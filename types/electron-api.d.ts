@@ -210,7 +210,7 @@ export interface SttTranscribeOpts {
 // electron/preload.ts; returns are traced from electron/ipc.js handlers.
 export interface ElectronAPI {
   // ── DB ──────────────────────────────────────────────────────────────────────
-  getPosts: (filters?: unknown) => Promise<Shelfy.Post[]>;
+  getPosts: (filters?: unknown) => Promise<PostSearchResult>;
   getPostIds: (filters?: unknown) => Promise<string[]>;
   getPostsByIds: (ids: string[]) => Promise<Shelfy.Post[]>;
   existingIds: (ids: string[]) => Promise<string[]>;
