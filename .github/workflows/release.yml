@@ -51,9 +51,9 @@ jobs:
             artifact: linux
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -76,15 +76,19 @@ jobs:
       - name: Collect feed artifacts
         run: |
           mkdir -p out
-          # Only the update-feed files; never the unpacked app dirs. `*.yml` (not
-          # just latest*.yml) so prerelease channel manifests (beta-mac.yml, …) are
-          # included for the beta channel.
+          # Only the update-feed files; never the unpacked app dirs. With
+          # generateUpdatesFilesForAllChannels off, electron-builder emits just the
+          # manifest for THIS build's channel (latest-*.yml for a plain vX.Y.Z,
+          # beta-*.yml for a vX.Y.Z-beta.N prerelease), so a plain `*.yml` glob is
+          # already channel-correct — no stray alpha-/beta- manifests in stable.
           cp release/*.dmg release/*.blockmap release/*.yml out/ 2>/dev/null || true
           cp release/*.zip out/ 2>/dev/null || true
           cp release/*.AppImage out/ 2>/dev/null || true
+          # builder-debug.yml is electron-builder's own debug dump — never ship it.
+          rm -f out/builder-debug.yml
           ls -la out
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: feed-${{ matrix.artifact }}
           path: out/
@@ -95,9 +99,9 @@ jobs:
     name: Source feed (Windows self-rebuild)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -108,7 +112,7 @@ jobs:
           if [[ "${GITHUB_REF_NAME}" == *-* ]]; then export SHELFY_CHANNEL=beta; fi
           node scripts/make-source-feed.mjs
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: feed-source
           path: |
@@ -125,9 +129,9 @@ jobs:
     name: Mac mini-pack (whisper + ffmpeg)
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -156,7 +160,7 @@ jobs:
       - name: Build mini-pack
         run: node scripts/make-binary-packs.mjs
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: feed-mac-pack
           path: |
@@ -170,9 +174,9 @@ jobs:
     name: Linux mini-pack (whisper + ffmpeg)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -201,7 +205,7 @@ jobs:
       - name: Build mini-pack
         run: node scripts/make-binary-packs.mjs
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: feed-linux-pack
           path: |
@@ -218,7 +222,7 @@ jobs:
     permissions:
       contents: write # only this job needs to create the release + upload assets
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist-release
           merge-multiple: true

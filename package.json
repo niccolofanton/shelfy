@@ -92,7 +92,6 @@
     "directories": {
       "output": "release"
     },
-    "generateUpdatesFilesForAllChannels": true,
     "publish": [
       {
         "provider": "generic",
