@@ -35,6 +35,7 @@ about, entirely offline.
   <a href="#connectors">Connectors</a> ·
   <a href="#website-analyzer">Website Analyzer</a> ·
   <a href="#features">Features</a> ·
+  <a href="#install">Install</a> ·
   <a href="#getting-started">Getting started</a> ·
   <a href="#license">License</a>
 </sub>
@@ -161,6 +162,61 @@ folding and lexical near-duplicate merges rewrite tags across affected posts.
 across restarts. A single Activity Center aggregates every background task with progress, ETA,
 actions and a badge count.
 
+## Install
+
+> **Just want to use the app?** Download the latest build for your OS from
+> **[⬇️ Releases](https://github.com/niccolofanton/shelfy/releases)** and follow the per-platform
+> steps below. The builds are **not signed** with a paid certificate (Apple Developer ID / Windows
+> code-signing), so each OS shows a **one-time warning** on first launch — the steps below clear it.
+> This is a limit of free distribution, **not** a sign the app is unsafe. Full guide:
+> **[docs/install.md](docs/install.md)**.
+
+### macOS (Apple Silicon)
+
+1. Download `SHELFY-<version>-arm64.dmg`, open it and drag **SHELFY** into **Applications**.
+2. On first launch macOS blocks the app because it isn't notarized. You'll hit one of two messages:
+
+   **“SHELFY Not Opened — Apple could not verify SHELFY is free of malware…”** (macOS 15 Sequoia and later):
+   - Click **Done**, then open **System Settings → Privacy & Security**.
+   - Scroll to the bottom and click **Open Anyway** next to the SHELFY notice, then authenticate
+     with password / Touch ID. *(Do it right after the failed launch — the button only shows for a
+     few minutes.)* You only need to do this once.
+   - On older macOS (≤ 14) you can instead **right-click** (or Ctrl+click) SHELFY in Applications →
+     **Open** → **Open**.
+
+   **“SHELFY is damaged and can't be opened”:**
+   - This is just Gatekeeper's *quarantine* flag on an ad-hoc-signed app. Clear it from Terminal:
+     ```bash
+     xattr -dr com.apple.quarantine /Applications/SHELFY.app
+     ```
+   - Then open the app normally. This command also works as a one-shot fix for the
+     “could not verify” case above.
+
+> AI features require **Apple Silicon (arm64)** — running under Rosetta/Intel isn't supported.
+
+### Windows
+
+1. Download and run `SHELFY-Setup-<version>.exe`.
+2. **SmartScreen** may show *“Windows protected your PC”* because the installer isn't signed.
+   Click **More info → Run anyway**. Only the first time.
+
+> Windows updates are a local *self-rebuild* and need **Node.js 22+** installed on the PC — see
+> **[docs/windows.md](docs/windows.md)**.
+
+### Linux
+
+1. Download `SHELFY-<version>-x86_64.AppImage`.
+2. Make it executable and run it:
+   ```bash
+   chmod +x SHELFY-*.AppImage
+   ./SHELFY-*.AppImage
+   ```
+
+> Linux has no in-app self-update yet: grab the new AppImage from **Releases** when a version ships.
+
+Once installed, Shelfy keeps itself up to date from the GitHub Releases feed on **macOS and Windows**
+(Settings → *Aggiornamenti*, Stable/Beta channel). See **[Auto-update](#auto-update)** for details.
+
 ## How it works
 
 ```mermaid
@@ -213,10 +269,9 @@ the item — then the React UI lets you browse, filter and search (by text or vo
 
 ## Getting started
 
-> **Just want to use the app?** Download the latest build for your OS from
-> **[Releases](https://github.com/niccolofanton/shelfy/releases)** and follow
-> **[docs/install.md](docs/install.md)** (it covers the macOS/Windows first-launch unlock and the
-> Linux AppImage). The steps below are for **building from source**.
+> **Just want to use the app?** See **[Install](#install)** — grab a prebuilt binary from
+> **[Releases](https://github.com/niccolofanton/shelfy/releases)** and clear the first-launch
+> warning. The steps below are for **building from source**.
 
 **Prerequisites:** Node.js 22+ and npm 10+.
 

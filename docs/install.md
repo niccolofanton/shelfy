@@ -14,13 +14,22 @@ Scarica l'artefatto per il tuo sistema dall'ultima release.
 
 1. Scarica `SHELFY-<versione>-arm64.dmg`.
 2. Apri il `.dmg` e trascina **SHELFY** in **Applicazioni**.
-3. Al **primo avvio** macOS blocca l'app perché non notarizzata. Hai due modi:
+3. Al **primo avvio** macOS blocca l'app perché non notarizzata. A seconda della versione di
+   macOS vedrai uno di questi avvisi:
 
-   **Metodo A — click destro (consigliato):**
+   **Metodo A — "SHELFY Not Opened / Apple could not verify…" (macOS 15 Sequoia e successivi):**
+   - Nell'avviso premi **Fine** (*Done*).
+   - Apri **Impostazioni di Sistema → Privacy e Sicurezza**, scorri in fondo e clicca
+     **Apri comunque** accanto alla notifica di SHELFY, poi autenticati con password / Touch ID.
+   - Fallo **subito dopo** il tentativo di apertura: il pulsante compare solo per pochi minuti.
+     Va fatto **solo la prima volta**.
+
+   **Metodo A (bis) — click destro (macOS ≤ 14):**
    - In `Applicazioni`, **click destro** (o Ctrl+click) su **SHELFY** → **Apri**.
    - Nella finestra di avviso, clicca di nuovo **Apri**. Va fatto **solo la prima volta**.
 
-   **Metodo B — Terminale (se compare "SHELFY è danneggiata e non può essere aperta"):**
+   **Metodo B — Terminale (se compare "SHELFY è danneggiata e non può essere aperta", o se i
+   metodi sopra non bastano):**
    Questo errore su Apple Silicon è dovuto all'attributo di *quarantena* di Gatekeeper su
    un'app ad-hoc non notarizzata. Si rimuove così:
    ```bash
