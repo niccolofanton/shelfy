@@ -12,12 +12,16 @@
 // build is already present.
 //
 // Run automatically before electron-builder via the `build`/`release` npm scripts,
-// or manually: node build/prepare-playwright.cjs
+// or manually: tsx build/prepare-playwright.ts
 
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
+// This file runs as ESM (root "type":"module" + tsx), so __dirname isn't defined —
+// derive it from the module URL.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const DEST = path.join(ROOT, 'build', 'ms-playwright');
 
