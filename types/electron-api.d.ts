@@ -82,6 +82,12 @@ export interface QueuedResult {
   queued: number;
 }
 
+// analyze:post enqueues a single post, so it returns a boolean ack (queued vs
+// skipped) — unlike the analyze:all / download:* family, which return a count.
+export interface AnalyzePostResult {
+  queued: boolean;
+}
+
 // analyze:split
 export interface AnalyzeSplitResult {
   analyzable: string[];
@@ -264,7 +270,7 @@ export interface ElectronAPI {
   retryDownloadJob: (key: string) => Promise<unknown>;
 
   // ── Analyze (local VLM categorization) ────────────────────────────────────────
-  analyzePost: (postId: string) => Promise<QueuedResult>;
+  analyzePost: (postId: string) => Promise<AnalyzePostResult>;
   analyzeAll: () => Promise<QueuedResult>;
   analyzePosts: (postIds: string[]) => Promise<QueuedResult>;
   splitForAnalysis: (postIds: string[]) => Promise<AnalyzeSplitResult>;
@@ -373,7 +379,7 @@ export interface ElectronAPI {
     limit?: number,
     offset?: number,
     source?: 'all' | 'web' | 'social',
-  ) => Promise<Shelfy.Post[]>;
+  ) => Promise<PostSearchResult>;
 
   // ── Web references ──────────────────────────────────────────────────────────────
   // web:add / web:discover resolve to weborchestrator-internal shapes; untyped.

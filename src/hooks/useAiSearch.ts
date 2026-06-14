@@ -195,9 +195,8 @@ function runGallerySearch(
   const reqId = ++resultsReqId;
   setState({ resultsLoading: true });
 
-  // searchByText resolves a bare Post[]; the tag/hybrid paths resolve
-  // { posts, total }. Normalize to a common shape below.
-  let searchFn: Promise<{ posts?: Shelfy.Post[]; total?: number } | Shelfy.Post[]>;
+  // All three search paths resolve a { posts, total } envelope.
+  let searchFn: Promise<{ posts?: Shelfy.Post[]; total?: number }>;
   if (hasTags && textQuery && window.electronAPI?.searchHybrid) {
     searchFn = window.electronAPI.searchHybrid(tags, textQuery, mode, RESULT_LIMIT, 0, source);
   } else if (hasTags) {
@@ -209,11 +208,7 @@ function runGallerySearch(
   searchFn
     .then((res) => {
       if (reqId !== resultsReqId) return;
-      if (Array.isArray(res)) {
-        setState({ results: res, total: res.length });
-      } else {
-        setState({ results: res?.posts ?? [], total: res?.total ?? 0 });
-      }
+      setState({ results: res?.posts ?? [], total: res?.total ?? 0 });
     })
     .catch((err) => {
       if (reqId !== resultsReqId) return;

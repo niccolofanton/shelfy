@@ -8,7 +8,7 @@ import React, {
   createElement,
   type ReactNode,
 } from 'react';
-import type { QueuedResult } from '../../types/electron-api';
+import type { AnalyzePostResult, QueuedResult } from '../../types/electron-api';
 
 // The analyzer's runtime job record (analyze:getJobs → onAnalyzeProgress). It has
 // no Shelfy.* domain type (it's an analyzer-internal shape, not the persisted
@@ -82,7 +82,7 @@ export interface AnalysisInstance {
   isPaused: boolean;
   concurrency: number;
   refreshModel: () => Promise<ModelStatus | null>;
-  analyzePost: (postId: string) => Promise<QueuedResult>;
+  analyzePost: (postId: string) => Promise<AnalyzePostResult>;
   analyzeAll: () => Promise<QueuedResult>;
   cancelJob: (key: string) => Promise<unknown>;
   cancelAll: () => Promise<unknown>;
@@ -331,7 +331,7 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
   );
 
   const analyzePost = useCallback(
-    (postId: string): Promise<QueuedResult> => window.electronAPI.analyzePost(postId),
+    (postId: string): Promise<AnalyzePostResult> => window.electronAPI.analyzePost(postId),
     [],
   );
   const analyzeAll = useCallback((): Promise<QueuedResult> => window.electronAPI.analyzeAll(), []);
