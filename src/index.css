@@ -1,0 +1,764 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'Space Grotesk';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300 700;
+  src: url('./assets/fonts/space-grotesk-variable.woff2') format('woff2-variations');
+}
+
+:root {
+  --bg-primary: #0f0f0f;
+  --bg-secondary: #1a1a1a;
+  --bg-card: #202020;
+  --bg-hover: #2a2a2a;
+  --border: #2e2e2e;
+  --text-primary: #f0f0f0;
+  --text-secondary: #a0a0a0;
+  --text-muted: #606060;
+  --accent: #7b5cff;
+  --accent-hover: #5a3dde;
+  --success: #4caf50;
+  --error: #ef5350;
+
+  /* ─────────────────────────────────────────────────────────────────────────
+     MOTION SYSTEM — single source of truth for the whole app.
+     Every animated element references THESE tokens/utilities; views must not
+     invent their own easings or durations, so motion stays coherent.
+
+     Easings:
+       --ease-out   signature "decelerate" — entrances, things arriving/settling
+       --ease-std   symmetric — hover/state/color changes
+       --ease-emphasized strong-but-elegant decelerate — pops, confirmations, accents (NO overshoot/bounce)
+     Durations:
+       --dur-1 (120ms) micro-feedback: press, tiny toggles
+       --dur-2 (200ms) standard: hover, fades, color
+       --dur-3 (320ms) entrances: cards, panels, lists
+       --dur-4 (440ms) deliberate: modals, large surfaces
+     ───────────────────────────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emphasized: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Back-compat alias: `--ease-spring` now maps to the same overshoot-free
+     emphasized curve, so every existing `var(--ease-spring)` reference stays
+     valid but no longer bounces. */
+  --ease-spring: var(--ease-emphasized);
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 320ms;
+  --dur-4: 440ms;
+
+  /* ─────────────────────────────────────────────────────────────────────────
+     TYPE SCALE — single source of truth for font sizes (the design-system
+     primitive that was missing). Components should reference these tokens (or
+     the .u-fs-* utilities) instead of hardcoding text-[10px]/text-[11px]/etc.
+       --fs-2xs micro-labels, uppercase eyebrows
+       --fs-xs  captions, chip/meta text
+       --fs-sm  secondary body, controls
+       --fs-md  body
+       --fs-lg  section titles
+       --fs-xl  view headings
+     ───────────────────────────────────────────────────────────────────────── */
+  --fs-2xs: 10px;
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 14px;
+  --fs-lg: 18px;
+  --fs-xl: 24px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    sans-serif;
+  background: #0f0f0f;
+  color: #f0f0f0;
+  overflow: hidden;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4a4a4a;
+}
+
+/* Selection highlight */
+::selection {
+  background: #7b5cff33;
+}
+
+/* Transition utility (supplements Tailwind) */
+.transition-colors {
+  transition-property: color, background-color, border-color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+.font-display {
+  font-family:
+    'Space Grotesk',
+    system-ui,
+    -apple-system,
+    sans-serif;
+  letter-spacing: -0.01em;
+}
+
+/* Type-scale utilities — map 1:1 to the --fs-* tokens for use from JSX. */
+.u-fs-2xs {
+  font-size: var(--fs-2xs);
+}
+.u-fs-xs {
+  font-size: var(--fs-xs);
+}
+.u-fs-sm {
+  font-size: var(--fs-sm);
+}
+.u-fs-md {
+  font-size: var(--fs-md);
+}
+.u-fs-lg {
+  font-size: var(--fs-lg);
+}
+.u-fs-xl {
+  font-size: var(--fs-xl);
+}
+
+/* Logo idle — a slow, non-invasive accent glow that "breathes" while at rest.
+   Subliminal by design: the drop-shadow swells to a soft 12px halo and back over
+   ~4.4s (the --dur-4 family, scaled to a loop). Neutralised automatically by the
+   reduced-motion safety net below. */
+@keyframes logo-idle-glow {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 transparent);
+  }
+  50% {
+    filter: drop-shadow(0 0 12px rgba(123, 92, 255, 0.55));
+  }
+}
+
+.logo-idle {
+  animation: logo-idle-glow 4.4s var(--ease-std) infinite;
+  will-change: filter;
+}
+
+/* No image dragging */
+img {
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* AI ▸ Search — staggered gallery tile entrance */
+@keyframes tile-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.tile-in {
+  animation: tile-in 0.28s ease-out both;
+}
+
+/* Blinking cursor for the streaming chat reply */
+.streaming-cursor {
+  margin-left: 1px;
+  color: #7b5cff;
+}
+
+/* Placeholder pills shown while the model is choosing tags */
+@keyframes tag-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+.tag-skeleton {
+  display: inline-block;
+  height: 24px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #1a1a1a 25%, #2a2a2a 37%, #1a1a1a 63%);
+  background-size: 400% 100%;
+  animation: tag-shimmer 1.4s ease infinite;
+}
+
+/* Square placeholder tile for the post grids while the first page loads — same
+   shimmer as .tag-skeleton but sized by its container (aspect-square) instead of
+   a fixed pill. Gives a "progressive paint" instead of an empty area + spinner. */
+.skeleton-tile {
+  background: linear-gradient(90deg, #161616 25%, #232323 37%, #161616 63%);
+  background-size: 400% 100%;
+  animation: tag-shimmer 1.4s ease infinite;
+}
+
+/* Voice-dictation audio-level meter — smooth width changes as you speak */
+.dictation-meter {
+  transition: width 100ms linear;
+}
+
+/* AI Tags queue — indeterminate progress. The model inference is a single
+   non-streaming call with no measurable %, so a soft highlight glides across the
+   track instead of a crude opacity blink. */
+@keyframes ai-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+.ai-progress-track {
+  position: relative;
+  overflow: hidden;
+}
+.ai-progress-track::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 32%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: ai-progress-slide 1.4s ease-in-out infinite;
+}
+
+/* Websites stepper — the CURRENT step's label slides/fades in on every phase
+   change (entrata); deactivating labels just transition their colour (uscita),
+   while the active segment's sweep above carries the idle/progress motion. */
+@keyframes aiweb-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.aiweb-step-current {
+  animation: aiweb-step-in var(--dur-3) var(--ease-out) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .aiweb-step-current {
+    animation: none;
+  }
+}
+
+/* AI Tags queue — spotlight card for the item being processed */
+@keyframes ai-spotlight-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ai-spotlight-in {
+  animation: ai-spotlight-in 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Queue cards (now + next) sliding in from the right as the queue advances */
+@keyframes ai-card-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.ai-card-in {
+  animation: ai-card-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Skeleton blocks that hold a card's size while content is (or isn't yet) being
+   generated. .ai-skel shimmers (the item being processed now); .ai-skel-static is
+   flat (a queued item just waiting its turn). */
+.ai-skel,
+.ai-skel-static {
+  border-radius: 6px;
+  background: var(--bg-hover);
+}
+.ai-skel {
+  background: linear-gradient(90deg, var(--bg-hover) 25%, #353535 37%, var(--bg-hover) 63%);
+  background-size: 400% 100%;
+  animation: tag-shimmer 1.4s ease infinite;
+}
+
+/* Tag chips popping in one by one as the model streams them */
+@keyframes ai-tag-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.ai-tag-pop {
+  animation: ai-tag-pop 0.26s var(--ease-out) both;
+}
+
+/* Soft fade on the side where overflowing description text / tag pills are
+   clipped, so they dissolve into the row instead of being hard-cut. Applied only
+   when the content actually overflows (toggled from JS), and only on that side. */
+.ai-fade-left {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 16px, #000 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 16px, #000 100%);
+}
+.ai-fade-right {
+  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 16px), transparent 100%);
+}
+
+/* Completion flourish: the check scales in with a slight overshoot */
+@keyframes ai-done-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.ai-done-pop {
+  animation: ai-done-pop 0.5s var(--ease-emphasized) both;
+}
+@keyframes ai-done-ring {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+.ai-done-ring {
+  animation: ai-done-ring 0.7s ease-out forwards;
+}
+
+/* Blinking caret for the streaming generation text */
+@keyframes ai-caret-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+.ai-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: ai-caret-blink 1s step-end infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SHARED MOTION UTILITIES — use these everywhere instead of ad-hoc animations.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Entrance keyframes */
+@keyframes u-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes u-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes u-fade-in-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes u-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes u-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Entrance classes. Add inline `style={{ animationDelay: i * 30 + 'ms' }}` to
+   stagger a list. `both` keeps the start state before the (optional) delay. */
+.u-fade-in {
+  animation: u-fade-in var(--dur-2) var(--ease-out) both;
+}
+.u-fade-in-up {
+  animation: u-fade-in-up var(--dur-3) var(--ease-out) both;
+}
+.u-fade-in-down {
+  animation: u-fade-in-down var(--dur-3) var(--ease-out) both;
+}
+.u-scale-in {
+  animation: u-scale-in var(--dur-3) var(--ease-out) both;
+}
+.u-pop-in {
+  animation: u-pop-in var(--dur-3) var(--ease-spring) both;
+}
+
+/* Grid zoom: cards settle in from a slightly smaller scale when the post grid
+   density changes (zoom in/out), pairing with the row slide for an elegant
+   re-flow instead of an instant jump. */
+@keyframes u-grid-zoom {
+  from {
+    opacity: 0.5;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.u-grid-zoom {
+  animation: u-grid-zoom var(--dur-3) var(--ease-emphasized) both;
+}
+
+/* Modal/dialog primitives: backdrop fades, content scales up gently. */
+.u-backdrop-in {
+  animation: u-fade-in var(--dur-2) var(--ease-std) both;
+}
+.u-dialog-in {
+  animation: u-scale-in var(--dur-4) var(--ease-out) both;
+}
+
+/* Interactive feedback. `.u-press` adds a subtle tactile push on click and a
+   feather-light lift on hover; pair with Tailwind `transition-*` or rely on the
+   bundled transition below. Safe on buttons, chips, icon buttons, list rows. */
+.u-press {
+  transition:
+    transform var(--dur-1) var(--ease-std),
+    background-color var(--dur-2) var(--ease-std),
+    color var(--dur-2) var(--ease-std),
+    border-color var(--dur-2) var(--ease-std),
+    box-shadow var(--dur-2) var(--ease-std),
+    opacity var(--dur-2) var(--ease-std);
+}
+.u-press:active {
+  transform: scale(0.96);
+}
+.u-press:disabled {
+  transform: none;
+}
+
+/* `.u-lift` — for cards/tiles: rises and casts a soft shadow on hover. */
+.u-lift {
+  transition:
+    transform var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out);
+}
+.u-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 28px -8px rgba(0, 0, 0, 0.55);
+}
+
+/* Generic transition for transform+opacity (no color), the common pairing. */
+.u-transition {
+  transition:
+    transform var(--dur-2) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
+}
+
+/* ─── Exit keyframes & classes ─────────────────────────────────────────────
+   Mirror the entrances so things LEAVE as deliberately as they arrive. Use
+   `forwards` so the element holds its vanished state until React unmounts it. */
+@keyframes u-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes u-scale-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+}
+@keyframes u-pop-out {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+}
+.u-fade-out {
+  animation: u-fade-out var(--dur-2) var(--ease-std) forwards;
+}
+.u-scale-out {
+  animation: u-scale-out var(--dur-2) var(--ease-std) forwards;
+}
+.u-pop-out {
+  animation: u-pop-out var(--dur-1) var(--ease-std) forwards;
+}
+
+/* ─── Directional entrances ───────────────────────────────────────────────
+   For things that arrive from a side: chat bubbles, accent rails, slide-ins. */
+@keyframes u-fade-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes u-fade-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.u-fade-in-left {
+  animation: u-fade-in-left var(--dur-3) var(--ease-out) both;
+}
+.u-fade-in-right {
+  animation: u-fade-in-right var(--dur-3) var(--ease-out) both;
+}
+
+/* ─── Smooth value-driven width (progress bars) ────────────────────────────
+   Replaces ad-hoc `transition-[width] ease-linear`: bars decelerate like real
+   motion instead of sliding mechanically. */
+.u-progress {
+  transition: width var(--dur-3) var(--ease-out);
+}
+
+/* ─── Accent rail reveal ───────────────────────────────────────────────────
+   The selection/active bar that grows from its anchored edge. Pair with
+   `transform-origin` (top for vertical rails, left for horizontal). */
+@keyframes u-bar-in {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.u-bar-in {
+  animation: u-bar-in var(--dur-3) var(--ease-spring) both;
+  transform-origin: top;
+}
+
+/* ─── Attention: soft beacon glow ──────────────────────────────────────────
+   Continuous, gentle — for live/active indicators (syncing dot, recording,
+   active background job). Uses currentColor so it tints to context. */
+@keyframes u-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 currentColor;
+    opacity: 1;
+  }
+  50% {
+    box-shadow: 0 0 0 4px currentColor;
+    opacity: 0.82;
+  }
+}
+.u-glow {
+  animation: u-glow 1.8s var(--ease-std) infinite;
+}
+
+/* ─── Attention: one-shot error shake ──────────────────────────────────────
+   A short, low-amplitude horizontal nudge to flag a failure. Non-looping. */
+@keyframes u-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20% {
+    transform: translateX(-3px);
+  }
+  40% {
+    transform: translateX(3px);
+  }
+  60% {
+    transform: translateX(-2px);
+  }
+  80% {
+    transform: translateX(2px);
+  }
+}
+.u-shake {
+  animation: u-shake var(--dur-3) var(--ease-std) 1;
+}
+
+/* ─── Icon rotation ────────────────────────────────────────────────────────
+   `.u-spin` loops (busy); `.u-spin-once` is a single 360° flourish you can
+   retrigger by remounting / toggling the class (refresh, retry). */
+@keyframes u-spin-kf {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.u-spin {
+  animation: u-spin-kf 1s linear infinite;
+}
+.u-spin-once {
+  animation: u-spin-kf var(--dur-3) var(--ease-out) 1;
+}
+
+/* ─── Cross-fade for swapped content (state machines, content swaps) ───────
+   Apply to the incoming node keyed by state so React remounts it. */
+.u-swap-in {
+  animation: u-fade-in var(--dur-2) var(--ease-out) both;
+}
+
+/* Coherent keyboard focus ring across the whole app. Pointer clicks don't
+   trigger :focus-visible, so this only shows for keyboard/AT users. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Inputs already signal focus via border colour — avoid the doubled ring. */
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile-in {
+    animation: none;
+  }
+  .streaming-cursor {
+    animation: none;
+  }
+  .tag-skeleton {
+    animation: none;
+  }
+  .skeleton-tile {
+    animation: none;
+  }
+  .dictation-meter {
+    transition: none;
+  }
+  .ai-progress-track::after {
+    animation: none;
+  }
+  .ai-spotlight-in {
+    animation: none;
+  }
+  .ai-card-in {
+    animation: none;
+  }
+  .ai-skel {
+    animation: none;
+  }
+  .ai-tag-pop {
+    animation: none;
+  }
+  .ai-done-pop {
+    animation: none;
+  }
+  .ai-done-ring {
+    animation: none;
+  }
+  .ai-caret {
+    animation: none;
+  }
+
+  /* Blanket safety net: neutralise every animation/transition (including all
+     .u-* utilities and any added by views) for users who ask for reduced
+     motion. State still changes instantly — only the movement is removed. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .u-lift:hover {
+    transform: none;
+  }
+  .u-press:active {
+    transform: none;
+  }
+}

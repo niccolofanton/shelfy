@@ -1,0 +1,15 @@
+node_modules
+dist
+dist-electron
+release
+out
+coverage
+e2e-report
+playwright-report
+test-results
+bin
+.vlm
+package-lock.json
+**/.scratch
+**/.scratch-alias
+*.md

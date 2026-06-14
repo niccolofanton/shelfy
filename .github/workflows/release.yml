@@ -1,0 +1,263 @@
+name: Release
+
+# Tag-driven release: push a tag like `v1.5.3` and this builds the app on every
+# OS and publishes a (draft) GitHub Release. The app's updater reads the feed from
+# https://github.com/<owner>/<repo>/releases/latest/download (see package.json >
+# build.publish), so publishing the draft is what makes clients auto-update.
+#
+# Flow:
+#   npm version patch        # bumps package.json + creates tag vX.Y.Z
+#   git push --follow-tags   # pushes the tag -> triggers this workflow
+#
+# A plain `vX.Y.Z` tag → STABLE: created as a DRAFT (review, then "Publish").
+# `releases/latest/download` only resolves to a published, non-prerelease release,
+# so nothing reaches stable users until you publish.
+#
+# A prerelease tag `vX.Y.Z-beta.N` → BETA: published immediately to a rolling
+# `beta` pre-release. Beta clients read …/releases/download/beta. Cut one with:
+#   npm version prerelease --preid beta && git push --follow-tags
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {} # allow a manual dry-run from the Actions tab
+
+# Least privilege at the workflow level: the build jobs run third-party code
+# (npm ci postinstall, electron-builder, cmake) and must NOT hold a write token.
+# Only the final `release` job escalates to contents: write.
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  # Sidecar build sources, pinned. WHISPER_SHA is the commit the v1.8.5 tag points
+  # to (annotated tag) — verified after clone so a moved tag can't slip code in.
+  WHISPER_TAG: v1.8.5
+  WHISPER_SHA: f24588a272ae8e23280d9c220536437164e6ed28
+
+jobs:
+  # ── Prebuilt apps: build natively per-OS (this is what removes the need to
+  #    cross-compile native modules like better-sqlite3 from a single machine).
+  build-app:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14 # Apple Silicon runner -> arm64 dmg/zip
+            artifact: mac
+          - os: ubuntu-latest # -> AppImage
+            artifact: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer + app
+        # electron-builder rebuilds native modules for Electron's ABI (npmRebuild,
+        # on by default). `--publish never`: we upload via the release job below.
+        env:
+          # The app is intentionally unsigned (ad-hoc on macOS via afterSign).
+          # Stop electron-builder from looking for a Developer ID certificate.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          node build/prepare-playwright.cjs
+          npx vite build
+          npx electron-builder --publish never
+
+      - name: Collect feed artifacts
+        run: |
+          mkdir -p out
+          # Only the update-feed files; never the unpacked app dirs. `*.yml` (not
+          # just latest*.yml) so prerelease channel manifests (beta-mac.yml, …) are
+          # included for the beta channel.
+          cp release/*.dmg release/*.blockmap release/*.yml out/ 2>/dev/null || true
+          cp release/*.zip out/ 2>/dev/null || true
+          cp release/*.AppImage out/ 2>/dev/null || true
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feed-${{ matrix.artifact }}
+          path: out/
+          if-no-files-found: error
+
+  # ── Windows self-rebuild feed: source zip + manifest (no native build needed).
+  build-source-feed:
+    name: Source feed (Windows self-rebuild)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Generate source feed
+        run: |
+          # Prerelease tags (e.g. v1.5.3-beta.1) feed the beta channel
+          # (source-beta.json); plain vX.Y.Z tags feed stable (source.json).
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then export SHELFY_CHANNEL=beta; fi
+          node scripts/make-source-feed.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feed-source
+          path: |
+            release/SHELFY-src-*.zip
+            release/source*.json
+          if-no-files-found: error
+
+  # ── macOS mini-pack: whisper-server (built from source — no upstream macOS
+  #    binary) + ffmpeg (from ffmpeg-static). yt-dlp and llama-server are NOT here:
+  #    binaries.js downloads them directly from upstream on the client.
+  #    NOTE: the whisper.cpp build layout (binary name, which libs/rpath) is the
+  #    one piece not verifiable locally — sanity-check the first run's logs.
+  build-mac-pack:
+    name: Mac mini-pack (whisper + ffmpeg)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install deps (provides ffmpeg-static)
+        run: npm ci
+
+      - name: Build whisper.cpp (Metal + server) from source
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$WHISPER_TAG" https://github.com/ggml-org/whisper.cpp
+          GOT="$(git -C whisper.cpp rev-parse HEAD)"
+          test "$GOT" = "$WHISPER_SHA" || { echo "whisper.cpp tag moved: $GOT != $WHISPER_SHA"; exit 1; }
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON
+          cmake --build whisper.cpp/build -j --config Release
+          mkdir -p .vlm/whisper
+          SERVER="$(find whisper.cpp/build -type f \( -name 'whisper-server' -o -name 'server' \) -print -quit)"
+          test -n "$SERVER" || { echo 'whisper-server binary not found after build'; exit 1; }
+          cp -a "$SERVER" .vlm/whisper/whisper-server
+          # Every shared lib the server needs (whisper + ggml backends incl. metal),
+          # preserving symlinks so the relative dylib links survive.
+          find whisper.cpp/build -name '*.dylib' -exec cp -a {} .vlm/whisper/ \;
+          find whisper.cpp/build -name 'ggml-metal.metal' -exec cp -a {} .vlm/whisper/ \; 2>/dev/null || true
+          echo '--- .vlm/whisper:'; ls -la .vlm/whisper
+
+      - name: Build mini-pack
+        run: node scripts/make-binary-packs.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feed-mac-pack
+          path: |
+            release/shelfy-bin-*.tar.gz
+            release/binaries-*.json
+          if-no-files-found: error
+
+  # ── Linux mini-pack: whisper-server (built from source) + ffmpeg. yt-dlp and
+  #    llama-server come directly from upstream on the client (ensureBinariesLinux).
+  build-linux-pack:
+    name: Linux mini-pack (whisper + ffmpeg)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install deps (provides ffmpeg-static)
+        run: npm ci
+
+      - name: Build whisper.cpp (server) from source
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$WHISPER_TAG" https://github.com/ggml-org/whisper.cpp
+          GOT="$(git -C whisper.cpp rev-parse HEAD)"
+          test "$GOT" = "$WHISPER_SHA" || { echo "whisper.cpp tag moved: $GOT != $WHISPER_SHA"; exit 1; }
+          # GGML_NATIVE=OFF: don't bake in -march=native, so the binary runs on any
+          # x86-64 user machine, not just the runner's CPU.
+          cmake -S whisper.cpp -B whisper.cpp/build -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
+          cmake --build whisper.cpp/build -j --config Release
+          mkdir -p .vlm/whisper
+          SERVER="$(find whisper.cpp/build -type f \( -name 'whisper-server' -o -name 'server' \) -print -quit)"
+          test -n "$SERVER" || { echo 'whisper-server binary not found after build'; exit 1; }
+          cp -a "$SERVER" .vlm/whisper/whisper-server
+          # Shared libs (.so), preserving symlinks (libfoo.so -> libfoo.so.x).
+          find whisper.cpp/build -name '*.so*' -exec cp -a {} .vlm/whisper/ \;
+          echo '--- .vlm/whisper:'; ls -la .vlm/whisper
+
+      - name: Build mini-pack
+        run: node scripts/make-binary-packs.mjs
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: feed-linux-pack
+          path: |
+            release/shelfy-bin-*.tar.gz
+            release/binaries-*.json
+          if-no-files-found: error
+
+  # ── Assemble everything into one draft GitHub Release for this tag.
+  release:
+    name: Publish draft release
+    needs: [build-app, build-source-feed, build-mac-pack, build-linux-pack]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write # only this job needs to create the release + upload assets
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist-release
+          merge-multiple: true
+
+      - name: Merge binaries.json fragments
+        run: |
+          set -euo pipefail
+          # Combine per-key fragments (binaries-darwin-arm64.json, binaries-linux-x64.json)
+          # into the single binaries.json the runtime provisioner reads, then drop them.
+          jq -s 'reduce .[] as $m ({packs:{}}; .packs += ($m.packs // {}))' \
+            dist-release/binaries-*.json > dist-release/binaries.json
+          rm -f dist-release/binaries-*.json
+          echo '--- binaries.json:'; cat dist-release/binaries.json
+          ls -la dist-release
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$TAG" == *-* ]]; then
+            # Beta (pre-release tag): publish to a ROLLING `beta` release, so
+            # beta-channel clients (which read …/releases/download/beta) get it.
+            # `releases/latest/download` only resolves to stable, never to this.
+            gh release delete beta --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+            gh release create beta \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "SHELFY beta ($TAG)" \
+              --notes "Rolling beta build from $TAG." \
+              --prerelease \
+              dist-release/*
+          else
+            # Stable: a DRAFT release for review — clients see it only once you Publish.
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "SHELFY $TAG" \
+              --generate-notes \
+              --draft \
+              dist-release/*
+          fi

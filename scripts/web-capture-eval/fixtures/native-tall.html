@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>native-tall</title>
+  <meta name="x-harness-height" content="5000" />
+  <style>
+    * { margin: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; }
+    .sec { height: 1000px; display: flex; align-items: center; justify-content: center; font-size: 80px; color: #fff; }
+  </style>
+</head>
+<body>
+  <!-- Controllo: scroll nativo, documento realmente alto 5000px. Coverage attesa ~1. -->
+  <div id="root"></div>
+  <script>
+    const colors = ['#1e3a8a', '#9d174d', '#065f46', '#92400e', '#4c1d95'];
+    const root = document.getElementById('root');
+    colors.forEach((c, i) => {
+      const d = document.createElement('div');
+      d.className = 'sec';
+      d.style.background = c;
+      d.textContent = 'Section ' + (i + 1);
+      root.appendChild(d);
+    });
+  </script>
+</body>
+</html>

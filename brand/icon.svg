@@ -1,0 +1,21 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="160" y1="120" x2="864" y2="904" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1A1D23"/>
+      <stop offset="1" stop-color="#0F1116"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="396" y1="300" x2="628" y2="724" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7B5CFF"/>
+      <stop offset="1" stop-color="#5A3DDE"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.46" r="0.42" gradientUnits="objectBoundingBox">
+      <stop stop-color="#7B5CFF" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#7B5CFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="url(#bg)"/>
+  <rect x="64.5" y="64.5" width="895" height="895" rx="207.5" stroke="#7B5CFF" stroke-opacity="0.22" stroke-width="3"/>
+  <rect x="232" y="232" width="560" height="560" rx="180" fill="url(#glow)"/>
+  <path d="M396 300H628V724L512 612L396 724V300Z" fill="url(#mark)"/>
+  <path d="M396 300H628L396 498V300Z" fill="#FFFFFF" fill-opacity="0.14"/>
+</svg>

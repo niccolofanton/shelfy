@@ -1,0 +1,24 @@
+{
+  "_comment": "PLACEHOLDER — copia questo file in gold.json e sostituisci i cluster con la PARTIZIONE reale dei tag del TUO archivio, annotata a mano. Ogni 'tags' è in tag_norm (minuscolo, come in post_tags.tag_norm). Un tag dovrebbe comparire in UN solo cluster. I tag non elencati qui non vengono valutati (ma riducono la copertura riportata). Vedi README.md.",
+  "_schema": {
+    "clusters": "array di { label: string, tags: string[] }"
+  },
+  "clusters": [
+    {
+      "label": "audio / ascolto",
+      "tags": ["cuffie", "auricolari", "headphones", "musica", "spotify"]
+    },
+    {
+      "label": "fotografia",
+      "tags": ["fotografia", "ritratto", "obiettivo", "lightroom"]
+    },
+    {
+      "label": "cucina",
+      "tags": ["ricetta", "pasta", "forno", "impasto"]
+    },
+    {
+      "label": "sviluppo software",
+      "tags": ["javascript", "react", "css", "debug"]
+    }
+  ]
+}

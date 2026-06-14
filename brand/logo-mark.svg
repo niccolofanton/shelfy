@@ -1,0 +1,10 @@
+<svg width="96" height="128" viewBox="0 0 96 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="shelfyMark" x1="14" y1="6" x2="82" y2="122" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7B5CFF"/>
+      <stop offset="1" stop-color="#5A3DDE"/>
+    </linearGradient>
+  </defs>
+  <path d="M14 6H82V122L48 95L14 122V6Z" fill="url(#shelfyMark)"/>
+  <path d="M14 6H82L14 64V6Z" fill="#FFFFFF" fill-opacity="0.14"/>
+</svg>

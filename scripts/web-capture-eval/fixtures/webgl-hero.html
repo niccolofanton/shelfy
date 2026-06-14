@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>webgl-hero</title>
+  <meta name="x-harness-height" content="3000" />
+  <style>
+    * { margin: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; }
+    /* Hero canvas WebGL a tutto schermo, fisso: il fix NON deve appiattirlo a static. */
+    #bg { position: fixed; inset: 0; z-index: -1; }
+    .hero { height: 1000px; }
+    .sec { height: 1000px; display: flex; align-items: center; justify-content: center; font-size: 80px; color: #fff; }
+  </style>
+</head>
+<body>
+  <!-- Verifica: (1) la fascia hero (canvas WebGL) NON è nera; (2) JS_NEUTRALIZE_FIXED
+       non collassa il canvas fisso; (3) il contenuto sotto è catturato (coverage). -->
+  <canvas id="bg"></canvas>
+  <div class="hero"></div>
+  <div class="sec" style="background:#111827">Content A</div>
+  <div class="sec" style="background:#1f2937">Content B</div>
+  <script>
+    const cv = document.getElementById('bg');
+    function size() { cv.width = window.innerWidth; cv.height = window.innerHeight; }
+    size();
+    window.addEventListener('resize', size);
+    const gl = cv.getContext('webgl') || cv.getContext('experimental-webgl');
+    let t = 0;
+    function frame() {
+      t += 0.02;
+      const r = 0.55 + 0.35 * Math.sin(t);
+      const g = 0.45;
+      const b = 0.6 + 0.35 * Math.cos(t);
+      gl.viewport(0, 0, cv.width, cv.height);
+      gl.clearColor(r, g, b, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      window.requestAnimationFrame(frame);
+    }
+    if (gl) frame();
+  </script>
+</body>
+</html>

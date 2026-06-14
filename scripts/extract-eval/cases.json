@@ -1,0 +1,404 @@
+{
+  "seed": 42,
+  "quota": {
+    "video": 10,
+    "carousel": 4,
+    "image": 3,
+    "text": 3
+  },
+  "frequentTags": [
+    "shader",
+    "procedural",
+    "generative",
+    "creative coding",
+    "webgl",
+    "motion design",
+    "design tecnologico",
+    "threejs",
+    "design artistico",
+    "fluid solver",
+    "3d",
+    "illustrazione",
+    "ai",
+    "arte contemporanea",
+    "typography",
+    "social media",
+    "scultura",
+    "blender",
+    "design minimalista",
+    "ingegneria del prodotto",
+    "intelligenza artificiale",
+    "meme",
+    "tecnologia",
+    "moda & beauty",
+    "simulazione fluida",
+    "prodotto tecnologico",
+    "filosofia",
+    "data viz",
+    "touchdesigner",
+    "gioco",
+    "illustration",
+    "link esterno",
+    "glsl",
+    "citazione",
+    "graphicdesign",
+    "pixel art",
+    "particle system",
+    "fumetto",
+    "webgpu",
+    "graphic design"
+  ],
+  "posts": [
+    {
+      "id": "2042584997689737464",
+      "mediaType": "video",
+      "videoPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/videos/twitter-2042584997689737464.mp4",
+      "imagePath": null,
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/twitter-2042584997689737464.jpg",
+      "media": [],
+      "text": "Brazilian Amazon branding by @futurebrandsp https://t.co/bMS86qZJ63"
+    },
+    {
+      "id": "1860798998199554550",
+      "mediaType": "video",
+      "videoPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/videos/twitter-1860798998199554550.mp4",
+      "imagePath": null,
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/twitter-1860798998199554550.jpg",
+      "media": [],
+      "text": "44th #threejs journey lesson done !\nIt involved a very interesting concept : Procedural terrains. \n\nI'm done with Shaders.\nWhat's left :\n-Post-processing\n-Performance tips\n-React Three Fiber\n\nI honestly can't wait for what's next. https://t.co/zPTlHIrcFE"
+    },
+    {
+      "id": "3301237502878540558_55976057039",
+      "mediaType": "video",
+      "videoPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/videos/instagram-C3QWgSmReMO.mp4",
+      "imagePath": null,
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/instagram-C3QWgSmReMO.jpg",
+      "media": [],
+      "text": "Eerie Street Sculptures by Mark Jenkins @xmarkjenkinsx"
+    },
+    {
+      "id": "2046789841669521745",
+      "mediaType": "video",
+      "videoPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/videos/twitter-2046789841669521745.mp4",
+      "imagePath": null,
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/twitter-2046789841669521745.jpg",
+      "media": [],
+      "text": "A JAPANESE DEVELOPER MAY HAVE FOUND ONE OF THE SIMPLEST CLAUDE CODE HACKS FOR FINDING THE RIGHT SKILL FAST.\n\nInstead of digging through hundreds of options, one prompt can surface the best match for exactly what you’re trying to build.\n\nhttps://t.co/ttTKIRZDlq"
+    },
+    {
+      "id": "2021054040122261860",
+      "mediaType": "video",
+      "videoPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/videos/twitter-2021054040122261860.mp4",
+      "imagePath": null,
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/twitter-2021054040122261860.jpg",
+      "media": [],
+      "text": "Here is a quick demo of me grabbing perfect vectors from an Ortho animation.  This is all being live rendered at 120fps, including the shader effects!\n\nhttps://t.co/HKm7Ic1vgz https://t.co/RzaGpXRZh1"
+    },
+    {
+      "id": "3804281857714470174_229922596",
+      "mediaType": "video",
+      "videoPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/videos/instagram-DTLhjGSiL0e.mp4",
+      "imagePath": null,
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/instagram-DTLhjGSiL0e.jpg",
+      "media": [],
+      "text": "Want better inputs for design and direction?\nAdd these to your list:\n\npentagram.com\nmayda.co\nthe-brandidentity.com\nthreejs.org\n\nWho needs to know about these? 🤝"
+    },
+    {
+      "id": "2046517988572983435",
+      "mediaType": "video",
+      "videoPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/videos/twitter-2046517988572983435.mp4",
+      "imagePath": null,
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/twitter-2046517988572983435.jpg",
+      "media": [],
+      "text": "💿bzbzbzzbzz💿 https://t.co/cplo5tvbPj"
+    },
+    {
+      "id": "3484478139143713275_19719473",
+      "mediaType": "video",
+      "videoPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/videos/instagram-DBbWmfvRnH7.mp4",
+      "imagePath": null,
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/instagram-DBbWmfvRnH7.jpg",
+      "media": [],
+      "text": "@japanhouseldn’s “Looks Delicious!” exhibition uncovers the art and evolution of Sanpuru — Japan’s hyper-realistic food replicas. A deep dive into the craftsmanship behind these lifelike creations and their role in culinary culture."
+    },
+    {
+      "id": "2031790691890630749",
+      "mediaType": "video",
+      "videoPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/videos/twitter-2031790691890630749.mp4",
+      "imagePath": null,
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/twitter-2031790691890630749.jpg",
+      "media": [],
+      "text": "Soon. Join the waitlist.\n\nhttps://t.co/SYr30lh5mn https://t.co/DkIqbNN73H"
+    },
+    {
+      "id": "1812372254266724856",
+      "mediaType": "video",
+      "videoPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/videos/twitter-1812372254266724856.mp4",
+      "imagePath": null,
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/twitter-1812372254266724856.jpg",
+      "media": [],
+      "text": "Music networks ✨🕸️ https://t.co/v6uxQOYVSU"
+    },
+    {
+      "id": "3877585463960047840_3448625110",
+      "mediaType": "carousel",
+      "videoPath": null,
+      "imagePath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-0.jpg",
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/instagram-DXP829ljpDg.jpg",
+      "media": [
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-0.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-1.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-2.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-3.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-4.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-5.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-6.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-7.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-8.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-9.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-10.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-11.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-12.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DXP829ljpDg-13.jpg"
+        }
+      ],
+      "text": "Cory Kennedy gained attention in the mid-2000s during the Indie Sleaze era after being photographed by Mark Hunter (The Cobrasnake), with her images later circulating widely on Tumblr & MySpace where people reposted and copied her look. She was also dubbed the “New York ‘It’ Girl” by New York Magazine."
+    },
+    {
+      "id": "3837090888216631068_74555691791",
+      "mediaType": "carousel",
+      "videoPath": null,
+      "imagePath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-0.jpg",
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/instagram-DVAFdVDClcc.jpg",
+      "media": [
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-0.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-1.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-2.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-3.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-4.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-5.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-6.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-7.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-8.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-9.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-10.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-11.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVAFdVDClcc-12.jpg"
+        }
+      ],
+      "text": "Louis Vuitton Spring/Summer “Series 4” collection with Final Fantasy (2016)"
+    },
+    {
+      "id": "3844828666039904590_58215990921",
+      "mediaType": "carousel",
+      "videoPath": null,
+      "imagePath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVbk00NjClO-0.jpg",
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/instagram-DVbk00NjClO.jpg",
+      "media": [
+        {
+          "type": "video",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-DVbk00NjClO-0.jpg"
+        }
+      ],
+      "text": "In the mundane and the transitory, we find the true pulse of the urban archive. \n\nFor Rome New Media Week, the practice of Benjamin Bardou serves as a blueprint for a new kind of heritage. This is a heritage not built on monuments, but on the atmospheric debris of the everyday.\n\nBy rendering the banal city as a volumetric point cloud, Bardou captures the friction between physical reality and digital memory. In his hands, a metro tunnel or a rainy street becomes a latent landscape where raw data functions as a digital fossil of the present. He updates the concept of the flâneur for the age of spatial computing, proving that the digital twin is not a cold replica, but the ultimate vessel for the city’s invisible soul."
+    },
+    {
+      "id": "3359295227448572293_5514806044",
+      "mediaType": "carousel",
+      "videoPath": null,
+      "imagePath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-0.jpg",
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/instagram-C6enTYHvLmF.jpg",
+      "media": [
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-0.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-1.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-2.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-3.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-4.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-5.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-6.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-7.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-8.jpg"
+        },
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C6enTYHvLmF-9.jpg"
+        }
+      ],
+      "text": "Chromed animal paintings by Japanese illustrator Hajime Sorayama (born 1947). @hajimesorayamaofficial ✨\n\n#hajimesorayama#hajimesorayamaart#hajimesorayama_official#hajimesorayamarobot#beauty#hajimesorayamaillustrations#airbrush#art#artist#airbrushart#painting#airbrushed#light#robot#retroscifi#robots#robotart#eyes#amazing#beautiful#japaneseart#design#artwork#style#drawing#japaneseartist#scifi#scifiart#japaneseculture#sorayama"
+    },
+    {
+      "id": "1876297677014462504",
+      "mediaType": "image",
+      "videoPath": null,
+      "imagePath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/twitter-1876297677014462504-0.jpg",
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/twitter-1876297677014462504.jpg",
+      "media": [
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/twitter-1876297677014462504-0.jpg"
+        }
+      ],
+      "text": "(WANTED)\nfull stack dev\n\nneed to be experienced with:\n- vue / nuxt\n- pocketbase (or supabase, or similar)\n- simple devops (ssh, git, server setup)\n\nextra points if interested in learning three.js\n\nif you feel like you are the right fit or know somebody,\nplease send me a dm! https://t.co/qhBD1SgD1q"
+    },
+    {
+      "id": "3293444294558965152_63865130803",
+      "mediaType": "image",
+      "videoPath": null,
+      "imagePath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C20qiLwuV2g-0.jpg",
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/instagram-C20qiLwuV2g.jpg",
+      "media": [
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-C20qiLwuV2g-0.jpg"
+        }
+      ],
+      "text": "“To be yourself in a world that is constantly trying to make you something else is the greatest accomplishment” \n\n- Ralph Waldo Emerson"
+    },
+    {
+      "id": "2977059115349252247_50840317139",
+      "mediaType": "image",
+      "videoPath": null,
+      "imagePath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-ClQo34FuxiX-0.jpg",
+      "thumbnailPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/thumbnails/instagram-ClQo34FuxiX.jpg",
+      "media": [
+        {
+          "type": "image",
+          "localPath": "/Users/USERNAME/Library/Application Support/Shelfy/assets/images/instagram-ClQo34FuxiX-0.jpg"
+        }
+      ],
+      "text": "Study from photo \n\n#sketch #draw #art #figure #daily #dailydraw #dailydrawing #dailysketch #dailyart #figuredraw #figuredrawing #figuresketch #photostudy #study"
+    },
+    {
+      "id": "1797361792328286561",
+      "mediaType": "text",
+      "videoPath": null,
+      "imagePath": null,
+      "thumbnailPath": null,
+      "media": [],
+      "text": "I've created over 50,000 #gameassets which are completely free to use in any sort of project by anyone!\n\n🎁 Download: https://t.co/9leHgiHEwm\n💜 Donate: https://t.co/BaqaakQJeO\n🥳 Club (Patreon): https://t.co/sG5OHcYDsW"
+    },
+    {
+      "id": "1882853379552289084",
+      "mediaType": "text",
+      "videoPath": null,
+      "imagePath": null,
+      "thumbnailPath": null,
+      "media": [],
+      "text": "At @active_theory we're releasing on GitHub small javascript utilities 🧵"
+    },
+    {
+      "id": "1859463939395821848",
+      "mediaType": "text",
+      "videoPath": null,
+      "imagePath": null,
+      "thumbnailPath": null,
+      "media": [],
+      "text": "Quick breakdown on how I made this glass orb. With just a few building blocks from  #r3f and drei you can get a really dynamic effect 👇"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+<!doctype html>
+<html class="lenis lenis-smooth">
+<head>
+  <meta charset="utf-8" />
+  <title>lenis-native</title>
+  <meta name="x-harness-height" content="5000" />
+  <style>
+    * { margin: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; }
+    /* CSS reale di Lenis: clippa SOLO quando .lenis-stopped (qui non lo è). */
+    .lenis.lenis-stopped { overflow: clip; }
+    .sec { height: 1000px; display: flex; align-items: center; justify-content: center; font-size: 80px; color: #fff; }
+  </style>
+</head>
+<body>
+  <!-- Controllo: Lenis usa scroll NATIVO; il documento è alto 5000px davvero.
+       Verifica che il fix NON rompa i siti Lenis. window.lenis è METADATI, non l'istanza. -->
+  <div id="root"></div>
+  <script>
+    window.lenis = { version: '1.1.0' };
+    const colors = ['#0c4a6e', '#7f1d1d', '#14532d', '#713f12', '#581c87'];
+    const root = document.getElementById('root');
+    colors.forEach((c, i) => {
+      const d = document.createElement('div');
+      d.className = 'sec';
+      d.style.background = c;
+      d.textContent = 'Lenis ' + (i + 1);
+      root.appendChild(d);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,160 @@
+{
+  "name": "shelfy",
+  "version": "1.5.2",
+  "description": "Archive and browse your saved bookmarks from Instagram, TikTok, X and more",
+  "author": "Niccolò Fanton",
+  "license": "Apache-2.0",
+  "main": "electron/main.js",
+  "type": "module",
+  "engines": {
+    "node": ">=22",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"cross-env ELECTRON_DEV=true electronmon .\"",
+    "build": "node build/prepare-playwright.cjs && vite build && electron-builder",
+    "release": "node build/prepare-playwright.cjs && vite build && electron-builder",
+    "preview": "electron .",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "perf:gallery": "cross-env PERF=1 playwright test e2e/perf-gallery.spec.ts --workers=1",
+    "eval:search": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/search-eval/run.cjs",
+    "eval:extract": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/extract-eval/run.cjs",
+    "eval:extract:frames": "node scripts/extract-eval/frames.cjs",
+    "eval:cluster": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/cluster-eval/run.cjs",
+    "eval:capture": "electron scripts/web-capture-eval/run.cjs",
+    "eval:pw-engine": "electron scripts/web-capture-eval/pw-engine-test.cjs",
+    "setup:capture-browser": "playwright install chromium-headless-shell",
+    "postinstall": "node build/postinstall.cjs",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.13.26",
+    "better-sqlite3": "^12.10.0",
+    "electron-updater": "^6.8.3",
+    "ffmpeg-static": "^5.3.0",
+    "lucide-react": "^0.400.0",
+    "pdfjs-dist": "^4.10.38",
+    "playwright-core": "^1.60.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^21.0.2",
+    "@commitlint/config-conventional": "^21.0.2",
+    "@electron/fuses": "^2.1.2",
+    "@electron/rebuild": "^4.0.4",
+    "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.60.0",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^20.19.41",
+    "@vitejs/plugin-react": "^4.0.0",
+    "@vitest/coverage-v8": "^1.6.1",
+    "autoprefixer": "^10.0.0",
+    "concurrently": "^8.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.0.0",
+    "electronmon": "^2.0.4",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^9.1.2",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^17.6.0",
+    "husky": "^9.1.7",
+    "jsdom": "^24.1.3",
+    "lint-staged": "^17.0.7",
+    "postcss": "^8.0.0",
+    "prettier": "^3.8.3",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.0.0",
+    "vitest": "^1.6.1"
+  },
+  "electronmon": {
+    "patterns": [
+      "electron/**"
+    ]
+  },
+  "build": {
+    "appId": "com.shelfy.app",
+    "productName": "SHELFY",
+    "directories": {
+      "output": "release"
+    },
+    "generateUpdatesFilesForAllChannels": true,
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://github.com/niccolofanton/shelfy/releases/latest/download"
+      }
+    ],
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/playwright-core/**"
+    ],
+    "extraResources": [
+      {
+        "from": "build/ms-playwright",
+        "to": "ms-playwright"
+      }
+    ],
+    "afterPack": "build/afterPack.cjs",
+    "afterSign": "build/afterSign.cjs",
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        },
+        {
+          "target": "zip",
+          "arch": "arm64"
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "identity": "-",
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Shelfy usa il microfono per la dettatura vocale delle ricerche."
+      }
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "differentialPackage": true,
+      "artifactName": "SHELFY-Setup-${version}.${ext}"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png",
+      "artifactName": "SHELFY-${version}-${arch}.${ext}"
+    }
+  }
+}

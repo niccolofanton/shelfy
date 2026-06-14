@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>pinned-section</title>
+  <meta name="x-harness-height" content="4000" />
+  <style>
+    * { margin: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; }
+    .sec { height: 1000px; display: flex; align-items: center; justify-content: center; font-size: 70px; color: #fff; }
+    /* Sezione "pinned" stile GSAP pin-spacer: spacer alto con figlio sticky. */
+    .pin-spacer { height: 2000px; position: relative; }
+    .pin-spacer .pinned { position: sticky; top: 0; height: 1000px; display: flex; align-items: center; justify-content: center; font-size: 70px; color: #fff; background: #b91c1c; }
+  </style>
+</head>
+<body>
+  <!-- Documento alto 4000px (intro 1000 + pin-spacer 2000 + outro 1000). -->
+  <div class="sec" style="background:#1f2937">Intro</div>
+  <div class="pin-spacer"><div class="pinned">Pinned</div></div>
+  <div class="sec" style="background:#0e7490">Outro</div>
+</body>
+</html>

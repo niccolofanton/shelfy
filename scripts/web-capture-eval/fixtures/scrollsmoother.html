@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>scrollsmoother-virtual</title>
+  <meta name="x-harness-height" content="5000" />
+  <style>
+    * { margin: 0; box-sizing: border-box; }
+    /* Firma DOM di GSAP ScrollSmoother: il documento è bloccato a viewport, il
+       contenuto vive in #smooth-content traslato dentro #smooth-wrapper fixed. */
+    html, body { height: 100vh; overflow: hidden; font-family: system-ui, sans-serif; }
+    #smooth-wrapper { position: fixed; inset: 0; overflow: hidden; }
+    #smooth-content { will-change: transform; }
+    .sec { height: 1000px; display: flex; align-items: center; justify-content: center; font-size: 80px; color: #fff; }
+  </style>
+</head>
+<body>
+  <!-- Senza il fix: documentElement.scrollHeight ≈ 900 → cattura solo l'hero.
+       Con il fix: neutralizzazione → documento alto 5000 → cattura completa. -->
+  <div id="smooth-wrapper"><div id="smooth-content"></div></div>
+  <script>
+    const colors = ['#0f766e', '#7c2d12', '#1e40af', '#831843', '#3f6212'];
+    const content = document.getElementById('smooth-content');
+    colors.forEach((c, i) => {
+      const d = document.createElement('div');
+      d.className = 'sec';
+      d.style.background = c;
+      d.textContent = 'Smooth ' + (i + 1);
+      content.appendChild(d);
+    });
+    // Emula la virtualizzazione (matrix3d/translate) e il global esposto dalla lib.
+    content.style.transform = 'translate3d(0px, 0px, 0px)';
+    window.ScrollSmoother = { _i: { scrollTop() {}, kill() {} }, get() { return this._i; } };
+  </script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+{
+  // Relay del feedback di SHELFY. L'app (main process) POSTa qui il payload e il
+  // Worker inoltra l'email via Resend tenendo la chiave come SECRET. La chiave NON
+  // viaggia mai nel bundle dell'app: l'app conosce solo l'URL pubblico di questo
+  // Worker, che NON è un segreto.
+  //
+  // Deploy:  cd workers/feedback && npx wrangler@latest deploy
+  // Secret:  npx wrangler@latest secret put RESEND_API_KEY   (incolla la chiave)
+  // Vedi il README accanto per i passi completi.
+  "name": "shelfy-feedback",
+  "main": "src/index.js",
+  "compatibility_date": "2026-06-01",
+  "observability": { "enabled": true },
+
+  // Config NON sensibile (in chiaro, versionata): mittente, destinatario, cap.
+  // FROM=onboarding@resend.dev funziona senza dominio verificato, ma Resend
+  // recapita solo all'email del proprietario dell'account (vedi README).
+  "vars": {
+    "FROM": "SHELFY <onboarding@resend.dev>",
+    "TO": "niccolofanton1997@gmail.com",
+    "DAILY_CAP": "90"
+  },
+
+  // Livello 1 — rate-limit per IP (anti-burst). Finestra max 60s per la binding
+  // nativa: difende dai click ripetuti / spam da un singolo IP.
+  "ratelimits": [
+    {
+      "name": "PER_IP",
+      "namespace_id": "1001",
+      "simple": { "limit": 3, "period": 60 }
+    }
+  ],
+
+  // Livello 2 — budget giornaliero GLOBALE: protegge la quota Resend (free =
+  // 100 email/giorno) anche da abusi distribuiti su molti IP. L'id va riempito
+  // dopo `wrangler kv namespace create FEEDBACK_BUDGET` (vedi README).
+  "kv_namespaces": [{ "binding": "BUDGET", "id": "ca9707f9364b4caa8ff06b4be6799514" }]
+}

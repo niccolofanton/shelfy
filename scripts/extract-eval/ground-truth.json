@@ -1,0 +1,162 @@
+{
+  "2042584997689737464": {
+    "subject": "branding",
+    "mustHave": ["branding", "tipografia", "logotipo", "amazzonia"],
+    "acceptable": ["typeface", "lettering", "identità visiva", "design grafico", "motion design", "natura", "fiume", "brasile", "futurebrand", "generative typeface", "kinetic typography", "rebranding"],
+    "forbidden": ["shader", "webgl", "three.js", "raymarching", "scultura", "moda", "ritratto", "altro", "vario", "generico"],
+    "idealKeywords": ["branding amazzonia", "logo fluido tipografia", "identità visiva brasile", "generative typeface rivers"],
+    "note": "Branding/visual identity project for the Brazilian Amazon: a fluid handwritten 'Amazonia' wordmark whose strokes trace real rivers, over aerial footage."
+  },
+  "1860798998199554550": {
+    "subject": "terreno procedurale",
+    "mustHave": ["terreno procedurale", "three.js", "shader", "procedurale"],
+    "acceptable": ["webgl", "glsl", "creative coding", "generative", "noise", "3d", "lil-gui", "react three fiber", "rendering", "paesaggio 3d", "vertex shader", "fragment shader"],
+    "forbidden": ["moda", "scultura", "fotografia", "ritratto", "altro", "vario", "generico"],
+    "idealKeywords": ["terreno procedurale three.js", "procedural terrain shader", "three.js journey shaders", "paesaggio generativo 3d"],
+    "note": "Three.js Journey lesson: a real-time procedural 3D terrain generated with shaders, with a GUI panel of tweakable color bands and elevation parameters."
+  },
+  "3301237502878540558_55976057039": {
+    "subject": "scultura urbana",
+    "mustHave": ["scultura urbana", "installazione", "arte di strada", "mark jenkins"],
+    "acceptable": ["street art", "scultura", "figura umana", "iperrealismo", "manichino", "arte pubblica", "intervento urbano", "nastro adesivo", "performance", "spazio pubblico"],
+    "forbidden": ["shader", "generative", "creative coding", "webgl", "three.js", "motion design", "procedurale", "moda", "altro", "vario", "generico"],
+    "idealKeywords": ["sculture di strada mark jenkins", "installazioni urbane iperrealiste", "figure umane scultura urbana", "street sculpture eerie"],
+    "note": "Off-domain: hyperreal human-figure street sculptures/installations by Mark Jenkins placed in public spaces (rooftops, lampposts, walls)."
+  },
+  "2046789841669521745": {
+    "subject": "terminale",
+    "mustHave": ["terminale", "claude code", "cli", "tooling"],
+    "acceptable": ["coding", "sviluppo software", "ai coding assistant", "npx", "skills", "command line", "programmazione", "screencast", "developer tools", "agentic ai"],
+    "forbidden": ["shader", "generative", "creative coding", "webgl", "three.js", "motion design", "procedurale", "design artistico", "moda", "scultura", "altro", "vario", "generico"],
+    "idealKeywords": ["claude code skill finder", "cli terminale claude code", "npx skills add trick", "ai coding assistant terminal"],
+    "note": "Off-domain dev tooling: a terminal screencast of the Claude Code CLI demonstrating how to find the right skill via 'npx skills add' / find-skills."
+  },
+  "2021054040122261860": {
+    "subject": "grafica vettoriale 3d",
+    "mustHave": ["grafica vettoriale 3d", "rendering vettoriale", "shader", "ortografica"],
+    "acceptable": ["vettore", "3d", "toro", "anello", "datamosh", "glitch", "creative coding", "motion design", "real-time rendering", "design tool", "wireframe", "120fps"],
+    "forbidden": ["moda", "scultura", "fotografia", "ritratto", "branding", "altro", "vario", "generico"],
+    "idealKeywords": ["vettori da animazione 3d", "rendering vettoriale ortografico", "shader vector export tool", "anello 3d glitch shader"],
+    "note": "On-domain tool demo: extracting clean vectors from an orthographic 3D animation of a ring/torus, live-rendered at 120fps with shader/glitch effects."
+  },
+  "3804281857714470174_229922596": {
+    "subject": "risorse di design",
+    "mustHave": ["risorse di design", "ispirazione design", "branding"],
+    "acceptable": ["design direction", "siti web", "pentagram", "brand identity", "three.js", "graphic design", "consigli design", "moodboard", "creative resources", "studio design"],
+    "forbidden": ["scultura", "moda editoriale", "ritratto", "fotografia analogica", "altro", "vario", "generico"],
+    "idealKeywords": ["siti ispirazione branding", "risorse design direction", "the brand identity pentagram", "tool per designer"],
+    "note": "A creator recommends design/branding inspiration resources (pentagram.com, mayda.co, the-brandidentity.com, threejs.org) shown on a laptop."
+  },
+  "2046517988572983435": {
+    "subject": "sfera 3d",
+    "mustHave": ["sfera 3d", "render 3d", "astratto"],
+    "acceptable": ["orb", "cgi", "motion design", "creative coding", "rendering", "luce", "design astratto", "3d", "registration marks", "loop", "materiale", "abstract"],
+    "forbidden": ["moda", "scultura urbana", "ritratto", "fotografia", "branding", "altro", "vario", "generico"],
+    "idealKeywords": ["sfera 3d astratta render", "orb cgi glowing", "render astratto motion", "abstract 3d sphere loop"],
+    "note": "Abstract 3D-rendered glowing orb/sphere on a dark background with registration crosshairs; a stylized CGI/motion-design loop (caption is just disc sounds)."
+  },
+  "3484478139143713275_19719473": {
+    "subject": "cibo finto",
+    "mustHave": ["cibo finto", "sanpuru", "replica alimentare", "mostra"],
+    "acceptable": ["food replica", "iperrealismo", "artigianato", "giappone", "scultura di cibo", "japan house", "esposizione", "museo", "hamburger", "fake food", "cultura culinaria"],
+    "forbidden": ["shader", "generative", "creative coding", "webgl", "three.js", "motion design", "procedurale", "moda", "altro", "vario", "generico"],
+    "idealKeywords": ["repliche cibo finto giapponese", "sanpuru food replicas", "mostra japan house cibo", "modelli di cibo iperrealistici"],
+    "note": "Off-domain museum exhibition ('Looks Delicious!', Japan House London) on Sanpuru, Japan's hyper-realistic fake-food replicas, incl. a giant fake burger."
+  },
+  "2031790691890630749": {
+    "subject": "visualizzazione dati",
+    "mustHave": ["visualizzazione dati", "interfaccia", "mappa di immagini"],
+    "acceptable": ["data visualization", "embedding map", "ui design", "griglia di immagini", "product teaser", "noise", "moodboard", "ai", "interactive map", "image grid", "app"],
+    "forbidden": ["scultura", "moda", "ritratto", "fotografia analogica", "altro", "vario", "generico"],
+    "idealKeywords": ["mappa immagini visualizzazione", "interfaccia embedding immagini", "noise app waitlist", "image map data viz ui"],
+    "note": "Teaser for a product 'NOISE': an interactive spatial map/grid of images laid out on a 2D plane with labeled axes (an embedding-style image map UI)."
+  },
+  "1812372254266724856": {
+    "subject": "app musicale",
+    "mustHave": ["app musicale", "interfaccia", "grafo a nodi"],
+    "acceptable": ["music network", "ui design", "node graph", "mobile app", "data visualization", "scoperta musicale", "interfaccia mobile", "player", "rete di artisti", "music discovery", "graph visualization"],
+    "forbidden": ["scultura", "moda", "ritratto", "shader", "altro", "vario", "generico"],
+    "idealKeywords": ["app rete musicale grafo", "music network node graph app", "interfaccia scoperta musicale", "music discovery app nodes"],
+    "note": "A mobile app UI shown on a held phone: a node-graph 'music network' connecting artists (King Krule, Mount Kimbie, etc.) via album-art circles with a player."
+  },
+  "3877585463960047840_3448625110": {
+    "subject": "fotografia di moda",
+    "mustHave": ["fotografia di moda", "indie sleaze", "it girl", "cory kennedy"],
+    "acceptable": ["flash photography", "anni 2000", "street style", "ritratto", "cobrasnake", "tumblr", "copertina rivista", "new york magazine", "fotografia analogica", "moda", "youth culture"],
+    "forbidden": ["shader", "generative", "creative coding", "webgl", "three.js", "motion design", "procedurale", "3d", "altro", "vario", "generico"],
+    "idealKeywords": ["cory kennedy indie sleaze", "it girl new york 2000s", "fotografia flash indie sleaze", "cobrasnake party photography"],
+    "note": "Off-domain: indie-sleaze flash photography of Cory Kennedy (mid-2000s 'New York It Girl'), incl. a New York Magazine cover."
+  },
+  "3837090888216631068_74555691791": {
+    "subject": "campagna moda",
+    "mustHave": ["campagna moda", "louis vuitton", "pubblicità", "vetrina"],
+    "acceptable": ["fashion advertising", "moda di lusso", "final fantasy", "lightning", "billboard", "spring summer", "series 4", "borsa", "modella cgi", "luxury brand", "negozio"],
+    "forbidden": ["shader", "generative", "creative coding", "webgl", "three.js", "raymarching", "procedurale", "scultura urbana", "altro", "vario", "generico"],
+    "idealKeywords": ["louis vuitton final fantasy lightning", "campagna moda series 4", "vetrina louis vuitton", "lv lightning ad campaign"],
+    "note": "Off-domain fashion advertising: Louis Vuitton SS 'Series 4' (2016) campaign with Final Fantasy's CG character Lightning, shown in storefront windows."
+  },
+  "3844828666039904590_58215990921": {
+    "subject": "nuvola di punti",
+    "mustHave": ["nuvola di punti", "point cloud", "scansione 3d", "digital twin"],
+    "acceptable": ["photogrammetry", "fotogrammetria", "lidar", "spatial computing", "gemello digitale", "scansione urbana", "benjamin bardou", "volumetrico", "città digitale", "3d scanning", "new media art"],
+    "forbidden": ["moda", "scultura tradizionale", "ritratto", "fotografia analogica", "altro", "vario", "generico"],
+    "idealKeywords": ["nuvola di punti città", "point cloud scansione urbana", "digital twin benjamin bardou", "volumetric point cloud city"],
+    "note": "Text-only: Benjamin Bardou's practice (Rome New Media Week) rendering banal city scenes (metro tunnels, rainy streets) as volumetric point clouds / digital twins."
+  },
+  "3359295227448572293_5514806044": {
+    "subject": "illustrazione",
+    "mustHave": ["illustrazione", "aerografo", "animali cromati", "hajime sorayama"],
+    "acceptable": ["airbrush", "robot", "sci-fi", "retro scifi", "pittura", "cromato", "arte giapponese", "robot art", "illustrazione fantascientifica", "chrome", "cavallo", "delfino", "coniglio"],
+    "forbidden": ["shader", "generative", "creative coding", "webgl", "three.js", "render 3d", "procedurale", "moda", "fotografia", "altro", "vario", "generico"],
+    "idealKeywords": ["sorayama animali cromati", "airbrush robot animals", "illustrazione chrome sci-fi", "hajime sorayama robot art"],
+    "note": "Off-domain illustration: Hajime Sorayama airbrush paintings of chromed robotic animals (armored horse, robot rabbit, chrome dolphins/fish). Painting, not 3D render."
+  },
+  "1876297677014462504": {
+    "subject": "annuncio di lavoro",
+    "mustHave": ["annuncio di lavoro", "sviluppatore web", "full stack"],
+    "acceptable": ["hiring", "job posting", "vue", "nuxt", "pocketbase", "web development", "grafica testuale", "codice", "dev", "three.js", "recruiting"],
+    "forbidden": ["shader", "generative", "creative coding", "webgl", "motion design", "scultura", "moda", "ritratto", "altro", "vario", "generico"],
+    "idealKeywords": ["annuncio sviluppatore full stack", "cerco dev vue nuxt pocketbase", "job post web developer", "wanted full stack dev"],
+    "note": "A 'WANTED full stack dev' hiring graphic (vue/nuxt/pocketbase, bonus three.js) over a code-editor screenshot. A job ad, not a shader/creative-coding demo."
+  },
+  "3293444294558965152_63865130803": {
+    "subject": "illustrazione",
+    "mustHave": ["illustrazione", "cavaliere", "pittura digitale", "fantasy"],
+    "acceptable": ["digital painting", "armatura", "concept art", "scena narrativa", "medievale", "bambino", "atmosferico", "arte fantasy", "painterly", "mistico"],
+    "forbidden": ["shader", "generative", "creative coding", "webgl", "three.js", "motion design", "procedurale", "fotografia", "moda", "altro", "vario", "generico"],
+    "idealKeywords": ["illustrazione cavaliere fantasy", "pittura digitale armatura", "cavaliere legge libro bambino", "fantasy knight digital painting"],
+    "note": "Off-domain: a painterly digital illustration of an armored knight reading a book to a child by a cliff ('Mystical Antiquity'); caption is an Emerson quote."
+  },
+  "2977059115349252247_50840317139": {
+    "subject": "ritratto",
+    "mustHave": ["ritratto", "studio di figura", "disegno", "illustrazione"],
+    "acceptable": ["figure drawing", "sketch", "profilo", "study from photo", "digital painting", "personaggio", "cappello", "schizzo", "character art", "ritratto di profilo"],
+    "forbidden": ["shader", "generative", "creative coding", "webgl", "three.js", "motion design", "procedurale", "fotografia", "scultura", "altro", "vario", "generico"],
+    "idealKeywords": ["studio di figura da foto", "ritratto di profilo disegno", "figure study sketch", "disegno personaggio cappello pelliccia"],
+    "note": "Off-domain illustration: a stylized profile portrait/figure study of a person in a white fur-lined hat on a red background ('study from photo')."
+  },
+  "1797361792328286561": {
+    "subject": "asset di gioco",
+    "mustHave": ["asset di gioco", "game assets", "risorse gratuite"],
+    "acceptable": ["game development", "3d assets", "open source", "modelli 3d", "indie game", "asset gratuiti", "gamedev", "download", "patreon", "free assets"],
+    "forbidden": ["moda", "scultura", "ritratto", "fotografia", "shader", "altro", "vario", "generico"],
+    "idealKeywords": ["asset di gioco gratuiti", "free game assets download", "50000 game assets liberi", "risorse gamedev gratis"],
+    "note": "Text-only: a creator announces 50,000+ free-to-use game assets, with download/donate/Patreon links."
+  },
+  "1882853379552289084": {
+    "subject": "open source",
+    "mustHave": ["open source", "javascript", "active theory", "github"],
+    "acceptable": ["js utilities", "web development", "creative coding", "libreria", "tooling", "frontend", "studio", "thread", "npm", "developer tools"],
+    "forbidden": ["moda", "scultura", "ritratto", "fotografia", "altro", "vario", "generico"],
+    "idealKeywords": ["active theory javascript utilities", "librerie js open source github", "utility javascript creative studio", "active theory github"],
+    "note": "Text-only: Active Theory announces releasing small open-source JavaScript utilities on GitHub (a thread)."
+  },
+  "1859463939395821848": {
+    "subject": "sfera di vetro",
+    "mustHave": ["sfera di vetro", "react three fiber", "three.js", "shader"],
+    "acceptable": ["glass orb", "r3f", "drei", "webgl", "creative coding", "3d", "rendering", "rifrazione", "effetto vetro", "material", "tutorial", "breakdown"],
+    "forbidden": ["moda", "scultura", "ritratto", "fotografia", "altro", "vario", "generico"],
+    "idealKeywords": ["sfera di vetro react three fiber", "glass orb r3f drei", "shader effetto vetro three.js", "glass orb breakdown webgl"],
+    "note": "Text-only: a breakdown of making a dynamic glass-orb effect using react-three-fiber (r3f) and drei. On-domain creative coding."
+  }
+}

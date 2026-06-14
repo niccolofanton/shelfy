@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>locomotive-virtual</title>
+  <meta name="x-harness-height" content="5000" />
+  <style>
+    * { margin: 0; box-sizing: border-box; }
+    /* Firma DOM di Locomotive Scroll v3 classic: [data-scroll-container] traslato,
+       documento bloccato a viewport. */
+    html, body { height: 100vh; overflow: hidden; font-family: system-ui, sans-serif; }
+    [data-scroll-container] { position: fixed; inset: 0; overflow: hidden; will-change: transform; }
+    .sec { height: 1000px; display: flex; align-items: center; justify-content: center; font-size: 80px; color: #fff; }
+  </style>
+</head>
+<body>
+  <!-- Senza il fix: cattura solo l'hero. Con il fix: documento 5000 → completa. -->
+  <div data-scroll-container>
+    <div class="sec" style="background:#155e75">Loco 1</div>
+    <div class="sec" style="background:#9f1239">Loco 2</div>
+    <div class="sec" style="background:#3f6212">Loco 3</div>
+    <div class="sec" style="background:#6d28d9">Loco 4</div>
+    <div class="sec" style="background:#b45309">Loco 5</div>
+  </div>
+  <script>
+    document.querySelector('[data-scroll-container]').style.transform = 'translate3d(0px, 0px, 0px)';
+  </script>
+</body>
+</html>

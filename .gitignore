@@ -1,0 +1,84 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-electron/
+out/
+release/
+
+# Bug-hunt session artifacts (workflow scripts + report, not app source)
+.bug-hunt.workflow.js
+.bug-fix.workflow.js
+.fix-review.workflow.js
+BUG-HUNT-REPORT.md
+
+# Test & e2e run artifacts (generated, never source)
+coverage/
+e2e-report/
+playwright-report/
+test-results/
+perf-results/
+
+# Local llama.cpp sidecar binaries (large, rebuilt/redownloaded per platform)
+.vlm/
+
+# Downloaded sidecar binaries (yt-dlp etc.) — platform-specific, not versioned
+bin/
+
+# Bundled Playwright Chromium for the web-capture engine (large, per-platform;
+# downloaded at build time by build/prepare-playwright.cjs)
+build/ms-playwright/
+
+# Claude Code local state (agent worktrees, settings)
+.claude/
+
+# SQLite databases
+*.sqlite
+*.sqlite3
+*.db
+
+# Search-eval harness scratch (DB copy + last report)
+scripts/search-eval/.scratch/
+scripts/search-eval/last-report.json
+
+# Extract-eval harness scratch (frames + userdata) + transient outputs
+scripts/extract-eval/.scratch/
+scripts/extract-eval/last-report.json
+scripts/extract-eval/last-raw.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Scratch / eval artifacts (must never reach the release source zip: symlinks
+# to absolute macOS paths break the Windows self-rebuild `tar` extraction)
+**/.scratch/
+**/.scratch-alias/
+scripts/**/last-report.json
+*.sqlite
+
+# audit scratch artifacts (transient)
+.audit-*
+FIX-REVIEW-REPORT.md
+
+# Cloudflare Worker local state (feedback relay)
+.wrangler/
+**/.dev.vars

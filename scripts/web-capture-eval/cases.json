@@ -1,0 +1,39 @@
+[
+  {
+    "name": "native-tall (control)",
+    "file": "native-tall.html",
+    "realHeight": 5000,
+    "checks": ["coverage", "luma", "variance", "tail"]
+  },
+  {
+    "name": "lenis native (control)",
+    "file": "lenis.html",
+    "realHeight": 5000,
+    "checks": ["coverage", "luma", "variance", "tail"]
+  },
+  {
+    "name": "GSAP ScrollSmoother (virtual)",
+    "file": "scrollsmoother.html",
+    "realHeight": 5000,
+    "checks": ["coverage", "luma", "variance", "tail"]
+  },
+  {
+    "name": "Locomotive v3 (virtual)",
+    "file": "locomotive.html",
+    "realHeight": 5000,
+    "checks": ["coverage", "luma", "variance", "tail"]
+  },
+  {
+    "name": "WebGL hero (Three.js-like)",
+    "file": "webgl-hero.html",
+    "realHeight": 3000,
+    "settleMs": 2500,
+    "checks": ["coverage", "luma", "variance", "heroLuma", "tail"]
+  },
+  {
+    "name": "pinned section",
+    "file": "pinned.html",
+    "realHeight": 4000,
+    "checks": ["coverage", "luma", "variance", "tail"]
+  }
+]
