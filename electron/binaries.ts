@@ -330,7 +330,7 @@ function writeLlamaBuildMarker(): void {
 // A llama runtime is only usable if its shared libs actually RESOLVE. The macOS
 // pack stores them as relative symlinks (libfoo.0.dylib -> libfoo.0.0.9500.dylib)
 // that llama-server loads via @loader_path. A pack built before the
-// make-binary-packs.mjs verbatimSymlinks fix rewrote those links to ABSOLUTE paths
+// make-binary-packs.ts verbatimSymlinks fix rewrote those links to ABSOLUTE paths
 // on the build machine — so they dangle on every other Mac and llama-server dies at
 // load with "Library not loaded: @rpath/libllama-common.0.dylib". status() only
 // checked that the llama-server FILE exists, so such an install looked "ready" and
@@ -349,7 +349,7 @@ function llamaLibsResolvable(): boolean {
 }
 
 // Heal a llama/ dir whose shared-lib symlinks dangle. A macOS pack built before the
-// make-binary-packs.mjs verbatimSymlinks fix stored those links as ABSOLUTE paths on
+// make-binary-packs.ts verbatimSymlinks fix stored those links as ABSOLUTE paths on
 // the build machine (…/llama/libfoo.0.0.9500.dylib): they resolve on the builder but
 // dangle on every OTHER Mac, so llama-server dies at load, status() reports it missing
 // (via llamaLibsResolvable) and — since re-fetching the same broken pack changes

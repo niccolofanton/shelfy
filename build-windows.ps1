@@ -154,7 +154,7 @@ Ok "Native module ready"
 # NOT needed to build the installer (the app downloads them at runtime); this
 # block runs only when refreshing the packs.
 if ($BinaryPack) {
-  Log "[-BinaryPack] obsoleto: Windows scarica i sidecar direttamente da upstream (electron/binaries.js); i mini-pack mac/Linux li produce la CI (scripts/make-binary-packs.mjs). Niente piu' upload R2."
+  Log "[-BinaryPack] obsoleto: Windows scarica i sidecar direttamente da upstream (electron/binaries.js); i mini-pack mac/Linux li produce la CI (scripts/make-binary-packs.ts). Niente piu' upload R2."
   exit 1
 
 # ── 3. yt-dlp.exe ──────────────────────────────────────────────────────────────
@@ -305,7 +305,7 @@ if (Test-Path $llamaSrv) {
   # Build and upload the binary pack for this platform/variant, then stop.
   $packVariant = if ($LlamaVariant -like "cuda*") { "cuda" } elseif ($LlamaVariant -like "vulkan*") { "vulkan" } else { "cpu" }
   Log "Creating binary pack (variant $packVariant) and uploading to R2 ..."
-  Run "node" @("scripts/make-binary-packs.mjs", "--variant", $packVariant)
+  Run "npx" @("tsx", "scripts/make-binary-packs.ts", "--variant", $packVariant)
   Ok "Binary pack uploaded to R2"
   exit 0
 }  # end -BinaryPack

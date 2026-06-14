@@ -194,9 +194,9 @@ Windows con moduli nativi si cross-compilano dal Mac:
 Il rilascio è **tag-driven via GitHub Actions**
 ([`.github/workflows/release.yml`](../.github/workflows/release.yml)): un tag
 `vX.Y.Z` scatena la build nativa su ogni OS (macOS arm64 `.dmg`/`.zip`, Linux
-AppImage), genera il feed sorgente Windows (`scripts/make-source-feed.mjs` →
+AppImage), genera il feed sorgente Windows (`scripts/make-source-feed.ts` →
 `source.json` + `SHELFY-src-<ver>.zip`) e i mini-pack sidecar mac/Linux
-(`scripts/make-binary-packs.mjs` → `binaries.json`), poi pubblica una **GitHub
+(`scripts/make-binary-packs.ts` → `binaries.json`), poi pubblica una **GitHub
 Release** con tutti gli artefatti.
 
 ```bash

@@ -11,11 +11,11 @@
     "npm": ">=10"
   },
   "scripts": {
-    "dev": "node build/esbuild-electron.mjs && concurrently -k \"node build/esbuild-electron.mjs --watch\" \"vite\" \"cross-env ELECTRON_DEV=true electronmon .\"",
-    "build": "node build/prepare-playwright.cjs && node build/esbuild-electron.mjs && vite build && electron-builder",
-    "release": "node build/prepare-playwright.cjs && node build/esbuild-electron.mjs && vite build && electron-builder",
-    "build:electron": "node build/esbuild-electron.mjs",
-    "preview": "node build/esbuild-electron.mjs && electron .",
+    "dev": "tsx build/esbuild-electron.ts && concurrently -k \"tsx build/esbuild-electron.ts --watch\" \"vite\" \"cross-env ELECTRON_DEV=true electronmon .\"",
+    "build": "tsx build/prepare-playwright.ts && tsx build/esbuild-electron.ts && vite build && cross-env NODE_OPTIONS=--import=tsx electron-builder",
+    "release": "tsx build/prepare-playwright.ts && tsx build/esbuild-electron.ts && vite build && cross-env NODE_OPTIONS=--import=tsx electron-builder",
+    "build:electron": "tsx build/esbuild-electron.ts",
+    "preview": "tsx build/esbuild-electron.ts && electron .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -32,14 +32,14 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "perf:gallery": "cross-env PERF=1 playwright test e2e/perf-gallery.spec.ts --workers=1",
-    "eval:search": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/search-eval/run.cjs",
-    "eval:extract": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/extract-eval/run.cjs",
-    "eval:extract:frames": "node scripts/extract-eval/frames.cjs",
-    "eval:cluster": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/cluster-eval/run.cjs",
-    "eval:capture": "electron scripts/web-capture-eval/run.cjs",
-    "eval:pw-engine": "electron scripts/web-capture-eval/pw-engine-test.cjs",
+    "eval:search": "cross-env ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--import=tsx electron scripts/search-eval/run.ts",
+    "eval:extract": "cross-env ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--import=tsx electron scripts/extract-eval/run.ts",
+    "eval:extract:frames": "tsx scripts/extract-eval/frames.ts",
+    "eval:cluster": "cross-env ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--import=tsx electron scripts/cluster-eval/run.ts",
+    "eval:capture": "cross-env NODE_OPTIONS=--import=tsx electron scripts/web-capture-eval/run.ts",
+    "eval:pw-engine": "cross-env NODE_OPTIONS=--import=tsx electron scripts/web-capture-eval/pw-engine-test.ts",
     "setup:capture-browser": "playwright install chromium-headless-shell",
-    "postinstall": "node build/postinstall.cjs",
+    "postinstall": "tsx build/postinstall.ts",
     "prepare": "husky"
   },
   "dependencies": {
@@ -82,6 +82,7 @@
     "eslint-plugin-react-hooks": "^5.2.0",
     "globals": "^17.6.0",
     "husky": "^9.1.7",
+    "jiti": "^2.7.0",
     "jsdom": "^24.1.3",
     "lint-staged": "^17.0.7",
     "postcss": "^8.0.0",
@@ -125,8 +126,8 @@
         "to": "ms-playwright"
       }
     ],
-    "afterPack": "build/afterPack.cjs",
-    "afterSign": "build/afterSign.cjs",
+    "afterPack": "build/afterPack.ts",
+    "afterSign": "build/afterSign.ts",
     "mac": {
       "target": [
         {

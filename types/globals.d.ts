@@ -23,3 +23,11 @@ declare module '*.svg' {
   export default src;
 }
 declare module '*.css';
+
+// eslint-config-prettier ships no type declarations; it is a flat-config object
+// consumed by eslint.config.ts.
+declare module 'eslint-config-prettier' {
+  import type { Linter } from 'eslint';
+  const config: Linter.Config;
+  export default config;
+}

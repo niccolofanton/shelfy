@@ -137,7 +137,7 @@ jobs:
           # Prerelease tags (e.g. v1.5.3-beta.1) feed the beta channel
           # (source-beta.json); plain vX.Y.Z tags feed stable (source.json).
           if [[ "${GITHUB_REF_NAME}" == *-* ]]; then export SHELFY_CHANNEL=beta; fi
-          node scripts/make-source-feed.mjs
+          npx tsx scripts/make-source-feed.ts
 
       - uses: actions/upload-artifact@v7
         with:
@@ -186,7 +186,7 @@ jobs:
           echo '--- .vlm/whisper:'; ls -la .vlm/whisper
 
       - name: Build mini-pack
-        run: node scripts/make-binary-packs.mjs
+        run: npx tsx scripts/make-binary-packs.ts
 
       - uses: actions/upload-artifact@v7
         with:
@@ -232,7 +232,7 @@ jobs:
           echo '--- .vlm/whisper:'; ls -la .vlm/whisper
 
       - name: Build mini-pack
-        run: node scripts/make-binary-packs.mjs
+        run: npx tsx scripts/make-binary-packs.ts
 
       - uses: actions/upload-artifact@v7
         with:
