@@ -25,8 +25,13 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { scoreClustering, type Label } from './score';
 import { summarizeRuns } from '../lib/agg-stats'; // P11
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 // Internal Module._load hook surface (not part of the public `module` typings).
 type ModuleLoad = (this: unknown, request: string, ...rest: unknown[]) => unknown;

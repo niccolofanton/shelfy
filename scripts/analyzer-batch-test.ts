@@ -8,11 +8,15 @@
 //
 // Uso: node scripts/analyzer-batch-test.cjs
 
-import Module from 'module';
+import Module, { createRequire } from 'module';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import type { app as ElectronApp } from 'electron';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 // Node exposes the internal CommonJS loader on the Module object; @types/node does
 // not declare it, so we describe just the slice we monkeypatch.

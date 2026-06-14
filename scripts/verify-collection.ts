@@ -15,6 +15,9 @@ import { app, BrowserWindow } from 'electron';
 import type { WebContents } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 // CRITICAL: running `electron <script>` defaults the app name to "Electron",
 // so userData (and the persist:social partition) would point at an empty

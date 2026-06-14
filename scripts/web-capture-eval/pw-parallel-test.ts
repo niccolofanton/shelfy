@@ -7,6 +7,9 @@
 // Run: electron scripts/web-capture-eval/pw-parallel-test.cjs
 
 import { app } from 'electron';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 const URLS = [
   'https://example.com/',

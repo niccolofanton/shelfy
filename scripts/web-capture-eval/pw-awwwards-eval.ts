@@ -20,6 +20,9 @@
 import { app } from 'electron';
 import fs from 'fs';
 import { execFile } from 'child_process';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 // Isolate eval artifacts away from the real app's userData.
 app.setPath('userData', '/tmp/shelfy-awwwards-eval');

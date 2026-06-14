@@ -25,7 +25,12 @@ import path from 'path';
 import fs from 'fs';
 import http from 'http';
 import { spawn } from 'child_process';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import CASES from './cases.json';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 // Deve essere impostato PRIMA di whenReady: mappa un hostname "pubblico" → loopback.
 app.commandLine.appendSwitch('host-resolver-rules', 'MAP capture.test 127.0.0.1');

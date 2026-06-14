@@ -13,8 +13,13 @@
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { scoreCase, type GroundTruth, type ModelOutput, type CaseScore } from './score';
 import { summarize } from '../lib/agg-stats';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 // Internal Module._load hook surface (not part of the public `module` typings).
 type ModuleLoad = (this: unknown, request: string, ...rest: unknown[]) => unknown;

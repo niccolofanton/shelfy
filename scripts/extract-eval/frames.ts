@@ -8,6 +8,9 @@
 import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 interface CaseMedia {
   type?: string;

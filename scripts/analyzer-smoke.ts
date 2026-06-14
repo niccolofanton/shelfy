@@ -3,10 +3,14 @@
 //
 // Uso: node scripts/analyzer-smoke.cjs [video.mp4]
 
-import Module from 'module';
+import Module, { createRequire } from 'module';
 import path from 'path';
 import os from 'os';
+import { fileURLToPath } from 'url';
 import type { app as ElectronApp } from 'electron';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 type Analyzer = typeof import('../electron/analyzer');
 

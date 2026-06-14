@@ -27,9 +27,14 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 import { orderMetrics } from './order-metrics'; // P9
 import { summarizeRuns } from '../lib/agg-stats'; // P11
 import type { EvalCase } from './cases';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 const errMsg = (e: unknown): string => (e as Error).message;
 

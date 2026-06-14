@@ -12,8 +12,12 @@
 //   node scripts/web-capture-eval/discover-wego.cjs            # we-go.it
 //   node scripts/web-capture-eval/discover-wego.cjs example.com # altro sito
 
-import Module from 'module';
+import Module, { createRequire } from 'module';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 // Module._load è API interna non esposta dai tipi pubblici di node: la descriviamo
 // localmente per poterla intercettare con tipi reali.

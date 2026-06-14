@@ -13,6 +13,9 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { execFile } from 'child_process';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 const TARGET = process.argv.find((a) => /^https?:\/\//.test(a)) || 'https://lusion.co/';
 const FF = require('../../node_modules/ffmpeg-static') as string;

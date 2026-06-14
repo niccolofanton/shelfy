@@ -8,6 +8,9 @@
 // Run: npm run eval:pw-engine -- https://lusion.co/
 
 import { app } from 'electron';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 const TARGET = process.argv.find((a) => /^https?:\/\//.test(a)) || 'https://lusion.co/';
 

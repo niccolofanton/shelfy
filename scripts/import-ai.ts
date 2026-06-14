@@ -29,7 +29,9 @@ if (!process.versions.electron) {
 // userData REALE (così scriviamo nel DB vero, NON una copia scratch).
 import os from 'os';
 import path from 'path';
-import Module from 'module';
+import Module, { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 const REAL_USERDATA = path.join(os.homedir(), 'Library', 'Application Support', 'Shelfy');
 
