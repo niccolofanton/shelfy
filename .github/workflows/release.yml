@@ -107,8 +107,9 @@ jobs:
           # manifest for THIS build's channel (latest-*.yml for a plain vX.Y.Z,
           # beta-*.yml for a vX.Y.Z-beta.N prerelease), so a plain `*.yml` glob is
           # already channel-correct — no stray alpha-/beta- manifests in stable.
-          cp release/*.dmg release/*.blockmap release/*.yml out/ 2>/dev/null || true
-          cp release/*.zip out/ 2>/dev/null || true
+          # No *.blockmap / mac *.zip: the in-app updater downloads the full .dmg,
+          # so the Squirrel zip and the differential blockmaps are dead weight.
+          cp release/*.dmg release/*.yml out/ 2>/dev/null || true
           cp release/*.AppImage out/ 2>/dev/null || true
           # builder-debug.yml is electron-builder's own debug dump — never ship it.
           rm -f out/builder-debug.yml
@@ -273,29 +274,45 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          # Human-facing notes: a Download table FIRST (so users don't have to guess
+          # which of the assets to grab), then the machine-feed hint, then the auto
+          # changelog. The updater-feed assets stay in the release but are called out
+          # as ignorable.
+          NOTES="$(mktemp)"
+          {
+            echo "## ⬇️ Download"
+            echo
+            echo "| OS | File |"
+            echo "|----|------|"
+            echo "| **macOS** (Apple Silicon) | \`SHELFY-${VER}-arm64.dmg\` |"
+            echo "| **Linux** | \`SHELFY-${VER}-x86_64.AppImage\` |"
+            echo "| **Windows** | self-rebuild installer — see [docs/install.md](docs/install.md) |"
+            echo
+            echo "> The \`*.yml\`, \`*.json\` and \`*.tar.gz\` assets are read by the in-app auto-updater — you can ignore them."
+            echo
+          } > "$NOTES"
           if [[ "$TAG" == *-* ]]; then
-            # Beta (pre-release tag): publish to a ROLLING `beta` release, so
-            # beta-channel clients (which read …/releases/download/beta) get it.
-            # `releases/latest/download` only resolves to stable, never to this.
+            # Beta: ROLLING pre-release, published now (clients read …/releases/download/beta).
+            echo "_Rolling beta build from \`$TAG\`._" >> "$NOTES"
             gh release delete beta --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
             gh release create beta \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "SHELFY beta ($TAG)" \
-              --notes "Rolling beta build from $TAG." \
+              --notes-file "$NOTES" \
               --prerelease \
               dist-release/*
           else
-            # Stable: a DRAFT release for review — clients see it only once you Publish.
-            # Idempotent: drop any existing release/draft for this tag first, so a
-            # re-run REPLACES it instead of piling up duplicate drafts (the beta
-            # branch above is already idempotent via `release delete`). No
-            # --cleanup-tag here: the tag must survive for the published release.
+            # Stable: DRAFT for review — clients see it only once you Publish. Append
+            # the auto-generated changelog. Idempotent: drop any existing draft for
+            # this tag first so a re-run replaces it (no --cleanup-tag: keep the tag).
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" --jq .body >> "$NOTES" || true
             gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes || true
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "SHELFY $TAG" \
-              --generate-notes \
+              --notes-file "$NOTES" \
               --draft \
               dist-release/*
           fi
