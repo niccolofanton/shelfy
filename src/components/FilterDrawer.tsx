@@ -93,7 +93,7 @@ function Segmented({ options, value, onChange, cols }: SegmentedProps): React.JS
             onClick={() => onChange(opt.value)}
             aria-pressed={active}
             className={[
-              'u-press px-2 py-1.5 rounded-md text-[12.5px] font-medium text-center truncate transition-colors',
+              'u-press px-1.5 py-1.5 rounded-md text-[12.5px] font-medium text-center leading-tight transition-colors',
               active
                 ? 'bg-[#7B5CFF] text-white shadow-sm u-pop-in'
                 : 'text-gray-400 hover:text-gray-100 hover:bg-[#202020]',

@@ -29,13 +29,13 @@ export default {
     // Download-status filter
     downloadStatus: 'Stato download',
     downloadAll: 'All',
-    downloadDownloaded: 'Scaricati',
+    downloadDownloaded: 'Salvati',
     downloadLinkOnly: 'Solo link',
     // AI-tags filter
     aiTags: 'Tag AI',
     aiAll: 'All',
-    aiTagged: 'Con tag AI',
-    aiUntagged: 'Senza tag AI',
+    aiTagged: 'Con tag',
+    aiUntagged: 'Senza tag',
   },
   en: {
     title: 'Filters',
@@ -51,11 +51,11 @@ export default {
     mediaCarousel: 'Carousel',
     downloadStatus: 'Download status',
     downloadAll: 'All',
-    downloadDownloaded: 'Downloaded',
+    downloadDownloaded: 'Saved',
     downloadLinkOnly: 'Link only',
     aiTags: 'AI tags',
     aiAll: 'All',
-    aiTagged: 'With AI tags',
-    aiUntagged: 'Without AI tags',
+    aiTagged: 'Tagged',
+    aiUntagged: 'Untagged',
   },
 } satisfies LangMessages;
