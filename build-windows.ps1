@@ -116,7 +116,10 @@ Log "SHELFY Windows build starting in $root"
 if (-not (Test-Path (Join-Path $root "package.json"))) {
   Log "No sources here - downloading them from GitHub Releases ..."
   $srcZip = Join-Path $env:TEMP "shelfy-src.zip"
-  Get-FileWithProgress "$FEED_BASE/SHELFY-src-latest.zip" $srcZip "Downloading sources"
+  # Resolve the versioned source archive from the channel manifest — no separate
+  # *-latest.zip alias needed (source.json already names the right zip).
+  $srcName = (Invoke-RestMethod "$FEED_BASE/source.json").zip
+  Get-FileWithProgress "$FEED_BASE/$srcName" $srcZip "Downloading sources"
   Expand-Archive -Path $srcZip -DestinationPath $root -Force
   Remove-Item -Force $srcZip
   Ok "Sources downloaded"
