@@ -29,7 +29,7 @@
     "test": "vitest",
     "test:run": "vitest run",
     "coverage": "vitest run --coverage",
-    "test:e2e": "playwright test",
+    "test:e2e": "tsx build/esbuild-electron.ts && playwright test",
     "test:e2e:ui": "playwright test --ui",
     "perf:gallery": "cross-env PERF=1 playwright test e2e/perf-gallery.spec.ts --workers=1",
     "eval:search": "cross-env ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--import=tsx electron scripts/search-eval/run.ts",

@@ -3,6 +3,7 @@ import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { MOCK_POSTS, MOCK_STATS, MOCK_DOWNLOAD_JOBS } from './test-data';
+import { DISCLAIMER_VERSION } from '../src/disclaimer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -119,6 +120,22 @@ export const test = base.extend<Fixtures>({
     await p.waitForLoadState('domcontentloaded');
     // Replace real IPC handlers with deterministic mocks
     await installMocks(electronApp);
+    // Seed a deterministic starting state on the dev-server origin BEFORE (re)load:
+    // pre-accept the current disclaimer version so the DisclaimerGate modal does not
+    // cover the UI, and pin the language to English (the e2e assertions are written
+    // against the English copy). Without this the gate intercepts every interaction
+    // on a fresh Electron profile, and the host locale would make text flaky.
+    await p.addInitScript((version) => {
+      try {
+        localStorage.setItem(
+          'app:disclaimerAcceptance',
+          JSON.stringify({ version, acceptedAt: new Date().toISOString(), dontShowAgain: true }),
+        );
+        localStorage.setItem('app:language', 'en');
+      } catch {
+        /* storage unavailable */
+      }
+    }, DISCLAIMER_VERSION);
     // Navigate to the dev server URL fresh — more reliable than page.reload() in Electron
     await p.goto('http://localhost:5173', { waitUntil: 'domcontentloaded' });
     // The sidebar is our "app is ready" signal
