@@ -1,21 +1,20 @@
-'use strict';
-
 // File logger for diagnosing packaged builds (no DevTools available there).
 // Mirrors console.* to <userData>/logs/main.log and records renderer crashes,
 // load failures and the renderer's own console output.
 
-const { app } = require('electron');
-const path = require('path');
-const fs = require('fs');
+import { app } from 'electron';
+import type { WebContents, BrowserWindow } from 'electron';
+import path from 'path';
+import fs from 'fs';
 
 const MAX_LOG_BYTES = 5 * 1024 * 1024; // rotate main.log once it exceeds 5 MB
 
-let stream = null;
-let logPath = null;
+let stream: fs.WriteStream | null = null;
+let logPath: string | null = null;
 
 // Keep a single rotated copy (main.log → main.log.1) when the live log grows
 // past MAX_LOG_BYTES, so the file can't grow without bound across launches.
-function rotateIfNeeded(file) {
+function rotateIfNeeded(file: string): void {
   try {
     if (fs.statSync(file).size <= MAX_LOG_BYTES) return;
   } catch {
@@ -30,11 +29,11 @@ function rotateIfNeeded(file) {
   }
 }
 
-function ts() {
+function ts(): string {
   return new Date().toISOString();
 }
 
-function fmt(a) {
+function fmt(a: unknown): string {
   if (typeof a === 'string') return a;
   if (a instanceof Error) return a.stack || a.message;
   try {
@@ -49,7 +48,7 @@ const IS_DEV = process.env.ELECTRON_DEV === 'true';
 // In dev, also mirror renderer console output to the terminal running `npm run
 // dev`, so the whole codebase (main + renderer) is readable in one place.
 // Main-process console.* already prints to that terminal on its own.
-function echoToTerminal(source, level, message) {
+function echoToTerminal(source: string, level: string, message: string): void {
   if (!IS_DEV) return;
   const text = `[${source}:${level}] ${message}\n`;
   try {
@@ -58,13 +57,13 @@ function echoToTerminal(source, level, message) {
 }
 
 // Electron passes console-message level as 0=verbose 1=info 2=warning 3=error.
-function levelName(level) {
+function levelName(level: number): string {
   return ['log', 'info', 'warn', 'error'][level] || 'log';
 }
 
 // Map webContents type to a friendly source tag. The main window reports as
 // 'window'; we call it 'renderer' to match how the rest of the app refers to it.
-function sourceTag(wc) {
+function sourceTag(wc: WebContents): string {
   try {
     const t = wc.getType();
     return t === 'window' ? 'renderer' : t; // 'webview' | 'offscreen' | 'browserView' | ...
@@ -76,7 +75,7 @@ function sourceTag(wc) {
 // Webviews host remote, logged-in pages (the persist:social session): their
 // console output can echo URLs carrying tokens/session params, which must never
 // land in plaintext in main.log. Skip the mirror for those surfaces entirely.
-function isUntrustedRemoteSurface(wc) {
+function isUntrustedRemoteSurface(wc: WebContents): boolean {
   try {
     if (wc.getType() === 'webview') return true;
   } catch {}
@@ -90,8 +89,8 @@ function isUntrustedRemoteSurface(wc) {
 // Attach the console mirror to any webContents, once. Used both for the main
 // window and (via app.on('web-contents-created')) for webviews and the
 // offscreen capture page, so every renderer surface lands in main.log + terminal.
-const consoleAttached = new WeakSet();
-function attachConsole(wc) {
+const consoleAttached = new WeakSet<WebContents>();
+function attachConsole(wc: WebContents): void {
   if (!wc || consoleAttached.has(wc)) return;
   if (isUntrustedRemoteSurface(wc)) return; // never mirror remote-page consoles
   consoleAttached.add(wc);
@@ -103,14 +102,14 @@ function attachConsole(wc) {
   });
 }
 
-function write(level, args) {
+function write(level: string, args: unknown[]): void {
   const line = `[${ts()}] [${level}] ${args.map(fmt).join(' ')}\n`;
   try {
     if (stream) stream.write(line);
   } catch {}
 }
 
-function init() {
+function init(): string | null {
   if (stream) return logPath;
   const dir = path.join(app.getPath('userData'), 'logs');
   fs.mkdirSync(dir, { recursive: true });
@@ -125,9 +124,9 @@ function init() {
   write('info', [`resourcesPath=${process.resourcesPath}`]);
   write('info', [`userData=${app.getPath('userData')}`]);
 
-  for (const level of ['log', 'info', 'warn', 'error']) {
+  for (const level of ['log', 'info', 'warn', 'error'] as const) {
     const orig = console[level].bind(console);
-    console[level] = (...args) => {
+    console[level] = (...args: unknown[]) => {
       write(level, args);
       orig(...args);
     };
@@ -146,7 +145,7 @@ function init() {
 
 // Strip query string and fragment before logging a URL: query params can carry
 // tokens/session ids that must not end up in plaintext in main.log.
-function safeUrlForLog(url) {
+function safeUrlForLog(url: string): string {
   try {
     const u = new URL(url);
     return `${u.origin}${u.pathname}`;
@@ -155,7 +154,7 @@ function safeUrlForLog(url) {
   }
 }
 
-function attachWindow(win) {
+function attachWindow(win: BrowserWindow): void {
   const wc = win.webContents;
   wc.on('did-fail-load', (_e, code, desc, url, isMainFrame) =>
     write('error', [
@@ -168,4 +167,5 @@ function attachWindow(win) {
   wc.on('did-finish-load', () => write('info', ['renderer did-finish-load']));
 }
 
-module.exports = { init, attachWindow, getLogPath: () => logPath };
+export { init, attachWindow };
+export const getLogPath = (): string | null => logPath;

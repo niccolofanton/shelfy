@@ -8,7 +8,7 @@ export default defineConfig({
     setupFiles: ['tests/setup.js'],
     // Only the real suite under tests/. Keeps Playwright specs (e2e/) and stale
     // agent-worktree copies (.claude/worktrees/) out of the unit run.
-    include: ['tests/**/*.{test,spec}.{js,jsx}'],
+    include: ['tests/**/*.{test,spec}.{js,jsx,ts,tsx}'],
     exclude: ['**/node_modules/**', 'dist/**', 'release/**', '.claude/**', 'e2e/**'],
     environmentMatchGlobs: [
       ['tests/components/**', 'jsdom'],
@@ -18,8 +18,15 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
-      include: ['electron/**/*.js', 'src/**/*.{js,jsx}'],
-      exclude: ['electron/main.js', 'electron/interceptor.js', 'electron/webview-preload.js'],
+      include: ['electron/**/*.{js,ts}', 'src/**/*.{js,jsx,ts,tsx}'],
+      exclude: [
+        'electron/main.js',
+        'electron/main.ts',
+        'electron/interceptor.js',
+        'electron/interceptor.ts',
+        'electron/webview-preload.js',
+        'electron/webview-preload.ts',
+      ],
     },
   },
 });

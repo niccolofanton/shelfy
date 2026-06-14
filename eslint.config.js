@@ -3,22 +3,28 @@ import globals from 'globals';
 import react from 'eslint-plugin-react';
 import reactHooks from 'eslint-plugin-react-hooks';
 import prettier from 'eslint-config-prettier';
+import tseslint from 'typescript-eslint';
 
 /**
  * Flat ESLint config for Shelfy.
  *
  * The codebase spans several runtimes, so rules are scoped per area:
- *  - electron/**        main process + webview scripts (CommonJS, Node + browser)
+ *  - electron/**        main process + webview scripts (CommonJS .js / ESM .ts, Node + browser)
  *  - src/**             React renderer (ESM, browser)
- *  - scripts/*.cjs|mjs  build/eval tooling (Node)
+ *  - scripts/*.cjs|mjs|ts  build/eval tooling (Node)
  *  - tests/**           Vitest (jsdom)
  *  - e2e/**             Playwright (handled by tsc for types)
+ *
+ * TypeScript files (.ts/.tsx) get the typescript-eslint parser + recommended
+ * rules; the per-area blocks below only contribute globals (and the CommonJS
+ * sourceType for the legacy .js side), so the two module systems coexist while
+ * the migration is in flight.
  *
  * Prettier owns formatting; this config focuses on correctness (real bugs,
  * React hook rules, undefined references), so `npm run lint` stays meaningful
  * without drowning in style noise.
  */
-export default [
+export default tseslint.config(
   {
     ignores: [
       'node_modules/**',
@@ -62,19 +68,52 @@ export default [
     },
   },
 
-  // Electron main process + injected webview scripts (CommonJS, Node + browser)
+  // TypeScript: parser + recommended rules for every .ts/.tsx file.
   {
-    files: ['electron/**/*.js'],
+    files: ['**/*.{ts,tsx}'],
+    extends: [tseslint.configs.recommended],
+    languageOptions: {
+      sourceType: 'module',
+      parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+    rules: {
+      // TS owns unused detection; the base rule double-reports on typed code.
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        {
+          args: 'none',
+          ignoreRestSiblings: true,
+          varsIgnorePattern: '^_',
+          argsIgnorePattern: '^_',
+        },
+      ],
+      '@typescript-eslint/no-explicit-any': 'warn',
+      // Lazy/conditional requires of heavy native deps (ffmpeg-static,
+      // playwright-core) stay synchronous `require()` by design.
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/ban-ts-comment': 'warn',
+      '@typescript-eslint/no-empty-object-type': 'off',
+    },
+  },
+
+  // Electron main process + injected webview scripts (Node + browser globals).
+  // Legacy .js is CommonJS; converted .ts is ESM (transpiled to CJS by esbuild).
+  {
+    files: ['electron/**/*.{js,ts}'],
     languageOptions: {
       ecmaVersion: 2023,
-      sourceType: 'commonjs',
       globals: { ...globals.node, ...globals.browser },
     },
+  },
+  {
+    files: ['electron/**/*.js'],
+    languageOptions: { sourceType: 'commonjs' },
   },
 
   // React renderer
   {
-    files: ['src/**/*.{js,jsx}'],
+    files: ['src/**/*.{js,jsx,ts,tsx}'],
     plugins: { react, 'react-hooks': reactHooks },
     languageOptions: {
       ecmaVersion: 2023,
@@ -106,9 +145,15 @@ export default [
     },
   },
 
-  // ESM tooling + root config files
+  // ESM/TS tooling + root config files
   {
-    files: ['scripts/**/*.mjs', '*.config.js', 'eslint.config.js'],
+    files: [
+      'scripts/**/*.{mjs,ts}',
+      'build/**/*.{mjs,ts}',
+      '__mocks__/**/*.ts',
+      '*.config.{js,ts}',
+      'eslint.config.{js,ts}',
+    ],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
@@ -118,7 +163,7 @@ export default [
 
   // Cloudflare Worker (feedback relay) — ESM, runtime Workers (fetch/Response…)
   {
-    files: ['workers/**/*.js'],
+    files: ['workers/**/*.{js,ts}'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
@@ -128,7 +173,7 @@ export default [
 
   // AudioWorklet processor — runs in AudioWorkletGlobalScope
   {
-    files: ['src/lib/dictation/pcm-worklet.js'],
+    files: ['src/lib/dictation/pcm-worklet.{js,ts}'],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
@@ -144,7 +189,7 @@ export default [
 
   // Vitest unit tests
   {
-    files: ['tests/**/*.{js,jsx}'],
+    files: ['tests/**/*.{js,jsx,ts,tsx}'],
     plugins: { react, 'react-hooks': reactHooks },
     languageOptions: {
       ecmaVersion: 2023,
@@ -162,4 +207,4 @@ export default [
 
   // Prettier last: disable all formatting rules
   prettier,
-];
+);
