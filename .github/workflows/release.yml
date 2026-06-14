@@ -95,9 +95,10 @@ jobs:
           # Stop electron-builder from looking for a Developer ID certificate.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
-          node build/prepare-playwright.cjs
+          npx tsx build/prepare-playwright.ts
+          npx tsx build/esbuild-electron.ts
           npx vite build
-          npx electron-builder --publish never
+          NODE_OPTIONS=--import=tsx npx electron-builder --publish never
 
       - name: Collect feed artifacts
         run: |
@@ -133,12 +134,16 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
 
+      # Install the pinned toolchain (tsx) without the heavy Chromium postinstall;
+      # this job only does git-archive + hashing, so it needs no native build.
+      - run: npm ci --ignore-scripts
+
       - name: Generate source feed
         run: |
           # Prerelease tags (e.g. v1.5.3-beta.1) feed the beta channel
           # (source-beta.json); plain vX.Y.Z tags feed stable (source.json).
           if [[ "${GITHUB_REF_NAME}" == *-* ]]; then export SHELFY_CHANNEL=beta; fi
-          node scripts/make-source-feed.mjs
+          npx tsx scripts/make-source-feed.ts
 
       - uses: actions/upload-artifact@v7
         with:
@@ -187,7 +192,7 @@ jobs:
           echo '--- .vlm/whisper:'; ls -la .vlm/whisper
 
       - name: Build mini-pack
-        run: node scripts/make-binary-packs.mjs
+        run: npx tsx scripts/make-binary-packs.ts
 
       - uses: actions/upload-artifact@v7
         with:
@@ -233,7 +238,7 @@ jobs:
           echo '--- .vlm/whisper:'; ls -la .vlm/whisper
 
       - name: Build mini-pack
-        run: node scripts/make-binary-packs.mjs
+        run: npx tsx scripts/make-binary-packs.ts
 
       - uses: actions/upload-artifact@v7
         with:

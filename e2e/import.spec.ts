@@ -10,7 +10,7 @@ test.describe('Import Modal – all states and transitions', () => {
 
   // Convenience scoped locators
   const modal = (page: Page) => page.locator('[data-testid="import-modal"]');
-  const btn   = (page: Page, name: string) => modal(page).getByRole('button', { name });
+  const btn = (page: Page, name: string) => modal(page).getByRole('button', { name });
 
   test('modal opens in idle state', async ({ page }) => {
     await openModal(page);
@@ -40,7 +40,10 @@ test.describe('Import Modal – all states and transitions', () => {
     await expect(btn(page, 'Import')).toBeEnabled();
   });
 
-  test('clicking Choose File when dialog is cancelled does not enable Import', async ({ page, electronApp }) => {
+  test('clicking Choose File when dialog is cancelled does not enable Import', async ({
+    page,
+    electronApp,
+  }) => {
     await overrideHandler(electronApp, 'dialog:openFile', null);
     await openModal(page);
     await btn(page, 'Choose File').click();
@@ -73,8 +76,14 @@ test.describe('Import Modal – all states and transitions', () => {
 
   test('error state is shown when importJSON rejects', async ({ page, electronApp }) => {
     await electronApp.evaluate(({ ipcMain }) => {
-      try { ipcMain.removeHandler('db:importJSON'); } catch { /* ok */ }
-      ipcMain.handle('db:importJSON', () => { throw new Error('Invalid JSON format'); });
+      try {
+        ipcMain.removeHandler('db:importJSON');
+      } catch {
+        /* ok */
+      }
+      ipcMain.handle('db:importJSON', () => {
+        throw new Error('Invalid JSON format');
+      });
     });
 
     await openModal(page);
@@ -85,8 +94,14 @@ test.describe('Import Modal – all states and transitions', () => {
 
   test('Try Again button resets modal to idle from error state', async ({ page, electronApp }) => {
     await electronApp.evaluate(({ ipcMain }) => {
-      try { ipcMain.removeHandler('db:importJSON'); } catch { /* ok */ }
-      ipcMain.handle('db:importJSON', () => { throw new Error('Parse error'); });
+      try {
+        ipcMain.removeHandler('db:importJSON');
+      } catch {
+        /* ok */
+      }
+      ipcMain.handle('db:importJSON', () => {
+        throw new Error('Parse error');
+      });
     });
 
     await openModal(page);
@@ -104,8 +119,14 @@ test.describe('Import Modal – all states and transitions', () => {
 
   test('Cancel in error state closes the modal', async ({ page, electronApp }) => {
     await electronApp.evaluate(({ ipcMain }) => {
-      try { ipcMain.removeHandler('db:importJSON'); } catch { /* ok */ }
-      ipcMain.handle('db:importJSON', () => { throw new Error('Fail'); });
+      try {
+        ipcMain.removeHandler('db:importJSON');
+      } catch {
+        /* ok */
+      }
+      ipcMain.handle('db:importJSON', () => {
+        throw new Error('Fail');
+      });
     });
 
     await openModal(page);
@@ -118,15 +139,23 @@ test.describe('Import Modal – all states and transitions', () => {
 
   test('overlay click does NOT close modal while importing', async ({ page, electronApp }) => {
     await electronApp.evaluate(({ ipcMain }) => {
-      try { ipcMain.removeHandler('db:importJSON'); } catch { /* ok */ }
-      ipcMain.handle('db:importJSON', () =>
-        new Promise((res) => setTimeout(() => res({ imported: 0 }), 3000)));
+      try {
+        ipcMain.removeHandler('db:importJSON');
+      } catch {
+        /* ok */
+      }
+      ipcMain.handle(
+        'db:importJSON',
+        () => new Promise((res) => setTimeout(() => res({ imported: 0 }), 3000)),
+      );
     });
 
     await openModal(page);
     await btn(page, 'Choose File').click();
     await btn(page, 'Import').click();
-    await expect(page.getByText('Importing posts...')).toBeVisible();
+    // The i18n string uses a typographic ellipsis (U+2026): 'Importing posts…'.
+    // Match the stable prefix so the assertion doesn't hinge on the glyph.
+    await expect(page.getByText('Importing posts')).toBeVisible();
 
     // Click the backdrop — modal must stay open during import
     await modal(page).click({ position: { x: 10, y: 10 } });

@@ -22,7 +22,12 @@ export default defineConfig({
   webServer: {
     command: 'npx vite --port 5173',
     port: 5173,
-    reuseExistingServer: true,
+    // Reusing an external Vite instance is the main source of e2e flakiness: a
+    // dev server started outside the run can die mid-run, cascading into
+    // ERR_CONNECTION_REFUSED across the remaining specs. Always start a fresh,
+    // isolated server locally and in CI; only opt into reuse when explicitly on CI
+    // tooling that manages its own server.
+    reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },
 });
