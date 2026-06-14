@@ -116,8 +116,9 @@ Log "Scarico lo script di build ..."
 $build = Join-Path $work "build-windows.ps1"
 Invoke-WebRequest "$REPO_RAW/build-windows.ps1" -OutFile $build -UseBasicParsing
 
-# ── 3. Build the installer (build-windows.ps1 fetches the sources from R2,
-#       installs deps and runs electron-builder; runs in THIS folder) ──────────
+# ── 3. Build the installer (build-windows.ps1 fetches the sources from the
+#       GitHub Releases feed, installs deps and runs electron-builder; runs
+#       in THIS folder) ────────────────────────────────────────────────────────
 Log "Compilo SHELFY — la prima volta richiede qualche minuto ..."
 $buildArgs = @()
 if ($Version)       { $buildArgs += @('-Version', $Version) }

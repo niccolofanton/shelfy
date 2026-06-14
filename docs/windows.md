@@ -67,18 +67,22 @@ piattaforma.
 ### Modalità autonoma (senza copiare i sorgenti)
 
 Scarica **solo** `build-windows.ps1` in una cartella vuota ed eseguilo: rileva
-l'assenza dei sorgenti (`package.json` mancante) e li scarica dalla GitHub
-Release (`SHELFY-src-latest.zip`), poi builda.
+l'assenza dei sorgenti (`package.json` mancante), legge `source.json` dalla
+GitHub Release per risolvere l'archivio versionato `SHELFY-src-<ver>.zip`, lo
+scarica e builda.
 
 ---
 
 ## 3. Rilasciare un aggiornamento (tag-driven via GitHub Actions)
 
 Non serve buildare o pubblicare a mano: il rilascio è automatico a ogni tag.
+`main` è protetto, quindi i cambiamenti entrano via Pull Request; lo **stable** si
+rilascia taggando su `main` (i tag non sono soggetti alla branch protection):
 
 ```bash
-npm version patch        # bump + tag vX.Y.Z (stable)
-git push --follow-tags   # GitHub Actions builda e pubblica la Release
+# stable: dopo che la PR è stata mergiata in main e la CI è verde
+git switch main && git pull
+git tag vX.Y.Z && git push origin vX.Y.Z   # GitHub Actions builda e pubblica la Release (draft)
 ```
 
 La CI ([`.github/workflows/release.yml`](../.github/workflows/release.yml)) genera
