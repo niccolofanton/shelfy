@@ -258,6 +258,11 @@ jobs:
               dist-release/*
           else
             # Stable: a DRAFT release for review — clients see it only once you Publish.
+            # Idempotent: drop any existing release/draft for this tag first, so a
+            # re-run REPLACES it instead of piling up duplicate drafts (the beta
+            # branch above is already idempotent via `release delete`). No
+            # --cleanup-tag here: the tag must survive for the published release.
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes || true
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "SHELFY $TAG" \
