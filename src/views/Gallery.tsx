@@ -7,6 +7,7 @@ import FilterDrawer from '../components/FilterDrawer';
 import CollectionModal from '../components/CollectionModal';
 import Popover from '../components/Popover';
 import { usePosts } from '../hooks/usePosts';
+import type { SyncTarget, SyncPlatform } from '../hooks/useSourceSync';
 import { useToast } from '../hooks/useToast';
 import { toApiFilters } from '../lib/postFilters';
 import { useDownloadPrefs } from '../hooks/useDownloadPrefs';
@@ -69,10 +70,11 @@ interface SourceSyncJob {
   status: string;
 }
 
-// The sync target descriptor built for the toolbar button and routed to onSyncSource.
-type SyncTarget =
-  | { type: 'collection'; platform: Shelfy.Platform; collectionId: number }
-  | { type: 'platform'; platform: string };
+// The sync target routed to onSyncSource is the shared SyncTarget from
+// useSourceSync. This guard narrows a collection's (wider) platform to the three
+// syncable platforms — the sidebar sync button only exists for IG/X/Pinterest.
+const isSyncPlatform = (p: Shelfy.Platform | null | undefined): p is SyncPlatform =>
+  p === 'instagram' || p === 'twitter' || p === 'pinterest';
 
 // Fields PostModal forwards back up when a single post is edited in place.
 type PostUpdateFields = Partial<Shelfy.Post>;
@@ -1016,7 +1018,7 @@ export default function Gallery({
                     const c =
                       collectionId != null ? collections.find((x) => x.id === collectionId) : null;
                     const target: SyncTarget | null = c
-                      ? c.platform && c.externalId != null
+                      ? isSyncPlatform(c.platform) && c.externalId != null
                         ? { type: 'collection', platform: c.platform, collectionId: c.id }
                         : null
                       : platform === 'instagram' || platform === 'twitter'
@@ -1028,7 +1030,7 @@ export default function Gallery({
                           ? { type: 'platform', platform }
                           : null;
                     if (!target) return null;
-                    const job = sourceSyncJobs?.[target.platform];
+                    const job = target.platform ? sourceSyncJobs?.[target.platform] : undefined;
                     const running =
                       !!job && (job.status === 'navigating' || job.status === 'syncing');
                     return (

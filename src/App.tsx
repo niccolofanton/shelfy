@@ -21,6 +21,7 @@ import { useDownloads } from './hooks/useDownloads';
 import { useWebJobs } from './hooks/useWebJobs';
 import { AnalysisProvider, useAnalysis, analysisSummary } from './hooks/useAnalysis';
 import { ActivityProvider } from './hooks/useActivity';
+import type { SourceSyncApi, SyncTarget } from './hooks/useSourceSync';
 import { useT, useLang, localeTag } from './i18n';
 import { buildTime } from 'virtual:build-time';
 
@@ -70,19 +71,6 @@ interface SourceSyncJob {
   skipped: string[];
   startedAt: number;
   finishedAt: number | null;
-}
-
-// The imperative source-sync API the Browser registers up to App.
-interface SourceSyncApi {
-  start: (target: SyncTarget) => boolean;
-  stop: (platform: BrowserPlatform) => void;
-  dismiss: (platform: BrowserPlatform) => void;
-}
-
-// A request to start a per-platform background sync from a sidebar row.
-interface SyncTarget {
-  platform: BrowserPlatform;
-  collectionId?: number;
 }
 
 // Batch-save summary emitted by the Browser when an import finishes.
@@ -244,7 +232,7 @@ function AppInner(): React.JSX.Element {
   // Il Browser (sempre montato) registra qui la sua API imperativa; i job per
   // piattaforma risalgono via onSourceSyncJobs e alimentano sidebar + Attività.
   const sourceSyncApiRef = useRef<SourceSyncApi | null>(null);
-  const registerSourceSyncApi = useCallback((api: SourceSyncApi) => {
+  const registerSourceSyncApi = useCallback((api: SourceSyncApi | null) => {
     sourceSyncApiRef.current = api;
   }, []);
   const [sourceSyncJobs, setSourceSyncJobs] = useState<Record<string, SourceSyncJob>>({});
@@ -705,7 +693,7 @@ function AppInner(): React.JSX.Element {
               collections={collections}
               onCreateCollection={createCollection}
               onCollectionsChanged={handleCollectionsChanged}
-              registerSourceSyncApi={registerSourceSyncApi as (api: unknown) => void}
+              registerSourceSyncApi={registerSourceSyncApi}
               onSourceSyncJobs={setSourceSyncJobs as (jobs: unknown) => void}
             />
           </div>
@@ -763,13 +751,7 @@ function AppInner(): React.JSX.Element {
                       onOpenInWebsites={goOpenInWebsites}
                       onReanalyzeWeb={goReanalyzeWeb}
                       sourceSyncJobs={sourceSyncJobs}
-                      onSyncSource={
-                        handleSyncSource as unknown as (target: {
-                          type: 'platform' | 'collection';
-                          platform: string;
-                          collectionId?: number;
-                        }) => void
-                      }
+                      onSyncSource={handleSyncSource}
                     />
                   )}
                   {v === 'downloads' && <Downloads downloads={downloads} />}

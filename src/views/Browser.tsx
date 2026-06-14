@@ -24,7 +24,7 @@ import {
 import { readIgFolderName } from '../lib/browserScripts';
 import useBrowserScripts from '../hooks/useBrowserScripts';
 import useBrowserSync from '../hooks/useBrowserSync';
-import useSourceSync from '../hooks/useSourceSync';
+import useSourceSync, { type SourceSyncApi } from '../hooks/useSourceSync';
 import useBrowserWebview from '../hooks/useBrowserWebview';
 import useBrowserSelection from '../hooks/useBrowserSelection';
 import useBrowserIntercept from '../hooks/useBrowserIntercept';
@@ -132,7 +132,7 @@ interface BrowserProps {
     opts: { platform: BrowserTab; externalId: string; igName: string },
   ) => Promise<Shelfy.Collection | null | undefined>;
   onCollectionsChanged?: () => void;
-  registerSourceSyncApi?: (api: unknown) => void;
+  registerSourceSyncApi?: (api: SourceSyncApi | null) => void;
   onSourceSyncJobs?: (jobs: unknown) => void;
 }
 
