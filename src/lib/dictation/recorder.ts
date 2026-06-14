@@ -2,6 +2,14 @@
 // AudioWorklet, keeps a rolling buffer (capped to MAX_SECONDS), and can snapshot
 // it to a 16-bit WAV at any moment for whisper.cpp's /inference endpoint.
 
+// The worklet is authored in TS but must reach the browser as real JavaScript:
+// a bare `new URL('./pcm-worklet.ts', import.meta.url)` makes Vite emit the file
+// untranspiled under a `video/mp2t` MIME (from the .ts extension), which
+// audioWorklet.addModule() rejects. `?worker&url` makes Vite transpile + emit it
+// as a hashed .js asset and hand back its URL — the load-mechanism trick for
+// worklets (the code uses no Worker APIs, only registerProcessor).
+import pcmWorkletUrl from './pcm-worklet.ts?worker&url';
+
 export const SAMPLE_RATE = 16000;
 const MAX_SECONDS = 60;
 const MAX_SAMPLES = SAMPLE_RATE * MAX_SECONDS;
@@ -62,7 +70,7 @@ export class DictationRecorder {
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
     });
     this._ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
-    await this._ctx.audioWorklet.addModule(new URL('./pcm-worklet.js', import.meta.url));
+    await this._ctx.audioWorklet.addModule(pcmWorkletUrl);
 
     const src = this._ctx.createMediaStreamSource(this._stream);
     this._node = new AudioWorkletNode(this._ctx, 'pcm-recorder');
