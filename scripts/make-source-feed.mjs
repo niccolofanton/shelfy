@@ -8,8 +8,7 @@
 // alongside the electron-builder outputs.
 //
 //   release/SHELFY-src-<version>.zip   source archive (git HEAD, versioned files)
-//   release/SHELFY-src-latest.zip      stable alias (build-windows.ps1 fetches this)
-//   release/source.json                stable manifest (or source-beta.json)
+//   release/source.json                stable manifest (or source-beta.json) — names the zip
 //
 // Env:
 //   SHELFY_VERSION   version to stamp (default: package.json version)
@@ -18,7 +17,7 @@
 // Produces the same source.json + zip layout the installed Windows clients expect
 // (electron/updater.js: {version, channel, zip, sha512}).
 
-import { mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
@@ -53,13 +52,10 @@ if (res.status !== 0) {
   process.exit(1);
 }
 
-// Stable alias so build-windows.ps1 can fetch sources without knowing the version.
-copyFileSync(zipPath, path.join(RELEASE_DIR, 'SHELFY-src-latest.zip'));
-
 const sha512 = createHash('sha512').update(readFileSync(zipPath)).digest('base64');
 const manifest = { version: VERSION, channel: CHANNEL, zip: path.basename(zipPath), sha512 };
 writeFileSync(path.join(RELEASE_DIR, SOURCE_MANIFEST), JSON.stringify(manifest, null, 2));
 
 console.log(
-  `[make-source-feed] wrote ${path.basename(zipPath)} + SHELFY-src-latest.zip + ${SOURCE_MANIFEST} (v${VERSION}, ${CHANNEL})`,
+  `[make-source-feed] wrote ${path.basename(zipPath)} + ${SOURCE_MANIFEST} (v${VERSION}, ${CHANNEL})`,
 );
