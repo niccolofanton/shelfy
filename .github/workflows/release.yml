@@ -95,9 +95,10 @@ jobs:
           # Stop electron-builder from looking for a Developer ID certificate.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
-          node build/prepare-playwright.cjs
+          npx tsx build/prepare-playwright.ts
+          npx tsx build/esbuild-electron.ts
           npx vite build
-          npx electron-builder --publish never
+          NODE_OPTIONS=--import=tsx npx electron-builder --publish never
 
       - name: Collect feed artifacts
         run: |
@@ -131,6 +132,10 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+
+      # Install the pinned toolchain (tsx) without the heavy Chromium postinstall;
+      # this job only does git-archive + hashing, so it needs no native build.
+      - run: npm ci --ignore-scripts
 
       - name: Generate source feed
         run: |

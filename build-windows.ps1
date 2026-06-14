@@ -317,12 +317,17 @@ if ($Publish) {
 } else {
   if ($Version) {
     Log "Building renderer + Windows installer v$Version ..."
-    # Same as the -Publish path: this -Version branch bypasses the npm build script,
-    # so run prepare-playwright explicitly to bundle build/ms-playwright (chromium-
-    # headless-shell) — otherwise the installer ships without the capture browser.
-    Run "node" @("build/prepare-playwright.cjs")
+    # This -Version branch bypasses the npm build script, so replicate it here:
+    # esbuild the main process into dist-electron/ (the new app entry), run
+    # prepare-playwright to bundle build/ms-playwright (chromium-headless-shell),
+    # then package with tsx registered so electron-builder can load the .ts
+    # afterPack/afterSign hooks — otherwise fuses/signing silently no-op.
+    Run "npx" @("tsx", "build/prepare-playwright.ts")
+    Run "npx" @("tsx", "build/esbuild-electron.ts")
     Run "npx" @("vite", "build")
+    $env:NODE_OPTIONS = "--import=tsx"
     Run "npx" @("electron-builder", "-c.extraMetadata.version=$Version")
+    Remove-Item Env:\NODE_OPTIONS
   } else {
     Log "Building renderer + Windows installer (vite build + electron-builder) ..."
     Run "npm" @("run", "build")
