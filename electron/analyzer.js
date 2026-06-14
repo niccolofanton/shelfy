@@ -90,32 +90,22 @@ const MODELS = {
     minRamGB: 16,
     note: 'OCR e ragionamento migliori del 4B. Consigliato con 16 GB+ di RAM.',
   },
-  'gemma3-4b': {
-    id: 'gemma3-4b',
-    name: 'Gemma 3 4B',
+  // Gemma 4 (giu 2026): multimodale encoder-free con proiettore vision di tipo
+  // `gemma4uv`, supportato solo da llama.cpp ≥ b9500 (b9370 falliva con "unknown
+  // projector type: gemma4uv"). Il pack GGUF di ggml-org spedisce comunque un mmproj
+  // separato, quindi calza nella struttura modelFile+mmprojFile. L'E4B è la taglia
+  // compatta (multimodale come la 12B) per macchine con 8 GB+ di RAM.
+  'gemma4-e4b': {
+    id: 'gemma4-e4b',
+    name: 'Gemma 4 E4B',
     tier: 'Alternativa leggera',
-    modelFile: 'gemma-3-4b-it-Q4_K_M.gguf',
-    mmprojFile: 'mmproj-model-f16.gguf',
-    hfBase: 'https://huggingface.co/ggml-org/gemma-3-4b-it-GGUF/resolve/main',
-    sizeGB: 3.3,
+    modelFile: 'gemma-4-E4B-it-Q4_K_M.gguf',
+    mmprojFile: 'mmproj-gemma-4-E4B-it-Q8_0.gguf',
+    hfBase: 'https://huggingface.co/ggml-org/gemma-4-E4B-it-GGUF/resolve/main',
+    sizeGB: 5.9,
     minRamGB: 8,
-    note: 'Famiglia Google, forte nel multilingue. Alternativa leggera al Qwen.',
+    note: 'Ultima generazione Google in formato compatto: multimodale unificato, OCR e multilingue forti. Ideale per archivi grandi con 8 GB+ di RAM.',
   },
-  'gemma3-12b': {
-    id: 'gemma3-12b',
-    name: 'Gemma 3 12B',
-    tier: 'Alternativa qualità',
-    modelFile: 'gemma-3-12b-it-Q4_K_M.gguf',
-    mmprojFile: 'mmproj-model-f16.gguf',
-    hfBase: 'https://huggingface.co/ggml-org/gemma-3-12b-it-GGUF/resolve/main',
-    sizeGB: 8.2,
-    minRamGB: 16,
-    note: 'Più capace del 3 4B. Più lenta, richiede 16 GB+ di RAM.',
-  },
-  // Gemma 4 12B "Unified" (giu 2026): multimodale encoder-free con proiettore
-  // vision di tipo `gemma4uv`, supportato solo da llama.cpp ≥ b9500 (b9370 falliva
-  // con "unknown projector type: gemma4uv"). Il pack GGUF di ggml-org spedisce
-  // comunque un mmproj separato, quindi calza nella struttura modelFile+mmprojFile.
   'gemma4-12b': {
     id: 'gemma4-12b',
     name: 'Gemma 4 12B',
@@ -639,7 +629,7 @@ function buildLlamaArgs(model, mmproj, port, concurrency, tuning, opts = {}) {
     // answer: a "thinking" model (e.g. Gemma 4, whose template defaults thinking=on)
     // would otherwise spend the whole token budget in `reasoning_content` and leave
     // `message.content` EMPTY → "Model returned invalid JSON". Harmless no-op for the
-    // non-thinking presets (Qwen3-VL Instruct, Gemma 3), verified to still emit JSON.
+    // non-thinking presets (Qwen3-VL Instruct), verified to still emit JSON.
     '--reasoning',
     'off',
     '--no-warmup',
