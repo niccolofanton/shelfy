@@ -54,18 +54,24 @@ test.describe('Downloads – controls, checkboxes, and job list', () => {
 
   // ── Download All button ──────────────────────────────────────────────────
 
-  test('Download All button is enabled when at least one asset type is selected', async ({ page }) => {
+  test('Download All button is enabled when at least one asset type is selected', async ({
+    page,
+  }) => {
     await expect(page.locator('[data-testid="download-all"]')).toBeEnabled();
   });
 
-  test('Download All button is disabled when all asset types are unchecked in Settings', async ({ page }) => {
+  test('Download All button is disabled when all asset types are unchecked in Settings', async ({
+    page,
+  }) => {
     await setAssetType(page, 'Thumbnails', false);
     await setAssetType(page, 'Images', false);
     await setAssetType(page, 'Videos', false);
     await expect(page.locator('[data-testid="download-all"]')).toBeDisabled();
   });
 
-  test('Download All button re-enables after re-checking an asset type in Settings', async ({ page }) => {
+  test('Download All button re-enables after re-checking an asset type in Settings', async ({
+    page,
+  }) => {
     await setAssetType(page, 'Thumbnails', false);
     await setAssetType(page, 'Images', false);
     await setAssetType(page, 'Videos', false);
@@ -86,7 +92,9 @@ test.describe('Downloads – controls, checkboxes, and job list', () => {
     await expect(page.locator('[data-testid="download-missing"]')).toBeEnabled();
   });
 
-  test('Download Missing button is disabled when all asset types unchecked in Settings', async ({ page }) => {
+  test('Download Missing button is disabled when all asset types unchecked in Settings', async ({
+    page,
+  }) => {
     await setAssetType(page, 'Thumbnails', false);
     await setAssetType(page, 'Images', false);
     await setAssetType(page, 'Videos', false);
@@ -106,7 +114,10 @@ test.describe('Downloads – controls, checkboxes, and job list', () => {
 
   test('done job shows checkmark icon', async ({ page }) => {
     // ig_001 is 'done' — its row should contain "done" text
-    const doneRow = page.locator('[data-testid="download-job"]').filter({ hasText: 'done' }).first();
+    const doneRow = page
+      .locator('[data-testid="download-job"]')
+      .filter({ hasText: 'done' })
+      .first();
     await expect(doneRow).toBeVisible();
   });
 
@@ -118,7 +129,9 @@ test.describe('Downloads – controls, checkboxes, and job list', () => {
 
   test('error job shows error text', async ({ page }) => {
     // tw_001 has error 'Network timeout'
-    const errorRow = page.locator('[data-testid="download-job"]').filter({ hasText: 'Network timeout' });
+    const errorRow = page
+      .locator('[data-testid="download-job"]')
+      .filter({ hasText: 'Network timeout' });
     await expect(errorRow).toBeVisible();
   });
 
@@ -137,9 +150,11 @@ test.describe('Downloads – controls, checkboxes, and job list', () => {
   test('empty state shows when no jobs', async ({ page, electronApp }) => {
     await overrideHandler(electronApp, 'download:status', []);
 
-    // Navigate away and back to trigger a re-mount with the new mock
-    await page.click('[data-testid="nav-gallery"]');
-    await page.click('[data-testid="nav-downloads"]');
+    // Views are kept-alive (mounted once, toggled via visibility), so the old
+    // "navigate away and back to re-mount" trick no longer re-fetches the job
+    // list. Trigger a real refresh instead: Download Missing re-reads the
+    // download status in its finally — now empty — surfacing the empty state.
+    await page.click('[data-testid="download-missing"]');
 
     await expect(page.locator('[data-testid="downloads-empty"]')).toBeVisible();
     await expect(page.getByText('No active downloads', { exact: false })).toBeVisible();

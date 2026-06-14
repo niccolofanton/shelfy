@@ -157,7 +157,7 @@ Ok "Native module ready"
 # NOT needed to build the installer (the app downloads them at runtime); this
 # block runs only when refreshing the packs.
 if ($BinaryPack) {
-  Log "[-BinaryPack] obsoleto: Windows scarica i sidecar direttamente da upstream (electron/binaries.js); i mini-pack mac/Linux li produce la CI (scripts/make-binary-packs.mjs). Niente piu' upload R2."
+  Log "[-BinaryPack] obsoleto: Windows scarica i sidecar direttamente da upstream (electron/binaries.js); i mini-pack mac/Linux li produce la CI (scripts/make-binary-packs.ts). Niente piu' upload R2."
   exit 1
 
 # ── 3. yt-dlp.exe ──────────────────────────────────────────────────────────────
@@ -308,7 +308,7 @@ if (Test-Path $llamaSrv) {
   # Build and upload the binary pack for this platform/variant, then stop.
   $packVariant = if ($LlamaVariant -like "cuda*") { "cuda" } elseif ($LlamaVariant -like "vulkan*") { "vulkan" } else { "cpu" }
   Log "Creating binary pack (variant $packVariant) and uploading to R2 ..."
-  Run "node" @("scripts/make-binary-packs.mjs", "--variant", $packVariant)
+  Run "npx" @("tsx", "scripts/make-binary-packs.ts", "--variant", $packVariant)
   Ok "Binary pack uploaded to R2"
   exit 0
 }  # end -BinaryPack
@@ -320,12 +320,17 @@ if ($Publish) {
 } else {
   if ($Version) {
     Log "Building renderer + Windows installer v$Version ..."
-    # Same as the -Publish path: this -Version branch bypasses the npm build script,
-    # so run prepare-playwright explicitly to bundle build/ms-playwright (chromium-
-    # headless-shell) — otherwise the installer ships without the capture browser.
-    Run "node" @("build/prepare-playwright.cjs")
+    # This -Version branch bypasses the npm build script, so replicate it here:
+    # esbuild the main process into dist-electron/ (the new app entry), run
+    # prepare-playwright to bundle build/ms-playwright (chromium-headless-shell),
+    # then package with tsx registered so electron-builder can load the .ts
+    # afterPack/afterSign hooks — otherwise fuses/signing silently no-op.
+    Run "npx" @("tsx", "build/prepare-playwright.ts")
+    Run "npx" @("tsx", "build/esbuild-electron.ts")
     Run "npx" @("vite", "build")
+    $env:NODE_OPTIONS = "--import=tsx"
     Run "npx" @("electron-builder", "-c.extraMetadata.version=$Version")
+    Remove-Item Env:\NODE_OPTIONS
   } else {
     Log "Building renderer + Windows installer (vite build + electron-builder) ..."
     Run "npm" @("run", "build")

@@ -4,36 +4,42 @@
   "description": "Archive and browse your saved bookmarks from Instagram, TikTok, X and more",
   "author": "Niccolò Fanton",
   "license": "Apache-2.0",
-  "main": "electron/main.js",
+  "main": "dist-electron/main.js",
   "type": "module",
   "engines": {
     "node": ">=22",
     "npm": ">=10"
   },
   "scripts": {
-    "dev": "concurrently -k \"vite\" \"cross-env ELECTRON_DEV=true electronmon .\"",
-    "build": "node build/prepare-playwright.cjs && vite build && electron-builder",
-    "release": "node build/prepare-playwright.cjs && vite build && electron-builder",
-    "preview": "electron .",
+    "dev": "tsx build/esbuild-electron.ts && concurrently -k \"tsx build/esbuild-electron.ts --watch\" \"vite\" \"cross-env ELECTRON_DEV=true electronmon .\"",
+    "build": "tsx build/prepare-playwright.ts && tsx build/esbuild-electron.ts && vite build && cross-env NODE_OPTIONS=--import=tsx electron-builder",
+    "release": "tsx build/prepare-playwright.ts && tsx build/esbuild-electron.ts && vite build && cross-env NODE_OPTIONS=--import=tsx electron-builder",
+    "build:electron": "tsx build/esbuild-electron.ts",
+    "preview": "tsx build/esbuild-electron.ts && electron .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.electron.json && tsc -p tsconfig.renderer.json && tsc -p tsconfig.node.json && tsc -p tsconfig.tests.json && tsc -p tsconfig.json",
+    "typecheck:electron": "tsc -p tsconfig.electron.json",
+    "typecheck:renderer": "tsc -p tsconfig.renderer.json",
+    "typecheck:node": "tsc -p tsconfig.node.json",
+    "typecheck:tests": "tsc -p tsconfig.tests.json",
+    "typecheck:e2e": "tsc -p tsconfig.json",
     "test": "vitest",
     "test:run": "vitest run",
     "coverage": "vitest run --coverage",
-    "test:e2e": "playwright test",
+    "test:e2e": "tsx build/esbuild-electron.ts && playwright test",
     "test:e2e:ui": "playwright test --ui",
     "perf:gallery": "cross-env PERF=1 playwright test e2e/perf-gallery.spec.ts --workers=1",
-    "eval:search": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/search-eval/run.cjs",
-    "eval:extract": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/extract-eval/run.cjs",
-    "eval:extract:frames": "node scripts/extract-eval/frames.cjs",
-    "eval:cluster": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/cluster-eval/run.cjs",
-    "eval:capture": "electron scripts/web-capture-eval/run.cjs",
-    "eval:pw-engine": "electron scripts/web-capture-eval/pw-engine-test.cjs",
+    "eval:search": "cross-env ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--import=tsx electron scripts/search-eval/run.ts",
+    "eval:extract": "cross-env ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--import=tsx electron scripts/extract-eval/run.ts",
+    "eval:extract:frames": "tsx scripts/extract-eval/frames.ts",
+    "eval:cluster": "cross-env ELECTRON_RUN_AS_NODE=1 NODE_OPTIONS=--import=tsx electron scripts/cluster-eval/run.ts",
+    "eval:capture": "cross-env NODE_OPTIONS=--import=tsx electron scripts/web-capture-eval/run.ts",
+    "eval:pw-engine": "cross-env NODE_OPTIONS=--import=tsx electron scripts/web-capture-eval/pw-engine-test.ts",
     "setup:capture-browser": "playwright install chromium-headless-shell",
-    "postinstall": "node build/postinstall.cjs",
+    "postinstall": "tsx build/postinstall.ts",
     "prepare": "husky"
   },
   "dependencies": {
@@ -57,7 +63,10 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.19.41",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^4.0.0",
     "@vitest/coverage-v8": "^1.6.1",
     "autoprefixer": "^10.0.0",
@@ -66,24 +75,28 @@
     "electron": "^31.7.7",
     "electron-builder": "^24.0.0",
     "electronmon": "^2.0.4",
+    "esbuild": "^0.28.1",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^9.1.2",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
     "globals": "^17.6.0",
     "husky": "^9.1.7",
+    "jiti": "^2.7.0",
     "jsdom": "^24.1.3",
     "lint-staged": "^17.0.7",
     "postcss": "^8.0.0",
     "prettier": "^3.8.3",
     "tailwindcss": "^3.4.0",
+    "tsx": "^4.22.4",
     "typescript": "^5.9.3",
+    "typescript-eslint": "^8.61.0",
     "vite": "^5.0.0",
     "vitest": "^1.6.1"
   },
   "electronmon": {
     "patterns": [
-      "electron/**"
+      "dist-electron/**"
     ]
   },
   "build": {
@@ -99,7 +112,7 @@
       }
     ],
     "files": [
-      "electron/**/*",
+      "dist-electron/**/*",
       "dist/**/*",
       "node_modules/**/*"
     ],
@@ -113,8 +126,8 @@
         "to": "ms-playwright"
       }
     ],
-    "afterPack": "build/afterPack.cjs",
-    "afterSign": "build/afterSign.cjs",
+    "afterPack": "build/afterPack.ts",
+    "afterSign": "build/afterSign.ts",
     "mac": {
       "target": [
         {

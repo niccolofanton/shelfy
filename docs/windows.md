@@ -171,7 +171,7 @@ irm https://raw.githubusercontent.com/niccolofanton/shelfy/main/provision-binari
 ## Note
 
 - I sorgenti pubblicati: lo zip sulla GitHub Release è prodotto con `git archive
-  HEAD` (`scripts/make-source-feed.mjs`), quindi **solo file committati** — il
+  HEAD` (`scripts/make-source-feed.ts`), quindi **solo file committati** — il
   working tree dirty non finisce nel pacchetto.
 - macOS e Windows hanno feed separati: i client mac usano il `.dmg`
   (`latest-mac.yml`), i client Windows il self-rebuild (`source.json`).
@@ -185,7 +185,7 @@ irm https://raw.githubusercontent.com/niccolofanton/shelfy/main/provision-binari
 serviva a caricare su R2 i "binary pack". Oggi i client Windows scaricano i
 binari **direttamente da upstream** per variante GPU, quindi non serve. I
 mini-pack **macOS/Linux** (solo whisper + ffmpeg) li produce la CI con
-`node scripts/make-binary-packs.mjs` e li pubblica sulla GitHub Release.
+`node scripts/make-binary-packs.ts` e li pubblica sulla GitHub Release.
 
 ---
 

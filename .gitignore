@@ -20,6 +20,9 @@ playwright-report/
 test-results/
 perf-results/
 
+# Playwright MCP browser-automation scratch (console logs + page snapshots)
+.playwright-mcp/
+
 # Local llama.cpp sidecar binaries (large, rebuilt/redownloaded per platform)
 .vlm/
 

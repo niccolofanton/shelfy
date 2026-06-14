@@ -8,14 +8,19 @@ test.describe('App – navigation and top-level features', () => {
 
   test('Gallery is the default view', async ({ page }) => {
     await expect(page.locator('[data-testid="gallery-view"]')).toBeVisible();
-    await expect(page.locator('[data-testid="nav-gallery"]')).toHaveClass(/bg-\[#1e1e1e\]/);
+    // The default source is "All posts" (source-all); when active it carries the
+    // selected-row background. (The old nav-gallery item was removed in the sidebar
+    // refactor that grouped sources under Library.)
+    await expect(page.locator('[data-testid="source-all"]')).toHaveClass(/bg-\[#1e1e1e\]/);
   });
 
   test('navigates to Browser via a platform sub-tab', async ({ page }) => {
     await page.click('[data-testid="browser-tab-instagram"]');
     await expect(page.locator('[data-testid="browser-view"]')).toBeVisible();
     await expect(page.locator('[data-testid="gallery-view"]')).not.toBeVisible();
-    await expect(page.locator('[data-testid="browser-tab-instagram"]')).toHaveClass(/bg-\[#1e1e1e\]/);
+    await expect(page.locator('[data-testid="browser-tab-instagram"]')).toHaveClass(
+      /bg-\[#1e1e1e\]/,
+    );
   });
 
   test('navigates to Downloads tab', async ({ page }) => {
@@ -27,14 +32,16 @@ test.describe('App – navigation and top-level features', () => {
 
   test('navigates back to Gallery from Downloads', async ({ page }) => {
     await page.click('[data-testid="nav-downloads"]');
-    await page.click('[data-testid="nav-gallery"]');
+    // Selecting a source (here "All posts") returns to the gallery view.
+    await page.click('[data-testid="source-all"]');
     await expect(page.locator('[data-testid="gallery-view"]')).toBeVisible();
   });
 
   test('sidebar shows Instagram and Twitter post counts', async ({ page }) => {
-    const stats = page.locator('[data-testid="sidebar-stats"]');
-    await expect(stats.getByText('9')).toBeVisible(); // instagram count
-    await expect(stats.getByText('6')).toBeVisible(); // twitter count
+    // Per-platform counts now render on each source row (source-<platform>) under
+    // Library, not in a dedicated sidebar-stats block.
+    await expect(page.locator('[data-testid="source-instagram"]')).toContainText('9');
+    await expect(page.locator('[data-testid="source-twitter"]')).toContainText('6');
   });
 
   test('Import JSON button opens the import modal', async ({ page }) => {
@@ -47,14 +54,21 @@ test.describe('App – navigation and top-level features', () => {
   test('modal closes when Cancel button is clicked', async ({ page }) => {
     await page.click('[data-testid="nav-settings"]');
     await page.click('[data-testid="open-import-btn"]');
-    await page.locator('[data-testid="import-modal"]').getByRole('button', { name: 'Cancel' }).click();
+    await page
+      .locator('[data-testid="import-modal"]')
+      .getByRole('button', { name: 'Cancel' })
+      .click();
     await expect(page.locator('[data-testid="import-modal"]')).not.toBeVisible();
   });
 
   test('modal closes when X button is clicked', async ({ page }) => {
     await page.click('[data-testid="nav-settings"]');
     await page.click('[data-testid="open-import-btn"]');
-    await page.locator('[data-testid="import-modal"] button').filter({ has: page.locator('svg') }).first().click();
+    await page
+      .locator('[data-testid="import-modal"] button')
+      .filter({ has: page.locator('svg') })
+      .first()
+      .click();
     await expect(page.locator('[data-testid="import-modal"]')).not.toBeVisible();
   });
 
@@ -66,12 +80,21 @@ test.describe('App – navigation and top-level features', () => {
     await expect(page.locator('[data-testid="import-modal"]')).not.toBeVisible();
   });
 
-  test('clicking a platform sub-tab clears its new-posts alert badge', async ({ page, electronApp }) => {
-    // Simulate a new-posts push event from the main process (defaults to instagram)
+  test('clicking a platform sub-tab clears its new-posts alert badge', async ({
+    page,
+    electronApp,
+  }) => {
+    // Simulate a new-posts push event from the main process. The handler only
+    // badges a labelled platform ('instagram'|'twitter'|'pinterest') — an
+    // unlabelled signal is intentionally ignored — so the payload must carry it.
     await electronApp.evaluate(({ BrowserWindow }) => {
       const wins = BrowserWindow.getAllWindows();
       if (wins[0]) {
-        wins[0].webContents.send('interceptor:newPosts', { posts: [], count: 3 });
+        wins[0].webContents.send('interceptor:newPosts', {
+          platform: 'instagram',
+          posts: [],
+          count: 3,
+        });
       }
     });
     // Badge should appear on the Instagram sub-tab
