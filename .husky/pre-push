@@ -1,0 +1,3 @@
+# Gate pre-push: la suite di unit test deve passare prima di pubblicare.
+# Veloce (~3s, Vitest). Bypass d'emergenza: `git push --no-verify`.
+npm run test:run

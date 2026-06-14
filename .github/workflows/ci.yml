@@ -1,0 +1,29 @@
+name: CI
+
+# Unit tests + lint + typecheck on every push to main/dev and every PR into main.
+# This is the status check required by main's branch protection: main only accepts
+# PRs whose CI is green. Mirrors the local pre-push hook (.husky/pre-push) so the
+# cloud gate and the developer's local gate run the same suite.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:run

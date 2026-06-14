@@ -5,17 +5,17 @@ name: Release
 # https://github.com/<owner>/<repo>/releases/latest/download (see package.json >
 # build.publish), so publishing the draft is what makes clients auto-update.
 #
-# Flow:
-#   npm version patch        # bumps package.json + creates tag vX.Y.Z
-#   git push --follow-tags   # pushes the tag -> triggers this workflow
+# Channel ↔ branch (enforced by the validate-tag job below):
+#   • STABLE  vX.Y.Z         must be tagged from `main` → DRAFT release (review → Publish).
+#   • BETA    vX.Y.Z-beta.N  must be tagged from `dev`  → rolling `beta` pre-release, live now.
 #
-# A plain `vX.Y.Z` tag → STABLE: created as a DRAFT (review, then "Publish").
+# Beta:   git switch dev && npm version prerelease --preid beta && git push --follow-tags
+# Stable: land work on main via PR (main is protected), then tag the merge commit on main
+#         and push the tag (tags are not branch-protected):
+#           git switch main && git pull && git tag vX.Y.Z && git push origin vX.Y.Z
+#
 # `releases/latest/download` only resolves to a published, non-prerelease release,
-# so nothing reaches stable users until you publish.
-#
-# A prerelease tag `vX.Y.Z-beta.N` → BETA: published immediately to a rolling
-# `beta` pre-release. Beta clients read …/releases/download/beta. Cut one with:
-#   npm version prerelease --preid beta && git push --follow-tags
+# so nothing reaches stable users until you publish the draft.
 
 on:
   push:
@@ -37,10 +37,36 @@ env:
   WHISPER_SHA: f24588a272ae8e23280d9c220536437164e6ed28
 
 jobs:
+  # ── Guard: the release channel must match the branch. A plain vX.Y.Z (stable)
+  #    must be tagged from main; a vX.Y.Z-beta.N (prerelease) from dev. Runs first
+  #    and gates every build job, so a mis-tagged release never even builds.
+  validate-tag:
+    name: Validate tag channel/branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Enforce stable→main / beta→dev
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"; SHA="${GITHUB_SHA}"
+          git fetch --quiet origin main dev
+          if [[ "$TAG" == *-* ]]; then
+            git merge-base --is-ancestor "$SHA" origin/dev \
+              || { echo "::error::Beta release $TAG must be tagged from 'dev'."; exit 1; }
+            echo "ok: beta $TAG is on dev"
+          else
+            git merge-base --is-ancestor "$SHA" origin/main \
+              || { echo "::error::Stable release $TAG must be tagged from 'main'."; exit 1; }
+            echo "ok: stable $TAG is on main"
+          fi
+
   # ── Prebuilt apps: build natively per-OS (this is what removes the need to
   #    cross-compile native modules like better-sqlite3 from a single machine).
   build-app:
     name: Build (${{ matrix.os }})
+    needs: [validate-tag]
     strategy:
       fail-fast: false
       matrix:
@@ -97,6 +123,7 @@ jobs:
   # ── Windows self-rebuild feed: source zip + manifest (no native build needed).
   build-source-feed:
     name: Source feed (Windows self-rebuild)
+    needs: [validate-tag]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -127,6 +154,7 @@ jobs:
   #    one piece not verifiable locally — sanity-check the first run's logs.
   build-mac-pack:
     name: Mac mini-pack (whisper + ffmpeg)
+    needs: [validate-tag]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v6
@@ -172,6 +200,7 @@ jobs:
   #    llama-server come directly from upstream on the client (ensureBinariesLinux).
   build-linux-pack:
     name: Linux mini-pack (whisper + ffmpeg)
+    needs: [validate-tag]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
