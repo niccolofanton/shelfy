@@ -412,7 +412,7 @@ function sanitizeForPrompt(text: unknown, opts: { maxChars?: number } = {}): str
 
   // (3) remove zero-width, soft hyphen, BOM, bidi overrides, and C0/C1 control
   // chars (keep \t \n which collapseWs handles).
-  s = s.replace(/[​-‏‪-‮⁠-⁤⁪-⁯﻿­]/g, '').replace(/[ ---]/g, ' ');
+  s = s.replace(/[​-‏‪-‮⁠-⁤⁪-⁯﻿­]/g, '').replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, ' ');
 
   // (4) collapse + cap on a word boundary.
   s = collapseWs(s);
