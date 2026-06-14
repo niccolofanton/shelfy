@@ -525,7 +525,25 @@ export default function AiPanel({
     }
   };
 
-  if (!hasLocalAsset) return null;
+  // Also show the panel when the post already carries (or is producing) an AI
+  // analysis, even without a local asset — mirrors the backend's text-only path
+  // in canAnalyze(): a not-downloaded post can be tagged from its caption alone,
+  // and those tags must stay visible here rather than be hidden by the gate.
+  const hasExistingAnalysis =
+    !!(description && description.trim()) ||
+    (Array.isArray(tags) && tags.length > 0) ||
+    !!post.aiStatus ||
+    busy;
+
+  // A not-downloaded video can't be (re)analyzed — this mirrors the backend's
+  // canAnalyze(), which skips videos without their file on disk (cover thumbnail
+  // / caption alone misrepresent a clip). Frontend proxy: no videoPath = not
+  // downloaded. We still surface the panel to SHOW tags it may already carry,
+  // but never offer the analyze/regenerate action for it.
+  const videoNeedsDownload = post.mediaType === 'video' && !post.videoPath;
+
+  if (!hasLocalAsset && !hasExistingAnalysis) return null;
+  if (videoNeedsDownload && !hasExistingAnalysis) return null;
 
   const handleAnalyze = async (): Promise<void> => {
     // Drop any manual-edit/description-delete override so the regenerated analysis
@@ -816,15 +834,17 @@ export default function AiPanel({
           </p>
         )}
 
-        <div className="flex items-center gap-3 pt-0.5">
-          <button
-            data-testid="post-modal-regenerate"
-            onClick={handleAnalyze}
-            className="u-press flex items-center gap-1.5 px-2.5 h-7 rounded-md text-[11px] bg-violet-500/15 text-violet-200 hover:bg-violet-500/25"
-          >
-            <RotateCw size={12} /> {t('regenerate')}
-          </button>
-        </div>
+        {!videoNeedsDownload && (
+          <div className="flex items-center gap-3 pt-0.5">
+            <button
+              data-testid="post-modal-regenerate"
+              onClick={handleAnalyze}
+              className="u-press flex items-center gap-1.5 px-2.5 h-7 rounded-md text-[11px] bg-violet-500/15 text-violet-200 hover:bg-violet-500/25"
+            >
+              <RotateCw size={12} /> {t('regenerate')}
+            </button>
+          </div>
+        )}
 
         <UserLayer
           note={userNote}

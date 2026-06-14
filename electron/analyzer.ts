@@ -3768,6 +3768,14 @@ function pumpQueue(): void {
 // or a downloaded carousel slide). Not limited to videos anymore.
 function canAnalyze(post: AnalyzePost | null | undefined): boolean {
   if (!post) return false;
+  // A not-downloaded video is too imprecise to tag: without the file on disk we
+  // could only fall back to its cover thumbnail / caption, which misrepresents a
+  // moving clip. So a video is analyzable ONLY when its file is actually on disk
+  // (frame extraction). Images/carousels/text bookmarks keep the looser rule
+  // below (thumbnail or caption is enough).
+  if (post.mediaType === 'video') {
+    return typeof post.videoPath === 'string' && fs.existsSync(post.videoPath);
+  }
   const candidates: Array<string | null | undefined> = [
     post.videoPath,
     post.imagePath,
