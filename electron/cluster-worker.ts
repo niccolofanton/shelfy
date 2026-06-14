@@ -38,6 +38,7 @@ try {
   const groups = buildTagCommunities(freqMap, edges || [], { ...(opts || {}), cosSim });
   port.postMessage({ ok: true, groups });
 } catch (err: unknown) {
-  const message = err instanceof Error ? err.message : undefined;
+  const message =
+    err instanceof Error ? err.message : (err as { message?: unknown } | null)?.message;
   port.postMessage({ ok: false, error: String(message || err) });
 }

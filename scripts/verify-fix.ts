@@ -17,7 +17,7 @@ const URL =
   process.env.SHELFY_IG_COLLECTION_URL ||
   'https://www.instagram.com/<your-handle>/saved/<collection-name>/<collection-id>/';
 const INJECTED_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'electron', 'webview-injected.js'),
+  path.join(__dirname, '..', 'dist-electron', 'webview-injected.js'),
   'utf8',
 );
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

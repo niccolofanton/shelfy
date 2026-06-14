@@ -75,7 +75,7 @@ const origLoad = (Module as unknown as ModuleWithLoad)._load;
   return origLoad.apply(this, arguments as unknown as Parameters<ModuleLoad>);
 };
 
-const analyzer = require(path.join(__dirname, '..', 'electron', 'analyzer.js')) as Analyzer;
+const analyzer = require(path.join(__dirname, '..', 'electron', 'analyzer')) as Analyzer;
 
 interface FixtureRow {
   id: string | number;

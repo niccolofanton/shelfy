@@ -183,7 +183,7 @@ process.env.SHELFY_EXTERNAL_LLAMA_PORT = String(PORT);
 // so 5 variants can be evaluated concurrently against the shared server without
 // touching the repo's electron/analyzer.js.
 const ANALYZER_PATH =
-  process.env.EVAL_ANALYZER_PATH || path.join(HERE, '..', '..', 'electron', 'analyzer.js');
+  process.env.EVAL_ANALYZER_PATH || path.join(HERE, '..', '..', 'electron', 'analyzer');
 const analyzer = require(ANALYZER_PATH) as Analyzer;
 
 // Report output paths (override so concurrent agents don't clobber each other).
