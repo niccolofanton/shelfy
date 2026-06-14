@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     globals: true,
-    setupFiles: ['tests/setup.js'],
+    setupFiles: ['tests/setup.ts'],
     // Only the real suite under tests/. Keeps Playwright specs (e2e/) and stale
     // agent-worktree copies (.claude/worktrees/) out of the unit run.
     include: ['tests/**/*.{test,spec}.{js,jsx,ts,tsx}'],

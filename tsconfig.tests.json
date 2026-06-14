@@ -5,7 +5,7 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["node", "vitest/globals", "@testing-library/jest-dom"]
+    "types": ["node", "vitest/globals", "@testing-library/jest-dom", "vite/client"]
   },
   "include": ["tests/**/*.ts", "tests/**/*.tsx", "__mocks__/**/*.ts", "types/**/*.d.ts"]
 }

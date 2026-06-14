@@ -52,12 +52,12 @@ function isSupported(v: unknown): v is Lang {
 // (and under vitest, which is Vite-powered), so dropping a new file in messages/
 // wires it up automatically — there is no central registry to keep in sync, which
 // also lets many files be authored in parallel without edit conflicts.
-const modules = import.meta.glob<MessageModule | { default?: MessageModule }>('./messages/*.js', {
+const modules = import.meta.glob<MessageModule | { default?: MessageModule }>('./messages/*.ts', {
   eager: true,
 });
 const messages: Record<Lang, Dict> = { it: {}, en: {} };
 for (const path of Object.keys(modules)) {
-  const ns = path.slice(path.lastIndexOf('/') + 1, -3); // './messages/settings.js' → 'settings'
+  const ns = path.slice(path.lastIndexOf('/') + 1, -3); // './messages/settings.ts' → 'settings'
   const raw = modules[path] as MessageModule | { default?: MessageModule };
   const mod: MessageModule = ('default' in raw && raw.default ? raw.default : raw) as MessageModule;
   for (const lang of SUPPORTED) {

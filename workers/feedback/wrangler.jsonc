@@ -8,7 +8,7 @@
   // Secret:  npx wrangler@latest secret put RESEND_API_KEY   (incolla la chiave)
   // Vedi il README accanto per i passi completi.
   "name": "shelfy-feedback",
-  "main": "src/index.js",
+  "main": "src/index.ts",
   "compatibility_date": "2026-06-01",
   "observability": { "enabled": true },
 
