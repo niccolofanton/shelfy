@@ -13,6 +13,7 @@
 // due hook; afterSign la sovrascrive comunque con l'identifier corretto del bundle.
 
 const path = require('path');
+const fs = require('fs');
 const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses');
 
 exports.default = async function afterPack(context) {
@@ -25,7 +26,20 @@ exports.default = async function afterPack(context) {
   } else if (electronPlatformName === 'win32') {
     electronBinaryPath = path.join(appOutDir, `${productFilename}.exe`);
   } else {
-    electronBinaryPath = path.join(appOutDir, productFilename);
+    // Linux: electron-builder nomina l'eseguibile con `executableName` (default: il
+    // `name` minuscolo del package, es. "shelfy"), NON il productFilename ("SHELFY").
+    // Proviamo i nomi noti e scegliamo quello realmente presente, così la fuse non
+    // viene applicata a un path inesistente né saltata in silenzio (sarebbe un buco
+    // di sicurezza). Se nessuno esiste, lasciamo che flipFuses fallisca forte.
+    const candidates = [
+      packager.executableName,
+      packager.appInfo.name,
+      productFilename,
+      productFilename.toLowerCase(),
+    ].filter(Boolean);
+    electronBinaryPath =
+      candidates.map((n) => path.join(appOutDir, n)).find((p) => fs.existsSync(p)) ||
+      path.join(appOutDir, productFilename);
   }
 
   console.log(`[afterPack] disattivo le fuse pericolose: ${electronBinaryPath}`);
