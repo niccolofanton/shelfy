@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import VirtualPostGrid from '../components/VirtualPostGrid';
+import InfiniteCanvas from '../components/InfiniteCanvas';
 import PostGridSkeleton from '../components/PostGridSkeleton';
 import PostModal from '../components/PostModal';
 import FilterBar from '../components/FilterBar';
@@ -12,6 +13,7 @@ import { useToast } from '../hooks/useToast';
 import { toApiFilters } from '../lib/postFilters';
 import { useDownloadPrefs } from '../hooks/useDownloadPrefs';
 import { useRangeSelect } from '../hooks/useRangeSelect';
+import { useViewMode } from '../hooks/useViewMode';
 import { useT } from '../i18n';
 import {
   RefreshCw,
@@ -32,6 +34,8 @@ import {
   Info,
   CloudDownload,
   Loader2,
+  LayoutGrid,
+  Telescope,
 } from 'lucide-react';
 
 // Date-sort direction surfaced by the toolbar's sort toggle.
@@ -137,6 +141,11 @@ const LOAD_BATCH = 50;
 // of the zone, keeping observer events flowing.
 const PAGE_BATCH = 250;
 const PREFETCH_PX = 3000;
+// Canvas view has no scroll sentinel to drive paging, but the infinite tiling
+// looks richest with a sizeable distinct pool. On entering canvas mode we grow
+// the loaded window up to this cap (capped so a huge library doesn't load whole
+// into memory — only ~100 tiles are ever mounted; the rest just add variety).
+const CANVAS_POOL = 500;
 
 // Date-sort options — surfaced directly above the list (not in the filters menu).
 // Labels are resolved at render time from the `gallery` namespace.
@@ -175,6 +184,17 @@ export default function Gallery({
 }: GalleryProps): React.JSX.Element {
   const t: Translate = useT('gallery');
   const tc: Translate = useT('common');
+  // View mode (shared, persisted): 'grid' is the date-ordered row grid; 'canvas'
+  // is the infinite pan/zoom wall where date ordering is intentionally inactive.
+  const { mode: viewMode, toggle: toggleViewMode } = useViewMode();
+  const canvas = viewMode === 'canvas';
+  // Mirrored in a ref, read by the filter callbacks/effects below to size a
+  // limit-reset: canvas pages a fixed CANVAS_POOL window, so resetting `limit`
+  // back to LOAD_BATCH on a filter change would flash the grid (a 50-post page)
+  // before the pool regrows. It also gates infinite-scroll paging off in canvas
+  // (see maybeLoadMore), since the canvas has no scroll sentinel driving it.
+  const canvasRef = useRef(canvas);
+  canvasRef.current = canvas;
   const [filters, setFilters] = useState<GalleryFilters>({
     platform,
     source: 'all',
@@ -189,7 +209,7 @@ export default function Gallery({
     concepts: [],
     conceptMode: 'or',
     sortOrder: 'newest',
-    limit: LOAD_BATCH,
+    limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH,
   });
 
   // Apply the source chosen from the sidebar. Keyed on sourceNonce so re-clicking
@@ -210,7 +230,7 @@ export default function Gallery({
       ...prev,
       platform,
       collectionId: collectionId ?? undefined,
-      limit: LOAD_BATCH,
+      limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceNonce]);
@@ -293,7 +313,7 @@ export default function Gallery({
       setFilters((prev) => {
         const cur = prev.concepts || [];
         const next = cur.includes(tag) ? cur.filter((x) => x !== tag) : [...cur, tag];
-        return { ...prev, concepts: next, limit: LOAD_BATCH };
+        return { ...prev, concepts: next, limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH };
       });
     },
     [resetAnchor],
@@ -846,6 +866,11 @@ export default function Gallery({
   const postsLenRef = useRef(posts.length);
   const totalRef = useRef(total);
   const activeRef = useRef(active);
+  // Canvas has no scroll sentinel driving it: the 1px sentinel stays mounted (so
+  // the observer node never goes stale across view switches) but always sits near
+  // the top in canvas mode, which would otherwise chain-load the whole library.
+  // Paging is gated off via `canvasRef` (declared up top) while canvas is the
+  // requested mode; the canvas pool is grown by its own count-driven effect below.
   loadingRef.current = loading;
   postsLenRef.current = posts.length;
   totalRef.current = total;
@@ -857,6 +882,7 @@ export default function Gallery({
   // (visibility:hidden keeps the sentinel's geometry, so it would otherwise keep
   // firing and load the whole library off-screen).
   const maybeLoadMore = useCallback(() => {
+    if (canvasRef.current) return; // canvas grows its pool via its own effect
     if (!activeRef.current || loadingRef.current) return;
     if (postsLenRef.current >= totalRef.current) return;
     const scroller = scrollRef.current;
@@ -889,9 +915,12 @@ export default function Gallery({
   // sentinel out of the prefetch zone, would stall paging until the next manual
   // scroll. Re-check after every load settles (and on re-activation) so
   // prefetching chains until the window outruns the zone or the library is done.
+  // `canvas` is a dep so leaving canvas re-arms paging: the observer only fires on
+  // intersection *changes*, so a sentinel already inside the prefetch zone when we
+  // switch back to grid would otherwise never trigger a load until a manual scroll.
   useEffect(() => {
     if (!loading) maybeLoadMore();
-  }, [loading, posts.length, total, active, maybeLoadMore]);
+  }, [loading, posts.length, total, active, canvas, maybeLoadMore]);
 
   // Reset limit when filter params (excluding limit) change. Preserve the
   // active collection filter (it lives outside the FilterBar UI).
@@ -900,7 +929,11 @@ export default function Gallery({
       // Filters change the post array; drop any stored range-select anchor so a
       // following shift+click can't span the stale array.
       resetAnchor();
-      setFilters((prev) => ({ ...newFilters, collectionId: prev.collectionId, limit: LOAD_BATCH }));
+      setFilters((prev) => ({
+        ...newFilters,
+        collectionId: prev.collectionId,
+        limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH,
+      }));
     },
     [resetAnchor],
   );
@@ -910,6 +943,20 @@ export default function Gallery({
   // True once every matching post (across pagination, not just the loaded page)
   // is selected — flips the select-all toggle to "Deseleziona tutti".
   const allSelected = total > 0 && selectedCount >= total;
+
+  // ── Canvas pool ───────────────────────────────────────────────────────────
+  // The infinite wall tiles a DISTINCT pool and must never reshuffle as more
+  // posts stream in, so we grow the window to CANVAS_POOL in one step and only
+  // reveal the wall once that pool has landed (poolReady). Until then the
+  // date-ordered grid stays visible — the switch never flashes blank or re-tiles.
+  const canvasTarget = total > 0 ? Math.min(CANVAS_POOL, total) : CANVAS_POOL;
+  const poolReady = total > 0 && posts.length >= canvasTarget;
+  const showCanvas = canvas && poolReady;
+  useEffect(() => {
+    if (!canvas || !active || loading) return;
+    if (posts.length >= canvasTarget) return;
+    setFilters((prev) => (prev.limit >= CANVAS_POOL ? prev : { ...prev, limit: CANVAS_POOL }));
+  }, [canvas, active, loading, posts.length, canvasTarget]);
 
   // Precompute, once per (posts, selected, collections) change, which collections
   // already contain ALL selected posts — instead of the O(N·S·P) inline scan that
@@ -969,26 +1016,47 @@ export default function Gallery({
               onToggleDrawer={() => setDrawerOpen((o) => !o)}
               leading={
                 <>
+                  {/* View toggle — flips the surface between the date-ordered grid
+                    and the infinite pan/zoom canvas. The icon previews the mode
+                    you'll switch TO. In canvas mode date ordering is off, so the
+                    sort toggle below hides. */}
+                  <button
+                    data-testid="view-mode-toggle"
+                    data-mode={viewMode}
+                    title={canvas ? t('viewGridTitle') : t('viewCanvasTitle')}
+                    onClick={toggleViewMode}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-gray-300 hover:text-white hover:bg-[#1a1a1a] u-press transition-colors whitespace-nowrap shrink-0"
+                  >
+                    {canvas ? (
+                      <LayoutGrid size={13} className="text-gray-500" />
+                    ) : (
+                      <Telescope size={13} className="text-[#7B5CFF]" />
+                    )}
+                    {canvas ? t('viewGrid') : t('viewCanvas')}
+                  </button>
+
                   {/* Sort by date — a single toggle: tap it to flip between
-                    "Più recenti" and "Meno recenti" (no second label / no menu). */}
-                  {(() => {
-                    const order = filters.sortOrder ?? 'newest';
-                    const next: SortOrder = order === 'newest' ? 'oldest' : 'newest';
-                    const labelKey = SORT_OPTIONS.find((o) => o.value === order)?.labelKey;
-                    const label = labelKey ? t(labelKey) : '';
-                    return (
-                      <button
-                        data-testid="sort-toggle"
-                        data-order={order}
-                        title={t('sortToggleTitle')}
-                        onClick={() => handleFilterChange({ ...filters, sortOrder: next })}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-gray-300 hover:text-white hover:bg-[#1a1a1a] u-press transition-colors whitespace-nowrap shrink-0"
-                      >
-                        <ArrowDownUp size={13} className="text-gray-500" />
-                        {label}
-                      </button>
-                    );
-                  })()}
+                    "Più recenti" and "Meno recenti" (no second label / no menu).
+                    Hidden in canvas mode, where date ordering is inactive. */}
+                  {!canvas &&
+                    (() => {
+                      const order = filters.sortOrder ?? 'newest';
+                      const next: SortOrder = order === 'newest' ? 'oldest' : 'newest';
+                      const labelKey = SORT_OPTIONS.find((o) => o.value === order)?.labelKey;
+                      const label = labelKey ? t(labelKey) : '';
+                      return (
+                        <button
+                          data-testid="sort-toggle"
+                          data-order={order}
+                          title={t('sortToggleTitle')}
+                          onClick={() => handleFilterChange({ ...filters, sortOrder: next })}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-gray-300 hover:text-white hover:bg-[#1a1a1a] u-press transition-colors whitespace-nowrap shrink-0"
+                        >
+                          <ArrowDownUp size={13} className="text-gray-500" />
+                          {label}
+                        </button>
+                      );
+                    })()}
 
                   {collectionId && collectionLabel && (
                     <span
@@ -1439,37 +1507,64 @@ export default function Gallery({
           </div>
         )}
 
-        {/* Scrollable content area */}
+        {/* Content area — date-ordered grid OR the infinite canvas. In canvas
+          mode the container stops scrolling (the canvas owns pan/zoom) and the
+          wall fills it via an absolute layer so its height resolves inside the
+          flex parent. The sentinel stays mounted in both modes (so the paging
+          observer node never goes stale across switches); grid paging is gated
+          off while canvas is requested (see maybeLoadMore). */}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent"
+          className={
+            showCanvas
+              ? 'relative flex-1 overflow-hidden'
+              : 'flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent'
+          }
         >
-          {/* Grid (row-virtualized via the shared VirtualPostGrid) — only the rows
-            in (or near) the viewport are mounted, so off-screen PostCard
-            images/videos are never created. A single onMouseDownCapture on the
-            container records the last pointer event (shiftKey for range-select)
-            and arms the drag-select sweep; onGridMouseOver extends the sweep. */}
-          <VirtualPostGrid
-            testId="post-grid"
-            posts={posts}
-            scrollRef={scrollRef}
-            onOpen={handleCardOpen}
-            selectable={selectMode}
-            selected={selected}
-            onQuickSelect={handleQuickSelect}
-            onGridMouseDownCapture={handleGridMouseDown}
-            onGridMouseOver={handleGridMouseOver}
-          />
+          {showCanvas ? (
+            <div className="absolute inset-0">
+              <InfiniteCanvas
+                testId="post-canvas"
+                posts={posts}
+                onOpen={handleCardOpen}
+                selectable={selectMode}
+                selected={selected}
+                onQuickSelect={handleQuickSelect}
+              />
+            </div>
+          ) : (
+            <>
+              {/* Grid (row-virtualized via the shared VirtualPostGrid) — only the
+                rows in (or near) the viewport are mounted, so off-screen PostCard
+                images/videos are never created. A single onMouseDownCapture on the
+                container records the last pointer event (shiftKey for range-select)
+                and arms the drag-select sweep; onGridMouseOver extends the sweep. */}
+              <VirtualPostGrid
+                testId="post-grid"
+                posts={posts}
+                scrollRef={scrollRef}
+                onOpen={handleCardOpen}
+                selectable={selectMode}
+                selected={selected}
+                onQuickSelect={handleQuickSelect}
+                onGridMouseDownCapture={handleGridMouseDown}
+                onGridMouseOver={handleGridMouseOver}
+              />
+
+              {/* Mid-scroll load (more pages) → small spinner under the grid.
+                Also covers the brief canvas-pool load (canvas requested, wall not
+                yet revealed): the grid is still showing, so it reads as "loading
+                more" rather than a frozen toggle. */}
+              {loading && posts.length > 0 && (
+                <div className="flex items-center justify-center py-10 u-fade-in">
+                  <RefreshCw size={20} className="text-[#555] animate-spin" strokeWidth={1.5} />
+                </div>
+              )}
+            </>
+          )}
 
           {/* Initial load → skeleton grid (content-shaped, no empty flash). */}
           {loading && posts.length === 0 && <PostGridSkeleton />}
-
-          {/* Mid-scroll load (more pages) → small spinner under the grid. */}
-          {loading && posts.length > 0 && (
-            <div className="flex items-center justify-center py-10 u-fade-in">
-              <RefreshCw size={20} className="text-[#555] animate-spin" strokeWidth={1.5} />
-            </div>
-          )}
 
           {/* Empty state */}
           {isEmpty && (
@@ -1514,7 +1609,11 @@ export default function Gallery({
           hasPrev={hasPrev}
           hasNext={hasNext}
           onApplyAiFilter={(patch: FilterPatch) => {
-            setFilters((prev) => ({ ...prev, ...patch, limit: LOAD_BATCH }));
+            setFilters((prev) => ({
+              ...prev,
+              ...patch,
+              limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH,
+            }));
             setActivePost(null);
           }}
           onLocalFilesDeleted={() => reload()}

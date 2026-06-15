@@ -489,6 +489,28 @@ img {
   animation: u-grid-zoom var(--dur-3) var(--ease-emphasized) both;
 }
 
+/* ─── Infinite canvas ──────────────────────────────────────────────────────
+   The date-order-OFF gallery surface (InfiniteCanvas). `u-canvas-in` opens the
+   whole wall with a gentle fade + settle when the view mode flips; `u-canvas-tile`
+   gives only the first-paint tiles a soft fade so the wall doesn't pop at its
+   edges while panning. Pan/zoom itself is GPU transform — never CSS-animated. */
+@keyframes u-canvas-in {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.u-canvas-in {
+  animation: u-canvas-in var(--dur-4) var(--ease-emphasized) both;
+}
+.u-canvas-tile {
+  animation: u-fade-in var(--dur-3) var(--ease-out) both;
+}
+
 /* Modal/dialog primitives: backdrop fades, content scales up gently. */
 .u-backdrop-in {
   animation: u-fade-in var(--dur-2) var(--ease-std) both;
@@ -705,6 +727,10 @@ textarea:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .tile-in {
+    animation: none;
+  }
+  .u-canvas-in,
+  .u-canvas-tile {
     animation: none;
   }
   .streaming-cursor {
