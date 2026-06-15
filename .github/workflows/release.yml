@@ -153,6 +153,56 @@ jobs:
             release/source*.json
           if-no-files-found: error
 
+  # ── Windows prebuilt installer: a real NSIS .exe, built on a Windows runner
+  #    (better-sqlite3 and the other native modules can't be cross-compiled from
+  #    Linux/macOS). This is the download-and-run installer; the source self-rebuild
+  #    feed above (build-source-feed) still drives the in-app auto-update.
+  build-windows-installer:
+    name: Windows installer (.exe)
+    needs: [validate-tag]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer + Windows installer
+        shell: bash
+        env:
+          # Unsigned, like macOS (ad-hoc). Stop electron-builder hunting for a cert.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx tsx build/prepare-playwright.ts
+          npx tsx build/esbuild-electron.ts
+          npx vite build
+          # NODE_OPTIONS=--import=tsx so electron-builder can load the .ts afterPack/
+          # afterSign hooks (fuses/ad-hoc). --publish never: the release job uploads.
+          NODE_OPTIONS=--import=tsx npx electron-builder --publish never
+
+      - name: Collect installer
+        shell: bash
+        run: |
+          mkdir -p out
+          # The versioned installer + a fixed-name copy, so a version-independent
+          # one-liner works (…/releases/latest/download/SHELFY-Setup.exe for stable,
+          # …/releases/download/beta/SHELFY-Setup.exe for beta).
+          ver="$(node -p "require('./package.json').version")"
+          cp "release/SHELFY-Setup-${ver}.exe" out/
+          cp "release/SHELFY-Setup-${ver}.exe" out/SHELFY-Setup.exe
+          ls -la out
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: feed-windows-exe
+          path: out/
+          if-no-files-found: error
+
   # ── macOS mini-pack: whisper-server (built from source — no upstream macOS
   #    binary) + ffmpeg (from ffmpeg-static). yt-dlp and llama-server are NOT here:
   #    binaries.js downloads them directly from upstream on the client.
@@ -251,7 +301,7 @@ jobs:
   # ── Assemble everything into one draft GitHub Release for this tag.
   release:
     name: Publish draft release
-    needs: [build-app, build-source-feed, build-mac-pack, build-linux-pack]
+    needs: [build-app, build-source-feed, build-windows-installer, build-mac-pack, build-linux-pack]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -292,7 +342,7 @@ jobs:
             echo "|----|------|"
             echo "| **macOS** (Apple Silicon) | \`SHELFY-${VER}-arm64.dmg\` |"
             echo "| **Linux** | \`SHELFY-${VER}-x86_64.AppImage\` |"
-            echo "| **Windows** | self-rebuild installer — see [docs/install.md](docs/install.md) |"
+            echo "| **Windows** | \`SHELFY-Setup-${VER}.exe\` — download & run (unsigned: accept the SmartScreen prompt) |"
             echo
             echo "> The \`*.yml\`, \`*.json\` and \`*.tar.gz\` assets are read by the in-app auto-updater — you can ignore them."
             echo
