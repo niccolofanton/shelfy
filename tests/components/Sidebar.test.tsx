@@ -102,7 +102,7 @@ describe('Sidebar', () => {
     it('labels the three add actions with verb-first copy', () => {
       setup();
       expect(screen.getByTestId('browser-tab-add-site')).toHaveTextContent('Aggiungi sito');
-      expect(screen.getByTestId('browser-tab-add-bookmark')).toHaveTextContent('Aggiungi bookmark');
+      expect(screen.getByTestId('browser-tab-add-bookmark')).toHaveTextContent('Aggiungi file');
       expect(screen.getByTestId('add-source-btn')).toHaveTextContent('Nuova cartella');
     });
 
