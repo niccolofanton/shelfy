@@ -18,7 +18,8 @@ about, entirely offline.
   <img src="https://img.shields.io/badge/SQLite-better--sqlite3-003B57?logo=sqlite&logoColor=white" alt="SQLite" />
   <img src="https://img.shields.io/badge/AI-on--device-7B5CFF" alt="On-device AI" />
   <img src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-supported-444" alt="Platforms" />
-  <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0" /></a>
+  <a href="https://github.com/niccolofanton/shelfy/stargazers"><img src="https://img.shields.io/github/stars/niccolofanton/shelfy?style=flat&logo=github&color=7B5CFF" alt="GitHub stars" /></a>
 </p>
 
 **by Niccolò Fanton**
@@ -54,7 +55,7 @@ about, entirely offline.
 ## Highlights
 
 - **100% on-device AI, no cloud, no Python.** A bundled `llama.cpp` server runs a quantized vision
-  model (default Qwen3-VL 4B, five selectable models up to Gemma 12B) and auto-tags every saved
+  model (default Qwen3-VL 4B, four selectable models up to Gemma 4 12B) and auto-tags every saved
   item — images, carousels, videos (via `ffmpeg` keyframes) and text-only posts.
 - **Passive, credential-free capture.** You log in inside a hardened embedded browser; Shelfy reads
   the platforms' own saved/bookmark API responses. No pixel scraping, no API keys, and your
@@ -141,9 +142,9 @@ SSRF guard on every request. A queue you control (live progress, per-row cancel/
 All / Missing / Pause / Resume / Clear) survives restarts and skips assets already on disk.
 
 **On-device AI tagging (Auto-tag)** — A bundled `llama.cpp` server loads a quantized GGUF vision
-model, queried over an OpenAI-compatible endpoint with **JSON-schema-constrained** output. Five
-selectable models in Settings: Qwen3-VL 4B (default), Qwen3-VL 8B (recommended), Gemma 3 4B, Gemma 3
-12B and Gemma 12B. Every item gets a description, general/specific tag tiers, entities, keywords, a
+model, queried over an OpenAI-compatible endpoint with **JSON-schema-constrained** output. Four
+selectable models in Settings: Qwen3-VL 4B (default), Qwen3-VL 8B (recommended), Gemma 4 E4B and
+Gemma 4 12B. Every item gets a description, general/specific tag tiers, entities, keywords, a
 save reason and a detected language, via a live queue with parallel inference (1–10),
 pause/resume/retry and restart recovery.
 
@@ -330,7 +331,7 @@ See **[docs/windows.md](docs/windows.md)** for the full guide.
 ## Auto-update
 
 Shelfy updates itself from a public **GitHub Releases** feed, polled every 60s. State surfaces via a
-non-intrusive toast and in *Settings → Aggiornamenti* (`electron/updater.js`). All artifacts are
+non-intrusive toast and in *Settings → Aggiornamenti* (`electron/updater.ts`). All artifacts are
 **sha512-verified**, the updater refuses any non-HTTPS feed, and two channels (**Stable**, **Beta**)
 are persisted by the main process.
 
