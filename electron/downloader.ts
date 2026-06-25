@@ -25,21 +25,22 @@ const REFERERS: Record<string, string> = {
 };
 const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp'];
 
-// Global slot cap (anonymous image fetches, X, etc.). Instagram is throttled
-// harder below: hammering the user's logged-in IG account with parallel
-// downloads is the surest way to get it flagged or banned.
-const CONCURRENCY = 3;
+// Global slot cap. Downloads are anonymous now (no account to protect), so we no
+// longer serialize Instagram to 1 — but the cap stays moderate (not "full gas")
+// so a bulk run can't earn the user's IP a 429 / temporary CDN block. The login
+// fallback is throttled separately, on its own serialized lane (see withLoginLane).
+const CONCURRENCY = 4;
 
-// Per-platform running-job cap; platforms not listed use CONCURRENCY. Instagram
-// is serialized to 1 so video pulls happen strictly one-at-a-time on the
-// authenticated session, mimicking human browsing instead of a burst.
-const PLATFORM_CONCURRENCY: Record<string, number> = { instagram: 1 };
+// Per-platform running-job cap; platforms not listed use CONCURRENCY. Empty now:
+// nothing is serialized at the queue level anymore. The only path that must stay
+// single-file — the authenticated cookie fallback — self-serializes via withLoginLane.
+const PLATFORM_CONCURRENCY: Record<string, number> = {};
 
 // Anti-ban pacing handed to yt-dlp (seconds). --sleep-requests spaces the
 // metadata/extraction calls; --sleep-interval/--max-sleep-interval add a
-// randomized pause before each media download. Randomization matters: a fixed
-// cadence is itself a fingerprint. Only affects video (yt-dlp); anonymous image
-// fetches are left untouched.
+// randomized pause before each media download (a fixed cadence is itself a
+// fingerprint). Applied ONLY on the authenticated cookie fallback (runYtDlp's
+// `paced` option) — the default anonymous path runs unthrottled.
 const YTDLP_SLEEP_REQUESTS = '1.5';
 const YTDLP_SLEEP_MIN = '2';
 const YTDLP_SLEEP_MAX = '6';
@@ -60,16 +61,15 @@ const IMAGE_FETCH_HEADERS: Record<string, string> = {
   'Sec-Fetch-Site': 'cross-site',
 };
 
-// Human-like pacing for direct image/thumbnail fetches on authenticated,
-// ban-prone platforms (yt-dlp already self-paces video, see YTDLP_SLEEP_*). A
-// burst of carousel slides pulled back-to-back is a bot signal even when the
-// requests are cookie-less, because they still share the user's IP + a social
-// Referer. The pause is randomized [min,max] ms so a fixed cadence isn't itself
-// a fingerprint. Platforms not listed (X, anonymous web) keep firing at the
-// global concurrency with no added delay.
+// Small jitter before direct image/thumbnail fetches on the higher-volume CDNs.
+// Image fetches are anonymous (cookie-less), so there's no account at stake — this
+// is only a light brake on the user's IP so a bulk carousel pull doesn't burst into
+// a 429. Kept deliberately small (conservative profile chosen in the design Q&A);
+// randomized [min,max] ms so the cadence isn't a fixed fingerprint. Platforms not
+// listed fire at full concurrency with no delay.
 const IMAGE_PACING_MS: Record<string, [number, number]> = {
-  instagram: [400, 1300],
-  pinterest: [250, 900],
+  instagram: [120, 400],
+  pinterest: [120, 400],
 };
 
 // Pacing is real wall-clock time, which would push the test suite (50-tick
@@ -333,17 +333,17 @@ async function clearAllAssets(): Promise<void> {
   ensureDirs();
 }
 
-// ─── Cookies from the in-app webview session ────────────────────────────────────
+// ─── Cookie fallback for login-walled media ─────────────────────────────────────
 //
-// Neither Instagram nor X/Twitter serve full media to anonymous sessions:
-// Instagram fails with "Unable to extract video url", and X hides video from
-// the guest API for sensitive/age-gated tweets ("No video could be found in
-// this tweet"). The app's Browser tab logs in via the `persist:social`
-// session, so we export those cookies into a Netscape cookies.txt and hand it
-// to yt-dlp. The jar holds every domain's cookies, but we scope each export to
-// only the platform being downloaded (see writeSessionCookieFile) so yt-dlp
-// never receives cookies for unrelated sites.
+// The default video path is fully ANONYMOUS (see runYtDlp / execVideo) — driving
+// downloads with the logged-in `persist:social` session is the one thing that
+// risks getting the user's account flagged or banned. We fall back to the session
+// cookies ONLY when the anonymous attempt fails with an explicit login / age /
+// private error (see NEEDS_LOGIN_RE), and only for that single retry — paced and
+// serialized (withLoginLane) so the account is touched as little as possible.
+// Public media never reaches here.
 
+// Serializes one Netscape cookie line, as yt-dlp's --cookies file expects.
 function toNetscapeLine(c: Electron.Cookie): string {
   const domain = c.domain || '';
   const includeSub = domain.startsWith('.') ? 'TRUE' : 'FALSE';
@@ -360,9 +360,8 @@ function toNetscapeLine(c: Electron.Cookie): string {
 }
 
 // Registrable domains whose cookies yt-dlp legitimately needs, per platform.
-// Used to scope the exported cookies.txt to the target platform instead of
-// dumping the whole session jar (which holds every site visited in the in-app
-// Browser) — a smaller blast radius if the file ever leaks or yt-dlp is steered.
+// Scopes the exported cookies.txt to the target platform instead of dumping the
+// whole session jar — a smaller blast radius if the file ever leaks.
 const PLATFORM_COOKIE_DOMAINS: Record<string, string[]> = {
   instagram: ['instagram.com', 'cdninstagram.com', 'facebook.com', 'fbcdn.net'],
   twitter: ['x.com', 'twitter.com', 'twimg.com'],
@@ -385,10 +384,9 @@ function cookieTmpDir(): string {
   return path.join(app.getPath('userData'), 'tmp-cookies');
 }
 
-// Writes a throwaway cookies.txt for the current download and returns its path,
-// or null if the session has no cookies for the platform. The jar is filtered to
-// only the platform's domains so yt-dlp never receives cookies for unrelated
-// sites. Caller is responsible for deleting it.
+// Writes a throwaway cookies.txt filtered to the platform's domains and returns
+// its path, or null when the session holds no cookies for the platform (i.e. the
+// user isn't logged in — the fallback then can't proceed). Caller deletes it.
 async function writeSessionCookieFile(platform: string): Promise<string | null> {
   const all = await session.fromPartition(PARTITION).cookies.get({});
   const cookies = platform ? all.filter((c) => cookieMatchesPlatform(c, platform)) : all;
@@ -583,11 +581,11 @@ function runYtDlp(
   outputPath: string,
   onProgress: ((pct: number) => void) | undefined,
   signal: AbortSignal | undefined,
-  cookieFile: string | null,
+  opts: { cookieFile?: string | null; paced?: boolean } = {},
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     // A signal can already be aborted before we get here (e.g. the job was
-    // cancelled during execVideo's cookie-file await): never spawn in that case.
+    // cancelled before the worker reached this point): never spawn in that case.
     if (signal?.aborted) {
       reject(Object.assign(new Error('AbortError'), { name: 'AbortError' }));
       return;
@@ -598,18 +596,24 @@ function runYtDlp(
     const args = [
       '--no-playlist',
       '--newline',
-      // Present the same browser identity the cookies were minted under.
+      // A realistic desktop-Chrome identity; a default yt-dlp UA is a bot signal.
       '--user-agent',
       UA,
-      // Human-like pacing to avoid tripping rate limits / bans (see constants).
-      '--sleep-requests',
-      YTDLP_SLEEP_REQUESTS,
-      '--sleep-interval',
-      YTDLP_SLEEP_MIN,
-      '--max-sleep-interval',
-      YTDLP_SLEEP_MAX,
     ];
-    if (cookieFile) args.push('--cookies', cookieFile);
+    // Anti-ban pacing ONLY on the authenticated fallback: when we're forced to use
+    // the user's session cookies we slow down to mimic human browsing. The default
+    // anonymous path stays unthrottled — there's no account to protect.
+    if (opts.paced) {
+      args.push(
+        '--sleep-requests',
+        YTDLP_SLEEP_REQUESTS,
+        '--sleep-interval',
+        YTDLP_SLEEP_MIN,
+        '--max-sleep-interval',
+        YTDLP_SLEEP_MAX,
+      );
+    }
+    if (opts.cookieFile) args.push('--cookies', opts.cookieFile);
     // The `--` end-of-options marker guarantees yt-dlp can never interpret the
     // (post-supplied, untrusted) URL as an option — e.g. a postUrl beginning
     // with `-` such as `--exec=...` would otherwise be a command-injection vector.
@@ -768,6 +772,30 @@ function cleanupVideoIntermediates(dest: string): void {
   }
 }
 
+// yt-dlp error fragments that mean "this needs an authenticated session" — an age
+// gate, a private account, or an explicit login wall. ONLY these trigger the cookie
+// fallback; transient failures (network, 429, CDN) must never reach for the account.
+const NEEDS_LOGIN_RE =
+  /age[-\s]?restrict|must be 18|login required|log ?in to|sign in to|rerun .*--cookies|requires? .*log\s?in|is private|private (?:account|video|profile|user)|only available .*registered users|restricted video/i;
+
+function needsLogin(message: string | undefined): boolean {
+  return NEEDS_LOGIN_RE.test(message || '');
+}
+
+// The cookie fallback runs ONE download at a time (decided in the design Q&A):
+// even when the anonymous path is at full concurrency, authenticated pulls go
+// strictly one-by-one so the account never shows a burst. A promise chain is a
+// sufficient mutex — the fallback is rare.
+let loginLaneTail: Promise<void> = Promise.resolve();
+function withLoginLane<T>(fn: () => Promise<T>): Promise<T> {
+  const result = loginLaneTail.then(fn, fn);
+  loginLaneTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
 async function execVideo(
   post: Shelfy.Post,
   key: string,
@@ -788,34 +816,55 @@ async function execVideo(
   if (fs.existsSync(dest)) return { videoPath: dest };
 
   const videoUrl = platform === 'twitter' ? normalizeVideoUrl(post.postUrl) : post.postUrl;
-  const cookieFile = await writeSessionCookieFile(platform);
   // Collapse yt-dlp's per-line progress (--newline, dozens-hundreds of lines)
   // to whole-percent steps so a video doesn't patch the job hundreds of times.
   let lastPct = -1;
+  const onProgress = (pct: number): void => {
+    const rounded = Math.round(pct);
+    if (rounded === lastPct) return;
+    lastPct = rounded;
+    patchJob(key, { progress: pct / 100 });
+  };
+
+  // Stage A — anonymous, unthrottled. Covers all public media (the vast majority)
+  // without ever touching the user's account.
   try {
-    await runYtDlp(
-      videoUrl,
-      dest,
-      (pct) => {
-        const rounded = Math.round(pct);
-        if (rounded === lastPct) return;
-        lastPct = rounded;
-        patchJob(key, { progress: pct / 100 });
-      },
-      signal,
-      cookieFile,
+    await runYtDlp(videoUrl, dest, onProgress, signal);
+    return { videoPath: dest };
+  } catch (err) {
+    const e = err as { name?: string; message?: string } | undefined;
+    if (e?.name === 'AbortError') throw err;
+    // Only an explicit login / age-gate / private wall justifies spending the
+    // account. Anything else (network, 429, CDN) fails right here — no cookies.
+    if (!needsLogin(e?.message)) {
+      cleanupVideoIntermediates(dest);
+      throw err;
+    }
+  }
+
+  // Stage B — login fallback. The anonymous attempt hit a wall only an
+  // authenticated session can pass. Export the platform's session cookies and
+  // retry ONCE, paced and serialized through the login lane so the account shows
+  // as little activity as possible. No session signed in → nothing we can do.
+  cleanupVideoIntermediates(dest);
+  const cookieFile = await writeSessionCookieFile(platform);
+  if (!cookieFile) {
+    throw new Error(
+      `Login required for this ${platform} video, but no ${platform} session is signed in`,
+    );
+  }
+  lastPct = -1;
+  try {
+    await withLoginLane(() =>
+      runYtDlp(videoUrl, dest, onProgress, signal, { cookieFile, paced: true }),
     );
   } catch (err) {
-    // Pause/cancel leaves partials on purpose (resume reuses them); only purge
-    // after a real failure so the next retry isn't poisoned by a bad fragment.
     if ((err as { name?: string })?.name !== 'AbortError') cleanupVideoIntermediates(dest);
     throw err;
   } finally {
-    if (cookieFile) {
-      try {
-        fs.unlinkSync(cookieFile);
-      } catch {}
-    }
+    try {
+      fs.unlinkSync(cookieFile);
+    } catch {}
   }
   return { videoPath: dest };
 }

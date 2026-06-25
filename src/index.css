@@ -556,6 +556,96 @@ img {
     opacity var(--dur-2) var(--ease-out);
 }
 
+/* `.u-media-zoom` — card hover treatment: the MEDIA inside the tile eases up to
+   1.05 while the card itself stays put (no lift, no shadow, no resting border),
+   so hovering never casts the stray pale halo the old ring+lift combo produced.
+   Pair with the card's `group` + `overflow-hidden` (the scale is clipped to the
+   crop). Keeps an opacity transition too, so the blur-up fade-in still rides on
+   this same declaration (it replaces `.u-transition` on the cover image). */
+.u-media-zoom {
+  transition:
+    transform var(--dur-3) var(--ease-out),
+    opacity var(--dur-2) var(--ease-out);
+  transform-origin: center;
+}
+
+/* `.u-clip-aa` — kills the pale antialiased seam Chrome paints along a rounded
+   `overflow:hidden` box when its child sits on its OWN compositing layer (a
+   <video>, which is ALWAYS composited, or the cover <img> mid-zoom while its
+   transform is live). The browser then clips the composited child against the
+   parent's rounded rect and leaves a ~1px lighter fringe at that boundary — it's
+   the CLIP edge, not the media edge, so overscanning the media can't reach it.
+   Forcing an (opaque) mask layer makes the rounded clip rasterize together with
+   the content, antialiased cleanly against it instead of against nothing. White
+   keeps every pixel fully shown under both alpha- and luminance-mask modes. */
+.u-clip-aa {
+  -webkit-mask-image: linear-gradient(#fff, #fff);
+  mask-image: linear-gradient(#fff, #fff);
+}
+.group:hover .u-media-zoom {
+  transform: scale(1.05);
+}
+@media (prefers-reduced-motion: reduce) {
+  .group:hover .u-media-zoom {
+    transform: none;
+  }
+}
+
+/* ─── Search transition: cards dissolve out, results bloom in ───────────────────
+   Fired per-card by VirtualPostGrid / InfiniteCanvas off the useSearchTransition
+   phase when the QUERY changes (not paging). Exit accelerates away, enter
+   decelerates in; each card carries its own animation-delay so a row ripples
+   left→right instead of snapping. `both` holds the end state until React swaps
+   the set / settles to idle. */
+@keyframes u-search-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+}
+@keyframes u-search-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.u-search-out {
+  animation: u-search-out 180ms var(--ease-std) both;
+}
+.u-search-in {
+  animation: u-search-in var(--dur-3) var(--ease-out) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .u-search-out,
+  .u-search-in {
+    animation: none;
+  }
+}
+
+/* ─── Push drawer track ────────────────────────────────────────────────────────
+   A side panel that opens/closes by animating its WIDTH (0 ↔ open) instead of
+   unmounting, so it slides in and out. The panel content sits at a fixed width,
+   pinned to the track's right edge inside `overflow-hidden`, so it reveals from
+   that edge (a true right-drawer feel) and never squashes mid-animation. Columns
+   don't reflow: the grid's column count keys off window width, not this panel. */
+.u-drawer-track {
+  transition: width var(--dur-3) var(--ease-emphasized);
+  will-change: width;
+}
+@media (prefers-reduced-motion: reduce) {
+  .u-drawer-track {
+    transition: none;
+  }
+}
+
 /* ─── Exit keyframes & classes ─────────────────────────────────────────────
    Mirror the entrances so things LEAVE as deliberately as they arrive. Use
    `forwards` so the element holds its vanished state until React unmounts it. */
@@ -712,16 +802,11 @@ img {
   animation: u-fade-in var(--dur-2) var(--ease-out) both;
 }
 
-/* Coherent keyboard focus ring across the whole app. Pointer clicks don't
-   trigger :focus-visible, so this only shows for keyboard/AT users. */
+/* Focus rings intentionally suppressed app-wide (per design): no accent outline
+   on keyboard/AT focus. Note this drops the visible focus indicator — a11y
+   trade-off accepted by the product owner. `outline:none` also kills the browser
+   default so nothing shows in its place. */
 :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-/* Inputs already signal focus via border colour — avoid the doubled ring. */
-input:focus-visible,
-textarea:focus-visible {
   outline: none;
 }
 
@@ -787,4 +872,47 @@ textarea:focus-visible {
   .u-press:active {
     transform: none;
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   FRAMELESS WINDOW CHROME — drag regions for the custom title bar.
+   The window has no native frame, so the OS needs an explicit "grab here to move
+   the window" surface. Mark a container `.drag-region`; everything interactive
+   inside it MUST stay clickable, so opt every control out of dragging by default
+   (a single rule, instead of annotating each button). `.no-drag` is the manual
+   escape hatch for non-element drag exclusions.
+   ───────────────────────────────────────────────────────────────────────────── */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   TEXT SELECTION — this is an app surface, not a document: chrome text (sidebar,
+   toolbar, card labels) is NOT selectable, so a stray drag never highlights the
+   UI. Form fields stay selectable everywhere (you must be able to select what you
+   type), and the post detail opts back in via `.select-text` so captions /
+   AI descriptions can be copied.
+   ───────────────────────────────────────────────────────────────────────────── */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+}
+input,
+textarea,
+[contenteditable='true'],
+.select-text,
+.select-text * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+.no-drag,
+button,
+a,
+input,
+select,
+textarea,
+[role='button'],
+[role='menuitem'],
+[contenteditable='true'] {
+  -webkit-app-region: no-drag;
 }

@@ -68,6 +68,10 @@ export default {
     // Model picker (background download note)
     downloadInProgressNote: 'Download in corso… puoi continuare a usare un modello già scaricato.',
 
+    // AI search-suggestions toggle (AI section)
+    aiSuggestTitle: 'Suggerimenti di ricerca AI',
+    aiSuggestDesc:
+      'Mentre cerchi, un modello locale propone tag correlati da aggiungere ai filtri. Disattivato di default: avvia il modello a ogni ricerca, quindi è pesante.',
     // ModelPicker titles/descriptions (AI section)
     vlmTitle: 'Modello di analisi AI',
     vlmDesc:
@@ -263,6 +267,10 @@ export default {
     downloadInProgressNote:
       'Download in progress… you can keep using a model that’s already downloaded.',
 
+    // AI search-suggestions toggle (AI section)
+    aiSuggestTitle: 'AI search suggestions',
+    aiSuggestDesc:
+      'While you search, a local model proposes related tags to add to the filters. Off by default: it spins up the model on every search, so it’s heavy.',
     // ModelPicker titles/descriptions (AI section)
     vlmTitle: 'AI analysis model',
     vlmDesc:

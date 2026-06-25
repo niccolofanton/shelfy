@@ -214,11 +214,13 @@ describe('PostCard', () => {
       expect(container.querySelector('.h-20')).toBeNull();
     });
 
-    it('defines the card edge with a hairline ring when not selected', () => {
+    it('has no resting ring when not selected', () => {
+      // The hover treatment is now a pure internal media zoom — no resting hairline
+      // ring and no accent ring at rest; the card edge is its own fill on the grid.
       render(<PostCard post={basePost} onOpen={vi.fn()} />);
       const card = screen.getByTestId('post-card');
-      expect(card.className).toContain('ring-1 ring-white/[0.06]');
       expect(card.className).not.toContain('ring-2 ring-[#7B5CFF]');
+      expect(card.className).not.toContain('ring-1 ring-white/[0.06]');
     });
 
     it('replaces the hairline ring with the accent ring when selected', () => {

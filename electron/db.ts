@@ -2544,6 +2544,44 @@ function updateMediaPath(
   invalidateStatsCache();
 }
 
+// For capture-on-view (electron/capture-mvp): locate the post/slide a captured
+// image belongs to, by its file basename. Reads through the LIVE rw connection so
+// it sees posts the sync just inserted via bulkUpsert (a separate read-only
+// connection lags behind and would mis-skip). Returns the slot + current local
+// paths so the caller can re-save when the file isn't local yet, and null when no
+// post carries that basename (image arrived before its data — caller can retry).
+type CaptureSlot = {
+  postId: string;
+  platform: string;
+  shortcode: string | null;
+  mediaType: string;
+  mediaCount: number;
+  position: number;
+  thumbPath: string | null;
+  imgPath: string | null;
+};
+function captureFindSlot(basename: string): CaptureSlot | null {
+  if (!db || !basename) return null;
+  const m = db
+    .prepare(
+      `SELECT p.id AS postId, p.platform AS platform, p.shortcode AS shortcode,
+              p.media_type AS mediaType, p.media_count AS mediaCount, mm.position AS position,
+              p.thumbnail_path AS thumbPath, p.image_path AS imgPath
+       FROM post_media mm JOIN posts p ON p.id = mm.post_id
+       WHERE mm.source_url LIKE '%' || ? || '%' LIMIT 1`,
+    )
+    .get(basename) as CaptureSlot | undefined;
+  if (m) return m;
+  const t = db
+    .prepare(
+      `SELECT id AS postId, platform, shortcode, media_type AS mediaType, media_count AS mediaCount,
+              thumbnail_path AS thumbPath, image_path AS imgPath
+       FROM posts WHERE thumbnail_url LIKE '%' || ? || '%' LIMIT 1`,
+    )
+    .get(basename) as Omit<CaptureSlot, 'position'> | undefined;
+  return t ? { ...t, position: 0 } : null;
+}
+
 // Serialize an array field for storage: undefined → skip (handled by caller),
 // null → explicit NULL, otherwise a JSON array string (coercing non-arrays to []).
 function serializeArrayField(v: unknown[] | null): string | null {
@@ -5893,6 +5931,7 @@ export {
   getStats,
   updatePaths,
   updateMediaPath,
+  captureFindSlot,
   listPostsMissingThumbBlur,
   setThumbBlur,
   extractContentTerms,

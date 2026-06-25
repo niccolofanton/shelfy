@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
+import WindowControls from './components/WindowControls';
 import Gallery from './views/Gallery';
 import AddSiteModal from './components/AddSiteModal';
 import AddBookmarkModal from './components/AddBookmarkModal';
@@ -123,6 +124,12 @@ const VIEW_IDS: ViewId[] = [
 // The AI tabs gated by the first-run onboarding: until the local pipeline is
 // fully configured they show the setup wizard instead of their own content.
 const AI_VIEW_IDS: ViewId[] = ['aitags', 'aiqueue', 'aiweb', 'aisearch'];
+
+// Frameless chrome: Windows/Linux get custom min/maximize/close buttons; macOS
+// uses its native traffic lights (so no custom cluster there). Platform is fixed
+// for the process lifetime, so resolve it once at module load.
+const customWindowControls =
+  typeof window !== 'undefined' && !!window.electronAPI && window.electronAPI.platform !== 'darwin';
 
 // Memo wrappers for the always-/keep-alive-mounted children: App re-renders on
 // every coalesced progress flush, so each view must only reconcile when its own
@@ -646,7 +653,15 @@ function AppInner(): React.JSX.Element {
       save={saveSrc}
       web={webSrc}
     >
-      <div className="flex h-screen w-screen overflow-hidden bg-[#0f0f0f]">
+      <div className="relative flex h-screen w-screen overflow-hidden bg-[#0f0f0f]">
+        {/* Frameless window controls — Windows/Linux only (macOS uses its native
+          traffic lights). Floats over the top-right corner of the shell; the
+          gallery toolbar reserves room for it (see Gallery's needsWinControls). */}
+        {customWindowControls && (
+          <div className="absolute top-0 right-0 z-50 no-drag">
+            <WindowControls />
+          </div>
+        )}
         {import.meta.env.DEV && devBarVisible && (
           <div className="u-fade-in-down fixed bottom-0 left-0 right-0 z-50 bg-yellow-400/90 text-black text-xs text-center py-1 px-3 font-mono">
             {t('devUpdated', { time: lastUpdate })}

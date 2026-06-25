@@ -72,7 +72,7 @@ export default function MediaCarousel({
               tabIndex={0}
               aria-label={t('zoomFullscreen')}
               title={t('clickToZoomFullscreen')}
-              className="w-full h-auto block cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+              className="w-full h-auto block cursor-zoom-in focus:outline-none"
               draggable={false}
             />
           ) : media.kind === 'video' ? (
@@ -199,7 +199,7 @@ export default function MediaCarousel({
           tabIndex={0}
           aria-label={t('zoom')}
           title={t('clickToZoom')}
-          className="u-fade-in max-w-full max-h-full object-contain cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/60"
+          className="u-fade-in max-w-full max-h-full object-contain cursor-zoom-in focus:outline-none"
         />
       )}
       {media.kind === 'webview' &&

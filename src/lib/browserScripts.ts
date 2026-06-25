@@ -9,109 +9,82 @@ export interface ScriptWebview {
   executeJavaScript(code: string): Promise<unknown>;
 }
 
-// Per-platform DOM-aware scroll scripts — mirrors the extension's approach.
-// Uses scrollIntoView() on specific elements to trigger virtual-scroll loading,
-// and stall-detects via window.__lastInterceptAt (set by webview-preload on each intercept).
+// Per-platform GRADUAL scroll scripts. A jump-to-last-element scroll is fast at
+// driving the virtual loader for DATA (JSON), but it skips past the intermediate
+// posts so their <img> never enter the viewport and never load — leaving the
+// on-view capture nothing to grab. These instead step DOWN ~0.55 viewport at a
+// time and pause, so every lazy-loaded image passes through the viewport and is
+// fetched by the browser (the capture then reads it from the network buffer — no
+// extra download). When a step can't advance (bottom of mounted content) we pull
+// the last tile into view to nudge the virtual loader, then wait a touch longer.
+//
+// TWO PASSES: the 1st loads ~all images top→bottom; the 2nd jumps back to the top
+// and repeats, catching the few the 1st skipped — IG virtualises aggressively (some
+// posts mount/unmount before their <img> finishes), and the very first screen can
+// load before the CDP capture is armed. Crucially those misses NEVER loaded, so
+// they're NOT cached: on the 2nd pass they load for real and get captured. Images
+// already grabbed ARE cached → no new request → harmlessly not re-captured.
+//
+// A pass ends at the real bottom (no new captures AND no scroll progress); we never
+// stall while still advancing. Stall-detects via window.__lastInterceptAt.
+function gradualScroll(lastSelector: string, settleMs: number): string {
+  return `
+    window.__syncStop = false;
+    window.__lastInterceptAt = window.__lastInterceptAt || Date.now();
+    (async () => {
+      const SETTLE_MS = ${settleMs};
+      const STALL_MS = 20000;
+      const MAX_STALLS = 3;
+      const MAX_RUN_MS = 30 * 60 * 1000;   // hard wall-clock ceiling (30 min)
+      const MAX_ITERS = 16000;             // shared across passes
+      const NO_GROWTH_LIMIT = 60;          // a pass ends after this many stuck steps
+      const PASSES = 2;
+      const sel = ${JSON.stringify(lastSelector)};
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      const startedAt = Date.now();
+      let iters = 0, done = false;
+      for (let pass = 0; pass < PASSES && !window.__syncStop && !done; pass++) {
+        if (pass > 0) { window.scrollTo(0, 0); await sleep(900); } // 2nd pass: re-scan from top
+        let stalls = 0, noGrowth = 0;
+        let lastCount = (window.__ssCapturedOrder || []).length;
+        while (!window.__syncStop) {
+          if (++iters > MAX_ITERS || Date.now() - startedAt > MAX_RUN_MS) { done = true; break; }
+          const beforeY = window.scrollY;
+          window.scrollBy(0, Math.floor(window.innerHeight * 0.55));
+          let extra = 0;
+          if (window.scrollY <= beforeY + 2) {
+            const items = document.querySelectorAll(sel);
+            const last = items[items.length - 1];
+            if (last) last.scrollIntoView({ behavior: 'instant', block: 'end' });
+            extra = 500;
+          }
+          await sleep(SETTLE_MS + extra);
+          const count = (window.__ssCapturedOrder || []).length;
+          const advanced = window.scrollY > beforeY + 2;
+          const grew = count > lastCount || advanced;
+          if (count > lastCount) lastCount = count;
+          if (grew) noGrowth = 0;
+          else if (++noGrowth >= NO_GROWTH_LIMIT) break; // bottom of this pass
+          // Stall only when stuck AND no fresh data intercepts — never while still
+          // advancing (the data replay finishes long before the image scroll does).
+          if (!advanced && Date.now() - window.__lastInterceptAt > STALL_MS) {
+            if (++stalls >= MAX_STALLS) break;
+          } else {
+            stalls = 0;
+          }
+        }
+      }
+    })()
+  `;
+}
+
 export const SCROLL_SCRIPTS: Record<'instagram' | 'twitter' | 'pinterest', string> = {
-  instagram: `
-    window.__syncStop = false;
-    window.__lastInterceptAt = window.__lastInterceptAt || Date.now();
-    (async () => {
-      const STALL_MS = 20000;
-      const MAX_STALLS = 3;
-      const MAX_RUN_MS = 30 * 60 * 1000;   // hard wall-clock ceiling (30 min)
-      const MAX_ITERS = 4000;              // hard iteration ceiling
-      const NO_GROWTH_LIMIT = 40;          // stop after this many iters with no new captures
-      const startedAt = Date.now();
-      let stalls = 0, iters = 0, noGrowth = 0;
-      let lastCount = (window.__ssCapturedOrder || []).length;
-      while (!window.__syncStop) {
-        if (++iters > MAX_ITERS || Date.now() - startedAt > MAX_RUN_MS) break;
-        const loader = document.querySelector('[data-visualcompletion="loading-state"]');
-        if (loader) {
-          loader.scrollIntoView({ behavior: 'instant', block: 'center' });
-        } else {
-          const posts = document.querySelectorAll('a[href^="/p/"]');
-          const last = posts[posts.length - 1];
-          if (last) last.scrollIntoView({ behavior: 'instant', block: 'start' });
-          else window.scrollBy(0, window.innerHeight * 0.8);
-        }
-        await new Promise(r => setTimeout(r, 1000));
-        const count = (window.__ssCapturedOrder || []).length;
-        if (count > lastCount) { lastCount = count; noGrowth = 0; }
-        else if (++noGrowth >= NO_GROWTH_LIMIT) break;
-        if (Date.now() - window.__lastInterceptAt > STALL_MS) {
-          if (++stalls >= MAX_STALLS) break;
-        } else {
-          stalls = 0;
-        }
-      }
-    })()
-  `,
-  twitter: `
-    window.__syncStop = false;
-    window.__lastInterceptAt = window.__lastInterceptAt || Date.now();
-    (async () => {
-      const STALL_MS = 20000;
-      const MAX_STALLS = 3;
-      const MAX_RUN_MS = 30 * 60 * 1000;   // hard wall-clock ceiling (30 min)
-      const MAX_ITERS = 4000;              // hard iteration ceiling
-      const NO_GROWTH_LIMIT = 40;          // stop after this many iters with no new captures
-      const startedAt = Date.now();
-      let stalls = 0, iters = 0, noGrowth = 0;
-      let lastCount = (window.__ssCapturedOrder || []).length;
-      while (!window.__syncStop) {
-        if (++iters > MAX_ITERS || Date.now() - startedAt > MAX_RUN_MS) break;
-        const articles = document.querySelectorAll('article[data-testid="tweet"]');
-        if (articles.length > 0) {
-          articles[articles.length - 1].scrollIntoView({ behavior: 'instant', block: 'end' });
-        } else {
-          window.scrollBy(0, window.innerHeight * 0.8);
-        }
-        await new Promise(r => setTimeout(r, 1200));
-        const count = (window.__ssCapturedOrder || []).length;
-        if (count > lastCount) { lastCount = count; noGrowth = 0; }
-        else if (++noGrowth >= NO_GROWTH_LIMIT) break;
-        if (Date.now() - window.__lastInterceptAt > STALL_MS) {
-          if (++stalls >= MAX_STALLS) break;
-        } else {
-          stalls = 0;
-        }
-      }
-    })()
-  `,
-  pinterest: `
-    window.__syncStop = false;
-    window.__lastInterceptAt = window.__lastInterceptAt || Date.now();
-    (async () => {
-      const STALL_MS = 20000;
-      const MAX_STALLS = 3;
-      const MAX_RUN_MS = 30 * 60 * 1000;   // hard wall-clock ceiling (30 min)
-      const MAX_ITERS = 4000;              // hard iteration ceiling
-      const NO_GROWTH_LIMIT = 40;          // stop after this many iters with no new captures
-      const startedAt = Date.now();
-      let stalls = 0, iters = 0, noGrowth = 0;
-      let lastCount = (window.__ssCapturedOrder || []).length;
-      while (!window.__syncStop) {
-        if (++iters > MAX_ITERS || Date.now() - startedAt > MAX_RUN_MS) break;
-        // Pinterest's masonry grid is virtualized; scroll the last mounted pin
-        // tile into view to drive the next BoardFeedResource fetch.
-        const pins = document.querySelectorAll('div[data-test-id="pin"], div[data-grid-item="true"], a[href*="/pin/"]');
-        const last = pins[pins.length - 1];
-        if (last) last.scrollIntoView({ behavior: 'instant', block: 'end' });
-        else window.scrollBy(0, window.innerHeight * 0.8);
-        await new Promise(r => setTimeout(r, 1000));
-        const count = (window.__ssCapturedOrder || []).length;
-        if (count > lastCount) { lastCount = count; noGrowth = 0; }
-        else if (++noGrowth >= NO_GROWTH_LIMIT) break;
-        if (Date.now() - window.__lastInterceptAt > STALL_MS) {
-          if (++stalls >= MAX_STALLS) break;
-        } else {
-          stalls = 0;
-        }
-      }
-    })()
-  `,
+  instagram: gradualScroll('a[href^="/p/"]', 650),
+  twitter: gradualScroll('article[data-testid="tweet"]', 750),
+  pinterest: gradualScroll(
+    'div[data-test-id="pin"], div[data-grid-item="true"], a[href*="/pin/"]',
+    650,
+  ),
 };
 
 // Instagram server-renders the FIRST page of a saved listing INLINE in the page

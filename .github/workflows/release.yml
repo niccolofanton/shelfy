@@ -24,7 +24,7 @@ on:
   workflow_dispatch: {} # allow a manual dry-run from the Actions tab
 
 # Least privilege at the workflow level: the build jobs run third-party code
-# (npm ci postinstall, electron-builder, cmake) and must NOT hold a write token.
+# (pnpm install postinstall, electron-builder, cmake) and must NOT hold a write token.
 # Only the final `release` job escalates to contents: write.
 permissions:
   contents: read
@@ -79,13 +79,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build renderer + app
         # electron-builder rebuilds native modules for Electron's ABI (npmRebuild,
@@ -130,13 +131,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
       # Install the pinned toolchain (tsx) without the heavy Chromium postinstall;
       # this job only does git-archive + hashing, so it needs no native build.
-      - run: npm ci --ignore-scripts
+      - run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Generate source feed
         run: |
@@ -164,13 +167,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build renderer + Windows installer
         shell: bash
@@ -215,13 +219,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
 
       - name: Install deps (provides ffmpeg-static)
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build whisper.cpp (Metal + server) from source
         run: |
@@ -261,13 +266,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: npm
+          cache: pnpm
 
       - name: Install deps (provides ffmpeg-static)
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build whisper.cpp (server) from source
         run: |

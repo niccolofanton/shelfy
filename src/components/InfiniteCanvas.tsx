@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PostCard from './PostCard';
 import { useGridSize } from '../hooks/useGridSize';
+import type { SearchPhase } from '../hooks/useSearchTransition';
 
 // ─── Infinite 2D canvas ───────────────────────────────────────────────────────
 // A free-pan / zoom surface that tiles the loaded posts INFINITELY in every
@@ -27,6 +28,10 @@ import { useGridSize } from '../hooks/useGridSize';
 
 interface InfiniteCanvasProps {
   posts: Shelfy.Post[];
+  // Ordered search transition phase (Gallery's useSearchSequence): 'out' fades the
+  // whole wall to 0, 'in'/'idle' shows it. Gallery swaps the pool to the new
+  // results while we're at 0, so the set never changes on screen mid-fade.
+  transitionPhase?: SearchPhase;
   onOpen: (post: Shelfy.Post, event?: React.SyntheticEvent) => void;
   selectable?: boolean;
   selected?: Set<string>;
@@ -90,8 +95,10 @@ const Tile = React.memo(function Tile({
 }: TileProps): React.JSX.Element {
   return (
     <div
-      // `grid` stretches the single child to fill the box so PostCard's
-      // aspect-square resolves to exactly `size` (mirrors VirtualPostGrid).
+      // `grid` stretches the single child to fill the box so PostCard's aspect-square
+      // resolves to exactly `size` (mirrors VirtualPostGrid). Search transitions are
+      // the world-level opacity crossfade (see below), not per-tile; tiles only carry
+      // the soft first-paint entrance.
       className={`absolute grid ${firstPaint ? 'u-canvas-tile' : ''}`}
       style={{ left, top, width: size, height: size }}
     >
@@ -108,6 +115,7 @@ const Tile = React.memo(function Tile({
 
 function InfiniteCanvas({
   posts,
+  transitionPhase = 'idle',
   onOpen,
   selectable = false,
   selected,
@@ -553,7 +561,16 @@ function InfiniteCanvas({
       <div
         ref={worldRef}
         className="absolute top-0 left-0"
-        style={{ transformOrigin: '0 0', willChange: 'transform' }}
+        // The rAF loop owns `transform` (written imperatively); React only sets
+        // opacity/transition here, so the two never fight. The whole wall fades to 0
+        // on 'out' and back on 'in'; Gallery (useSearchSequence) swaps the pool while
+        // we're hidden, so the set never changes on screen mid-fade.
+        style={{
+          transformOrigin: '0 0',
+          willChange: 'transform',
+          opacity: transitionPhase === 'out' ? 0 : 1,
+          transition: 'opacity 190ms ease',
+        }}
       >
         {tiles.map((tl) => {
           const post = posts[tl.index];

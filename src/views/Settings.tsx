@@ -23,9 +23,11 @@ import {
   MemoryStick,
   ShieldAlert,
   Scale,
+  Sparkles,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useDownloadPrefs } from '../hooks/useDownloadPrefs';
+import { useAiSuggestions } from '../hooks/useAiSuggestions';
 import ImportModal from '../components/ImportModal';
 import DisclaimerGate from '../components/DisclaimerGate';
 import LanguageCard from '../components/LanguageCard';
@@ -1887,6 +1889,29 @@ function AssetTypesCard({ prefs, setType }: AssetTypesCardProps) {
   );
 }
 
+// Opt-in toggle for the AI search-suggestion chips. Defaults OFF (see
+// useAiSuggestions) — running the local LLM on every keystroke-search is heavy,
+// so it stays a deliberate choice rather than always-on.
+function AiSuggestionsCard() {
+  const t = useT('settings');
+  const { enabled, setEnabled } = useAiSuggestions();
+  return (
+    <label className="u-press flex items-start gap-3 rounded-xl border border-[#242424] bg-[#161616] p-5 cursor-pointer select-none hover:bg-[#181818] transition-colors">
+      <Sparkles size={18} className="text-gray-400 mt-0.5 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-white text-sm font-medium">{t('aiSuggestTitle')}</p>
+        <p className="text-gray-500 text-xs mt-1 leading-relaxed">{t('aiSuggestDesc')}</p>
+      </div>
+      <input
+        type="checkbox"
+        checked={enabled}
+        onChange={(e) => setEnabled(e.target.checked)}
+        className="accent-[var(--accent)] w-4 h-4 mt-0.5 shrink-0 cursor-pointer"
+      />
+    </label>
+  );
+}
+
 interface SettingsProps {
   onDataCleared?: () => void;
 }
@@ -1920,6 +1945,7 @@ export default function Settings({ onDataCleared }: SettingsProps) {
 
           <SectionBlock title={t('sectionAi')} delay="40ms">
             <div className="flex flex-col gap-4">
+              <AiSuggestionsCard />
               <ModelPicker
                 icon={Cpu}
                 title={t('vlmTitle')}

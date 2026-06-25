@@ -90,11 +90,14 @@ interface Ipc {
   registerIpcHandlers: (win: {
     isDestroyed: () => boolean;
     webContents: { send: (...args: unknown[]) => void };
+    on: (...args: unknown[]) => void;
   }) => void;
 }
 
 const { registerIpcHandlers } = (await import('../../electron/ipc')) as Ipc;
-registerIpcHandlers({ isDestroyed: () => false, webContents: { send: vi.fn() } });
+// `on` is needed for the maximize/unmaximize listeners the custom title-bar wiring
+// registers on the window.
+registerIpcHandlers({ isDestroyed: () => false, webContents: { send: vi.fn() }, on: vi.fn() });
 
 const handlers = electronMock.handlers;
 const dialogMock = electronMock.dialog;

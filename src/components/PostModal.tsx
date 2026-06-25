@@ -359,7 +359,7 @@ export default function PostModal({
               : post.authorName || post.authorUsername || t('post')
           }
           tabIndex={-1}
-          className="u-dialog-in bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl flex flex-col w-full max-w-5xl h-[88vh] overflow-hidden focus:outline-none"
+          className="select-text u-dialog-in bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl flex flex-col w-full max-w-5xl h-[88vh] overflow-hidden focus:outline-none"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}

@@ -22,6 +22,10 @@ import ActivityCenter from './ActivityCenter';
 import FeedbackModal from './FeedbackModal';
 import { useT } from '../i18n';
 
+// Frameless chrome: macOS keeps native traffic lights (top-left), so the sidebar
+// reserves a draggable strip for them. Other platforms put controls top-right.
+const isMacChrome = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
+
 // Translator returned by useT — namespaced key + optional interpolation vars.
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
 
@@ -373,8 +377,15 @@ function Sidebar({
       data-testid="sidebar"
       className="flex flex-col w-[240px] min-w-[240px] h-full bg-[#111111] border-r border-[#2e2e2e] overflow-hidden select-none"
     >
-      {/* App header — pinned above the single scrolling menu */}
-      <div className="u-fade-in flex items-center gap-2.5 px-4 h-14 shrink-0">
+      {/* Frameless window: on macOS reserve a draggable top strip for the native
+          traffic lights (positioned here via trafficLightPosition in main.ts). On
+          Windows/Linux the custom controls live top-right (see App), so no strip. */}
+      {isMacChrome && <div className="drag-region h-9 shrink-0" />}
+
+      {/* App header — pinned above the single scrolling menu; doubles as the
+          window drag handle (its interactive children opt out via the global
+          no-drag rule). */}
+      <div className="drag-region u-fade-in flex items-center gap-2.5 px-4 h-14 shrink-0">
         <Logo size={20} />
         <div className="flex flex-col leading-tight">
           <span className="font-display text-white text-[15px] font-semibold tracking-wide">

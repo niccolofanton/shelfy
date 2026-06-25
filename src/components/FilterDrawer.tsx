@@ -146,7 +146,6 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
   onSelectSource,
 }: FilterDrawerProps<F>): React.JSX.Element | null {
   const t: Translate = useT('filterDrawer');
-  if (!open) return null;
 
   const MEDIA_TYPE_OPTIONS: SegmentedOption[] = [
     { value: 'all', label: t('mediaAll') },
@@ -230,67 +229,101 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
   );
 
   return (
-    <aside
-      data-testid="filter-drawer"
-      className="u-fade-in-right shrink-0 w-[280px] h-full bg-[#111111] border-l border-[#2e2e2e] flex flex-col overflow-hidden"
+    <div
+      // Width-animated track (see .u-drawer-track): opens/closes by sliding instead
+      // of unmounting. `pointer-events-none` + `aria-hidden` keep the hidden panel
+      // out of tab order / hit-testing when collapsed.
+      className={`u-drawer-track shrink-0 h-full relative overflow-hidden${
+        open ? '' : ' pointer-events-none'
+      }`}
+      style={{ width: open ? 280 : 0 }}
+      aria-hidden={!open}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 h-[52px] shrink-0 border-b border-[#2e2e2e]">
-        <span className="text-[13px] font-semibold text-gray-200">{t('title')}</span>
-        <div className="flex items-center gap-1">
-          {activeCount > 0 && (
+      <aside
+        data-testid="filter-drawer"
+        // Fixed width, pinned to the track's right edge so the panel reveals from
+        // there as the track widens (a true right-drawer slide), never squashing.
+        className="absolute top-0 right-0 w-[280px] h-full bg-[#111111] border-l border-[#2e2e2e] flex flex-col overflow-hidden"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 h-[52px] shrink-0 border-b border-[#2e2e2e]">
+          <span className="text-[13px] font-semibold text-gray-200">{t('title')}</span>
+          <div className="flex items-center gap-1">
+            {activeCount > 0 && (
+              <button
+                data-testid="drawer-reset"
+                onClick={() =>
+                  onFiltersChange({
+                    ...filters,
+                    mediaType: 'all',
+                    downloadStatus: 'all',
+                    aiTagged: 'all',
+                  })
+                }
+                className="u-press flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-200 transition-colors"
+              >
+                <RotateCcw size={12} />
+                {t('reset')}
+              </button>
+            )}
             <button
-              data-testid="drawer-reset"
-              onClick={() =>
-                onFiltersChange({
-                  ...filters,
-                  mediaType: 'all',
-                  downloadStatus: 'all',
-                  aiTagged: 'all',
-                })
-              }
-              className="u-press flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-200 transition-colors"
+              data-testid="drawer-close"
+              onClick={onClose}
+              title={t('closeTitle')}
+              className="u-press flex items-center justify-center w-6 h-6 rounded text-gray-500 hover:text-white hover:bg-[#1e1e1e] transition-colors"
             >
-              <RotateCcw size={12} />
-              {t('reset')}
+              <X size={15} />
             </button>
-          )}
-          <button
-            data-testid="drawer-close"
-            onClick={onClose}
-            title={t('closeTitle')}
-            className="u-press flex items-center justify-center w-6 h-6 rounded text-gray-500 hover:text-white hover:bg-[#1e1e1e] transition-colors"
-          >
-            <X size={15} />
-          </button>
+          </div>
         </div>
-      </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent p-3 space-y-4">
-        {/* Sources — mirror of the sidebar Bookmarks list */}
-        <div>
-          <SectionLabel icon={Bookmark}>{t('bookmarks')}</SectionLabel>
-          <div className="flex flex-col gap-0.5">
-            {sourceRow('all', {
-              active: isActive('platform', 'all'),
-              onClick: () => onSelectSource?.({ type: 'platform', value: 'all' }),
-              icon: <Grid3X3 size={15} className="shrink-0 text-gray-400" />,
-              label: t('allPosts'),
-              count: total,
-            })}
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent p-3 space-y-4">
+          {/* Sources — mirror of the sidebar Bookmarks list */}
+          <div>
+            <SectionLabel icon={Bookmark}>{t('bookmarks')}</SectionLabel>
+            <div className="flex flex-col gap-0.5">
+              {sourceRow('all', {
+                active: isActive('platform', 'all'),
+                onClick: () => onSelectSource?.({ type: 'platform', value: 'all' }),
+                icon: <Grid3X3 size={15} className="shrink-0 text-gray-400" />,
+                label: t('allPosts'),
+                count: total,
+              })}
 
-            {PLATFORM_ROWS.map(({ id, label, Icon }) => {
-              const children = collections.filter((c) => c.platform === id);
-              return (
-                <React.Fragment key={id}>
-                  {sourceRow(id, {
-                    active: isActive('platform', id),
-                    onClick: () => onSelectSource?.({ type: 'platform', value: id }),
-                    icon: <Icon size={15} className="shrink-0" />,
-                    label,
-                    count: byPlatform[id] ?? 0,
-                  })}
-                  {children.map((c) =>
+              {PLATFORM_ROWS.map(({ id, label, Icon }) => {
+                const children = collections.filter((c) => c.platform === id);
+                return (
+                  <React.Fragment key={id}>
+                    {sourceRow(id, {
+                      active: isActive('platform', id),
+                      onClick: () => onSelectSource?.({ type: 'platform', value: id }),
+                      icon: <Icon size={15} className="shrink-0" />,
+                      label,
+                      count: byPlatform[id] ?? 0,
+                    })}
+                    {children.map((c) =>
+                      sourceRow(`c${c.id}`, {
+                        active: isActive('collection', c.id),
+                        onClick: () =>
+                          onSelectSource?.({
+                            type: 'collection',
+                            value: c.id,
+                            label: c.name,
+                            color: c.color,
+                          }),
+                        dot: c.color,
+                        label: c.name,
+                        count: c.count ?? 0,
+                        nested: true,
+                      }),
+                    )}
+                  </React.Fragment>
+                );
+              })}
+
+              {customCollections.length > 0 && (
+                <div className="mt-1.5 flex flex-col gap-0.5">
+                  {customCollections.map((c) =>
                     sourceRow(`c${c.id}`, {
                       active: isActive('collection', c.id),
                       onClick: () =>
@@ -303,66 +336,45 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
                       dot: c.color,
                       label: c.name,
                       count: c.count ?? 0,
-                      nested: true,
                     }),
                   )}
-                </React.Fragment>
-              );
-            })}
+                </div>
+              )}
+            </div>
+          </div>
 
-            {customCollections.length > 0 && (
-              <div className="mt-1.5 flex flex-col gap-0.5">
-                {customCollections.map((c) =>
-                  sourceRow(`c${c.id}`, {
-                    active: isActive('collection', c.id),
-                    onClick: () =>
-                      onSelectSource?.({
-                        type: 'collection',
-                        value: c.id,
-                        label: c.name,
-                        color: c.color,
-                      }),
-                    dot: c.color,
-                    label: c.name,
-                    count: c.count ?? 0,
-                  }),
-                )}
-              </div>
-            )}
+          {/* Media / download / AI-tag filters (moved from the Filtri popover) */}
+          <div data-testid="drawer-mediatype">
+            <SectionLabel icon={Film}>{t('mediaType')}</SectionLabel>
+            <Segmented
+              cols={2}
+              options={MEDIA_TYPE_OPTIONS}
+              value={mediaType}
+              onChange={(val) => onFiltersChange({ ...filters, mediaType: val })}
+            />
+          </div>
+
+          <div data-testid="drawer-download">
+            <SectionLabel icon={HardDrive}>{t('downloadStatus')}</SectionLabel>
+            <Segmented
+              cols={3}
+              options={DOWNLOAD_OPTIONS}
+              value={downloadStatus}
+              onChange={(val) => onFiltersChange({ ...filters, downloadStatus: val })}
+            />
+          </div>
+
+          <div data-testid="drawer-aitags">
+            <SectionLabel icon={Sparkles}>{t('aiTags')}</SectionLabel>
+            <Segmented
+              cols={3}
+              options={AI_TAGS_OPTIONS}
+              value={aiTagged}
+              onChange={(val) => onFiltersChange({ ...filters, aiTagged: val })}
+            />
           </div>
         </div>
-
-        {/* Media / download / AI-tag filters (moved from the Filtri popover) */}
-        <div data-testid="drawer-mediatype">
-          <SectionLabel icon={Film}>{t('mediaType')}</SectionLabel>
-          <Segmented
-            cols={2}
-            options={MEDIA_TYPE_OPTIONS}
-            value={mediaType}
-            onChange={(val) => onFiltersChange({ ...filters, mediaType: val })}
-          />
-        </div>
-
-        <div data-testid="drawer-download">
-          <SectionLabel icon={HardDrive}>{t('downloadStatus')}</SectionLabel>
-          <Segmented
-            cols={3}
-            options={DOWNLOAD_OPTIONS}
-            value={downloadStatus}
-            onChange={(val) => onFiltersChange({ ...filters, downloadStatus: val })}
-          />
-        </div>
-
-        <div data-testid="drawer-aitags">
-          <SectionLabel icon={Sparkles}>{t('aiTags')}</SectionLabel>
-          <Segmented
-            cols={3}
-            options={AI_TAGS_OPTIONS}
-            value={aiTagged}
-            onChange={(val) => onFiltersChange({ ...filters, aiTagged: val })}
-          />
-        </div>
-      </div>
-    </aside>
+      </aside>
+    </div>
   );
 }

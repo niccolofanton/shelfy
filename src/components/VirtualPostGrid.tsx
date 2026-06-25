@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import PostCard from './PostCard';
 import { useGridSize, applyStep } from '../hooks/useGridSize';
+import type { SearchPhase } from '../hooks/useSearchTransition';
 
 // Row-virtualized grid of PostCards, shared by every post surface (Gallery,
 // AI Search results, Tags Explorer results). A grid of thousands of cards keeps
@@ -28,7 +29,16 @@ export function colsForWidth(w: number): number {
 
 interface VirtualPostGridProps {
   posts: Shelfy.Post[];
+  // Search-transition phase (from Gallery's useSearchTransition). 'out' dissolves
+  // the current cards, 'in' blooms the new set; 'idle' (default) leaves the normal
+  // first-paint entrance in charge.
+  transitionPhase?: SearchPhase;
   scrollRef: React.RefObject<HTMLDivElement | null> | null;
+  // Top content-inset (px). A surface with a floating/overlay header (e.g. the
+  // Gallery's frosted toolbar) passes its header height so the grid starts just
+  // below it and scrolls behind it. Fed to the virtualizer as `scrollMargin` so
+  // the windowing math stays exact; defaults to 0 (no inset) for every other use.
+  topInset?: number;
   onOpen: (post: Shelfy.Post, event?: React.SyntheticEvent) => void;
   selectable?: boolean;
   selected?: Set<string>; // Set<id> | undefined
@@ -51,7 +61,9 @@ interface VirtualPostGridProps {
 
 function VirtualPostGrid({
   posts,
+  transitionPhase = 'idle',
   scrollRef,
+  topInset = 0,
   onOpen,
   selectable = false,
   selected, // Set<id> | undefined
@@ -117,24 +129,55 @@ function VirtualPostGrid({
     // tick — a real jank source on fast flings.)
     estimateSize: () => rowHeight,
     overscan,
+    // The virtualized rows start `topInset` px into the scroll area (the wrapper's
+    // paddingTop below) — tell the virtualizer so its scrollOffset→row mapping
+    // accounts for it; row transforms subtract it back out.
+    scrollMargin: topInset,
   });
 
   // Column count changed (breakpoint OR zoom step) → row composition + heights
   // changed; discard cached row measurements so they re-measure at the new size.
-  // When it's a zoom change (not the first mount / a plain resize) we briefly
-  // flip `zooming` on so rows transition to their new positions and cards play a
-  // soft scale-in, instead of snapping. The window matches --dur-3 (320ms).
-  const [zooming, setZooming] = useState<boolean>(false);
-  const didMount = React.useRef<boolean>(false);
-  useEffect(() => {
+  //
+  // Zoom feel: a FLIP scale on the whole grid. The new (denser/sparser) layout is
+  // painted immediately, then we render it pre-scaled so it visually MATCHES the
+  // old card size, anchored on the current viewport centre, and animate that scale
+  // to 1 — so the grid appears to smoothly zoom in/out around where you're looking
+  // instead of snapping to a reflowed layout. One GPU transform on a single node,
+  // so it stays cheap; idle state carries no transform/transition at all.
+  const [zoom, setZoom] = useState<{ scale: number; origin: number; settling: boolean }>({
+    scale: 1,
+    origin: 0,
+    settling: false,
+  });
+  const didMount = useRef<boolean>(false);
+  const prevCols = useRef<number>(colsPerRow);
+  useLayoutEffect(() => {
     rowVirtualizer.measure();
     if (!didMount.current) {
       didMount.current = true;
+      prevCols.current = colsPerRow;
       return undefined;
     }
-    setZooming(true);
-    const t = setTimeout(() => setZooming(false), 340);
-    return () => clearTimeout(t);
+    if (prevCols.current === colsPerRow) return undefined;
+    // start scale = newCols/oldCols → the new layout, scaled by this, occupies the
+    // old card size; animating it to 1 lands on the true new size.
+    const startScale = colsPerRow / prevCols.current;
+    prevCols.current = colsPerRow;
+    const el = scrollRef?.current;
+    const vh = el?.clientHeight ?? 0;
+    const st = el?.scrollTop ?? 0;
+    // Anchor (in the inner wrapper's own coords) on the viewport centre so the zoom
+    // grows/shrinks around what the user is looking at, not the page top.
+    const origin = Math.max(0, st - topInset + vh / 2);
+    setZoom({ scale: startScale, origin, settling: false }); // jump to start, no transition
+    const raf = requestAnimationFrame(() =>
+      requestAnimationFrame(() => setZoom((z) => ({ ...z, scale: 1, settling: true }))),
+    );
+    const done = setTimeout(() => setZoom({ scale: 1, origin: 0, settling: false }), 380);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(done);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [colsPerRow]);
 
@@ -192,12 +235,29 @@ function VirtualPostGrid({
             // Global index of the card in `posts` — lets the drag-select resolve
             // which card the pointer is over from the event target alone.
             data-post-index={start + col}
-            // Only the initial rows get a soft staggered entrance, keyed off the
-            // column so a row ripples in left→right. Once `firstPaint` clears we
-            // render plain wrappers so scroll-mounted rows don't re-animate —
-            // except during a zoom change, when cards scale-in to the new size.
-            className={firstPaint ? 'u-fade-in' : zooming ? 'u-grid-zoom' : undefined}
-            style={firstPaint ? { animationDelay: `${col * 30}ms` } : undefined}
+            // A search transition takes precedence: cards dissolve out / bloom in
+            // with a per-column ripple (left→right). Otherwise only the initial rows
+            // get the soft staggered entrance (firstPaint); once it clears we render
+            // plain wrappers so scroll-mounted rows don't re-animate (the zoom change
+            // is handled by the grid-wide FLIP scale, not per card).
+            className={
+              transitionPhase === 'out'
+                ? 'u-search-out'
+                : transitionPhase === 'in'
+                  ? 'u-search-in'
+                  : firstPaint
+                    ? 'u-fade-in'
+                    : undefined
+            }
+            style={
+              transitionPhase === 'out'
+                ? { animationDelay: `${col * 14}ms` }
+                : transitionPhase === 'in'
+                  ? { animationDelay: `${col * 18}ms` }
+                  : firstPaint
+                    ? { animationDelay: `${col * 30}ms` }
+                    : undefined
+            }
           >
             <PostCard
               post={post}
@@ -224,11 +284,27 @@ function VirtualPostGrid({
       // select-none while in select mode: a drag-select sweep must not also
       // start a native text/image selection.
       className={selectable ? 'p-2 select-none' : 'p-2'}
+      // Content-inset for a floating header: push the first row down by topInset
+      // (overrides p-2's top padding). Paired with the virtualizer's scrollMargin
+      // so windowing stays exact. Undefined when topInset=0 → keep the p-2 gutter.
+      style={topInset ? { paddingTop: topInset } : undefined}
       onMouseDownCapture={onGridMouseDownCapture}
       onMouseOver={onGridMouseOver}
     >
       {windowed ? (
-        <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
+        <div
+          style={{
+            height: rowVirtualizer.getTotalSize(),
+            position: 'relative',
+            width: '100%',
+            // FLIP zoom: pre-scaled to the old card size, then animated to 1 (see
+            // the colsPerRow effect). Idle → no transform/transition at all.
+            transform: zoom.settling || zoom.scale !== 1 ? `scale(${zoom.scale})` : undefined,
+            transformOrigin: `50% ${zoom.origin}px`,
+            transition: zoom.settling ? 'transform var(--dur-3) var(--ease-emphasized)' : undefined,
+            willChange: zoom.settling ? 'transform' : undefined,
+          }}
+        >
           {virtualRows.map((vrow) => (
             <div
               key={vrow.key}
@@ -241,10 +317,9 @@ function VirtualPostGrid({
                 top: 0,
                 left: 0,
                 width: '100%',
-                transform: `translateY(${vrow.start}px)`,
-                // Slide rows to their new offsets on a zoom change only; never
-                // during scroll (would lag the virtualizer).
-                transition: zooming ? 'transform var(--dur-3) var(--ease-emphasized)' : undefined,
+                // Subtract scrollMargin (topInset): vrow.start includes it, but the
+                // wrapper's paddingTop already places row 0 below the header.
+                transform: `translateY(${vrow.start - topInset}px)`,
               }}
             >
               {renderRow(vrow.index)}

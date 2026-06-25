@@ -215,6 +215,17 @@ export interface SttTranscribeOpts {
 // The contextBridge surface exposed on `window.electronAPI`. Arguments mirror
 // electron/preload.ts; returns are traced from electron/ipc.js handlers.
 export interface ElectronAPI {
+  // ── Window chrome (frameless) ─────────────────────────────────────────────────
+  /** Host platform, read synchronously at preload time (e.g. 'darwin', 'win32', 'linux'). */
+  platform: string;
+  windowMinimize: () => Promise<void>;
+  /** Toggles maximize/restore; resolves to the resulting maximized state. */
+  windowMaximizeToggle: () => Promise<boolean>;
+  windowClose: () => Promise<void>;
+  windowIsMaximized: () => Promise<boolean>;
+  /** Subscribe to native maximize/unmaximize; returns an unsubscribe fn. */
+  onWindowMaximizeChange: (cb: (maximized: boolean) => void) => () => void;
+
   // ── DB ──────────────────────────────────────────────────────────────────────
   getPosts: (filters?: unknown) => Promise<PostSearchResult>;
   getPostIds: (filters?: unknown) => Promise<string[]>;

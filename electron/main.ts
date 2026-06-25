@@ -6,6 +6,7 @@ import { Readable } from 'stream';
 import { fileURLToPath, pathToFileURL } from 'url';
 import * as logger from './logger';
 import * as netSafety from './net-safety';
+import { attachCaptureSpike } from './capture-mvp';
 import {
   THUMB_EXTS,
   thumbnailFor,
@@ -355,6 +356,10 @@ function hardenWebContents(): void {
   app.on('web-contents-created', (_e, contents: WebContents) => {
     const type = contents.getType();
 
+    // SPIKE: prove the CDP path captures feed-image bytes (no-op unless
+    // SHELFY_CAPTURE_MVP=1). Remove with electron/capture-mvp.ts once validated.
+    if (type === 'webview') attachCaptureSpike(contents);
+
     // OAuth/login popups ("Continue with Google/Apple/Facebook") spawned from the
     // social webview open as a real popup window that SHARES the persist:social
     // session, so the auth cookie lands in the webview's own partition (otherwise
@@ -491,12 +496,22 @@ function hardenWebContents(): void {
 }
 
 function createWindow(): BrowserWindow {
+  // Frameless on every platform (the native title bar is gone — see the custom
+  // chrome in the renderer). macOS keeps its native traffic lights via the
+  // 'hiddenInset' style (positioned into the sidebar's top strip); Windows/Linux
+  // drop the frame entirely and draw their own min/maximize/close cluster.
+  const isMac = process.platform === 'darwin';
+  const chrome: Partial<Electron.BrowserWindowConstructorOptions> = isMac
+    ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 11 } }
+    : { frame: false };
+
   const mainWindow = new BrowserWindow({
     title: 'SHELFY',
     width: 1280,
     height: 800,
     minWidth: 900,
     minHeight: 600,
+    ...chrome,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
