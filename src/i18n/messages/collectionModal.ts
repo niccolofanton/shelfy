@@ -24,8 +24,6 @@ export default {
       other: 'Eliminata, ma {count} file non sono stati rimossi dal disco.',
     },
     deleteVerb: 'Elimina',
-    deletePlatformDesc:
-      'Rimuove solo il raggruppamento locale. Questa cartella è sincronizzata e riapparirà al prossimo sync.',
     deleteDesc: "Scegli cosa rimuovere. L'operazione non è reversibile.",
     whatToRemove: 'Cosa rimuovere',
     onlyLabel: 'Solo l’etichetta',
@@ -65,8 +63,6 @@ export default {
       other: 'Deleted, but {count} files could not be removed from disk.',
     },
     deleteVerb: 'Delete',
-    deletePlatformDesc:
-      'Removes only the local grouping. This folder is synced and will reappear on the next sync.',
     deleteDesc: 'Choose what to remove. This action cannot be undone.',
     whatToRemove: 'What to remove',
     onlyLabel: 'Label only',

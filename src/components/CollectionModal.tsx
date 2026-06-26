@@ -282,14 +282,15 @@ export default function CollectionModal({
             <p className="text-sm font-medium text-gray-200">
               {t('deleteVerb')} <span className="text-white">«{initial.name}»</span>
             </p>
-            <p className="text-xs text-gray-500 mt-0.5 mb-3">
-              {isPlatform ? t('deletePlatformDesc') : t('deleteDesc')}
-            </p>
+            <p className="text-xs text-gray-500 mt-0.5 mb-3">{t('deleteDesc')}</p>
 
             {/* Mutually-exclusive delete-mode choices exposed as a real radio group
-                for screen readers + arrow-key navigation. The destructive
-                "delete posts too" option is hidden for synced (platform) folders,
-                whose posts are auto-recreated and must not be nuked from a view. */}
+                for screen readers + arrow-key navigation. Both "label only" and
+                "label + posts" are offered for every folder — manual or synced.
+                For a synced folder, deleting its posts removes them from the whole
+                archive (with their files); they are NOT auto-recreated unless that
+                specific folder is manually synced again (the Auto-import only cycles
+                collections that still exist). */}
             <div role="radiogroup" aria-label={t('whatToRemove')} className="space-y-2">
               <button
                 type="button"
@@ -298,11 +299,7 @@ export default function CollectionModal({
                 data-testid="collection-delete-mode-label"
                 onClick={() => setDeleteMode('label')}
                 onKeyDown={(e) => {
-                  if (
-                    (e.key === 'ArrowDown' || e.key === 'ArrowRight') &&
-                    postCount > 0 &&
-                    !isPlatform
-                  )
+                  if ((e.key === 'ArrowDown' || e.key === 'ArrowRight') && postCount > 0)
                     setDeleteMode('posts');
                 }}
                 className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-lg border text-left u-press u-transition ${
@@ -320,7 +317,7 @@ export default function CollectionModal({
                 </span>
               </button>
 
-              {postCount > 0 && !isPlatform && (
+              {postCount > 0 && (
                 <button
                   type="button"
                   role="radio"

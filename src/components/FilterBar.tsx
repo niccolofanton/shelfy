@@ -78,22 +78,30 @@ export default function FilterBar<F extends FilterBarFilters>({
     (downloadStatus !== 'all' ? 1 : 0) +
     (aiTagged !== 'all' ? 1 : 0);
 
+  // Apple-Maps-style floating control "island": a translucent, blurred, rounded
+  // capsule with a hairline ring + soft shadow. There is NO toolbar background —
+  // each group floats over the grid as its own pill, so the posts show through the
+  // gaps. `pointer-events-auto` re-enables interaction (the header strip that
+  // hosts the pills is pointer-events-none so clicks in the gaps reach the grid).
+  const PILL =
+    'pointer-events-auto flex items-center rounded-full bg-[#1c1c1e]/85 backdrop-blur-xl ring-1 ring-white/10 shadow-[0_6px_20px_-6px_rgba(0,0,0,0.6)]';
+
   return (
+    // The row itself is pointer-events-none so the gaps between the floating pills
+    // let clicks/scrolls reach the post grid behind them; each pill re-enables
+    // pointer events. No background — this is just the layout for the islands.
     <div className="relative w-full h-[52px]">
-      <div className="flex items-center h-full px-4 py-2 gap-3 overflow-x-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent">
-        {/* Search */}
-        <div className="relative w-[280px] shrink-0">
-          <Search
-            size={14}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 pointer-events-none"
-          />
+      <div className="pointer-events-none flex items-center h-full px-3 gap-2">
+        {/* ── Pill 1 · Search ─────────────────────────────────────────────── */}
+        <div className={`${PILL} h-9 pl-3 pr-1.5 w-[300px] max-w-[30vw] min-w-[150px]`}>
+          <Search size={15} className="text-gray-400 shrink-0 pointer-events-none" />
           <input
             type="text"
             value={searchValue}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchValue(e.target.value)}
             placeholder={t('searchPlaceholder')}
             aria-label={t('searchAria')}
-            className={`w-full bg-[#1a1a1a] border border-[#2e2e2e] rounded-md pl-7 ${searchValue ? 'pr-8' : 'pr-3'} py-1.5 text-sm text-gray-200 placeholder-gray-600 outline-none focus:border-[#7B5CFF] focus:shadow-[0_0_0_3px_rgba(123,92,255,0.18)] transition-[border-color,box-shadow] u-transition`}
+            className="flex-1 min-w-0 bg-transparent border-0 outline-none px-2 text-sm text-gray-100 placeholder-gray-500"
           />
           {searchValue && (
             <button
@@ -102,27 +110,27 @@ export default function FilterBar<F extends FilterBarFilters>({
               onClick={() => setSearchValue('')}
               title={t('clearSearch')}
               aria-label={t('clearSearch')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center justify-center w-4 h-4 rounded-full text-gray-500 hover:text-white hover:bg-[#2e2e2e] transition-colors u-press"
+              className="flex items-center justify-center w-5 h-5 rounded-full text-gray-400 hover:text-white hover:bg-white/10 transition-colors u-press shrink-0"
             >
               <X size={12} />
             </button>
           )}
         </div>
 
-        {/* Gallery-owned leading controls (sort toggle + active-collection chip) */}
-        {leading}
+        {/* ── Pill 2 · View + order (Gallery-owned leading controls) ───────── */}
+        {leading && <div className={`${PILL} h-9 px-1.5 gap-0.5 shrink-0`}>{leading}</div>}
 
-        {/* Active tag chip (set from the AI panel) */}
+        {/* Active tag chip (set from the AI panel) — its own floating chip */}
         {filters.tag && (
           <div
             data-testid="tag-filter-chip"
-            className="flex items-center gap-1.5 shrink-0 pl-3 pr-1.5 py-1 rounded-full bg-violet-500/15 text-violet-200 text-sm u-pop-in"
+            className={`${PILL} h-9 pl-3 pr-1.5 gap-1.5 text-violet-200 text-sm u-pop-in shrink-0`}
           >
             <span className="whitespace-nowrap">#{filters.tag}</span>
             <button
               onClick={() => onFiltersChange({ ...filters, tag: undefined })}
               title={t('removeTagFilter')}
-              className="flex items-center justify-center w-4 h-4 rounded-full text-violet-200/80 hover:text-white hover:bg-violet-500/30 transition-colors u-press"
+              className="flex items-center justify-center w-5 h-5 rounded-full text-violet-200/80 hover:text-white hover:bg-violet-500/30 transition-colors u-press"
             >
               <X size={12} />
             </button>
@@ -131,40 +139,43 @@ export default function FilterBar<F extends FilterBarFilters>({
 
         <div className="flex-1" />
 
-        {/* Post count — total only (the old "mostrando N" strip is gone) */}
-        <span className="text-sm text-gray-500 shrink-0 tabular-nums whitespace-nowrap">
-          {t('postsCount', { n: total.toLocaleString() })}
-        </span>
+        {/* ── Pill 3 · Count · zoom · Filters · refresh · select ──────────── */}
+        <div className={`${PILL} h-9 pl-3 pr-1.5 gap-1.5 shrink-0`}>
+          {/* Post count — total only (the old "mostrando N" strip is gone) */}
+          <span className="text-sm text-gray-400 shrink-0 tabular-nums whitespace-nowrap">
+            {t('postsCount', { n: total.toLocaleString() })}
+          </span>
 
-        {/* Grid zoom (shared density preference, ⌘/Ctrl +/- shortcuts) */}
-        <GridSizeControl className="shrink-0" />
+          {/* Grid zoom (shared density preference, ⌘/Ctrl +/- shortcuts) */}
+          <GridSizeControl className="shrink-0" />
 
-        {/* Divider */}
-        <div className="h-5 w-px bg-[#2e2e2e] shrink-0" />
+          {/* Divider */}
+          <div className="h-5 w-px bg-white/10 shrink-0" />
 
-        {/* Filters drawer toggle */}
-        <button
-          data-testid="filters-toggle"
-          aria-expanded={!!drawerOpen}
-          title={t('filtersTitle')}
-          onClick={() => onToggleDrawer?.()}
-          className={`relative flex items-center gap-1.5 whitespace-nowrap px-3 py-1.5 rounded-md text-sm cursor-pointer transition-colors u-press shrink-0 ${
-            drawerOpen || activeCount > 0
-              ? 'bg-[#2a2a2a] text-white'
-              : 'bg-[#1a1a1a] text-gray-400 hover:bg-[#2a2a2a]'
-          }`}
-        >
-          <SlidersHorizontal size={14} />
-          {t('filters')}
-          {activeCount > 0 && (
-            <span className="flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-medium tabular-nums u-pop-in">
-              {activeCount}
-            </span>
-          )}
-        </button>
+          {/* Filters drawer toggle */}
+          <button
+            data-testid="filters-toggle"
+            aria-expanded={!!drawerOpen}
+            title={t('filtersTitle')}
+            onClick={() => onToggleDrawer?.()}
+            className={`relative flex items-center gap-1.5 whitespace-nowrap px-3 py-1.5 rounded-full text-sm cursor-pointer transition-colors u-press shrink-0 ${
+              drawerOpen || activeCount > 0
+                ? 'bg-white/15 text-white'
+                : 'text-gray-300 hover:bg-white/10'
+            }`}
+          >
+            <SlidersHorizontal size={14} />
+            {t('filters')}
+            {activeCount > 0 && (
+              <span className="flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-medium tabular-nums u-pop-in">
+                {activeCount}
+              </span>
+            )}
+          </button>
 
-        {/* Gallery-owned trailing controls (refresh + select) */}
-        {trailing}
+          {/* Gallery-owned trailing controls (refresh + select) */}
+          {trailing}
+        </div>
       </div>
     </div>
   );

@@ -16,6 +16,11 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    // View mode toggle (grid ↔ infinite canvas)
+    viewGrid: 'Griglia',
+    viewCanvas: 'Canvas',
+    viewGridTitle: 'Passa alla vista a griglia (ordinata per data)',
+    viewCanvasTitle: 'Passa al canvas infinito (esplora liberamente)',
     // Sort options (date)
     sortNewest: 'Più recenti',
     sortOldest: 'Meno recenti',
@@ -83,6 +88,10 @@ export default {
     emptyHint: 'Importa un file JSON o cattura post dalla scheda Browser.',
   },
   en: {
+    viewGrid: 'Grid',
+    viewCanvas: 'Canvas',
+    viewGridTitle: 'Switch to grid view (sorted by date)',
+    viewCanvasTitle: 'Switch to the infinite canvas (free roam)',
     sortNewest: 'Newest',
     sortOldest: 'Oldest',
     sortToggleTitle: 'Change sort by date',

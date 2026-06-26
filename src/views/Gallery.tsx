@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import VirtualPostGrid from '../components/VirtualPostGrid';
+import InfiniteCanvas from '../components/InfiniteCanvas';
 import PostGridSkeleton from '../components/PostGridSkeleton';
 import PostModal from '../components/PostModal';
 import FilterBar from '../components/FilterBar';
@@ -7,11 +8,14 @@ import FilterDrawer from '../components/FilterDrawer';
 import CollectionModal from '../components/CollectionModal';
 import Popover from '../components/Popover';
 import { usePosts } from '../hooks/usePosts';
+import { useSearchSequence } from '../hooks/useSearchTransition';
+import { useAiSuggestions } from '../hooks/useAiSuggestions';
 import type { SyncTarget, SyncPlatform } from '../hooks/useSourceSync';
 import { useToast } from '../hooks/useToast';
 import { toApiFilters } from '../lib/postFilters';
 import { useDownloadPrefs } from '../hooks/useDownloadPrefs';
 import { useRangeSelect } from '../hooks/useRangeSelect';
+import { useViewMode } from '../hooks/useViewMode';
 import { useT } from '../i18n';
 import {
   RefreshCw,
@@ -32,6 +36,8 @@ import {
   Info,
   CloudDownload,
   Loader2,
+  LayoutGrid,
+  Telescope,
 } from 'lucide-react';
 
 // Date-sort direction surfaced by the toolbar's sort toggle.
@@ -137,6 +143,11 @@ const LOAD_BATCH = 50;
 // of the zone, keeping observer events flowing.
 const PAGE_BATCH = 250;
 const PREFETCH_PX = 3000;
+// Canvas view has no scroll sentinel to drive paging, but the infinite tiling
+// looks richest with a sizeable distinct pool. On entering canvas mode we grow
+// the loaded window up to this cap (capped so a huge library doesn't load whole
+// into memory — only ~100 tiles are ever mounted; the rest just add variety).
+const CANVAS_POOL = 500;
 
 // Date-sort options — surfaced directly above the list (not in the filters menu).
 // Labels are resolved at render time from the `gallery` namespace.
@@ -144,6 +155,24 @@ const SORT_OPTIONS: ReadonlyArray<{ value: SortOrder; labelKey: string }> = [
   { value: 'newest', labelKey: 'sortNewest' },
   { value: 'oldest', labelKey: 'sortOldest' },
 ];
+
+// Frameless chrome: Windows/Linux draw their min/maximize/close cluster top-right
+// (over the floating toolbar). Reserve that width on the toolbar so its trailing
+// buttons don't slide under the controls. macOS (native lights, top-left) needs 0.
+const WIN_CONTROLS_W = 144;
+const winControlsInset =
+  typeof window !== 'undefined' && !!window.electronAPI && window.electronAPI.platform !== 'darwin'
+    ? WIN_CONTROLS_W
+    : 0;
+
+// Apple-Maps-style floating "islands": translucent, blurred, rounded controls
+// that hover over the grid (no toolbar background). FLOAT_PILL is the capsule for
+// control clusters; FLOAT_CARD the wider rounded card for contextual strips.
+// pointer-events-auto re-enables interaction over the pointer-events-none header.
+const FLOAT_MATERIAL =
+  'pointer-events-auto bg-[#1c1c1e]/85 backdrop-blur-xl ring-1 ring-white/10 shadow-[0_6px_20px_-6px_rgba(0,0,0,0.6)]';
+const FLOAT_PILL = `${FLOAT_MATERIAL} flex items-center rounded-full`;
+const FLOAT_CARD = `${FLOAT_MATERIAL} rounded-2xl`;
 
 // Snapshot of an in-flight drag-select sweep (see handleGridMouseDown).
 interface DragState {
@@ -175,6 +204,17 @@ export default function Gallery({
 }: GalleryProps): React.JSX.Element {
   const t: Translate = useT('gallery');
   const tc: Translate = useT('common');
+  // View mode (shared, persisted): 'grid' is the date-ordered row grid; 'canvas'
+  // is the infinite pan/zoom wall where date ordering is intentionally inactive.
+  const { mode: viewMode, toggle: toggleViewMode } = useViewMode();
+  const canvas = viewMode === 'canvas';
+  // Mirrored in a ref, read by the filter callbacks/effects below to size a
+  // limit-reset: canvas pages a fixed CANVAS_POOL window, so resetting `limit`
+  // back to LOAD_BATCH on a filter change would flash the grid (a 50-post page)
+  // before the pool regrows. It also gates infinite-scroll paging off in canvas
+  // (see maybeLoadMore), since the canvas has no scroll sentinel driving it.
+  const canvasRef = useRef(canvas);
+  canvasRef.current = canvas;
   const [filters, setFilters] = useState<GalleryFilters>({
     platform,
     source: 'all',
@@ -189,7 +229,7 @@ export default function Gallery({
     concepts: [],
     conceptMode: 'or',
     sortOrder: 'newest',
-    limit: LOAD_BATCH,
+    limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH,
   });
 
   // Apply the source chosen from the sidebar. Keyed on sourceNonce so re-clicking
@@ -210,7 +250,7 @@ export default function Gallery({
       ...prev,
       platform,
       collectionId: collectionId ?? undefined,
-      limit: LOAD_BATCH,
+      limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceNonce]);
@@ -243,6 +283,8 @@ export default function Gallery({
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
   const aiReqIdRef = useRef(0);
+  // Opt-in (default OFF): spinning the local LLM on every search is expensive.
+  const { enabled: aiSuggestEnabled } = useAiSuggestions();
 
   useEffect(() => {
     const query = (filters.search || '').trim();
@@ -251,7 +293,8 @@ export default function Gallery({
     setFilters((prev) =>
       prev.concepts && prev.concepts.length ? { ...prev, concepts: [] } : prev,
     );
-    if (!query) {
+    // No query, or the feature is turned off → don't touch the model at all.
+    if (!query || !aiSuggestEnabled) {
       setSuggestLoading(false);
       return undefined;
     }
@@ -280,7 +323,7 @@ export default function Gallery({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [filters.search]);
+  }, [filters.search, aiSuggestEnabled]);
 
   const activeConcepts = filters.concepts || [];
   const conceptMode: ConceptMode = filters.conceptMode || 'or';
@@ -293,7 +336,7 @@ export default function Gallery({
       setFilters((prev) => {
         const cur = prev.concepts || [];
         const next = cur.includes(tag) ? cur.filter((x) => x !== tag) : [...cur, tag];
-        return { ...prev, concepts: next, limit: LOAD_BATCH };
+        return { ...prev, concepts: next, limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH };
       });
     },
     [resetAnchor],
@@ -304,7 +347,9 @@ export default function Gallery({
   }, []);
 
   const showSuggestBar =
-    !!(filters.search || '').trim() && (suggestLoading || suggestedTags.length > 0);
+    aiSuggestEnabled &&
+    !!(filters.search || '').trim() &&
+    (suggestLoading || suggestedTags.length > 0);
 
   // ── Multi-select / assignment ─────────────────────────────────────────────
   const [selectMode, setSelectMode] = useState(false);
@@ -339,6 +384,18 @@ export default function Gallery({
   // Normalised filters matching usePosts (shared mapper), without limit/offset —
   // used to resolve the full id set behind the current view (select-all-matching).
   const buildApiFilters = useCallback(() => toApiFilters(filters), [filters]);
+
+  // Query identity (active filters WITHOUT the paging limit) — drives the
+  // bloom-in search transition. Growing the limit (infinite scroll) keeps the same
+  // key, so paging adopts rows silently while a real search animates.
+  const searchKey = useMemo(() => JSON.stringify(buildApiFilters()), [buildApiFilters]);
+  // Ordered search transition: holds the current results on screen during the
+  // background fetch, then plays them OUT and the fresh ones IN — in that exact
+  // order. `displayed` (not raw `posts`) is what BOTH views render. The canvas adds
+  // a settle (swapped-in tiles render behind the hidden wall before the fade back);
+  // the grid uses the snappier default fade/bloom.
+  const seqOpts = useMemo(() => (canvas ? { outMs: 200, settleMs: 400, inMs: 380 } : {}), [canvas]);
+  const { displayed, phase: searchPhase } = useSearchSequence(posts, loading, searchKey, seqOpts);
 
   const exitSelectMode = useCallback(() => {
     setSelectMode(false);
@@ -842,10 +899,31 @@ export default function Gallery({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
+
+  // Floating frosted toolbar: it overlays the grid (absolute, out of flow) so the
+  // posts scroll behind its glass. The grid must inset its content by exactly the
+  // header's live height so the first row starts just below the bar and nothing is
+  // hidden at rest. The height changes when contextual strips (suggested tags /
+  // download hint) appear, so measure it instead of hardcoding 52px.
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const [headerH, setHeaderH] = useState<number>(53);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(() => setHeaderH(el.offsetHeight));
+    ro.observe(el);
+    setHeaderH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, []);
   const loadingRef = useRef(loading);
   const postsLenRef = useRef(posts.length);
   const totalRef = useRef(total);
   const activeRef = useRef(active);
+  // Canvas has no scroll sentinel driving it: the 1px sentinel stays mounted (so
+  // the observer node never goes stale across view switches) but always sits near
+  // the top in canvas mode, which would otherwise chain-load the whole library.
+  // Paging is gated off via `canvasRef` (declared up top) while canvas is the
+  // requested mode; the canvas pool is grown by its own count-driven effect below.
   loadingRef.current = loading;
   postsLenRef.current = posts.length;
   totalRef.current = total;
@@ -857,6 +935,7 @@ export default function Gallery({
   // (visibility:hidden keeps the sentinel's geometry, so it would otherwise keep
   // firing and load the whole library off-screen).
   const maybeLoadMore = useCallback(() => {
+    if (canvasRef.current) return; // canvas grows its pool via its own effect
     if (!activeRef.current || loadingRef.current) return;
     if (postsLenRef.current >= totalRef.current) return;
     const scroller = scrollRef.current;
@@ -889,9 +968,12 @@ export default function Gallery({
   // sentinel out of the prefetch zone, would stall paging until the next manual
   // scroll. Re-check after every load settles (and on re-activation) so
   // prefetching chains until the window outruns the zone or the library is done.
+  // `canvas` is a dep so leaving canvas re-arms paging: the observer only fires on
+  // intersection *changes*, so a sentinel already inside the prefetch zone when we
+  // switch back to grid would otherwise never trigger a load until a manual scroll.
   useEffect(() => {
     if (!loading) maybeLoadMore();
-  }, [loading, posts.length, total, active, maybeLoadMore]);
+  }, [loading, posts.length, total, active, canvas, maybeLoadMore]);
 
   // Reset limit when filter params (excluding limit) change. Preserve the
   // active collection filter (it lives outside the FilterBar UI).
@@ -900,16 +982,43 @@ export default function Gallery({
       // Filters change the post array; drop any stored range-select anchor so a
       // following shift+click can't span the stale array.
       resetAnchor();
-      setFilters((prev) => ({ ...newFilters, collectionId: prev.collectionId, limit: LOAD_BATCH }));
+      setFilters((prev) => ({
+        ...newFilters,
+        collectionId: prev.collectionId,
+        limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH,
+      }));
     },
     [resetAnchor],
   );
 
-  const isEmpty = !loading && posts.length === 0;
+  // Gate on `displayed` (what's on screen), not raw `posts`: during a search's
+  // out-phase the old results are still held up, so the empty-state must not flash.
+  const isEmpty = !loading && displayed.length === 0;
   const selectedCount = selected.size;
   // True once every matching post (across pagination, not just the loaded page)
   // is selected — flips the select-all toggle to "Deseleziona tutti".
   const allSelected = total > 0 && selectedCount >= total;
+
+  // ── Canvas pool ───────────────────────────────────────────────────────────
+  // The infinite wall tiles a DISTINCT pool, so we still grow the window to
+  // CANVAS_POOL in one step (below) to give it a rich, non-repeating set.
+  // BUT the wall is revealed as soon as ANY posts exist — NOT gated on the pool
+  // being full. Gating on a full pool made a fresh search briefly fall through to
+  // the grid branch while the new pool refilled (the new `posts` land a tick
+  // before `total` updates, so canvasTarget stays large and "poolReady" reads
+  // false) — flashing the results in grid layout for a few frames before the wall
+  // took over. Revealing on first result keeps the grid branch unreachable in
+  // canvas mode, so the search never cross-fades through the grid.
+  const canvasTarget = total > 0 ? Math.min(CANVAS_POOL, total) : CANVAS_POOL;
+  // Gate on `displayed`: keeps the wall mounted through the out-phase even when the
+  // new query has zero results (raw `posts` would already be empty), so the old
+  // tiles can finish dissolving before the empty-state takes over.
+  const showCanvas = canvas && displayed.length > 0;
+  useEffect(() => {
+    if (!canvas || !active || loading) return;
+    if (posts.length >= canvasTarget) return;
+    setFilters((prev) => (prev.limit >= CANVAS_POOL ? prev : { ...prev, limit: CANVAS_POOL }));
+  }, [canvas, active, loading, posts.length, canvasTarget]);
 
   // Precompute, once per (posts, selected, collections) change, which collections
   // already contain ALL selected posts — instead of the O(N·S·P) inline scan that
@@ -949,525 +1058,603 @@ export default function Gallery({
           {feedback}
         </div>
       )}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        {/* Unified sticky toolbar (~52px) — one strip for everything above the grid.
+      <div className="relative flex flex-col flex-1 min-w-0 overflow-hidden">
+        {/* Floating frosted toolbar (~52px) — overlays the grid; one strip for
+          everything above it.
           Two distinct modes:
           • browse — the FilterBar: search | sort toggle | active source chip | tag
             chip | total count | grid zoom | Filtri | refresh (icon) | "Seleziona".
           • select — the same strip swaps to the contextual action bar: feedback +
             selection count + select-all + the single "Azioni" menu + exit (✕). */}
         <div
-          className="sticky top-0 z-10 bg-[#0f0f0f] border-b border-[#2e2e2e]"
-          style={{ minHeight: 52 }}
+          ref={headerRef}
+          className="pointer-events-none absolute top-0 left-0 right-0 z-20"
+          style={winControlsInset ? { paddingRight: winControlsInset } : undefined}
         >
-          {!selectMode ? (
-            <FilterBar
-              filters={filters}
-              onChange={handleFilterChange}
-              total={total}
-              drawerOpen={drawerOpen}
-              onToggleDrawer={() => setDrawerOpen((o) => !o)}
-              leading={
-                <>
-                  {/* Sort by date — a single toggle: tap it to flip between
-                    "Più recenti" and "Meno recenti" (no second label / no menu). */}
-                  {(() => {
-                    const order = filters.sortOrder ?? 'newest';
-                    const next: SortOrder = order === 'newest' ? 'oldest' : 'newest';
-                    const labelKey = SORT_OPTIONS.find((o) => o.value === order)?.labelKey;
-                    const label = labelKey ? t(labelKey) : '';
-                    return (
-                      <button
-                        data-testid="sort-toggle"
-                        data-order={order}
-                        title={t('sortToggleTitle')}
-                        onClick={() => handleFilterChange({ ...filters, sortOrder: next })}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-gray-300 hover:text-white hover:bg-[#1a1a1a] u-press transition-colors whitespace-nowrap shrink-0"
-                      >
-                        <ArrowDownUp size={13} className="text-gray-500" />
-                        {label}
-                      </button>
-                    );
-                  })()}
-
-                  {collectionId && collectionLabel && (
-                    <span
-                      data-testid="active-collection-chip"
-                      className="flex items-center gap-1.5 text-sm text-gray-300 whitespace-nowrap shrink-0 u-fade-in"
+          {/* No toolbar background: the controls float over the grid as Apple-Maps
+            -style pills (each pill owns its own translucent material). The wrapper
+            is pointer-events-none so clicks/scrolls in the gaps reach the grid. */}
+          <div style={{ minHeight: 52 }}>
+            {!selectMode ? (
+              <FilterBar
+                filters={filters}
+                onChange={handleFilterChange}
+                total={total}
+                drawerOpen={drawerOpen}
+                onToggleDrawer={() => setDrawerOpen((o) => !o)}
+                leading={
+                  <>
+                    {/* View toggle — flips the surface between the date-ordered grid
+                    and the infinite pan/zoom canvas. The icon previews the mode
+                    you'll switch TO. In canvas mode date ordering is off, so the
+                    sort toggle below hides. */}
+                    <button
+                      data-testid="view-mode-toggle"
+                      data-mode={viewMode}
+                      title={canvas ? t('viewGridTitle') : t('viewCanvasTitle')}
+                      onClick={toggleViewMode}
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-gray-300 hover:text-white hover:bg-[#1a1a1a] u-press transition-colors whitespace-nowrap shrink-0"
                     >
+                      {canvas ? (
+                        <LayoutGrid size={13} className="text-gray-500" />
+                      ) : (
+                        <Telescope size={13} className="text-[#7B5CFF]" />
+                      )}
+                      {canvas ? t('viewGrid') : t('viewCanvas')}
+                    </button>
+
+                    {/* Sort by date — a single toggle: tap it to flip between
+                    "Più recenti" and "Meno recenti" (no second label / no menu).
+                    Hidden in canvas mode, where date ordering is inactive. */}
+                    {!canvas &&
+                      (() => {
+                        const order = filters.sortOrder ?? 'newest';
+                        const next: SortOrder = order === 'newest' ? 'oldest' : 'newest';
+                        const labelKey = SORT_OPTIONS.find((o) => o.value === order)?.labelKey;
+                        const label = labelKey ? t(labelKey) : '';
+                        return (
+                          <button
+                            data-testid="sort-toggle"
+                            data-order={order}
+                            title={t('sortToggleTitle')}
+                            onClick={() => handleFilterChange({ ...filters, sortOrder: next })}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-gray-300 hover:text-white hover:bg-[#1a1a1a] u-press transition-colors whitespace-nowrap shrink-0"
+                          >
+                            <ArrowDownUp size={13} className="text-gray-500" />
+                            {label}
+                          </button>
+                        );
+                      })()}
+
+                    {collectionId && collectionLabel && (
                       <span
-                        className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: collectionColor || '#7B5CFF' }}
-                      />
-                      {collectionLabel}
-                    </span>
-                  )}
-                </>
-              }
-              trailing={
-                <>
-                  {/* Source-sync: fetches new posts from the source's connector in
+                        data-testid="active-collection-chip"
+                        className="flex items-center gap-1.5 text-sm text-gray-300 whitespace-nowrap shrink-0 u-fade-in"
+                      >
+                        <span
+                          className="w-2 h-2 rounded-full"
+                          style={{ backgroundColor: collectionColor || '#7B5CFF' }}
+                        />
+                        {collectionLabel}
+                      </span>
+                    )}
+                  </>
+                }
+                trailing={
+                  <>
+                    {/* Source-sync: fetches new posts from the source's connector in
                     background (Activity Center shows the progress). Only sources
                     that map to a connector listing get the button: IG / X
                     platforms, Pinterest once it has boards, native folders.
                     CloudDownload (not RefreshCw — taken by the grid refresh
                     beside it); while the run is in flight it becomes a spinner
                     and clicking it stops the run. */}
-                  {(() => {
-                    if (!onSyncSource) return null;
-                    const c =
-                      collectionId != null ? collections.find((x) => x.id === collectionId) : null;
-                    const target: SyncTarget | null = c
-                      ? isSyncPlatform(c.platform) && c.externalId != null
-                        ? { type: 'collection', platform: c.platform, collectionId: c.id }
-                        : null
-                      : platform === 'instagram' || platform === 'twitter'
-                        ? { type: 'platform', platform }
-                        : platform === 'pinterest' &&
-                            collections.some(
-                              (x) => x.platform === 'pinterest' && x.externalId != null,
-                            )
-                          ? { type: 'platform', platform }
+                    {(() => {
+                      if (!onSyncSource) return null;
+                      const c =
+                        collectionId != null
+                          ? collections.find((x) => x.id === collectionId)
                           : null;
-                    if (!target) return null;
-                    const job = target.platform ? sourceSyncJobs?.[target.platform] : undefined;
-                    const running =
-                      !!job && (job.status === 'navigating' || job.status === 'syncing');
-                    return (
-                      <button
-                        data-testid="gallery-sync-source"
-                        onClick={() => onSyncSource(target)}
-                        title={running ? t('syncStopTitle') : t('syncSourceTitle')}
-                        aria-label={running ? t('syncStopTitle') : t('syncSourceTitle')}
-                        className={[
-                          'flex items-center justify-center w-7 h-7 rounded-md u-press shrink-0',
-                          running
-                            ? 'text-amber-400 hover:bg-[#1a1a1a]'
-                            : 'text-gray-400 hover:text-white hover:bg-[#1a1a1a]',
-                        ].join(' ')}
-                      >
-                        {running ? (
-                          <Loader2 size={15} className="animate-spin" />
-                        ) : (
-                          <CloudDownload size={15} />
-                        )}
-                      </button>
-                    );
-                  })()}
+                      const target: SyncTarget | null = c
+                        ? isSyncPlatform(c.platform) && c.externalId != null
+                          ? { type: 'collection', platform: c.platform, collectionId: c.id }
+                          : null
+                        : platform === 'instagram' || platform === 'twitter'
+                          ? { type: 'platform', platform }
+                          : platform === 'pinterest' &&
+                              collections.some(
+                                (x) => x.platform === 'pinterest' && x.externalId != null,
+                              )
+                            ? { type: 'platform', platform }
+                            : null;
+                      if (!target) return null;
+                      const job = target.platform ? sourceSyncJobs?.[target.platform] : undefined;
+                      const running =
+                        !!job && (job.status === 'navigating' || job.status === 'syncing');
+                      return (
+                        <button
+                          data-testid="gallery-sync-source"
+                          onClick={() => onSyncSource(target)}
+                          title={running ? t('syncStopTitle') : t('syncSourceTitle')}
+                          aria-label={running ? t('syncStopTitle') : t('syncSourceTitle')}
+                          className={[
+                            'flex items-center justify-center w-7 h-7 rounded-md u-press shrink-0',
+                            running
+                              ? 'text-amber-400 hover:bg-[#1a1a1a]'
+                              : 'text-gray-400 hover:text-white hover:bg-[#1a1a1a]',
+                          ].join(' ')}
+                        >
+                          {running ? (
+                            <Loader2 size={15} className="animate-spin" />
+                          ) : (
+                            <CloudDownload size={15} />
+                          )}
+                        </button>
+                      );
+                    })()}
 
-                  <button
-                    data-testid="gallery-refresh"
-                    onClick={() => reload()}
-                    disabled={loading}
-                    title={t('refreshTitle')}
-                    aria-label={t('refreshTitle')}
-                    className="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-white hover:bg-[#1a1a1a] disabled:opacity-50 disabled:cursor-not-allowed u-press shrink-0"
-                  >
-                    <RefreshCw size={15} className={loading ? 'animate-spin' : undefined} />
-                  </button>
+                    <button
+                      data-testid="gallery-refresh"
+                      onClick={() => reload()}
+                      disabled={loading}
+                      title={t('refreshTitle')}
+                      aria-label={t('refreshTitle')}
+                      className="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-white hover:bg-[#1a1a1a] disabled:opacity-50 disabled:cursor-not-allowed u-press shrink-0"
+                    >
+                      <RefreshCw size={15} className={loading ? 'animate-spin' : undefined} />
+                    </button>
 
-                  <button
-                    data-testid="select-toggle"
-                    onClick={() => setSelectMode(true)}
-                    title={t('selectTitle')}
-                    className="flex items-center gap-1.5 px-3 py-1 rounded-md text-sm text-gray-400 hover:text-white hover:bg-[#1a1a1a] u-press whitespace-nowrap shrink-0"
-                  >
-                    <CheckSquare size={15} />
-                    {t('select')}
-                  </button>
-                </>
-              }
-            />
-          ) : (
-            <div className="flex items-center gap-2 w-full px-4 h-[52px] u-fade-in-down">
-              {/* Everything is pushed to the right: an empty flexer fills the left
+                    <button
+                      data-testid="select-toggle"
+                      onClick={() => setSelectMode(true)}
+                      title={t('selectTitle')}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-md text-sm text-gray-400 hover:text-white hover:bg-[#1a1a1a] u-press whitespace-nowrap shrink-0"
+                    >
+                      <CheckSquare size={15} />
+                      {t('select')}
+                    </button>
+                  </>
+                }
+              />
+            ) : (
+              <div className="pointer-events-none flex items-center w-full px-3 h-[52px] u-fade-in-down">
+                {/* Everything is pushed to the right: an empty flexer fills the left
                 gutter so the count, the single "Azioni" menu and the exit (✕) sit
-                together as one right-aligned cluster. */}
-              <div className="flex-1" />
+                together as one right-aligned floating pill. */}
+                <div className="flex-1" />
 
-              {feedback && (
-                <span
-                  key={feedback}
-                  data-testid="bulk-feedback"
-                  className="text-xs text-[#7B5CFF] tabular-nums u-pop-in whitespace-nowrap"
-                >
-                  {feedback}
-                </span>
-              )}
+                <div className={`${FLOAT_PILL} h-9 pl-3 pr-1.5 gap-2 shrink-0`}>
+                  {feedback && (
+                    <span
+                      key={feedback}
+                      data-testid="bulk-feedback"
+                      className="text-xs text-[#7B5CFF] tabular-nums u-pop-in whitespace-nowrap"
+                    >
+                      {feedback}
+                    </span>
+                  )}
 
-              <span
-                data-testid="selection-count"
-                className="text-sm font-medium text-gray-200 tabular-nums whitespace-nowrap shrink-0"
-              >
-                {t('selectedCount', { n: selectedCount.toLocaleString() })}
-              </span>
+                  <span
+                    data-testid="selection-count"
+                    className="text-sm font-medium text-gray-200 tabular-nums whitespace-nowrap shrink-0"
+                  >
+                    {t('selectedCount', { n: selectedCount.toLocaleString() })}
+                  </span>
 
-              {/* Select-all toggle — lives next to the counter (not in the actions
+                  {/* Select-all toggle — lives next to the counter (not in the actions
                 menu) so the most common bulk gesture is one click away. */}
-              {total > 0 && (
-                <button
-                  data-testid="select-all-matching"
-                  onClick={handleSelectAll}
-                  title={allSelected ? t('deselectAllTitle') : t('selectAllTitle')}
-                  className="u-press flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-[#b9a6ff] hover:bg-[#7B5CFF]/15 whitespace-nowrap shrink-0 transition-colors"
-                >
-                  <ListChecks size={15} className="shrink-0" />
-                  {allSelected
-                    ? t('deselectAll')
-                    : total > posts.length
-                      ? t('selectAllN', { n: total.toLocaleString() })
-                      : t('selectAll')}
-                </button>
-              )}
+                  {total > 0 && (
+                    <button
+                      data-testid="select-all-matching"
+                      onClick={handleSelectAll}
+                      title={allSelected ? t('deselectAllTitle') : t('selectAllTitle')}
+                      className="u-press flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-[#b9a6ff] hover:bg-[#7B5CFF]/15 whitespace-nowrap shrink-0 transition-colors"
+                    >
+                      <ListChecks size={15} className="shrink-0" />
+                      {allSelected
+                        ? t('deselectAll')
+                        : total > posts.length
+                          ? t('selectAllN', { n: total.toLocaleString() })
+                          : t('selectAll')}
+                    </button>
+                  )}
 
-              <div className="h-5 w-px bg-[#2e2e2e] shrink-0" />
+                  <div className="h-5 w-px bg-[#2e2e2e] shrink-0" />
 
-              {/* Single "Azioni" menu: holds every bulk action (analyze/download,
+                  {/* Single "Azioni" menu: holds every bulk action (analyze/download,
                 assign-to-source, cleanup and the destructive delete) — select-all
                 lives next to the counter above. The trigger stays enabled with
                 nothing selected; the action-requiring rows disable themselves. */}
-              <div className="relative shrink-0" ref={actionsRef}>
-                <button
-                  data-testid="bulk-actions"
-                  onClick={() => setActionsOpen((o) => !o)}
-                  aria-haspopup="menu"
-                  aria-expanded={actionsOpen}
-                  title={t('actionsTitle')}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-md text-sm font-medium text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] u-press transition-colors"
-                >
-                  <Sparkles size={15} />
-                  {t('actions')}
-                  <ChevronDown
-                    size={14}
-                    className={['transition-transform', actionsOpen ? 'rotate-180' : ''].join(' ')}
-                  />
-                </button>
-
-                <Popover
-                  anchorRef={actionsRef}
-                  open={actionsOpen}
-                  align="right"
-                  onRequestClose={() => setActionsOpen(false)}
-                  data-testid="bulk-actions-menu"
-                  className="w-72 bg-[#1a1a1a] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 u-fade-in-down origin-top-right"
-                >
-                  {/* ── Azioni primarie ───────────────────────────────────── */}
-                  <button
-                    data-testid="bulk-analyze"
-                    disabled={selectedCount === 0}
-                    onClick={() => {
-                      setActionsOpen(false);
-                      handleAnalyzeSelected();
-                    }}
-                    className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                  >
-                    <Sparkles size={15} className="shrink-0" />
-                    <span className="flex-1">{t('analyze')}</span>
-                  </button>
-
-                  <button
-                    data-testid="bulk-download"
-                    disabled={selectedCount === 0}
-                    onClick={() => {
-                      setActionsOpen(false);
-                      handleDownloadSelected();
-                    }}
-                    className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                  >
-                    <Download size={15} className="shrink-0" />
-                    <span className="flex-1 min-w-0">
-                      <span className="block">{tc('download')}</span>
-                      {/* The backend enqueues missing assets only — say so, or a
-                        full-library selection looks like it re-downloads everything. */}
-                      <span className="block text-[11px] text-gray-500 leading-snug">
-                        {t('downloadOnlyMissingHint')}
-                      </span>
-                    </span>
-                  </button>
-
-                  <div className="my-1 border-t border-[#2e2e2e]" />
-
-                  {/* ── Aggiungi a source ─────────────────────────────────── */}
-                  <div
-                    className={[
-                      'transition-opacity',
-                      selectedCount === 0 ? 'opacity-40 pointer-events-none' : '',
-                    ].join(' ')}
-                  >
-                    <p className="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-600 flex items-center gap-1.5">
-                      <FolderPlus size={12} className="shrink-0" />
-                      {t('addToSource')}
-                    </p>
-                    <div className="max-h-44 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e]">
-                      {collections.length === 0 && (
-                        <p className="px-3 py-1.5 text-xs text-gray-500">{t('noSources')}</p>
-                      )}
-                      {collections.map((c) => {
-                        const allIn = selectedCount > 0 && !!allInByCollection[c.id];
-                        return (
-                          <button
-                            key={c.id}
-                            data-testid={`assign-to-${c.id}`}
-                            onClick={() => assignTo(c.id)}
-                            className="u-press w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-gray-300 hover:bg-[#2a2a2a] hover:text-white transition-colors"
-                          >
-                            <span
-                              className="w-2 h-2 rounded-full shrink-0"
-                              style={{ backgroundColor: c.color }}
-                            />
-                            <span className="flex-1 truncate text-left">{c.name}</span>
-                            {allIn && (
-                              <Check size={14} className="u-pop-in text-green-400 shrink-0" />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
+                  <div className="relative shrink-0" ref={actionsRef}>
                     <button
-                      data-testid="assign-create-new"
-                      onClick={() => {
-                        setActionsOpen(false);
-                        setShowCreate(true);
-                      }}
-                      className="u-press w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-gray-300 hover:bg-[#2a2a2a] hover:text-white transition-colors"
+                      data-testid="bulk-actions"
+                      onClick={() => setActionsOpen((o) => !o)}
+                      aria-haspopup="menu"
+                      aria-expanded={actionsOpen}
+                      title={t('actionsTitle')}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-md text-sm font-medium text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] u-press transition-colors"
                     >
-                      <Plus size={15} className="shrink-0" />
-                      <span className="flex-1 text-left">{t('createNewSource')}</span>
+                      <Sparkles size={15} />
+                      {t('actions')}
+                      <ChevronDown
+                        size={14}
+                        className={['transition-transform', actionsOpen ? 'rotate-180' : ''].join(
+                          ' ',
+                        )}
+                      />
                     </button>
+
+                    <Popover
+                      anchorRef={actionsRef}
+                      open={actionsOpen}
+                      align="right"
+                      onRequestClose={() => setActionsOpen(false)}
+                      data-testid="bulk-actions-menu"
+                      className="w-72 bg-[#1a1a1a] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 u-fade-in-down origin-top-right"
+                    >
+                      {/* ── Azioni primarie ───────────────────────────────────── */}
+                      <button
+                        data-testid="bulk-analyze"
+                        disabled={selectedCount === 0}
+                        onClick={() => {
+                          setActionsOpen(false);
+                          handleAnalyzeSelected();
+                        }}
+                        className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                      >
+                        <Sparkles size={15} className="shrink-0" />
+                        <span className="flex-1">{t('analyze')}</span>
+                      </button>
+
+                      <button
+                        data-testid="bulk-download"
+                        disabled={selectedCount === 0}
+                        onClick={() => {
+                          setActionsOpen(false);
+                          handleDownloadSelected();
+                        }}
+                        className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                      >
+                        <Download size={15} className="shrink-0" />
+                        <span className="flex-1 min-w-0">
+                          <span className="block">{tc('download')}</span>
+                          {/* The backend enqueues missing assets only — say so, or a
+                        full-library selection looks like it re-downloads everything. */}
+                          <span className="block text-[11px] text-gray-500 leading-snug">
+                            {t('downloadOnlyMissingHint')}
+                          </span>
+                        </span>
+                      </button>
+
+                      <div className="my-1 border-t border-[#2e2e2e]" />
+
+                      {/* ── Aggiungi a source ─────────────────────────────────── */}
+                      <div
+                        className={[
+                          'transition-opacity',
+                          selectedCount === 0 ? 'opacity-40 pointer-events-none' : '',
+                        ].join(' ')}
+                      >
+                        <p className="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-600 flex items-center gap-1.5">
+                          <FolderPlus size={12} className="shrink-0" />
+                          {t('addToSource')}
+                        </p>
+                        <div className="max-h-44 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e]">
+                          {collections.length === 0 && (
+                            <p className="px-3 py-1.5 text-xs text-gray-500">{t('noSources')}</p>
+                          )}
+                          {collections.map((c) => {
+                            const allIn = selectedCount > 0 && !!allInByCollection[c.id];
+                            return (
+                              <button
+                                key={c.id}
+                                data-testid={`assign-to-${c.id}`}
+                                onClick={() => assignTo(c.id)}
+                                className="u-press w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-gray-300 hover:bg-[#2a2a2a] hover:text-white transition-colors"
+                              >
+                                <span
+                                  className="w-2 h-2 rounded-full shrink-0"
+                                  style={{ backgroundColor: c.color }}
+                                />
+                                <span className="flex-1 truncate text-left">{c.name}</span>
+                                {allIn && (
+                                  <Check size={14} className="u-pop-in text-green-400 shrink-0" />
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <button
+                          data-testid="assign-create-new"
+                          onClick={() => {
+                            setActionsOpen(false);
+                            setShowCreate(true);
+                          }}
+                          className="u-press w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-gray-300 hover:bg-[#2a2a2a] hover:text-white transition-colors"
+                        >
+                          <Plus size={15} className="shrink-0" />
+                          <span className="flex-1 text-left">{t('createNewSource')}</span>
+                        </button>
+                      </div>
+
+                      <div className="my-1 border-t border-[#2e2e2e]" />
+
+                      {/* ── Pulizia + distruttiva (two-step) ──────────────────── */}
+                      <button
+                        data-testid={
+                          confirmClearDesc
+                            ? 'bulk-clear-descriptions-confirm'
+                            : 'bulk-clear-descriptions'
+                        }
+                        disabled={selectedCount === 0}
+                        onClick={() => {
+                          if (confirmClearDesc) handleClearDescriptions();
+                          else {
+                            setConfirmClearDesc(true);
+                            setConfirmClearTags(false);
+                            setConfirmDeletePosts(false);
+                          }
+                        }}
+                        className={[
+                          'u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
+                          confirmClearDesc
+                            ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                            : 'text-gray-300 hover:bg-[#2a2a2a] hover:text-white',
+                        ].join(' ')}
+                      >
+                        <Eraser size={15} className="shrink-0" />
+                        <span key={confirmClearDesc ? 'c' : 'i'} className="u-fade-in">
+                          {confirmClearDesc
+                            ? t('clearDescriptionsConfirm', { n: selectedCount })
+                            : t('clearDescriptions')}
+                        </span>
+                      </button>
+
+                      <button
+                        data-testid={
+                          confirmClearTags ? 'bulk-clear-tags-confirm' : 'bulk-clear-tags'
+                        }
+                        disabled={selectedCount === 0}
+                        onClick={() => {
+                          if (confirmClearTags) handleClearAiTags();
+                          else {
+                            setConfirmClearTags(true);
+                            setConfirmClearDesc(false);
+                            setConfirmDeletePosts(false);
+                          }
+                        }}
+                        className={[
+                          'u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
+                          confirmClearTags
+                            ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+                            : 'text-gray-300 hover:bg-[#2a2a2a] hover:text-white',
+                        ].join(' ')}
+                      >
+                        <TagsIcon size={15} className="shrink-0" />
+                        <span key={confirmClearTags ? 'c' : 'i'} className="u-fade-in">
+                          {confirmClearTags
+                            ? t('clearTagsConfirm', { n: selectedCount })
+                            : t('clearTags')}
+                        </span>
+                      </button>
+
+                      <div className="my-1 border-t border-[#2e2e2e]" />
+
+                      <button
+                        data-testid={
+                          confirmDeletePosts ? 'bulk-delete-posts-confirm' : 'bulk-delete-posts'
+                        }
+                        disabled={selectedCount === 0}
+                        onClick={() => {
+                          if (confirmDeletePosts) handleDeletePosts();
+                          else {
+                            setConfirmDeletePosts(true);
+                            setConfirmClearDesc(false);
+                            setConfirmClearTags(false);
+                          }
+                        }}
+                        className={[
+                          'u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
+                          confirmDeletePosts
+                            ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                            : 'text-red-400/90 hover:bg-red-500/10 hover:text-red-300',
+                        ].join(' ')}
+                      >
+                        <Trash2 size={15} className="shrink-0" />
+                        <span key={confirmDeletePosts ? 'c' : 'i'} className="u-fade-in">
+                          {confirmDeletePosts
+                            ? t('deletePostsConfirm', { n: selectedCount })
+                            : t('deletePosts')}
+                        </span>
+                      </button>
+                      {confirmDeletePosts && (
+                        <p className="px-3 pt-1 pb-1.5 text-[10.5px] leading-snug text-gray-500">
+                          {t('deleteHint')}
+                        </p>
+                      )}
+                    </Popover>
                   </div>
 
-                  <div className="my-1 border-t border-[#2e2e2e]" />
-
-                  {/* ── Pulizia + distruttiva (two-step) ──────────────────── */}
                   <button
-                    data-testid={
-                      confirmClearDesc
-                        ? 'bulk-clear-descriptions-confirm'
-                        : 'bulk-clear-descriptions'
-                    }
-                    disabled={selectedCount === 0}
-                    onClick={() => {
-                      if (confirmClearDesc) handleClearDescriptions();
-                      else {
-                        setConfirmClearDesc(true);
-                        setConfirmClearTags(false);
-                        setConfirmDeletePosts(false);
-                      }
-                    }}
-                    className={[
-                      'u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
-                      confirmClearDesc
-                        ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
-                        : 'text-gray-300 hover:bg-[#2a2a2a] hover:text-white',
-                    ].join(' ')}
+                    data-testid="select-cancel"
+                    onClick={exitSelectMode}
+                    title={t('exitSelectionTitle')}
+                    className="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-white hover:bg-white/10 u-press shrink-0"
                   >
-                    <Eraser size={15} className="shrink-0" />
-                    <span key={confirmClearDesc ? 'c' : 'i'} className="u-fade-in">
-                      {confirmClearDesc
-                        ? t('clearDescriptionsConfirm', { n: selectedCount })
-                        : t('clearDescriptions')}
-                    </span>
+                    <X size={16} />
                   </button>
-
-                  <button
-                    data-testid={confirmClearTags ? 'bulk-clear-tags-confirm' : 'bulk-clear-tags'}
-                    disabled={selectedCount === 0}
-                    onClick={() => {
-                      if (confirmClearTags) handleClearAiTags();
-                      else {
-                        setConfirmClearTags(true);
-                        setConfirmClearDesc(false);
-                        setConfirmDeletePosts(false);
-                      }
-                    }}
-                    className={[
-                      'u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
-                      confirmClearTags
-                        ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
-                        : 'text-gray-300 hover:bg-[#2a2a2a] hover:text-white',
-                    ].join(' ')}
-                  >
-                    <TagsIcon size={15} className="shrink-0" />
-                    <span key={confirmClearTags ? 'c' : 'i'} className="u-fade-in">
-                      {confirmClearTags
-                        ? t('clearTagsConfirm', { n: selectedCount })
-                        : t('clearTags')}
-                    </span>
-                  </button>
-
-                  <div className="my-1 border-t border-[#2e2e2e]" />
-
-                  <button
-                    data-testid={
-                      confirmDeletePosts ? 'bulk-delete-posts-confirm' : 'bulk-delete-posts'
-                    }
-                    disabled={selectedCount === 0}
-                    onClick={() => {
-                      if (confirmDeletePosts) handleDeletePosts();
-                      else {
-                        setConfirmDeletePosts(true);
-                        setConfirmClearDesc(false);
-                        setConfirmClearTags(false);
-                      }
-                    }}
-                    className={[
-                      'u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
-                      confirmDeletePosts
-                        ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
-                        : 'text-red-400/90 hover:bg-red-500/10 hover:text-red-300',
-                    ].join(' ')}
-                  >
-                    <Trash2 size={15} className="shrink-0" />
-                    <span key={confirmDeletePosts ? 'c' : 'i'} className="u-fade-in">
-                      {confirmDeletePosts
-                        ? t('deletePostsConfirm', { n: selectedCount })
-                        : t('deletePosts')}
-                    </span>
-                  </button>
-                  {confirmDeletePosts && (
-                    <p className="px-3 pt-1 pb-1.5 text-[10.5px] leading-snug text-gray-500">
-                      {t('deleteHint')}
-                    </p>
-                  )}
-                </Popover>
+                </div>
               </div>
+            )}
+          </div>
 
+          {/* AI-suggested filter tags. Tethered to the search pill: same floating
+          material, same left gutter, sitting one even step below it. The vertical gap
+          to the search pill must read the SAME as the pill's own breathing room — the
+          search pill is h-9 centred in the 52px bar, i.e. 8px above and below — so the
+          suggested bar needs no top margin: the bar's 8px bottom padding already is
+          that gap, matching search→grid (8px) and the horizontal pill gap (gap-2).
+          One slim capsule; chips ghosted inside. */}
+          {showSuggestBar && (
+            <div
+              data-testid="suggested-tags-bar"
+              className="pointer-events-auto inline-flex items-center gap-1 ml-3 h-9 max-w-[calc(100%-1.5rem)] pl-2 pr-1.5 rounded-full bg-[#1c1c1e]/85 backdrop-blur-xl ring-1 ring-white/10 overflow-x-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent u-fade-in-down"
+            >
+              <Sparkles size={13} className="text-[#7B5CFF] shrink-0 mr-0.5" />
+
+              {suggestedTags.map((tag, i) => {
+                const isActive = activeConcepts.includes(tag);
+                return (
+                  <button
+                    key={tag}
+                    data-testid="suggested-tag"
+                    onClick={() => toggleConcept(tag)}
+                    // Don't take focus on mouse click — avoids the accent focus
+                    // outline lingering and jumping chip→chip after each toggle.
+                    // Keyboard Tab still focuses (and shows the ring) for a11y.
+                    onMouseDown={(e) => e.preventDefault()}
+                    style={{ animationDelay: i * 25 + 'ms' }}
+                    className={[
+                      'shrink-0 whitespace-nowrap rounded-full px-2.5 h-7 flex items-center text-[12px] u-press u-pop-in transition-colors',
+                      isActive
+                        ? 'bg-[#7B5CFF] text-white'
+                        : 'bg-white/[0.04] text-gray-300 hover:bg-white/[0.10] hover:text-white',
+                    ].join(' ')}
+                  >
+                    {tag}
+                  </button>
+                );
+              })}
+
+              {/* AND/OR — only when it can actually change the result (2+ concepts) */}
+              {activeConcepts.length >= 2 && (
+                <div className="shrink-0 inline-flex rounded-full bg-black/30 overflow-hidden ml-0.5">
+                  {(['or', 'and'] as const).map((m) => (
+                    <button
+                      key={m}
+                      data-testid={`concept-mode-${m}`}
+                      onClick={() => changeConceptMode(m)}
+                      onMouseDown={(e) => e.preventDefault()}
+                      className={[
+                        'px-2 h-7 text-[10px] uppercase tracking-wide u-press transition-colors',
+                        conceptMode === m
+                          ? 'bg-[#7B5CFF] text-white'
+                          : 'text-gray-400 hover:text-white',
+                      ].join(' ')}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {suggestLoading && (
+                <RefreshCw
+                  size={13}
+                  className="text-[#7B5CFF] animate-spin shrink-0 mr-0.5"
+                  strokeWidth={1.5}
+                />
+              )}
+            </div>
+          )}
+
+          {/* Suggested-download banner — shown after a bulk analyze when part of the
+          selection had remote-only media that must be downloaded before it can be
+          analyzed. Offers to queue exactly those downloads. */}
+          {selectMode && downloadSuggest && downloadSuggest.length > 0 && (
+            <div
+              data-testid="analyze-download-suggest"
+              className={`${FLOAT_CARD} flex items-center gap-2 mx-3 mt-2 px-3 py-1.5 !bg-amber-500/20 u-fade-in-down`}
+            >
+              <Info size={14} className="text-amber-300 shrink-0" />
+              <span className="flex-1 text-xs text-amber-200/90 leading-snug">
+                {t('analyzeNeedsDownload', { n: downloadSuggest.length })}
+              </span>
               <button
-                data-testid="select-cancel"
-                onClick={exitSelectMode}
-                title={t('exitSelectionTitle')}
-                className="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-white hover:bg-[#1a1a1a] u-press shrink-0"
+                data-testid="analyze-download-suggest-action"
+                onClick={handleDownloadSuggested}
+                title={t('downloadOnlyMissingHint')}
+                className="u-press flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] shrink-0 transition-colors"
               >
-                <X size={16} />
+                <Download size={13} />
+                {t('analyzeDownloadMissing', { n: downloadSuggest.length })}
+              </button>
+              <button
+                data-testid="analyze-download-suggest-dismiss"
+                onClick={() => setDownloadSuggest(null)}
+                title={t('analyzeSuggestDismiss')}
+                className="flex items-center justify-center w-6 h-6 rounded-md text-amber-200/70 hover:text-white hover:bg-white/10 u-press shrink-0"
+              >
+                <X size={14} />
               </button>
             </div>
           )}
         </div>
+        {/* ↑ end floating frosted header (toolbar + contextual strips) */}
 
-        {/* AI-suggested filter tags — a separate strip below the toolbar while a
-          query is active */}
-        {showSuggestBar && (
-          <div
-            data-testid="suggested-tags-bar"
-            className="flex items-center gap-2 px-3 py-2 shrink-0 border-b border-[#1e1e1e] bg-[#0f0f0f] overflow-x-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent u-fade-in-down"
-          >
-            <span className="flex items-center gap-1.5 text-[11px] text-gray-500 shrink-0">
-              <Sparkles size={13} className="text-[#7B5CFF]" />
-              {t('suggestedFilters')}
-            </span>
-
-            {/* AND/OR toggle — meaningful only with 2+ active concepts */}
-            <div className="inline-flex rounded-md border border-[#2e2e2e] overflow-hidden shrink-0">
-              {(['or', 'and'] as const).map((m) => (
-                <button
-                  key={m}
-                  data-testid={`concept-mode-${m}`}
-                  onClick={() => changeConceptMode(m)}
-                  disabled={activeConcepts.length < 2}
-                  className={[
-                    'px-2 py-0.5 text-[10px] uppercase u-press disabled:opacity-40',
-                    conceptMode === m
-                      ? 'bg-[#7B5CFF] text-white'
-                      : 'text-gray-400 hover:bg-[#1a1a1a]',
-                  ].join(' ')}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-
-            {suggestedTags.map((tag, i) => {
-              const isActive = activeConcepts.includes(tag);
-              return (
-                <button
-                  key={tag}
-                  data-testid="suggested-tag"
-                  onClick={() => toggleConcept(tag)}
-                  style={{ animationDelay: i * 30 + 'ms' }}
-                  className={[
-                    'shrink-0 whitespace-nowrap px-2.5 py-0.5 rounded-full text-[12px] u-press u-pop-in',
-                    isActive
-                      ? 'bg-[#7B5CFF] text-white'
-                      : 'bg-[#7B5CFF]/15 text-[#b9a6ff] hover:bg-[#7B5CFF]/25',
-                  ].join(' ')}
-                >
-                  {isActive ? '' : '#'}
-                  {tag}
-                </button>
-              );
-            })}
-
-            {suggestLoading && (
-              <RefreshCw
-                size={13}
-                className="text-[#7B5CFF] animate-spin shrink-0"
-                strokeWidth={1.5}
-              />
-            )}
-          </div>
-        )}
-
-        {/* Suggested-download banner — shown after a bulk analyze when part of the
-          selection had remote-only media that must be downloaded before it can be
-          analyzed. Offers to queue exactly those downloads. */}
-        {selectMode && downloadSuggest && downloadSuggest.length > 0 && (
-          <div
-            data-testid="analyze-download-suggest"
-            className="flex items-center gap-2 px-3 py-1.5 shrink-0 border-b border-[#1e1e1e] bg-amber-500/10 u-fade-in-down"
-          >
-            <Info size={14} className="text-amber-300 shrink-0" />
-            <span className="flex-1 text-xs text-amber-200/90 leading-snug">
-              {t('analyzeNeedsDownload', { n: downloadSuggest.length })}
-            </span>
-            <button
-              data-testid="analyze-download-suggest-action"
-              onClick={handleDownloadSuggested}
-              title={t('downloadOnlyMissingHint')}
-              className="u-press flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] shrink-0 transition-colors"
-            >
-              <Download size={13} />
-              {t('analyzeDownloadMissing', { n: downloadSuggest.length })}
-            </button>
-            <button
-              data-testid="analyze-download-suggest-dismiss"
-              onClick={() => setDownloadSuggest(null)}
-              title={t('analyzeSuggestDismiss')}
-              className="flex items-center justify-center w-6 h-6 rounded-md text-amber-200/70 hover:text-white hover:bg-white/10 u-press shrink-0"
-            >
-              <X size={14} />
-            </button>
-          </div>
-        )}
-
-        {/* Scrollable content area */}
+        {/* Content area — date-ordered grid OR the infinite canvas. In canvas
+          mode the container stops scrolling (the canvas owns pan/zoom) and the
+          wall fills it via an absolute layer so its height resolves inside the
+          flex parent. The sentinel stays mounted in both modes (so the paging
+          observer node never goes stale across switches); grid paging is gated
+          off while canvas is requested (see maybeLoadMore). */}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent"
+          className={
+            showCanvas
+              ? 'relative flex-1 overflow-hidden'
+              : 'flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent'
+          }
         >
-          {/* Grid (row-virtualized via the shared VirtualPostGrid) — only the rows
-            in (or near) the viewport are mounted, so off-screen PostCard
-            images/videos are never created. A single onMouseDownCapture on the
-            container records the last pointer event (shiftKey for range-select)
-            and arms the drag-select sweep; onGridMouseOver extends the sweep. */}
-          <VirtualPostGrid
-            testId="post-grid"
-            posts={posts}
-            scrollRef={scrollRef}
-            onOpen={handleCardOpen}
-            selectable={selectMode}
-            selected={selected}
-            onQuickSelect={handleQuickSelect}
-            onGridMouseDownCapture={handleGridMouseDown}
-            onGridMouseOver={handleGridMouseOver}
-          />
+          {showCanvas ? (
+            <div className="absolute inset-0">
+              <InfiniteCanvas
+                testId="post-canvas"
+                posts={displayed}
+                transitionPhase={searchPhase}
+                onOpen={handleCardOpen}
+                selectable={selectMode}
+                selected={selected}
+                onQuickSelect={handleQuickSelect}
+              />
+            </div>
+          ) : (
+            <>
+              {/* Grid (row-virtualized via the shared VirtualPostGrid) — only the
+                rows in (or near) the viewport are mounted, so off-screen PostCard
+                images/videos are never created. A single onMouseDownCapture on the
+                container records the last pointer event (shiftKey for range-select)
+                and arms the drag-select sweep; onGridMouseOver extends the sweep. */}
+              <VirtualPostGrid
+                testId="post-grid"
+                posts={displayed}
+                transitionPhase={searchPhase}
+                scrollRef={scrollRef}
+                topInset={headerH}
+                onOpen={handleCardOpen}
+                selectable={selectMode}
+                selected={selected}
+                onQuickSelect={handleQuickSelect}
+                onGridMouseDownCapture={handleGridMouseDown}
+                onGridMouseOver={handleGridMouseOver}
+              />
 
-          {/* Initial load → skeleton grid (content-shaped, no empty flash). */}
-          {loading && posts.length === 0 && <PostGridSkeleton />}
+              {/* Mid-scroll load (more pages) → small spinner under the grid.
+                Grid mode only: in canvas mode the wall shows as soon as results
+                exist, so this branch isn't reached with posts present. */}
+              {loading && posts.length > 0 && (
+                <div className="flex items-center justify-center py-10 u-fade-in">
+                  <RefreshCw size={20} className="text-[#555] animate-spin" strokeWidth={1.5} />
+                </div>
+              )}
+            </>
+          )}
 
-          {/* Mid-scroll load (more pages) → small spinner under the grid. */}
-          {loading && posts.length > 0 && (
-            <div className="flex items-center justify-center py-10 u-fade-in">
-              <RefreshCw size={20} className="text-[#555] animate-spin" strokeWidth={1.5} />
+          {/* Initial load → skeleton grid (content-shaped, no empty flash). Inset
+            below the floating header so the first skeleton row isn't hidden. */}
+          {loading && posts.length === 0 && (
+            <div style={{ paddingTop: headerH }}>
+              <PostGridSkeleton />
             </div>
           )}
 
@@ -1514,7 +1701,11 @@ export default function Gallery({
           hasPrev={hasPrev}
           hasNext={hasNext}
           onApplyAiFilter={(patch: FilterPatch) => {
-            setFilters((prev) => ({ ...prev, ...patch, limit: LOAD_BATCH }));
+            setFilters((prev) => ({
+              ...prev,
+              ...patch,
+              limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH,
+            }));
             setActivePost(null);
           }}
           onLocalFilesDeleted={() => reload()}

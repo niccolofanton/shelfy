@@ -31,6 +31,23 @@ declare module 'react' {
   }
 }
 
+// Media overscan: the cover image / video preview render 6px wider & taller than
+// the tile and shift up-left 3px, so the element bleeds 3px past every edge of the
+// card's rounded `overflow-hidden` clip. The clip then always cuts through solid
+// image INTERIOR — never the element's own antialiased (and, once `u-media-zoom`
+// promotes it, composited) border — so no pale seam shows at rest, mid-zoom, or on
+// a static video. `maxWidth:'none'` defeats the img preflight `max-width:100%` cap.
+// Kept as an inline style (not a Tailwind arbitrary value) because `calc(100%+6px)`
+// without spaces around `+` is INVALID CSS and silently dropped — which is exactly
+// what made the earlier overscan a no-op, leaving the seam visible until hover.
+const MEDIA_OVERSCAN: React.CSSProperties = {
+  top: '-3px',
+  left: '-3px',
+  width: 'calc(100% + 6px)',
+  height: 'calc(100% + 6px)',
+  maxWidth: 'none',
+};
+
 type Translate = (key: string, vars?: Record<string, unknown>) => string;
 
 // web_palette_json may be hex strings OR { hex, role } objects (F4 is loose);
@@ -226,18 +243,28 @@ function ManualFallback({ post, t }: { post: Shelfy.Post; t: Translate }): React
   );
 }
 
-// Social post with neither an image nor text: platform glyph + author handle.
+// Social post whose media can't be shown (no local file and its remote thumbnail
+// has expired — Instagram/Twitter CDN URLs are signed and short-lived), or which
+// simply has no media: platform glyph + author handle. When the post DID have
+// media (so the image is genuinely gone, not absent), a muted "media unavailable"
+// line says so — instead of dumping the caption as if it were a text post.
 function SocialFallback({ post, t }: { post: Shelfy.Post; t: Translate }): React.JSX.Element {
+  const hadMedia =
+    !!(post.thumbnailUrl || post.thumbnailPath || post.imagePath || post.videoPath) ||
+    (Array.isArray(post.media) && post.media.length > 0);
   return (
     <div
       data-testid="social-fallback"
-      className="w-full h-full flex flex-col items-center justify-center gap-1.5 px-4"
+      className="w-full h-full flex flex-col items-center justify-center gap-1 px-4"
       style={{ backgroundColor: '#161618' }}
     >
       <SourceIcon platform={post.platform} size={20} className="text-gray-500" />
       <p className="text-[11px] text-gray-400 truncate max-w-full">
         @{post.authorUsername || t('unknownAuthor')}
       </p>
+      {hadMedia && (
+        <p className="text-[10px] text-gray-600 truncate max-w-full">{t('mediaUnavailable')}</p>
+      )}
     </div>
   );
 }
@@ -462,11 +489,20 @@ function PostCard({
   const displayedImage = slideshowActive ? slideshowImages[slide] : imageSrc;
   const imageShowable = !!displayedImage && !imageFailed;
 
-  // Text posts always get the typographic treatment; other social posts fall
-  // back to it only when their media is unavailable but the caption survives
-  // (web/manual have their own informative fallbacks below).
+  // Whether this post is a MEDIA post at all (it has, or once had, a thumbnail /
+  // image / video / carousel). A signed remote thumbnail that has since expired
+  // still counts — the post is a media post whose image is merely gone, not a
+  // text post. Used to keep such posts OUT of the typographic text treatment.
+  const hasMediaSource =
+    !!(post.thumbnailPath || post.imagePath || post.videoPath || post.thumbnailUrl) ||
+    (Array.isArray(post.media) && post.media.length > 0);
+
+  // Only GENUINE text posts get the typographic quote-card: an explicit text
+  // mediaType, or a social post that truly carries no media (just a caption).
+  // A media post whose image failed to load no longer masquerades as a text card
+  // — it drops to the informative SocialFallback ("media unavailable") instead.
   const isTextCard =
-    post.mediaType === 'text' || (!imageShowable && hasText && !isWeb && !isManual);
+    post.mediaType === 'text' || (!hasMediaSource && hasText && !isWeb && !isManual);
 
   // A new image source (post change, or hover-slideshow frame) clears a stale
   // failure flag so a later valid src isn't permanently hidden behind the fallback.
@@ -474,12 +510,15 @@ function PostCard({
     setImageFailed(false);
   }, [displayedImage]);
 
-  // Settle fallback: transitionend doesn't fire when transitions are disabled
-  // (prefers-reduced-motion) or the event is missed — never leave the blurred
-  // placeholder composited under an already-opaque image.
+  // Settle fallback: ALWAYS arm the timer, not only after onLoad. transitionend can
+  // be missed (reduced-motion), but more importantly a cover whose <img> fires
+  // NEITHER load NOR error — e.g. a video post with an expired/hanging remote
+  // thumbnail or no saved local cover — would otherwise leave the pixelated blur-up
+  // placeholder composited on top of the card forever. Loaded → quick settle as the
+  // fade ends; not loaded → a longer failsafe, then drop the blur regardless.
   useEffect(() => {
-    if (!imageLoaded || imageSettled) return undefined;
-    const t = setTimeout(() => setImageSettled(true), 450);
+    if (imageSettled) return undefined;
+    const t = setTimeout(() => setImageSettled(true), imageLoaded ? 450 : 1200);
     return () => clearTimeout(t);
   }, [imageLoaded, imageSettled]);
 
@@ -502,10 +541,13 @@ function PostCard({
         // `isolate` confines the card's internal z-10/z-20 layers (gradient, badges,
         // checkbox) to its own stacking context, so they can't paint over the
         // gallery's sticky filter bar / dropdown panel above the grid.
-        'group relative isolate aspect-square overflow-hidden rounded-sm cursor-pointer u-lift outline-none focus-visible:ring-2 focus-visible:ring-[#7B5CFF] focus-visible:ring-inset',
-        // A hairline ring defines the card edge against the grid at rest; the
-        // accent ring replaces (not stacks on) it while selected.
-        selected ? 'ring-2 ring-[#7B5CFF] ring-inset' : 'ring-1 ring-white/[0.06]',
+        // No lift/shadow and no resting hairline: the hover treatment is a pure
+        // INTERNAL media zoom (see `u-media-zoom`) + the gradient overlay fading in,
+        // so a card never casts the stray pale halo the old ring+lift produced.
+        'group relative isolate aspect-square overflow-hidden rounded-sm u-clip-aa cursor-pointer outline-none',
+        // Only the selected state draws a ring (accent); at rest the card edge is
+        // defined by its own fill against the darker grid, with no hairline border.
+        selected ? 'ring-2 ring-[#7B5CFF] ring-inset' : '',
       ].join(' ')}
       style={{ backgroundColor: '#1a1a1a' }}
       onClick={handleClick}
@@ -551,13 +593,14 @@ function PostCard({
             // until near the viewport, defeating the pre-loading.
             loading="eager"
             decoding="async"
-            // `relative` keeps this image painting ABOVE the absolutely-positioned
-            // blur layer (static elements would paint below positioned siblings).
-            // Full-page web screenshots are anchored to the top so the hero /
-            // above-the-fold stays visible in the square crop.
-            className={`relative ${isWeb ? 'object-top' : ''} object-cover w-full h-full u-transition ${
+            // Cover image FILLS the square (object-cover) and overscans 3px past every
+            // edge via MEDIA_OVERSCAN, so the rounded clip cuts image interior, never the
+            // element's antialiased/composited border → no pale seam at rest, mid-zoom, or
+            // settled. Painted above the blur (later in DOM order). Web shots anchor to top.
+            className={`absolute object-cover u-media-zoom ${isWeb ? 'object-top' : ''} ${
               imageLoaded ? (selectable && !selected ? 'opacity-80' : 'opacity-100') : 'opacity-0'
             }`}
+            style={MEDIA_OVERSCAN}
             draggable={false}
             onLoad={() => setImageLoaded(true)}
             onTransitionEnd={() => setImageSettled(true)}
@@ -584,9 +627,10 @@ function PostCard({
           playsInline
           preload="none"
           onPlaying={() => setVideoReady(true)}
-          className={`absolute inset-0 object-cover w-full h-full transition-opacity u-transition ${
+          className={`absolute object-cover u-media-zoom ${
             hovering && videoReady ? 'opacity-100' : 'opacity-0'
           }`}
+          style={MEDIA_OVERSCAN}
           draggable={false}
         />
       )}
@@ -645,14 +689,22 @@ function PostCard({
         nodi DOM della card e quasi tutti gli SVG lucide — tenerlo fuori dal mount
         path è ciò che alleggerisce le righe rivelate durante lo scroll. */}
       {everHovered && (
-        <div
-          className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity u-transition z-10 flex flex-col justify-end"
-          style={{
-            background:
-              'linear-gradient(to top, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.72) 15%, rgba(0,0,0,0.46) 30%, rgba(0,0,0,0.20) 50%, rgba(0,0,0,0.05) 70%, transparent 100%)',
-          }}
-        >
-          <div className="px-2 pb-8 space-y-1 translate-y-1 group-hover:translate-y-0 transition-transform u-transition">
+        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity u-transition z-10 flex flex-col justify-end">
+          {/* Darkening gradient, deliberately LARGER than the card (-inset-2) so it
+            still covers the hover-zoomed image (scale 1.05) right up to the edges:
+            pushing the layer's own antialiased edge OUTSIDE the card removes the ~1px
+            unscrimmed seam the edge-to-edge overlay left against the scaled image's
+            compositing layer. The card's overflow-hidden clips the overflow. Kept
+            separate from the text so the copy below isn't scaled with it. */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute -inset-2"
+            style={{
+              background:
+                'linear-gradient(to top, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.72) 15%, rgba(0,0,0,0.46) 30%, rgba(0,0,0,0.20) 50%, rgba(0,0,0,0.05) 70%, transparent 100%)',
+            }}
+          />
+          <div className="relative px-2 pb-8 space-y-1 translate-y-1 group-hover:translate-y-0 transition-transform u-transition">
             <p className="text-white text-xs font-bold leading-tight truncate font-display">
               {isWeb
                 ? post.webDomain || post.authorName || t('website')

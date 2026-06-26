@@ -17,6 +17,20 @@ try {
   const path = require('path') as typeof import('path');
 
   const electronAPI: ElectronAPI = {
+    // Window chrome (frameless): the renderer draws its own title-bar controls on
+    // Windows/Linux and positions macOS' native traffic lights. `platform` is read
+    // synchronously at preload time so the UI can branch without an async round-trip.
+    platform: process.platform,
+    windowMinimize: () => ipcRenderer.invoke('window:minimize'),
+    windowMaximizeToggle: () => ipcRenderer.invoke('window:maximizeToggle'),
+    windowClose: () => ipcRenderer.invoke('window:close'),
+    windowIsMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+    onWindowMaximizeChange: (cb) => {
+      const handler = (_: IpcRendererEvent, data: unknown) => cb(!!data);
+      ipcRenderer.on('window:maximizeChanged', handler);
+      return () => ipcRenderer.removeListener('window:maximizeChanged', handler);
+    },
+
     // DB
     getPosts: (filters) => ipcRenderer.invoke('db:getPosts', filters),
     getPostIds: (filters) => ipcRenderer.invoke('db:getPostIds', filters),

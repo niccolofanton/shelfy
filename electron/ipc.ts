@@ -112,6 +112,12 @@ function registerIpcHandlers(mainWindow: BrowserWindow): void {
   // Always update the window ref so events go to the current window
   _window = mainWindow;
 
+  // Frameless chrome: the renderer's custom window controls (Windows/Linux) need
+  // to flip the maximize/restore icon when the window is maximized by any means
+  // (double-click drag edge, OS shortcut), so mirror the native state down.
+  mainWindow.on('maximize', () => sendToWindow('window:maximizeChanged', true));
+  mainWindow.on('unmaximize', () => sendToWindow('window:maximizeChanged', false));
+
   // Wire the progress emitter to always use the current window
   downloader.setProgressEmitter((job: unknown) => {
     sendToWindow('download:progress', job);
@@ -775,6 +781,27 @@ function registerIpcHandlers(mainWindow: BrowserWindow): void {
       }
       return { ok: true, promoted, cleared, errors };
     },
+  );
+
+  // ── Window controls (frameless chrome) ────────────────────────────────────────
+  // Drive the BrowserWindow from the renderer's custom title-bar buttons. macOS
+  // still uses its native traffic lights, but Windows/Linux are frameless and
+  // rely entirely on these.
+  ipcMain.handle('window:minimize', () => {
+    if (_window && !_window.isDestroyed()) _window.minimize();
+  });
+  ipcMain.handle('window:maximizeToggle', () => {
+    if (!_window || _window.isDestroyed()) return false;
+    if (_window.isMaximized()) _window.unmaximize();
+    else _window.maximize();
+    return _window.isMaximized();
+  });
+  ipcMain.handle('window:close', () => {
+    if (_window && !_window.isDestroyed()) _window.close();
+  });
+  ipcMain.handle(
+    'window:isMaximized',
+    () => !!(_window && !_window.isDestroyed() && _window.isMaximized()),
   );
 
   // ── App / Updates ─────────────────────────────────────────────────────────────

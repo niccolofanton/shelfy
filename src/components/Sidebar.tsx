@@ -22,6 +22,10 @@ import ActivityCenter from './ActivityCenter';
 import FeedbackModal from './FeedbackModal';
 import { useT } from '../i18n';
 
+// Frameless chrome: macOS keeps native traffic lights (top-left), so the sidebar
+// reserves a draggable strip for them. Other platforms put controls top-right.
+const isMacChrome = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
+
 // Translator returned by useT — namespaced key + optional interpolation vars.
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
 
@@ -92,7 +96,7 @@ interface BrowserTab {
 }
 
 // Persisted collapse-state maps (keyed by group / platform id).
-type ExpandedGroups = { browser: boolean; bookmarks: boolean; ai: boolean };
+type ExpandedGroups = { browser: boolean; bookmarks: boolean; ai: boolean; allposts: boolean };
 type ExpandedPlatforms = Record<string, boolean>;
 
 // The header total + per-platform counts the sidebar reads. Loose enough to
@@ -239,7 +243,12 @@ function Sidebar({
   // backwards-compat with persisted state / tests. Hydrated from localStorage so
   // the choice survives remounts and restarts.
   const [expandedGroups, setExpandedGroups] = useState<ExpandedGroups>(() =>
-    loadPersisted<ExpandedGroups>(LS_GROUPS_KEY, { browser: true, bookmarks: true, ai: true }),
+    loadPersisted<ExpandedGroups>(LS_GROUPS_KEY, {
+      browser: true,
+      bookmarks: true,
+      ai: true,
+      allposts: true,
+    }),
   );
   const toggleGroup = (id: keyof ExpandedGroups): void =>
     setExpandedGroups((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -368,8 +377,15 @@ function Sidebar({
       data-testid="sidebar"
       className="flex flex-col w-[240px] min-w-[240px] h-full bg-[#111111] border-r border-[#2e2e2e] overflow-hidden select-none"
     >
-      {/* App header — pinned above the single scrolling menu */}
-      <div className="u-fade-in flex items-center gap-2.5 px-4 h-14 shrink-0">
+      {/* Frameless window: on macOS reserve a draggable top strip for the native
+          traffic lights (positioned here via trafficLightPosition in main.ts). On
+          Windows/Linux the custom controls live top-right (see App), so no strip. */}
+      {isMacChrome && <div className="drag-region h-9 shrink-0" />}
+
+      {/* App header — pinned above the single scrolling menu; doubles as the
+          window drag handle (its interactive children opt out via the global
+          no-drag rule). */}
+      <div className="drag-region u-fade-in flex items-center gap-2.5 px-4 h-14 shrink-0">
         <Logo size={20} />
         <div className="flex flex-col leading-tight">
           <span className="font-display text-white text-[15px] font-semibold tracking-wide">
@@ -381,7 +397,8 @@ function Sidebar({
         </div>
       </div>
 
-      {/* One single scrollable menu: Connections, Library (with Downloads), AI, then the
+      {/* One single scrollable menu: Connections, Library (All posts → platforms /
+          folders / New folder, then Downloads), AI, then the
           footer actions (Feedback / Attività / Impostazioni). Everything lives in
           the same scroll flow — when it runs out of vertical room it scrolls,
           nothing is pinned as an overlay on top. */}
@@ -486,6 +503,7 @@ function Sidebar({
           {/* ===================== LIBRARY (ex Bookmarks/Gallery) ===================== */}
           {(() => {
             const open = expandedGroups.bookmarks;
+            const allPostsOpen = expandedGroups.allposts;
             return (
               <div data-testid="sidebar-bookmarks" className="flex flex-col mt-2">
                 {/* Group header: toggles the section. Adding a custom source now
@@ -504,7 +522,173 @@ function Sidebar({
 
                 {open && (
                   <div className="flex flex-col gap-0.5 mb-0.5 mt-0.5">
-                    {/* Downloads — lives under Bookmarks as the first sub-row. */}
+                    {/* All posts — now an expandable parent: the platform rows,
+                        custom sources and the "New folder" action all nest under it.
+                        The chevron (left gutter) toggles the subtree; clicking the
+                        label still navigates to the all-posts gallery, exactly like
+                        the platform rows below. */}
+                    <div
+                      className={[
+                        'group relative w-full flex items-center pr-2 pl-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors',
+                        isActive('platform', 'all')
+                          ? 'bg-[#1e1e1e] text-white'
+                          : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                      ].join(' ')}
+                    >
+                      {isActive('platform', 'all') && accentBar()}
+                      {/* Disclosure chevron in the left gutter (w-7 = pl-9 indent),
+                          so the All posts icon stays aligned with chevron-less rows. */}
+                      <span className="w-7 shrink-0 flex justify-center">
+                        <button
+                          data-testid="source-all-toggle"
+                          aria-expanded={allPostsOpen}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleGroup('allposts');
+                          }}
+                          title={allPostsOpen ? t('collapse') : t('expand')}
+                          className="u-press flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors"
+                        >
+                          <ChevronDown
+                            size={13}
+                            className={[
+                              'transition-transform duration-200',
+                              allPostsOpen ? '' : '-rotate-90',
+                            ].join(' ')}
+                          />
+                        </button>
+                      </span>
+                      <button
+                        data-testid="source-all"
+                        aria-current={isActive('platform', 'all') ? 'page' : undefined}
+                        onClick={() => onSelectSource?.({ type: 'platform', value: 'all' })}
+                        className="u-press flex-1 flex justify-between items-center min-w-0 text-left"
+                      >
+                        <span className="flex items-center gap-2.5 min-w-0">
+                          <Grid3X3 size={15} className="shrink-0" />
+                          <span className="truncate">{t('allPosts')}</span>
+                        </span>
+                        <span className="text-[11px] text-gray-500 tabular-nums shrink-0 ml-2">
+                          {formatCount(total)}
+                        </span>
+                      </button>
+                      {/* Empty slot so the count stays column-aligned with rows that have one. */}
+                      <span aria-hidden className="w-5 ml-1 shrink-0" />
+                    </div>
+
+                    {/* All posts subtree — indented one level (pl-3) so the nesting
+                        under All posts reads. Holds the platform rows, any custom
+                        sources, and the "New folder" action. */}
+                    {allPostsOpen && (
+                      <div data-testid="source-all-children" className="flex flex-col gap-0.5 pl-3">
+                        {PLATFORM_STATS.map(({ id, label, key, Icon: PIcon }) => {
+                          // Brand rows carry a verbatim `label`; the localized 'web' row
+                          // resolves its label from a `sidebar` i18n key at render.
+                          const platformLabel = key ? t(key) : label;
+                          // Folder-tags belonging to this platform nest underneath it (e.g.
+                          // Instagram saved folders), turning the platform row into a dropdown.
+                          const children = collections.filter((c) => c.platform === id);
+                          const platformOpen = expandedPlatforms[id] !== false; // default expanded
+                          return (
+                            <React.Fragment key={id}>
+                              <div
+                                className={[
+                                  'group relative w-full flex items-center pr-2 pl-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors',
+                                  isActive('platform', id)
+                                    ? 'bg-[#1e1e1e] text-white'
+                                    : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                                ].join(' ')}
+                              >
+                                {isActive('platform', id) && accentBar()}
+                                {/* Disclosure chevron lives in the left gutter (w-7 = pl-9 indent),
+                                so platform icons stay aligned with chevron-less rows. */}
+                                <span className="w-7 shrink-0 flex justify-center">
+                                  {children.length > 0 && (
+                                    <button
+                                      data-testid={`source-${id}-toggle`}
+                                      aria-expanded={platformOpen}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        togglePlatform(id);
+                                      }}
+                                      title={platformOpen ? t('collapse') : t('expand')}
+                                      className="u-press flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors"
+                                    >
+                                      <ChevronDown
+                                        size={13}
+                                        className={[
+                                          'transition-transform duration-200',
+                                          platformOpen ? '' : '-rotate-90',
+                                        ].join(' ')}
+                                      />
+                                    </button>
+                                  )}
+                                </span>
+                                <button
+                                  data-testid={`source-${id}`}
+                                  onClick={() => onSelectSource?.({ type: 'platform', value: id })}
+                                  className="u-press flex-1 flex justify-between items-center min-w-0 text-left"
+                                >
+                                  <span className="flex items-center gap-2.5 min-w-0">
+                                    <PIcon size={15} className="shrink-0" />
+                                    <span className="truncate">{platformLabel}</span>
+                                  </span>
+                                  <span className="text-[11px] text-gray-500 tabular-nums shrink-0 ml-2">
+                                    {formatCount(byPlatform[id] ?? 0)}
+                                  </span>
+                                </button>
+                                {/* Empty slot so counts stay column-aligned with rows that have one. */}
+                                <span aria-hidden className="w-5 ml-1 shrink-0" />
+                              </div>
+                              {children.length > 0 && platformOpen && (
+                                <div
+                                  data-testid={`source-${id}-children`}
+                                  className="flex flex-col"
+                                >
+                                  {children.map((c, i) =>
+                                    renderCollectionRow(c, i, {
+                                      nested: true,
+                                      isLast: i === children.length - 1,
+                                    }),
+                                  )}
+                                </div>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+
+                        {/* Custom sources: any collection not nested under a shown
+                        platform row. Covers both platform-less folders (`!platform`)
+                        and orphans whose `platform` is a value outside PLATFORM_STATS
+                        (legacy/unknown ids), so no collection is ever invisible. */}
+                        {collections.some(
+                          (c) => !PLATFORM_STATS.some((p) => p.id === c.platform),
+                        ) && (
+                          <div data-testid="custom-sources" className="mt-1.5">
+                            {collections
+                              .filter((c) => !PLATFORM_STATS.some((p) => p.id === c.platform))
+                              .map((c, i) => renderCollectionRow(c, i))}
+                          </div>
+                        )}
+
+                        {/* Action row: opens the modal to create a custom source
+                        (a "folder/label" for organising bookmarks). Not a view →
+                        no active state. Reads lighter (gray-500) like the add
+                        rows in Connections, with the same "+" affordance. */}
+                        <button
+                          data-testid="add-source-btn"
+                          onClick={onAddCollection}
+                          title={t('addCollection')}
+                          className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
+                        >
+                          <FolderPlus size={15} className="shrink-0" />
+                          <span className="flex-1">{t('newFolder')}</span>
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Downloads — sibling row after the All posts block (collapsed
+                        or expanded, it always sits just below it). */}
                     <button
                       data-testid="nav-downloads"
                       aria-current={currentView === 'downloads' ? 'page' : undefined}
@@ -536,127 +720,6 @@ function Sidebar({
                       )}
                       {/* Empty chevron slot so the badge/label aligns with counted rows. */}
                       <span aria-hidden className="w-5 ml-1 shrink-0" />
-                    </button>
-
-                    {/* All posts */}
-                    <button
-                      data-testid="source-all"
-                      aria-current={isActive('platform', 'all') ? 'page' : undefined}
-                      onClick={() => onSelectSource?.({ type: 'platform', value: 'all' })}
-                      className={[
-                        'u-press group relative w-full flex items-center pl-9 pr-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors',
-                        isActive('platform', 'all')
-                          ? 'bg-[#1e1e1e] text-white'
-                          : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
-                      ].join(' ')}
-                    >
-                      {isActive('platform', 'all') && accentBar()}
-                      <Grid3X3 size={15} className="shrink-0 mr-2.5" />
-                      <span className="flex-1 text-left truncate">{t('allPosts')}</span>
-                      <span className="text-[11px] text-gray-500 tabular-nums shrink-0">
-                        {formatCount(total)}
-                      </span>
-                      {/* Empty chevron slot so the count aligns with rows that have a chevron. */}
-                      <span aria-hidden className="w-5 ml-1 shrink-0" />
-                    </button>
-
-                    {PLATFORM_STATS.map(({ id, label, key, Icon: PIcon }) => {
-                      // Brand rows carry a verbatim `label`; the localized 'web' row
-                      // resolves its label from a `sidebar` i18n key at render.
-                      const platformLabel = key ? t(key) : label;
-                      // Folder-tags belonging to this platform nest underneath it (e.g.
-                      // Instagram saved folders), turning the platform row into a dropdown.
-                      const children = collections.filter((c) => c.platform === id);
-                      const platformOpen = expandedPlatforms[id] !== false; // default expanded
-                      return (
-                        <React.Fragment key={id}>
-                          <div
-                            className={[
-                              'group relative w-full flex items-center pr-2 pl-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors',
-                              isActive('platform', id)
-                                ? 'bg-[#1e1e1e] text-white'
-                                : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
-                            ].join(' ')}
-                          >
-                            {isActive('platform', id) && accentBar()}
-                            {/* Disclosure chevron lives in the left gutter (w-7 = pl-9 indent),
-                                so platform icons stay aligned with chevron-less rows. */}
-                            <span className="w-7 shrink-0 flex justify-center">
-                              {children.length > 0 && (
-                                <button
-                                  data-testid={`source-${id}-toggle`}
-                                  aria-expanded={platformOpen}
-                                  onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-                                    e.stopPropagation();
-                                    togglePlatform(id);
-                                  }}
-                                  title={platformOpen ? t('collapse') : t('expand')}
-                                  className="u-press flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors"
-                                >
-                                  <ChevronDown
-                                    size={13}
-                                    className={[
-                                      'transition-transform duration-200',
-                                      platformOpen ? '' : '-rotate-90',
-                                    ].join(' ')}
-                                  />
-                                </button>
-                              )}
-                            </span>
-                            <button
-                              data-testid={`source-${id}`}
-                              onClick={() => onSelectSource?.({ type: 'platform', value: id })}
-                              className="u-press flex-1 flex justify-between items-center min-w-0 text-left"
-                            >
-                              <span className="flex items-center gap-2.5 min-w-0">
-                                <PIcon size={15} className="shrink-0" />
-                                <span className="truncate">{platformLabel}</span>
-                              </span>
-                              <span className="text-[11px] text-gray-500 tabular-nums shrink-0 ml-2">
-                                {formatCount(byPlatform[id] ?? 0)}
-                              </span>
-                            </button>
-                            {/* Empty slot so counts stay column-aligned with rows that have one. */}
-                            <span aria-hidden className="w-5 ml-1 shrink-0" />
-                          </div>
-                          {children.length > 0 && platformOpen && (
-                            <div data-testid={`source-${id}-children`} className="flex flex-col">
-                              {children.map((c, i) =>
-                                renderCollectionRow(c, i, {
-                                  nested: true,
-                                  isLast: i === children.length - 1,
-                                }),
-                              )}
-                            </div>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-
-                    {/* Custom sources: any collection not nested under a shown
-                        platform row. Covers both platform-less folders (`!platform`)
-                        and orphans whose `platform` is a value outside PLATFORM_STATS
-                        (legacy/unknown ids), so no collection is ever invisible. */}
-                    {collections.some((c) => !PLATFORM_STATS.some((p) => p.id === c.platform)) && (
-                      <div data-testid="custom-sources" className="mt-1.5">
-                        {collections
-                          .filter((c) => !PLATFORM_STATS.some((p) => p.id === c.platform))
-                          .map((c, i) => renderCollectionRow(c, i))}
-                      </div>
-                    )}
-
-                    {/* Action row: opens the modal to create a custom source
-                        (a "folder/label" for organising bookmarks). Not a view →
-                        no active state. Reads lighter (gray-500) like the add
-                        rows in Connections, with the same "+" affordance. */}
-                    <button
-                      data-testid="add-source-btn"
-                      onClick={onAddCollection}
-                      title={t('addCollection')}
-                      className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
-                    >
-                      <FolderPlus size={15} className="shrink-0" />
-                      <span className="flex-1">{t('newFolder')}</span>
                     </button>
                   </div>
                 )}

@@ -320,22 +320,19 @@ export default function useBrowserSync({
     const script = SCROLL_SCRIPTS[tab] || SCROLL_SCRIPTS.instagram;
     if (tab === 'instagram') {
       // Instagram drives a folder import off TWO concurrent producers:
-      //   1. IG_FEED_REPLAY — the deterministic source: it refetches every REST
-      //      page of the listing from the top (incl. the SSR-inline first page the
-      //      passive hook can't see, since it never travels over fetch/XHR). Its
-      //      responses flow through the same intercept pipeline; its final
-      //      more_available=false page fires finishSync via the intercept handler.
-      //   2. the scroll loop — only an accelerator for IG's virtual loader.
-      // We must wait for BOTH before tearing the sync down. If the scroll loop
-      // alone called finishSync (the old behaviour) it would set window.__syncStop
-      // and TRUNCATE the replay mid-flight: the replay's still-in-flight final
-      // pages then land in the intercept handler with a now-null collection ref,
-      // so those posts get saved to the library but never filed into the folder —
-      // the folder count ends up short by ~one page. Awaiting both lets the replay
-      // run to completion so every page is filed under a valid collection id. The
-      // replay's terminal page still fires finishSync early in the common case;
-      // this allSettled is the safety net for when the replay breaks on a network
-      // error and never emits that signal, so the sync can't hang.
+      //   1. IG_FEED_REPLAY — the deterministic DATA source: it refetches every
+      //      REST page of the listing from the top (incl. the SSR-inline first page
+      //      the passive hook can't see, since it never travels over fetch/XHR).
+      //      Its responses flow through the same intercept pipeline.
+      //   2. the gradual scroll loop — steps every post through the viewport so its
+      //      <img> lazy-loads and the on-view capture can grab the bytes.
+      // The replay reaches more_available=false long BEFORE the gradual scroll has
+      // shown every image, so IG does NOT finishSync on that signal (see
+      // useBrowserIntercept) — it tears down only once BOTH producers settle. That
+      // also keeps the collection ref valid for the whole replay, so every page is
+      // filed under a valid collection id (closing early used to leave the final
+      // page filed under a now-null ref, short by ~one page). The MAX_RUN_MS /
+      // MAX_ITERS ceilings in the scroll script bound the worst case so it can't hang.
       const replay = wv.executeJavaScript(IG_FEED_REPLAY).catch(() => {});
       const scroll = wv.executeJavaScript(script).catch(() => {});
       const scripts = Promise.allSettled([replay, scroll]);

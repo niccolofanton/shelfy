@@ -1,14 +1,15 @@
 {
   "name": "shelfy",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Archive and browse your saved bookmarks from Instagram, TikTok, X and more",
   "author": "Niccolò Fanton",
   "license": "Apache-2.0",
   "main": "dist-electron/main.js",
   "type": "module",
+  "packageManager": "pnpm@10.9.0",
   "engines": {
     "node": ">=22",
-    "npm": ">=10"
+    "pnpm": ">=10"
   },
   "scripts": {
     "dev": "tsx build/esbuild-electron.ts && concurrently -k \"tsx build/esbuild-electron.ts --watch\" \"vite\" \"cross-env ELECTRON_DEV=true electronmon .\"",

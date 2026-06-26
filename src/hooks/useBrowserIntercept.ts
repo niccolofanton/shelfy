@@ -134,7 +134,14 @@ export default function useBrowserIntercept({
           // so re-reading it inside the .then would miss filing the final batch.
           const cid = syncCollectionRefs[tabId]?.current ?? null;
           if (items.length) ingestBatch(tabId, items, platform, cid);
-          if (hasNextPage === false && syncingRef.current[tabId]) {
+          // Instagram's data comes from IG_FEED_REPLAY, which hits
+          // more_available=false long BEFORE the gradual image-loading scroll
+          // finishes. Closing here would set __syncStop and truncate that scroll,
+          // leaving most images uncaptured — so IG terminates via the replay+scroll
+          // allSettled in useBrowserSync instead. For twitter/pinterest the scroll
+          // IS the data source, so end-of-feed coincides with the scroll bottom:
+          // close as before.
+          if (hasNextPage === false && syncingRef.current[tabId] && tabId !== 'instagram') {
             finishSync(tabId);
           }
         } else if (e.channel === 'ss-select') {

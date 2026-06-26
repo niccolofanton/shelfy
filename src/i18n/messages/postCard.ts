@@ -20,6 +20,7 @@ export default {
     post: 'Post',
     deselectPost: 'Deseleziona post',
     selectPost: 'Seleziona post',
+    mediaUnavailable: 'Media non disponibile',
   },
   en: {
     savedOffline: 'Saved offline',
@@ -32,5 +33,6 @@ export default {
     post: 'Post',
     deselectPost: 'Deselect post',
     selectPost: 'Select post',
+    mediaUnavailable: 'Media unavailable',
   },
 } satisfies LangMessages;
