@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "main": "dist-electron/main.js",
   "type": "module",
-  "packageManager": "pnpm@10.9.0",
+  "packageManager": "pnpm@12.5.1",
   "engines": {
     "node": ">=22",
     "pnpm": ">=10"
