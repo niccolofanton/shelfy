@@ -26,6 +26,8 @@ export const TABLET_VIEWPORT = { width: 768, height: 1024 };
 
 export default defineConfig({
   testDir: './e2e',
+  // The specs on a real server have their own config (e2e/server/).
+  testIgnore: ['server/**'],
   timeout: 30_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,

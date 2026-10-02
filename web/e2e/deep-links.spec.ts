@@ -36,14 +36,21 @@ test('/p/:key opens the post over the library, and closing it leaves for /', asy
 });
 
 test('pages this client cannot show yet say so', async ({ page }) => {
-  for (const path of ['/trash', '/settings/account', '/settings']) {
+  await page.goto('/trash');
+  await expect(page.getByTestId('route-unavailable')).toBeVisible();
+  await expect(page.getByTestId('sidebar')).toBeVisible();
+});
+
+test('/settings and /device open their pages', async ({ page }) => {
+  for (const path of ['/settings/account', '/settings']) {
     await page.goto(path);
-    await expect(page.getByTestId('route-unavailable'), path).toBeVisible();
-    await expect(page.getByTestId('sidebar'), path).toBeVisible();
+    await expect(page.getByTestId('settings-section-account'), path).toBeVisible();
+    await expect(page.getByTestId('account-email'), path).toHaveText('owner@example.test');
   }
-  await page.goto('/device');
-  await expect(page.getByTestId('device-unavailable')).toBeVisible();
-  await page.getByTestId('device-back').click();
+  await page.goto('/device#BCDF-GHJK');
+  await expect(page.getByTestId('device-code')).toHaveValue('BCDF-GHJK');
+  await expect(page).toHaveURL(/\/device$/);
+  await page.getByTestId('device-cancel').click();
   await expect(page.getByTestId('post-card')).toHaveCount(3);
 });
 

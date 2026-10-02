@@ -3,7 +3,7 @@
 // and record every request. Until the P1-05 synthetic libraries exist the
 // specs run without a server (P1 lane rule 6).
 import { test as base, type Page, type Route } from '@playwright/test';
-import { DISCLAIMER_VERSION } from '../../src/disclaimer';
+import { DISCLAIMER_VERSION, PRIVACY_VERSION } from '../../src/disclaimer';
 import type { components } from '../src/api/schema';
 
 type Schemas = components['schemas'];
@@ -122,12 +122,38 @@ export const OWNER: Schemas['Me'] = {
     capture: false,
     'video.onDemand': false,
   },
+  // A returning user: the current notices are accepted (the consent gate stays
+  // closed).
   consent: {
-    disclaimerVersion: null,
-    disclaimerAcceptedAt: null,
-    privacyVersion: null,
-    privacyAcceptedAt: null,
+    disclaimerVersion: DISCLAIMER_VERSION,
+    disclaimerAcceptedAt: T0,
+    privacyVersion: PRIVACY_VERSION,
+    privacyAcceptedAt: T0,
   },
+};
+
+// The account's own routes (`/me/*`), answered with an empty account.
+const ACCOUNT_ROUTES: Record<string, unknown> = {
+  '/api/v1/me/settings': {
+    language: null,
+    archiveAssetTypes: { thumbnail: true, image: true, video: true },
+  },
+  '/api/v1/me/passkeys': { items: [] },
+  '/api/v1/me/sessions': {
+    items: [
+      {
+        id: '0123456789abcdef0123456789abcdef',
+        current: true,
+        createdAt: T0,
+        lastSeenAt: T0,
+        expiresAt: T0 + 30 * 86_400_000,
+        userAgent: null,
+      },
+    ],
+  },
+  '/api/v1/me/tokens': { items: [] },
+  '/api/v1/me/usage': { usedBytes: 0, mediaBytes: 0, dbBytes: 0, quotaBytes: 0, updatedAt: T0 },
+  '/api/v1/version': { version: 'e2e', apiVersion: '1' },
 };
 
 function library(): Pick<MockApi, 'posts' | 'details' | 'collections'> {
@@ -226,6 +252,9 @@ async function answer(api: MockApi, route: Route): Promise<void> {
     });
   }
   if (path === '/api/v1/me') return route.fulfill({ json: OWNER });
+  if (method === 'GET' && path in ACCOUNT_ROUTES) {
+    return route.fulfill({ json: ACCOUNT_ROUTES[path] });
+  }
   if (path === '/api/v1/stats') return route.fulfill({ json: stats(api) });
   if (path === '/api/v1/collections') return route.fulfill({ json: { items: api.collections } });
   if (path === '/api/v1/posts') {
