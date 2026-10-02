@@ -1,16 +1,17 @@
 //! Sliding-window limits on sign-in requests (plan §2.9, §2.11):
 //!
-//! - per client: 10 per minute on the sign-in routes. The client is the TCP
-//!   peer, or `CF-Connecting-IP` when the peer is a trusted proxy
-//!   ([`crate::net`], `SHELFY_TRUSTED_PROXIES`). An IPv6 client counts by its
-//!   /64, the block one subscriber usually holds;
+//! - per client: 10 per minute over every `/api/v1/auth/*` route, counted by
+//!   the layer [`crate::rate_limit::by_client`] before the route runs. The
+//!   client is the TCP peer, or `CF-Connecting-IP` when the peer is a
+//!   trusted proxy ([`crate::net`], `SHELFY_TRUSTED_PROXIES`). An IPv6
+//!   client counts by its /64, the block one subscriber usually holds;
 //! - per email address: 3 sign-in emails per hour, counted for every address,
 //!   known or not, so a 429 says nothing about whether an account exists.
 //!
 //! Keys are SHA-256 digests, so the limiter holds no address or IP in clear.
 //! Memory is bounded: an idle key is dropped after one window, and the cache
-//! holds at most [`MAX_KEYS`] keys. P1-15 brings the general rate limits and
-//! may fold these in.
+//! holds at most [`MAX_KEYS`] keys. The other limits of the API (per user,
+//! search, client errors) are in [`crate::rate_limit`].
 
 use std::collections::VecDeque;
 use std::net::{IpAddr, Ipv6Addr};

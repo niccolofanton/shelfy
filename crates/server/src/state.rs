@@ -1,6 +1,6 @@
 //! The state shared by every request: the databases, the configuration,
 //! authentication, the mailer, the realtime event bus, the job system, the
-//! library caches and the shutdown token.
+//! library caches, the rate limiters and the shutdown token.
 
 use std::sync::Arc;
 
@@ -16,6 +16,7 @@ use crate::events::EventBus;
 use crate::jobs::Jobs;
 use crate::library::LibraryCaches;
 use crate::mail::Mailer;
+use crate::rate_limit::RateLimits;
 
 /// Cheap to clone: everything lives behind one `Arc`.
 #[derive(Clone)]
@@ -32,6 +33,7 @@ struct Inner {
     events: EventBus,
     jobs: Jobs,
     library_caches: LibraryCaches,
+    rate_limits: RateLimits,
     shutdown: CancellationToken,
 }
 
@@ -82,6 +84,7 @@ impl AppState {
         let control = Arc::new(control);
         let events = EventBus::new();
         let jobs = Jobs::new(&config.jobs, Arc::clone(&control), events.clone());
+        let rate_limits = RateLimits::new(&config.rate_limits);
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
@@ -92,6 +95,7 @@ impl AppState {
                 events,
                 jobs,
                 library_caches: LibraryCaches::new(),
+                rate_limits,
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -119,6 +123,12 @@ impl AppState {
     #[must_use]
     pub fn auth(&self) -> &AuthState {
         &self.inner.auth
+    }
+
+    /// The request limits of signed-in users ([`crate::rate_limit`]).
+    #[must_use]
+    pub fn rate_limits(&self) -> &RateLimits {
+        &self.inner.rate_limits
     }
 
     /// The outgoing-email transport.

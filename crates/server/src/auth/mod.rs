@@ -119,8 +119,9 @@ pub struct AuthConfig {
     pub passkey_ceremony_ttl: Duration,
     /// How recent a sign-in must be for [`RecentAuth`] (5 minutes).
     pub reauth_window: Duration,
-    /// Sign-in requests per client address (§2.9: 10 per minute; an IPv6
-    /// client counts by its /64).
+    /// Sign-in requests per client address, over every `/api/v1/auth/*`
+    /// route (§2.9: 10 per minute; an IPv6 client counts by its /64).
+    /// [`crate::rate_limit::by_client`] counts them.
     pub ip_limit: RateLimit,
     /// Sign-in emails per address (§2.11: 3 per hour).
     pub address_limit: RateLimit,

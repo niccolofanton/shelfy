@@ -39,6 +39,7 @@ use crate::auth::AuthConfig;
 use crate::jobs::JobsConfig;
 use crate::mail::{MailArgs, MailConfig};
 use crate::net::TrustedProxies;
+use crate::rate_limit::RateLimitConfig;
 use crate::static_files::WebApp;
 
 /// Default of `SHELFY_DATA_DIR`.
@@ -189,6 +190,9 @@ pub struct Config {
     pub mail: MailConfig,
     /// Session lifetimes and sign-in limits (plan §2.11).
     pub auth: AuthConfig,
+    /// The request limits of signed-in users (plan §2.9); the sign-in limit
+    /// per client address is in `auth`.
+    pub rate_limits: RateLimitConfig,
     /// The job kinds and the clock of the job system (plan §2.12).
     pub jobs: JobsConfig,
     /// The web app to serve, if any (P1-09).
@@ -243,6 +247,7 @@ impl Config {
             trusted_proxies: TrustedProxies::default(),
             mail: MailConfig::Disabled,
             auth: AuthConfig::default(),
+            rate_limits: RateLimitConfig::default(),
             jobs: JobsConfig::default(),
             web: None,
         }

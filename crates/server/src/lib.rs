@@ -21,6 +21,7 @@
 //! | [`app`] | the middleware stack around the routes |
 //! | [`routes`] | the router composition and the OpenAPI document |
 //! | [`limits`] | per-route body limits and handler timeouts |
+//! | [`rate_limit`] | request rate limits: per user, search, client errors, sign-in per client address |
 //! | [`error`] | `application/problem+json` errors with stable codes |
 //! | [`extract`] | request extractors whose rejections are problems |
 //! | [`current_user`] | the signed-in user of a request: the seam to authentication |
@@ -60,6 +61,7 @@ pub mod limits;
 pub mod mail;
 pub mod migrations;
 pub mod net;
+pub mod rate_limit;
 pub mod routes;
 pub mod security_headers;
 pub mod serve;

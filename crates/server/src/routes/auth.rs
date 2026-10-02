@@ -13,6 +13,11 @@
 //! A link opens the SPA page `/login/magic#<token>`, which calls `redeem`; no
 //! route redeems on `GET`. Every `POST` here passes the CSRF guard
 //! ([`crate::auth::csrf`]), session cookie or not.
+//!
+//! Every `/api/v1/auth/*` route shares the sign-in limit per client address
+//! (10 a minute), counted before the route runs
+//! ([`crate::rate_limit::by_client`]); sign-in emails have their own limit
+//! per address (3 an hour), counted here.
 
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -31,7 +36,6 @@ use crate::current_user::CurrentUser;
 use crate::error::{ApiError, ErrorCode};
 use crate::extract::Json;
 use crate::ids::now_ms;
-use crate::net::ClientIp;
 use crate::state::AppState;
 
 /// The routes of this module.
@@ -92,16 +96,13 @@ pub struct MagicLinkRequest {
 )]
 pub async fn request_magic_link(
     State(state): State<AppState>,
-    ClientIp(client): ClientIp,
     Json(request): Json<MagicLinkRequest>,
 ) -> Result<Response, ApiError> {
-    let now = now_ms();
-    hit(state.auth().ip_limiter(), &rate_limit::ip_key(client), now)?;
     let email = users::normalize_email(&request.email)?;
     hit(
         state.auth().address_limiter(),
         &rate_limit::key("email", &email),
-        now,
+        now_ms(),
     )?;
     magic_link::send_in_background(&state, email);
     Ok(no_store(StatusCode::ACCEPTED.into_response()))
@@ -134,15 +135,9 @@ pub struct RedeemRequest {
 )]
 pub async fn redeem_magic_link(
     State(state): State<AppState>,
-    ClientIp(client): ClientIp,
     headers: HeaderMap,
     Json(request): Json<RedeemRequest>,
 ) -> Result<Response, ApiError> {
-    hit(
-        state.auth().ip_limiter(),
-        &rate_limit::ip_key(client),
-        now_ms(),
-    )?;
     let redeemed = magic_link::redeem(
         &state,
         &request.token,

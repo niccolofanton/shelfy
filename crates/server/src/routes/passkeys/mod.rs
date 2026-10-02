@@ -32,15 +32,13 @@ use utoipa_axum::routes;
 use webauthn_rs::prelude::{PublicKeyCredential, RegisterPublicKeyCredential};
 use webauthn_rs_proto::{PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions};
 
-use super::auth::{hit, no_store, signed_in, user_agent};
+use super::auth::{no_store, signed_in, user_agent};
 use crate::auth::passkeys::{self, normalize_label};
-use crate::auth::{RecentAuth, SessionUser, cookie, rate_limit};
+use crate::auth::{RecentAuth, SessionUser, cookie};
 use crate::control::passkeys::PasskeyRow;
 use crate::current_user::CurrentUser;
 use crate::error::ApiError;
 use crate::extract::{Json, Path};
-use crate::ids::now_ms;
-use crate::net::ClientIp;
 use crate::state::AppState;
 
 /// The routes of this module.
@@ -157,15 +155,7 @@ pub struct PasskeyList {
         (status = OK, description = "The options of the sign-in.", body = PasskeyAssertionStart),
     )
 )]
-pub async fn start_sign_in(
-    State(state): State<AppState>,
-    ClientIp(client): ClientIp,
-) -> Result<Response, ApiError> {
-    hit(
-        state.auth().ip_limiter(),
-        &rate_limit::ip_key(client),
-        now_ms(),
-    )?;
+pub async fn start_sign_in(State(state): State<AppState>) -> Result<Response, ApiError> {
     let (ceremony_id, public_key) = passkeys::start_sign_in(&state)?;
     let start = PasskeyAssertionStart {
         ceremony_id,
@@ -193,15 +183,9 @@ pub async fn start_sign_in(
 )]
 pub async fn finish_sign_in(
     State(state): State<AppState>,
-    ClientIp(client): ClientIp,
     headers: HeaderMap,
     Json(request): Json<PasskeySignIn>,
 ) -> Result<Response, ApiError> {
-    hit(
-        state.auth().ip_limiter(),
-        &rate_limit::ip_key(client),
-        now_ms(),
-    )?;
     let session = passkeys::finish_sign_in(
         &state,
         &request.ceremony_id,

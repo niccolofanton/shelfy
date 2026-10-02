@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use shelfy_server::auth::RecentAuth;
 use shelfy_server::auth::access::{Access, AccessPolicy};
 use shelfy_server::auth::bearer::{Scope, TokenUser, scopes};
+use shelfy_server::auth::rate_limit::RateLimit;
 use shelfy_server::config::Config;
 use shelfy_server::current_user::CurrentUser;
 use shelfy_server::error::ErrorCode;
@@ -52,6 +53,15 @@ fn with_mailbox() -> TestState {
     TestState::with_config(|config: &mut Config| {
         config.mail = MailConfig::dev_mailbox(&config.data_dir);
     })
+}
+
+/// Lifts the sign-in limit per client, for the tests that sweep every route
+/// from one in-process client: every `/api/v1/auth/*` request counts.
+fn without_sign_in_limit(config: &mut Config) {
+    config.auth.ip_limit = RateLimit {
+        max: 100_000,
+        window: Duration::from_secs(60),
+    };
 }
 
 /// A read-write connection to the control database, beside the server's.
@@ -802,7 +812,10 @@ fn with_headers(mut request: Request<Body>, headers: &[(&str, &str)]) -> Request
 
 #[tokio::test]
 async fn every_state_changing_request_must_come_from_the_app() {
-    let t = with_mailbox();
+    let t = TestState::with_config(|config: &mut Config| {
+        config.mail = MailConfig::dev_mailbox(&config.data_dir);
+        without_sign_in_limit(config);
+    });
     let app = t.app();
     let cookie = sign_in(&app, &t).await;
     let public = t.state.config().public_url.as_str().to_owned();
@@ -1265,7 +1278,7 @@ async fn the_access_policy_matches_the_document() {
 
 #[tokio::test]
 async fn every_protected_route_answers_401_without_a_session() {
-    let t = TestState::new();
+    let t = TestState::with_config(without_sign_in_limit);
     let app = t.app();
     let owner_id = owner(&t);
     let cookie = sign_in(&app, &t).await;

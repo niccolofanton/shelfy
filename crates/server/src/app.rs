@@ -6,30 +6,37 @@
 //!    span, response log line, HTTP metrics;
 //! 2. the security headers ([`security_headers`]): the content security
 //!    policy, HSTS on an https public URL, `nosniff`, on every response;
-//! 3. compression (gzip, brotli) of responses over 1 KiB, except images,
+//! 3. the sign-in rate limit ([`rate_limit::by_client`]): 10 requests a
+//!    minute per client address over the `/api/v1/auth/*` routes, or 429;
+//! 4. compression (gzip, brotli) of responses over 1 KiB, except images,
 //!    audio, video, fonts and event streams;
-//! 4. [`problem_fallback`](crate::error::problem_fallback): error responses
+//! 5. [`problem_fallback`](crate::error::problem_fallback): error responses
 //!    from any layer become problems;
-//! 5. panic catching: a panicking handler answers 500 `internal`;
-//! 6. the CSRF and Origin guard ([`auth::csrf`]): a state-changing request
+//! 6. panic catching: a panicking handler answers 500 `internal`;
+//! 7. the CSRF and Origin guard ([`auth::csrf`]): a state-changing request
 //!    without an `Authorization` header must come from the public origin, or
 //!    it answers 403 `csrf_failed`;
-//! 7. the access gate ([`auth::access`]), a route layer: deny by default.
+//! 8. the access gate ([`auth::access`]), a route layer: deny by default.
 //!    The route's access (a session unless [`routes::PUBLIC_ROUTES`] or
 //!    [`routes::TOKEN_ROUTES`] say otherwise) is checked, and the user put in
 //!    the request extensions and span, or the request answers 401;
-//! 8. on the routes of [`routes::IDEMPOTENT_ROUTES`], a route layer too: the
-//!    `Idempotency-Key` middleware ([`jobs::idempotency`]), which replays the
-//!    stored response of a repeated request;
-//! 9. the route group's body limit and time limit ([`crate::limits`]);
-//! 10. the handler, which takes the user as an extractor.
+//! 9. the user's rate limits ([`rate_limit::by_user`]), a route layer: per
+//!    user on the `/api/v1` routes, plus searches and client error reports,
+//!    or 429;
+//! 10. on the routes of [`routes::IDEMPOTENT_ROUTES`], a route layer too: the
+//!     `Idempotency-Key` middleware ([`jobs::idempotency`]), which replays the
+//!     stored response of a repeated request;
+//! 11. the route group's body limit and time limit ([`crate::limits`]);
+//! 12. the handler, which takes the user as an extractor.
 //!
-//! A request that no route matches goes to the fallback, behind layers 1–6:
+//! A request that no route matches goes to the fallback, behind layers 1–7:
 //! the web app's files when `SHELFY_WEB_DIR` is set
 //! ([`static_files`](crate::static_files)), otherwise a 404 problem.
 //!
 //! The stack is applied after routing, so the route template is known to the
-//! logs and metrics. Rate limits (P1-15) join here.
+//! logs, the metrics and the rate limits. Both limits answer inside the
+//! observation and the security headers: a 429 is logged, counted and
+//! carries the headers like any other answer.
 
 use axum::Router;
 use axum::middleware;
@@ -44,6 +51,7 @@ use crate::auth::access::{AccessPolicy, Gate};
 use crate::error::{self, ApiError};
 use crate::jobs;
 use crate::jobs::idempotency::Idempotency;
+use crate::rate_limit;
 use crate::routes;
 use crate::security_headers::{self, SecurityHeaders};
 use crate::state::AppState;
@@ -75,11 +83,16 @@ pub fn build_with_access(
     let gate = Gate::new(state.clone(), access);
     let idempotency = Idempotency::new(state.clone(), routes::IDEMPOTENT_ROUTES);
     let router = if router.has_routes() {
-        // The later layer runs first: the gate, then the Idempotency-Key.
+        // The later layer runs first: the gate, the user's rate limits, then
+        // the Idempotency-Key.
         router
             .route_layer(middleware::from_fn_with_state(
                 idempotency,
                 jobs::idempotency::layer,
+            ))
+            .route_layer(middleware::from_fn_with_state(
+                state.clone(),
+                rate_limit::by_user,
             ))
             .route_layer(middleware::from_fn_with_state(gate, auth::access::gate))
     } else {
@@ -111,6 +124,10 @@ pub fn build_with_access(
                 .layer(middleware::from_fn_with_state(
                     security,
                     security_headers::apply,
+                ))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    rate_limit::by_client,
                 ))
                 .layer(compression)
                 .layer(middleware::from_fn(error::problem_fallback))
