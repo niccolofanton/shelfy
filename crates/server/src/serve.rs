@@ -37,7 +37,8 @@ pub const WORKER_THREADS: usize = 2;
 /// Upper bound of the blocking pool, where SQLite and file work run (§2.3).
 pub const MAX_BLOCKING_THREADS: usize = 16;
 
-/// How often idle user databases are evicted and idle readers closed.
+/// How often idle user databases are evicted, idle readers closed and the
+/// event buses swept.
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 /// Part of the shutdown grace kept for closing the databases after draining.
 const CLOSE_RESERVE: Duration = Duration::from_secs(5);
@@ -249,7 +250,8 @@ impl Server {
 }
 
 /// Periodic upkeep until shutdown: evicts idle user databases and closes idle
-/// readers, and drains the metrics recorder.
+/// readers, drops expired realtime events and idle event buses, and drains the
+/// metrics recorder.
 async fn maintenance(state: AppState, metrics: PrometheusHandle, token: CancellationToken) {
     let mut databases = tokio::time::interval(MAINTENANCE_INTERVAL);
     let mut upkeep = tokio::time::interval(UPKEEP_INTERVAL);
@@ -259,6 +261,7 @@ async fn maintenance(state: AppState, metrics: PrometheusHandle, token: Cancella
         tokio::select! {
             () = token.cancelled() => break,
             _ = databases.tick() => {
+                state.events().sweep();
                 let user_dbs = Arc::clone(state.user_dbs());
                 if let Err(err) = tokio::task::spawn_blocking(move || user_dbs.run_maintenance()).await {
                     tracing::warn!(error = %err, "database maintenance failed");

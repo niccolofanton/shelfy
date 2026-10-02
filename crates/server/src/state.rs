@@ -1,5 +1,5 @@
 //! The state shared by every request: the databases, the configuration,
-//! authentication, the mailer and the shutdown token.
+//! authentication, the mailer, the realtime event bus and the shutdown token.
 
 use std::sync::Arc;
 
@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::auth::{self, AuthState};
 use crate::config::Config;
 use crate::error::ApiError;
+use crate::events::EventBus;
 use crate::mail::Mailer;
 
 /// Cheap to clone: everything lives behind one `Arc`.
@@ -24,6 +25,7 @@ struct Inner {
     user_dbs: Arc<UserDbCache>,
     auth: AuthState,
     mailer: Mailer,
+    events: EventBus,
     shutdown: CancellationToken,
 }
 
@@ -64,6 +66,7 @@ impl AppState {
                 user_dbs: Arc::new(user_dbs),
                 auth,
                 mailer,
+                events: EventBus::new(),
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -97,6 +100,12 @@ impl AppState {
     #[must_use]
     pub fn mailer(&self) -> &Mailer {
         &self.inner.mailer
+    }
+
+    /// The realtime event bus: publish after a write commits.
+    #[must_use]
+    pub fn events(&self) -> &EventBus {
+        &self.inner.events
     }
 
     /// Cancelled when the server starts shutting down. Long-running work (job

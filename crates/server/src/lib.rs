@@ -24,13 +24,14 @@
 //! | [`extract`] | request extractors whose rejections are problems |
 //! | [`current_user`] | the signed-in user of a request: the seam to authentication |
 //! | [`conditional`] | ETags from the library generation, `304 Not Modified` |
-//! | [`state`] | the shared state: databases, config, auth, mailer, shutdown token |
+//! | [`state`] | the shared state: databases, config, auth, mailer, event bus, shutdown token |
 //! | [`auth`] | sign-in links, sessions, the CSRF guard, the authentication layer |
 //! | [`mail`] | outgoing email: SMTP, the dev mailbox, or off |
 //! | [`telemetry`] | JSON logs, redaction, request ids, Prometheus metrics |
 //! | [`control`] | queries on the control database |
 //! | [`admin`] | the operator commands |
-//! | [`jobs`], [`events`] | seams for the scheduler (P1-07) and SSE (P1-01) |
+//! | [`events`] | the per-user realtime bus behind SSE: publish, replay, throttles |
+//! | [`jobs`] | the seam for the scheduler (P1-07) |
 //!
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.2–§2.4 and §3.
 
