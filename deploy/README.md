@@ -93,6 +93,43 @@ It prints `<SHELFY_PUBLIC_URL>/login/reauth#<token>`, valid 15 minutes, once.
 Every route needs a signed-in session unless it is listed as public (or open to API tokens) in
 `crates/server/src/routes/mod.rs`.
 
+## Metrics, logs and rate limits
+
+`GET /metrics` on `SHELFY_METRICS_ADDR` answers in the Prometheus text format (§3.6). No label
+carries a user id or any other per-user value. The gauges are sampled every 5 seconds, the disk
+every 5 minutes; `crates/server/src/telemetry/metrics.rs` has the buckets. The dashboard
+`osn/shelfy/grafana/03-shelfy.json` and the rules in `osn/shelfy/alerting/shelfy.yaml` read these
+names and labels: change them together.
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `shelfy_http_requests_total` | counter | `route`, `method`, `status` | Responses. `route` is the route template (`/api/v1/posts/{key}`), `spa` for the web app's files, or `unmatched` |
+| `shelfy_http_request_duration_seconds` | histogram | `route` | Time to the response headers, with bucket bounds at the §6.2 budgets |
+| `shelfy_sse_connections` | gauge | — | Open realtime streams (`GET /api/v1/events`) |
+| `shelfy_jobs` | gauge | `kind`, `state` | Jobs the scheduler holds: `ready` (due, paused queues included), `delayed`, `running` |
+| `shelfy_job_oldest_queued_seconds` | gauge | `kind` | How long the oldest due job of an unpaused queue has waited; 0 when none |
+| `shelfy_job_duration_seconds` | histogram | `kind`, `outcome` | Each ended attempt: `succeeded`, `failed` (for good), `retried`, `requeued`, `interrupted` (shutdown), `cancelled`, `lease_expired` |
+| `shelfy_disk_bytes` | gauge | `area` | Bytes of the files under `control`, `users`, `cache`, `work`, `backup_staging` and `other` (the rest of the data directory) |
+| `shelfy_open_user_dbs` | gauge | — | Libraries open in the handle cache (at most 64) |
+| `shelfy_sqlite_busy_total` | counter | — | SQLite calls that gave up on a lock after `busy_timeout` (5 s) |
+| `shelfy_rendition_bytes` | histogram | `variant` | Size of each rendition written (`g480`), with bucket bounds at 35 and 60 KB |
+| `shelfy_build_info` | gauge | `version` | Always 1 |
+
+Logs never carry session ids, tokens, email addresses, captions, notes, post URLs or query
+strings: requests are logged by route template, and the free text of client error reports is
+scrubbed of URLs, addresses, query strings and tokens before it is logged.
+
+Over a rate limit (§2.9) the API answers 429 `rate_limited` with `Retry-After`:
+
+| Requests | Limit | Counted per |
+| --- | --- | --- |
+| every `/api/v1/*` route of a signed-in user (session or API token) | 20 a second, 60 at once | user |
+| searches: `GET /api/v1/search`, and `GET /api/v1/posts` or `/posts/count` with `q` or `concept` | 5 a second | user |
+| `POST /api/v1/client-errors` | 10 a minute | user |
+| every `/api/v1/auth/*` route | 10 a minute | client address (`SHELFY_TRUSTED_PROXIES`; IPv6 by /64) |
+
+`/media/*`, `/health` and the web app's files are not limited.
+
 ## Building and running the image
 
 The image takes the web app as built, so build `web/dist` first. BuildKit is required (the
