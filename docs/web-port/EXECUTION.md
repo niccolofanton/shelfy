@@ -49,9 +49,9 @@ These owner decisions override the plan where they conflict.
 | T7 | `crates/server`: axum app, config, health, metrics, errors, OpenAPI, admin CLI | T3 | done | `web/t7-server` (f95b212…bfb0dbc) |
 | T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | running | `web/t8-media` |
 | T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | todo | |
-| T10 | Owner auth v0: magic link, sessions, CSRF | T7 | running | `web/t10-auth` |
+| T10 | Owner auth v0: magic link, sessions, CSRF | T7 | done | `web/t10-auth` (c7d33ae…03a6cf8) |
 | T11 | Read API and generated TS client | T4, T7 | done | `web/t11-read-api` (fc1c3b7…9b0f643) |
-| T12 | SPA slice behind `ShelfyClient` | T10, T11 | todo | |
+| T12 | SPA slice behind `ShelfyClient` | T10, T11 | running | `web/t12-spa` |
 
 ### P1 — Library on the web
 
@@ -80,5 +80,5 @@ Each phase is broken down into tasks when the previous one is close to done.
 |---|---|---|---|
 | O1 | Load the unpacked extension and run the SPIKE-3 comparison on your own accounts: steps in [spikes/03-extension-capture.md](spikes/03-extension-capture.md) §5 | P2 | ready |
 | O2 | Appendix B prerequisite: R2 bucket `osn-backups` with a scoped token for restic. DNS Edit is no longer needed: OpenTofu manages DNS records with the existing DNS-scoped token (osn `ebd2de8`) | backups (P1-23) | pending |
-| O3 | Optional: fix Homebrew permissions so local tools such as mailpit can be installed | T10 | optional |
+| O3 | Optional: fix Homebrew permissions so local tools such as mailpit can be installed | T10 | not needed: T10 writes sign-in emails to a dev mailbox (`SHELFY_DEV_MAILBOX`) |
 | O4 | Confirm Bot Fight Mode is off for `niccolofanton.dev` (Security → Bots). Our tokens cannot read zone settings, and with it on, the extension, Shortcut and CLI calls could be challenged | before P2 removes Access | pending |
