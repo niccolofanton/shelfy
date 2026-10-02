@@ -1,0 +1,45 @@
+{
+  "_comment": "A hand-written VictoriaMetrics /api/v1/query response per budgets.mjs row id, in the Prometheus HTTP API vector format. For `node budgets.mjs --fixture scripts/live/budgets.fixture.json`: a dry run of the table and pass/fail logic with no live tunnel. media_p95 is deliberately over budget (8.3 ms > 5 ms) to exercise the FAIL path; g480_p95 is deliberately absent to exercise the \"no data\" path.",
+  "list_p95": {
+    "status": "success",
+    "data": {
+      "resultType": "vector",
+      "result": [{ "metric": { "route": "/api/v1/posts" }, "value": [1759000000, "0.0123"] }]
+    }
+  },
+  "list_p99": {
+    "status": "success",
+    "data": {
+      "resultType": "vector",
+      "result": [{ "metric": { "route": "/api/v1/posts" }, "value": [1759000000, "0.0451"] }]
+    }
+  },
+  "search_p95": {
+    "status": "success",
+    "data": {
+      "resultType": "vector",
+      "result": [{ "metric": { "route": "/api/v1/search" }, "value": [1759000000, "0.0520"] }]
+    }
+  },
+  "detail_p95": {
+    "status": "success",
+    "data": {
+      "resultType": "vector",
+      "result": [{ "metric": { "route": "/api/v1/posts/{key}" }, "value": [1759000000, "0.0091"] }]
+    }
+  },
+  "media_p95": {
+    "status": "success",
+    "data": {
+      "resultType": "vector",
+      "result": [{ "metric": { "route": "/media/{file}" }, "value": [1759000000, "0.0083"] }]
+    }
+  },
+  "g480_p50": {
+    "status": "success",
+    "data": {
+      "resultType": "vector",
+      "result": [{ "metric": { "variant": "g480" }, "value": [1759000000, "31000"] }]
+    }
+  }
+}
