@@ -1,0 +1,62 @@
+# Local stack for Shelfy Web, used until the osn PRs land (plan §3).
+#
+# Builds and runs shelfy-server from the working tree inside the pinned Rust
+# image, so no image build is needed (the production Dockerfile comes in P1-09).
+# The first start compiles the workspace and takes a few minutes; later starts
+# reuse the cargo volumes.
+#
+#   docker compose -f deploy/compose.dev.yml up -d
+#   curl http://127.0.0.1:8080/health
+#   docker compose -f deploy/compose.dev.yml exec shelfy-api \
+#     curl -s http://127.0.0.1:9464/metrics
+#   docker compose -f deploy/compose.dev.yml exec shelfy-api \
+#     shelfy-server admin create-owner --email you@example.com
+#   docker compose -f deploy/compose.dev.yml down        # add -v to drop the data
+#
+# Differences from production (§3.2): the container runs as root from the Rust
+# image with a writable root filesystem, logs are text, and no limits apply.
+
+name: shelfy-dev
+
+services:
+  shelfy-api:
+    # Keep in step with rust-toolchain.toml.
+    image: rust:1.99.0-bookworm
+    working_dir: /src
+    init: true # forwards SIGTERM, so `docker compose stop` shuts down gracefully
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - cargo build --locked --package shelfy-server && exec shelfy-server serve
+    environment:
+      SHELFY_DATA_DIR: /data/shelfy
+      SHELFY_LISTEN_ADDR: 0.0.0.0:8080
+      SHELFY_METRICS_ADDR: 0.0.0.0:9464
+      SHELFY_PUBLIC_URL: http://localhost:8080
+      SHELFY_LOG_FORMAT: text
+      RUST_LOG: info
+      CARGO_TARGET_DIR: /cargo-target
+      PATH: /cargo-target/debug:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - ..:/src:ro
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-target:/cargo-target
+      - shelfy-data:/data/shelfy
+    ports:
+      # The API, on the loopback only.
+      - "127.0.0.1:8080:8080"
+    # Metrics stay unpublished: as on the VPS, only the compose network
+    # reaches :9464.
+    expose:
+      - "9464"
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15m # the first start compiles the workspace
+
+volumes:
+  cargo-registry:
+  cargo-target:
+  shelfy-data:
