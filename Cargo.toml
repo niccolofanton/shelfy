@@ -24,10 +24,13 @@ anyhow = "1.0.104"
 axum = { version = "0.8.9", features = ["macros"] }
 base64 = { version = "0.22.1", default-features = false, features = ["std"] }
 clap = { version = "4.6.7", features = ["derive"] }
+fast_image_resize = "6.1.0"
 # Stream combinators for SSE bodies; the features axum already enables.
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 getrandom = "0.4.3"
 http-body-util = "0.1.5"
+# No default features: a crate enables only the codecs it decodes (no AVIF, EXR, TIFF…).
+image = { version = "0.25.10", default-features = false }
 jsonschema = { version = "0.58.4", default-features = false }
 # Email (§2.21): SMTP over rustls (ring, webpki roots; no OpenSSL) and the file transport
 # behind the dev mailbox. No connection pool: sign-in emails are rare.
@@ -42,6 +45,7 @@ metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 moka = { version = "0.12.16", features = ["sync"] }
 proptest = "1.11.0"
+rayon = "1.12.0"
 regex = "1.13.1"
 # No default features: they only add the wasm32 SQLite backend. `cache` is `prepare_cached`.
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache"] }
@@ -54,6 +58,7 @@ sha1 = "0.11.0"
 sha2 = "0.11.0"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
+thumbhash = "0.1.0"
 tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = "0.7.19"
 tower = "0.5.3"
@@ -63,6 +68,9 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
 utoipa = "6.0.0"
 utoipa-axum = "0.3.0"
+# Lossy WebP encoding through libwebp, compiled from source by `libwebp-sys` (needs a C
+# compiler). No default features: they only add `image` conversions.
+webp = { version = "0.3.1", default-features = false }
 
 [workspace.lints.rust]
 # Unsafe code is opt-in per item (`#[allow(unsafe_code)]`) and needs a `// SAFETY:` comment.

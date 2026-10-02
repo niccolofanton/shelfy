@@ -25,9 +25,11 @@ serde_html_form.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 shelfy-core = { path = "../core" }
+shelfy-media = { path = "../media" }
 thiserror.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
+# `fs`, `io-util` and tokio-util's `io`: media files are streamed from disk.
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio-util = { workspace = true, features = ["io"] }
 tower.workspace = true
 tower-http = { workspace = true, features = [
   "catch-panic",
@@ -45,6 +47,7 @@ utoipa-axum.workspace = true
 [dev-dependencies]
 http-body-util.workspace = true
 jsonschema.workspace = true
+proptest.workspace = true
 tempfile.workspace = true
 # `test-util`: paused time for the SSE heartbeat test.
 tokio = { workspace = true, features = ["io-util", "test-util"] }

@@ -7,5 +7,23 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+fast_image_resize.workspace = true
+# The codecs of the archived and uploaded images. WebP is decoded by `image-webp` (pure
+# Rust); libwebp (`webp`) only encodes.
+image = { workspace = true, features = ["gif", "jpeg", "png", "webp"] }
+rayon.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
+shelfy-core = { path = "../core" }
+tempfile.workspace = true
+thiserror.workspace = true
+thumbhash.workspace = true
+tokio = { workspace = true, features = ["io-util", "rt"] }
+webp.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
 [lints]
 workspace = true
