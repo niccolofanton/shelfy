@@ -256,7 +256,25 @@ async function answer(api: MockApi, route: Route): Promise<void> {
     return route.fulfill({ json: ACCOUNT_ROUTES[path] });
   }
   if (path === '/api/v1/stats') return route.fulfill({ json: stats(api) });
-  if (path === '/api/v1/collections') return route.fulfill({ json: { items: api.collections } });
+  if (path === '/api/v1/collections') {
+    if (method === 'POST') {
+      const { name, color } = (body ?? {}) as { name: string; color?: string };
+      const id = Math.max(0, ...api.collections.map((c) => c.id)) + 1;
+      const created = collection({ id, name, color: color ?? '#3d5afe', count: 0 });
+      api.collections.push(created);
+      return route.fulfill({ status: 201, json: created });
+    }
+    return route.fulfill({ json: { items: api.collections } });
+  }
+  if (path === '/api/v1/posts/batch-get' && method === 'POST') {
+    const keys = Array.isArray((body as { keys?: unknown })?.keys)
+      ? (body as { keys: unknown[] }).keys.filter((k): k is string => typeof k === 'string')
+      : [];
+    const items = keys
+      .map((key) => api.posts.find((p) => p.key === key))
+      .filter((p): p is Schemas['Post'] => !!p);
+    return route.fulfill({ json: { items } });
+  }
   if (path === '/api/v1/posts') {
     const folder = Number(query.get('collection')) || null;
     const items = api.posts.filter((p) => folder == null || p.collectionIds.includes(folder));
@@ -264,8 +282,78 @@ async function answer(api: MockApi, route: Route): Promise<void> {
   }
   const post = /^\/api\/v1\/posts\/([^/]+)$/.exec(path);
   if (post) {
-    const detail = api.details[decodeURIComponent(post[1])];
+    const key = decodeURIComponent(post[1]);
+    if (method === 'PATCH') {
+      const idx = api.posts.findIndex((p) => p.key === key);
+      if (idx === -1) return problem(route, 404, 'not_found');
+      const patch = (body ?? {}) as Partial<Schemas['Post']>;
+      api.posts[idx] = { ...api.posts[idx], ...patch };
+      const detail = { ...(api.details[key] ?? apiDetail(api.posts[idx])), ...patch };
+      api.details[key] = detail;
+      return route.fulfill({ json: detail });
+    }
+    const detail = api.details[key];
     return detail ? route.fulfill({ json: detail }) : problem(route, 404, 'not_found');
+  }
+  const collectionId = /^\/api\/v1\/collections\/(\d+)$/.exec(path);
+  if (collectionId && (method === 'PATCH' || method === 'DELETE')) {
+    const id = Number(collectionId[1]);
+    const idx = api.collections.findIndex((c) => c.id === id);
+    if (idx === -1) return problem(route, 404, 'not_found');
+    if (method === 'PATCH') {
+      const patch = (body ?? {}) as Partial<Schemas['Collection']>;
+      api.collections[idx] = { ...api.collections[idx], ...patch };
+      return route.fulfill({ json: api.collections[idx] });
+    }
+    // DELETE: `mode=withPosts` moves every linked post to the trash (soft:
+    // `deletedAt` only — this mock never actually hides trashed posts from
+    // `GET /posts`, which no P1-06 spec reads from the trash anyway).
+    const mode = query.get('mode');
+    api.collections.splice(idx, 1);
+    const now = T0 + 10_000;
+    let trashed = 0;
+    for (const p of api.posts) {
+      if (!p.collectionIds.includes(id)) continue;
+      p.collectionIds = p.collectionIds.filter((c) => c !== id);
+      if (mode === 'withPosts') {
+        p.deletedAt = now;
+        trashed += 1;
+      }
+    }
+    return route.fulfill({ json: { trashed, deletedAt: trashed > 0 ? now : null } });
+  }
+  const addPosts = /^\/api\/v1\/collections\/(\d+)\/posts$/.exec(path);
+  if (addPosts && method === 'POST') {
+    const id = Number(addPosts[1]);
+    const col = api.collections.find((c) => c.id === id);
+    if (!col) return problem(route, 404, 'not_found');
+    const keys: string[] =
+      (body as { selector?: { keys?: string[] } } | null)?.selector?.keys ?? [];
+    let added = 0;
+    for (const key of keys) {
+      const p = api.posts.find((p) => p.key === key);
+      if (p && !p.collectionIds.includes(id)) {
+        p.collectionIds = [...p.collectionIds, id];
+        added += 1;
+      }
+    }
+    col.count += added;
+    return route.fulfill({ json: { added, collection: col } });
+  }
+  const removePost = /^\/api\/v1\/collections\/(\d+)\/posts\/([^/]+)$/.exec(path);
+  if (removePost && method === 'DELETE') {
+    const id = Number(removePost[1]);
+    const key = decodeURIComponent(removePost[2]);
+    const col = api.collections.find((c) => c.id === id);
+    if (!col) return problem(route, 404, 'not_found');
+    const p = api.posts.find((p) => p.key === key);
+    let removed = false;
+    if (p && p.collectionIds.includes(id)) {
+      p.collectionIds = p.collectionIds.filter((c) => c !== id);
+      col.count = Math.max(0, col.count - 1);
+      removed = true;
+    }
+    return route.fulfill({ json: { removed, collection: col } });
   }
   if (path === '/api/v1/client-errors' && method === 'POST') {
     return route.fulfill({ status: 204 });

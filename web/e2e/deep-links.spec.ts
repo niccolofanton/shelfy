@@ -114,9 +114,14 @@ test('a posts.changed event reloads the library', async ({ page, api }) => {
 });
 
 test('a view that crashes shows its boundary and is reported', async ({ page, api }) => {
-  // A malformed post the modal cannot render (entities must be a list).
+  // A malformed post the modal cannot render (tags must be a list; unlike
+  // PostCard, AiPanel doesn't guard it). In `posts` (P1-06: a deep link
+  // resolves from POST /posts/batch-get first, the same list shape a card
+  // click already has) as well as `details` (GET /posts/{key}).
   const post = apiPost({ key: 'ig_9', caption: 'PRIVATE CAPTION', aiDescription: 'A lamp' });
-  api.details.ig_9 = apiDetail(post, { aiEntities: 'not a list' });
+  const malformed = { ...post, aiTags: 'not a list' } as unknown as typeof post;
+  api.posts.push(malformed);
+  api.details.ig_9 = apiDetail(malformed);
   const reported = page.waitForRequest('**/api/v1/client-errors');
   await page.goto('/p/ig_9');
   await expect(page.getByTestId('error-boundary')).toBeVisible();
