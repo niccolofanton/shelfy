@@ -2,14 +2,14 @@
 //! read-only connections (plan §2.3).
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, TryLockError};
+use std::time::{Duration, Instant};
 
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
+use super::DbError;
 use super::conn::{Pragmas, open_reader, open_writer};
-use super::{DbError, Generation};
+use crate::generation::{Generation, GenerationCell};
 use crate::schema::{self, Kind, Upgrade};
 
 /// How a [`Database`] manages its connections.
@@ -47,26 +47,11 @@ pub(crate) struct Database {
     writer: Mutex<Option<Connection>>,
     readers: Mutex<ReaderState>,
     reader_returned: Condvar,
-    instance: u64,
-    generation: AtomicU64,
+    /// The library's generation, shared with every other handle on the same
+    /// library ([`crate::generation`]).
+    generation: Arc<GenerationCell>,
     /// What opening did to the schema.
     upgrade: Upgrade,
-}
-
-/// Process-unique instance ids: the open time in nanoseconds plus a counter, so
-/// ids differ across instances in one process and, in practice, across restarts.
-fn next_instance_id() -> u64 {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    #[allow(clippy::cast_possible_truncation)] // the low 64 bits are enough
-    let nanos = nanos as u64;
-    nanos.wrapping_add(
-        COUNTER
-            .fetch_add(1, Ordering::Relaxed)
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15),
-    )
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -78,7 +63,13 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 impl Database {
     /// Opens the writer, checks the file belongs to `kind`, upgrades its
     /// schema ([`schema::upgrade`]), and opens the readers when they are eager.
-    pub(crate) fn open(path: &Path, kind: Kind, config: PoolConfig) -> Result<Self, DbError> {
+    /// Committed writes bump `generation`.
+    pub(crate) fn open(
+        path: &Path,
+        kind: Kind,
+        config: PoolConfig,
+        generation: Arc<GenerationCell>,
+    ) -> Result<Self, DbError> {
         assert!(
             config.max_readers > 0,
             "a database needs at least one reader"
@@ -93,8 +84,7 @@ impl Database {
             writer: Mutex::new(Some(writer)),
             readers: Mutex::new(ReaderState::default()),
             reader_returned: Condvar::new(),
-            instance: next_instance_id(),
-            generation: AtomicU64::new(0),
+            generation,
             upgrade,
         };
         if db.config.eager_readers {
@@ -122,10 +112,7 @@ impl Database {
     }
 
     pub(crate) fn generation(&self) -> Generation {
-        Generation {
-            instance: self.instance,
-            counter: self.generation.load(Ordering::Acquire),
-        }
+        self.generation.current()
     }
 
     /// Runs `f` in a write transaction (`BEGIN IMMEDIATE`) on the writer
@@ -146,7 +133,7 @@ impl Database {
         let out = f(&tx)?;
         tx.commit().map_err(DbError::from)?;
         if conn.total_changes() != before {
-            self.generation.fetch_add(1, Ordering::AcqRel);
+            self.generation.bump();
         }
         Ok(out)
     }

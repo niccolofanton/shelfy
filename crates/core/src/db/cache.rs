@@ -26,6 +26,13 @@
 //!
 //! **Locks** (plan §3.5). A library locked for maintenance
 //! ([`super::lock_library`]) is never opened through the cache.
+//!
+//! **Generations** ([`crate::generation`]). Every handle the cache opens on
+//! a user's library shares the user's [`Generation`] cell: a write through a
+//! handle that the cache has since evicted for idleness or capacity still
+//! moves the generation the API's ETags read. [`UserDbCache::evict`] and a
+//! lock retire the cell instead (the library may be replaced from another
+//! connection): the next handle starts a new generation.
 
 use std::fs::File;
 use std::io::{self, Read as _};
@@ -37,7 +44,8 @@ use moka::policy::EvictionPolicy;
 use moka::sync::Cache;
 
 use super::lock::is_library_locked;
-use super::{DbError, UserDb, UserDbConfig};
+use super::{DbError, Generation, UserDb, UserDbConfig};
+use crate::generation::{GenerationCell, Generations};
 use crate::schema::{Kind, Upgrade};
 
 /// File name of a user's library inside `<users_dir>/<user_id>/` (plan §2.5).
@@ -96,6 +104,7 @@ pub struct UserDbCache {
     db_config: UserDbConfig,
     cache: Cache<String, Arc<UserDb>>,
     on_upgrade: Option<UpgradeListener>,
+    generations: Generations,
 }
 
 impl UserDbCache {
@@ -117,6 +126,7 @@ impl UserDbCache {
             db_config,
             cache,
             on_upgrade: None,
+            generations: Generations::new(),
         }
     }
 
@@ -161,12 +171,12 @@ impl UserDbCache {
     pub fn get(&self, user_id: &str) -> Result<Arc<UserDb>, DbError> {
         let path = self.library_path(user_id)?;
         if self.is_locked(user_id)? {
-            self.cache.invalidate(user_id);
+            self.release_locked(user_id);
             return Err(DbError::Locked);
         }
         self.cache
             .try_get_with_by_ref(user_id, || {
-                let db = open(&path, &self.db_config)?;
+                let db = open(&path, &self.db_config, self.generations.cell(user_id))?;
                 let upgrade = db.schema_upgrade();
                 if let Some(listener) = &self.on_upgrade
                     && upgrade != Upgrade::Current
@@ -188,6 +198,13 @@ impl UserDbCache {
     #[must_use]
     pub fn get_if_present(&self, user_id: &str) -> Option<Arc<UserDb>> {
         self.cache.get(user_id)
+    }
+
+    /// The current generation of `user_id`'s library when some handle on it
+    /// is open, without opening anything.
+    #[must_use]
+    pub fn generation(&self, user_id: &str) -> Option<Generation> {
+        self.generations.current(user_id)
     }
 
     /// Upgrades `user_id`'s library if it is behind this build: one step of
@@ -234,15 +251,27 @@ impl UserDbCache {
         })
     }
 
-    /// Evicts and releases `user_id`'s database, for example before replacing
-    /// or deleting its files.
+    /// Evicts and releases `user_id`'s database, for example after replacing
+    /// its content from another connection or before deleting its files, and
+    /// retires its generation ([`Generations::retire`]): no ETag or cached
+    /// count taken before matches after, not even one a handle still held
+    /// computes.
     pub fn evict(&self, user_id: &str) {
         self.cache.invalidate(user_id);
+        self.generations.retire(user_id);
+    }
+
+    /// Releases the cached handle of a locked library and retires its
+    /// generation: the library may be replaced while it is locked.
+    fn release_locked(&self, user_id: &str) {
+        self.cache.invalidate(user_id);
+        self.generations.retire(user_id);
     }
 
     /// Applies pending evictions (capacity and time-to-idle), closes readers
-    /// that have been idle too long, and releases the databases of locked
-    /// users. Blocking: one `stat` per open database.
+    /// that have been idle too long, releases the databases of locked users,
+    /// and forgets the generation of libraries no handle holds any more.
+    /// Blocking: one `stat` per open database.
     pub fn run_maintenance(&self) {
         self.cache.run_pending_tasks();
         let mut locked = Vec::new();
@@ -254,9 +283,11 @@ impl UserDbCache {
             }
         }
         for user in locked {
-            self.cache.invalidate(user.as_str());
+            self.release_locked(user.as_str());
         }
+        // moka also lets go of an evicted handle on this run of pending tasks.
         self.cache.run_pending_tasks();
+        self.generations.prune();
     }
 
     /// Number of cached databases (approximate until maintenance runs).
@@ -278,11 +309,15 @@ impl UserDbCache {
     }
 }
 
-fn open(path: &Path, config: &UserDbConfig) -> Result<Arc<UserDb>, DbError> {
+fn open(
+    path: &Path,
+    config: &UserDbConfig,
+    generation: Arc<GenerationCell>,
+) -> Result<Arc<UserDb>, DbError> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    UserDb::open(path, config).map(Arc::new)
+    UserDb::open_with_generation(path, config, generation).map(Arc::new)
 }
 
 /// Whether `user_id` can name a user's directory: 1–64 ASCII letters and

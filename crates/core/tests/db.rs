@@ -399,6 +399,7 @@ fn get_if_present_never_opens_a_database() {
     let db = cache.get("userA").unwrap();
     let peeked = cache.get_if_present("userA").expect("cached");
     assert!(Arc::ptr_eq(&db, &peeked));
+    let before = db.generation();
     cache.evict("userA");
     assert!(cache.get_if_present("userA").is_none());
     let reopened = cache.get("userA").unwrap();
@@ -407,6 +408,60 @@ fn get_if_present_never_opens_a_database() {
         "a new handle after the eviction"
     );
     assert_ne!(db.generation().instance, reopened.generation().instance);
+    assert_ne!(db.generation(), before, "the retired generation moved on");
+}
+
+/// The *From T11* note of P1-07, fixed in the cache: every handle on a
+/// user's library shares one generation, so a write through a handle the
+/// cache has evicted for capacity (or idleness) still moves what the new
+/// handle reports.
+#[test]
+fn handles_of_one_library_share_its_generation() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = cache(&dir, 1, Duration::from_millis(50));
+    // A request still holds `old` while another user's library pushes it out.
+    let old = cache.get("userA").unwrap();
+    cache.run_maintenance();
+    let other = cache.get("userB").unwrap();
+    cache.run_maintenance();
+    assert!(
+        cache.get_if_present("userA").is_none(),
+        "evicted for capacity"
+    );
+    let new = cache.get("userA").unwrap();
+    assert!(!Arc::ptr_eq(&old, &new));
+    assert_eq!(old.generation(), new.generation());
+    assert_eq!(cache.generation("userA"), Some(new.generation()));
+
+    let seen = new.generation();
+    old.write(|tx| repo::posts::insert(tx, &bare_post("ig_1", Platform::Instagram, NOW), NOW))
+        .unwrap();
+    assert_ne!(
+        new.generation(),
+        seen,
+        "the write through the old handle shows"
+    );
+    assert_eq!(old.generation(), new.generation());
+    assert_ne!(other.generation().instance, new.generation().instance);
+
+    // Once no handle holds the library, maintenance forgets its generation;
+    // the next handle starts a new instance, so no old value comes back.
+    let instance = new.generation().instance;
+    drop((old, new, other));
+    thread::sleep(Duration::from_millis(120));
+    cache.run_maintenance();
+    assert!(cache.is_empty(), "idle libraries are released");
+    assert_eq!(cache.generation("userA"), None);
+    let fresh = cache.get("userA").unwrap();
+    assert_ne!(fresh.generation().instance, instance);
+}
+
+#[test]
+fn handles_opened_outside_the_cache_have_their_own_generation() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = open(&dir, &UserDbConfig::default());
+    let b = open(&dir, &UserDbConfig::default());
+    assert_ne!(a.generation().instance, b.generation().instance);
 }
 
 #[test]

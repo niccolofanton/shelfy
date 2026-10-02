@@ -28,6 +28,7 @@ use std::time::Duration;
 
 use rusqlite::{Connection, Transaction};
 
+pub use crate::generation::Generation;
 pub use cache::{
     LIBRARY_FILE_NAME, LibraryUpgrade, UpgradeListener, UserDbCache, UserDbCacheConfig,
     is_valid_user_id, library_ids,
@@ -37,6 +38,7 @@ pub use lock::{
     LOCK_FILE_NAME, is_library_locked, library_lock_path, lock_library, unlock_library,
 };
 
+use crate::generation::GenerationCell;
 use crate::schema::{Kind, Upgrade};
 use pool::{Database, PoolConfig};
 
@@ -105,19 +107,6 @@ impl DbError {
     }
 }
 
-/// Identifies the state of a database for cache validation (ETags, cached
-/// counts): it changes whenever a write transaction changes at least one row.
-///
-/// `instance` is unique per opened handle, so counters restarting at zero after
-/// a reopen or a server restart never repeat an earlier value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct Generation {
-    /// Random-ish id of the open handle.
-    pub instance: u64,
-    /// Number of committed write transactions that changed rows.
-    pub counter: u64,
-}
-
 /// Settings of a [`UserDb`] (plan §2.3: up to 2 readers, closed after 60 s idle).
 #[derive(Clone, Debug)]
 pub struct UserDbConfig {
@@ -181,6 +170,21 @@ impl UserDb {
     /// application, comes from a release this build cannot run on, or a
     /// migration fails.
     pub fn open(path: impl AsRef<Path>, config: &UserDbConfig) -> Result<Self, DbError> {
+        Self::open_with_generation(path, config, GenerationCell::new())
+    }
+
+    /// Opens a library like [`UserDb::open`], with `generation` as its
+    /// generation: the [`UserDbCache`] gives every handle on one user's
+    /// library the same cell ([`crate::generation`]).
+    ///
+    /// # Errors
+    ///
+    /// Like [`UserDb::open`].
+    pub fn open_with_generation(
+        path: impl AsRef<Path>,
+        config: &UserDbConfig,
+        generation: Arc<GenerationCell>,
+    ) -> Result<Self, DbError> {
         let pool = PoolConfig {
             max_readers: config.max_readers,
             reader_idle_timeout: Some(config.reader_idle_timeout),
@@ -188,7 +192,7 @@ impl UserDb {
             reader_wait_timeout: config.reader_wait_timeout,
             pragmas: config.pragmas.clone(),
         };
-        Database::open(path.as_ref(), Kind::Library, pool).map(Self)
+        Database::open(path.as_ref(), Kind::Library, pool, generation).map(Self)
     }
 
     /// Runs `f` in a write transaction and commits it; an `Err` rolls back.
@@ -217,7 +221,8 @@ impl UserDb {
         self.0.read(f)
     }
 
-    /// The current [`Generation`].
+    /// The current [`Generation`] of the library: shared with the other
+    /// handles on it when the [`UserDbCache`] opened this one.
     #[must_use]
     pub fn generation(&self) -> Generation {
         self.0.generation()
@@ -280,7 +285,7 @@ impl ControlDb {
             reader_wait_timeout: config.reader_wait_timeout,
             pragmas: config.pragmas.clone(),
         };
-        Database::open(path.as_ref(), Kind::Control, pool).map(Self)
+        Database::open(path.as_ref(), Kind::Control, pool, GenerationCell::new()).map(Self)
     }
 
     /// Runs `f` in a write transaction and commits it; an `Err` rolls back.

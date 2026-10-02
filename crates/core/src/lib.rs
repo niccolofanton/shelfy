@@ -4,6 +4,7 @@
 //! convergence (plan §2.20), the Electron app through napi. It owns:
 //!
 //! - the schema and its migrations, and the repositories built on it;
+//! - the library generation and the caches keyed by it;
 //! - ingest validation and merge rules, canonical ids and URL normalization;
 //! - search, tags, aliases and clusters;
 //! - web captures;
@@ -16,6 +17,7 @@
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.4.
 
 pub mod db;
+pub mod generation;
 pub mod ids;
 pub mod ingest;
 pub mod legacy;
