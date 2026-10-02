@@ -95,7 +95,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-04 | Client seam: routes, SSE client, error boundary, error codes | done | `web/p1-04-client-seam` (4f16f8e…b4afd04) |
 | P1-10 | Merge rules in the core and golden parity | done | `web/p1-10-merge` (ab6efbd, 2364d64) |
 | P1-05 | Search and filters complete, search-eval gate, `admin synth`/`bench` | running | `web/p1-05-search` |
-| P1-15 | Metrics, log redaction, rate limits | running | `web/p1-15-observability` |
+| P1-15 | Metrics, log redaction, rate limits | done | `web/p1-15-observability` (8ef7557…3ce52ee) |
 | P1-17 | Account API, API tokens, device-code flow | running | `web/p1-17-account` |
 | P1-02 | Responsive shell and a minimal web app manifest | running (Sonnet) | `web/p1-02-responsive` |
 | P1-16 | First osn PR, part 1: prepare (code only) | done; draft osn PR open | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` (967c83a…b5b94af) |
@@ -141,6 +141,10 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P1-06 | The gallery's own modal is not on the route yet: a card click calls `navigate({ name: 'post', key })`, closing calls `back(...)`, and prev/next replace the route. Then merge or drop App's `/p/:key` modal (the `routePost` block), so that one modal owns the route. Sidebar folder clicks already push `/c/:id`. | P1-04 |
 | P1-20 | Build the client with the capabilities from `GET /me`, once per session; the client owns the SSE stream. Replace `DevicePage` in `web/src/Root.tsx`, and read the Settings section from the route. `reauth_required` is the hook for the re-auth dialog. After a passkey sign-in, set the session back to "checking" to return to `?next=`. | P1-04 |
 | P1-21 | Replace the route mocks with `compose.test` plus `admin synth`. Run the desktop e2e with `CI=1`, or turn off `reuseExistingServer`: otherwise Playwright silently reuses any dev server on port 5173, such as the owner's `pnpm dev`, and tests the wrong checkout. | P1-04 |
+| P1-06 | The web HTTP client should honour `Retry-After` on 429. `getPostsByIds` sends one GET per post, so more than 60 ids exceed the per-user burst (20/s, burst 60): switch it to `POST /posts/batch-get`. | P1-15 |
+| P1-18 | Job series appear only once a job kind is registered, so until P1-11, P1-17 and P1-19 the job panels have no data. Check that the "Queue stuck" alert does not fire on no-data. | P1-15 |
+| P1-26 | Route p95s come from `shelfy_http_request_duration_seconds`, with bounds at 5, 15, 40, 60 and 100 ms. For `g480`, use `histogram_quantile` over `increase(shelfy_rendition_bytes_bucket{variant="g480"}[install window])`. `admin bench` runs with `RateLimitConfig::disabled()`. An authenticated k6 run as one user is held to 20 req/s. | P1-15 |
+| P3 | Add the AI-suggest limit (1/s) to `rate_limit::route_scope`. | P1-15 |
 | P1-21 | The CSP blocks the inline `<style>` in `src/views/Browser.tsx`, a desktop-only view. | P1-09 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
 
