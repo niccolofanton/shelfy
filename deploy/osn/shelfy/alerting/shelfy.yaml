@@ -1,0 +1,395 @@
+# =============================================================================
+# Shelfy web — Grafana alert rules (plan §3.6), provisioned on the osn VPS.
+# =============================================================================
+# Installed as osn observability/grafana/provisioning/alerting/shelfy.yaml
+# (`just shelfy-sync` in osn copies it from here). Same conventions as osn's
+# rules.yaml: datasource UID `vmds` (VictoriaMetrics), instant query A, reduce
+# B (last), threshold C, folder OSN, e-mail through the osn root policy.
+#
+# Other §3.6 alerts live elsewhere:
+#   - "Shelfy DOWN": osn's `osn_probe_down`, through the blackbox target
+#     http://shelfy-api:8080/health (health_target shelfy-api). "capture DOWN"
+#     comes with the second osn PR (P4, assumption G13).
+#   - Root disk (85 % warning, 90 % critical) and host contention: osn's
+#     rules.yaml, group osn-host.
+#   - Stale backups: shelfy-backups.yaml next to this file, installed only
+#     while the osn flag shelfy_backups_enabled is true.
+#
+# Rules on metrics that may not exist yet (no job ran, the breaker arrives in
+# P2) use noDataState OK: no series means nothing to report. Titles are
+# static; the labels go in the summary.
+#
+# Grafana does not delete a provisioned rule that disappears from this file:
+# list its UID under deleteRules instead.
+# =============================================================================
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: shelfy
+    folder: OSN
+    interval: 60s
+    rules:
+      # -----------------------------------------------------------------------
+      # Metrics scrape down: without it every rule below goes silent.
+      # -----------------------------------------------------------------------
+      - uid: shelfy_scrape_down
+        title: 'Shelfy metrics scrape DOWN'
+        condition: C
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: warning
+          scope: shelfy
+        annotations:
+          summary: 'VictoriaMetrics cannot scrape shelfy-api:9464/metrics'
+          description: >-
+            up{job="shelfy"} has been 0 for 5m: the Shelfy metrics are stale
+            and the Shelfy alerts cannot fire. Check the shelfy-api container
+            (`just shelfy-logs`) and its metrics listener on the internal network.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: up{job="shelfy"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      # -----------------------------------------------------------------------
+      # Queue stuck: the oldest queued job of a kind waits > 30 min (capture
+      # sites: > 2 h). The query returns age / limit, so the threshold is 1.
+      # -----------------------------------------------------------------------
+      - uid: shelfy_queue_stuck
+        title: 'Shelfy queue stuck'
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          scope: shelfy
+        annotations:
+          summary: 'Shelfy job queue {{ $labels.kind }} is not moving'
+          description: >-
+            The oldest queued {{ $labels.kind }} job has waited longer than its
+            limit (30 min; capture.site 2 h) for 10m. Check the queue in the
+            Shelfy dashboard, the paused queues and `just shelfy-logs`.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: >-
+                max by (kind) (shelfy_job_oldest_queued_seconds{kind!="capture.site"}) / 1800
+                or max by (kind) (shelfy_job_oldest_queued_seconds{kind="capture.site"}) / 7200
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [1] }
+
+      # -----------------------------------------------------------------------
+      # Job failures: failed / ended jobs over 1 h > 20 %, counted only when
+      # at least 5 jobs ended in that hour (one failure out of two is not a
+      # trend). shelfy_job_duration_seconds counts every attempt: only
+      # `succeeded` and `failed` end a job; retried, requeued, interrupted and
+      # lease_expired attempts run again, and cancelled is the user's choice.
+      # -----------------------------------------------------------------------
+      - uid: shelfy_job_failures
+        title: 'Shelfy job failures'
+        condition: C
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          scope: shelfy
+        annotations:
+          summary: 'More than 20 % of the Shelfy jobs failed in the last hour'
+          description: >-
+            Failed jobs over the jobs that ended (succeeded or failed) in the
+            last hour have stayed above 20 % for 30m (at least 5 jobs ended).
+            The Shelfy dashboard shows the failing kind; `just shelfy-logs`
+            shows the errors.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 3600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: >-
+                sum(increase(shelfy_job_duration_seconds_count{outcome="failed"}[1h]))
+                / sum(increase(shelfy_job_duration_seconds_count{outcome=~"succeeded|failed"}[1h]))
+                and on() sum(increase(shelfy_job_duration_seconds_count{outcome=~"succeeded|failed"}[1h])) >= 5
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [0.2] }
+
+      # -----------------------------------------------------------------------
+      # Slow API: p95 of the request routes (API and media, without the
+      # streams, uploads and /health) > 500 ms over 10 min, counted only above
+      # 0.05 req/s (30 requests in the window).
+      # -----------------------------------------------------------------------
+      - uid: shelfy_api_slow
+        title: 'Shelfy API slow'
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          scope: shelfy
+        annotations:
+          summary: 'Shelfy API p95 above 500 ms'
+          description: >-
+            The p95 of the API and media routes (SSE, uploads, chat and
+            speech-to-text excluded) has stayed above 500 ms for 10m. Check the
+            slowest routes in the Shelfy dashboard, container CPU and memory,
+            and host contention.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: >-
+                histogram_quantile(0.95, sum by (le) (rate(shelfy_http_request_duration_seconds_bucket{route=~"/api/.+|/media/.+", route!~"/api/v1/(events|uploads.*|search/chat|stt/.*)"}[10m])))
+                and on() sum(rate(shelfy_http_request_duration_seconds_count{route=~"/api/.+|/media/.+", route!~"/api/v1/(events|uploads.*|search/chat|stt/.*)"}[10m])) > 0.05
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [0.5] }
+
+      # -----------------------------------------------------------------------
+      # Media breaker open (P2: the metric appears with media fetching).
+      # -----------------------------------------------------------------------
+      - uid: shelfy_media_breaker_open
+        title: 'Shelfy media breaker open'
+        condition: C
+        for: 30m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: info
+          scope: shelfy
+        annotations:
+          summary: 'Media fetches for {{ $labels.host_group }} go through the extension'
+          description: >-
+            The per-host circuit breaker for {{ $labels.host_group }} has been
+            open for 30m: the CDN refuses the VPS, and the extension fetches and
+            uploads the bytes instead. No action unless it never closes.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: max by (host_group) (shelfy_breaker_open)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [0.5] }
+
+      # -----------------------------------------------------------------------
+      # Libraries over 85 % of their disk budget (SHELFY_MEDIA_BUDGET_GB=30,
+      # compose.yml; keep the two in step). At 100 % the server refuses new
+      # archives.
+      # -----------------------------------------------------------------------
+      - uid: shelfy_disk_users_budget
+        title: 'Shelfy libraries near the disk budget'
+        condition: C
+        for: 15m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          scope: shelfy
+        annotations:
+          summary: 'Shelfy libraries use more than 85 % of their 30 GB budget'
+          description: >-
+            shelfy_disk_bytes{area="users"} has stayed above 85 % of the 30 GB
+            media budget for 15m; at 100 % new archives are refused. See the
+            disk-pressure runbook (doc/RUNBOOK-shelfy.md in osn).
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: max(shelfy_disk_bytes{area="users"}) / 30e9
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [0.85] }
+
+      # -----------------------------------------------------------------------
+      # Container memory: working set > 90 % of the limit (api now, capture
+      # from P4). cAdvisor names containers osn-<service>-1.
+      # -----------------------------------------------------------------------
+      - uid: shelfy_container_memory_high
+        title: 'Shelfy container memory high'
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          scope: shelfy
+        annotations:
+          summary: 'Container {{ $labels.name }} uses more than 90 % of its memory limit'
+          description: >-
+            The working set of {{ $labels.name }} has stayed above 90 % of its
+            memory limit for 10m: the kernel will kill it next. ffmpeg and
+            yt-dlp children count toward the shelfy-api limit.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: >-
+                sum by (name) (container_memory_working_set_bytes{name=~"osn-shelfy-(api|capture)-1"})
+                / sum by (name) (container_spec_memory_limit_bytes{name=~"osn-shelfy-(api|capture)-1"} > 0)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [0.9] }

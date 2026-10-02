@@ -1,0 +1,1916 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Shelfy web (shelfy-api on refs.niccolofanton.dev): HTTP, jobs, storage, containers and backups (plan §3.6). Source: the Shelfy repo, deploy/osn/shelfy/grafana/03-shelfy.json.",
+  "editable": false,
+  "graphTooltip": 2,
+  "links": [],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["osn", "shelfy"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "",
+  "title": "03 - Shelfy",
+  "uid": "osn-shelfy",
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overview",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "shelfy-api",
+      "description": "Blackbox probe of http://shelfy-api:8080/health on the internal network (probe_success).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "DOWN",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "UP",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "max(probe_success{health_target=\"shelfy-api\"})",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Version",
+      "description": "Version of the running shelfy-server (shelfy_build_info).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "name",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "max by (version) (shelfy_build_info)",
+          "legendFormat": "{{version}}",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Requests/s",
+      "description": "All HTTP requests per second, 5 min rate.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum(rate(shelfy_http_requests_total[5m]))",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "5xx share",
+      "description": "Share of responses with a 5xx status over 5 min.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "(sum(rate(shelfy_http_requests_total{status=~\"5..\"}[5m])) or vector(0)) / sum(rate(shelfy_http_requests_total[5m]))",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "SSE connections",
+      "description": "Open /api/v1/events streams (shelfy_sse_connections).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum(shelfy_sse_connections)",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Open user DBs",
+      "description": "Libraries open in the handle cache (shelfy_open_user_dbs; cap 64, plan §2.3).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 48
+              },
+              {
+                "color": "red",
+                "value": 64
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "max(shelfy_open_user_dbs)",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "HTTP",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Requests/s per route group",
+      "description": "Route groups from the route template: api (/api/*), sse (/api/v1/events), media (/media/*), health, web (the web app and unmatched paths).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum by (group) (label_replace(label_replace(label_replace(label_replace(label_replace(rate(shelfy_http_requests_total[5m]), \"group\", \"web\", \"route\", \".*\"), \"group\", \"api\", \"route\", \"/api/.*\"), \"group\", \"sse\", \"route\", \"/api/v1/events\"), \"group\", \"media\", \"route\", \"/media/.*\"), \"group\", \"health\", \"route\", \"/health.*\"))",
+          "legendFormat": "{{group}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Latency per route group (p50, p95, p99)",
+      "description": "Time to the response headers (shelfy_http_request_duration_seconds). §6.2 budgets: list p95 40 ms, search p95 60 ms, detail p95 15 ms, media p95 5 ms.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (group, le) (label_replace(label_replace(label_replace(label_replace(label_replace(rate(shelfy_http_request_duration_seconds_bucket[5m]), \"group\", \"web\", \"route\", \".*\"), \"group\", \"api\", \"route\", \"/api/.*\"), \"group\", \"sse\", \"route\", \"/api/v1/events\"), \"group\", \"media\", \"route\", \"/media/.*\"), \"group\", \"health\", \"route\", \"/health.*\")))",
+          "legendFormat": "{{group}} p50"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (group, le) (label_replace(label_replace(label_replace(label_replace(label_replace(rate(shelfy_http_request_duration_seconds_bucket[5m]), \"group\", \"web\", \"route\", \".*\"), \"group\", \"api\", \"route\", \"/api/.*\"), \"group\", \"sse\", \"route\", \"/api/v1/events\"), \"group\", \"media\", \"route\", \"/media/.*\"), \"group\", \"health\", \"route\", \"/health.*\")))",
+          "legendFormat": "{{group}} p95"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (group, le) (label_replace(label_replace(label_replace(label_replace(label_replace(rate(shelfy_http_request_duration_seconds_bucket[5m]), \"group\", \"web\", \"route\", \".*\"), \"group\", \"api\", \"route\", \"/api/.*\"), \"group\", \"sse\", \"route\", \"/api/v1/events\"), \"group\", \"media\", \"route\", \"/media/.*\"), \"group\", \"health\", \"route\", \"/health.*\")))",
+          "legendFormat": "{{group}} p99"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Responses per status class",
+      "description": "Responses per second by status class (2xx to 5xx).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum by (class) (label_replace(label_replace(label_replace(label_replace(rate(shelfy_http_requests_total[5m]), \"class\", \"2xx\", \"status\", \"2..\"), \"class\", \"3xx\", \"status\", \"3..\"), \"class\", \"4xx\", \"status\", \"4..\"), \"class\", \"5xx\", \"status\", \"5..\"))",
+          "legendFormat": "{{class}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "bargauge",
+      "title": "Slowest routes (p95, last hour)",
+      "description": "The ten route templates with the highest p95 over the last hour.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "displayMode": "basic",
+        "orientation": "horizontal",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "topk(10, histogram_quantile(0.95, sum by (route, le) (rate(shelfy_http_request_duration_seconds_bucket[1h]))))",
+          "legendFormat": "{{route}}",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "row",
+      "title": "Jobs",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "panels": []
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Jobs per kind and state",
+      "description": "Jobs the scheduler holds (shelfy_jobs): ready (due, waiting for a slot), delayed (waiting for their run time, such as a retry backoff) and running.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 23
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum by (kind, state) (shelfy_jobs)",
+          "legendFormat": "{{kind}} {{state}}"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Oldest queued job per kind",
+      "description": "Age of the oldest queued job (shelfy_job_oldest_queued_seconds); the queue-stuck alert fires above 30 min (capture.site 2 h).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 23
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1800
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "max by (kind) (shelfy_job_oldest_queued_seconds)",
+          "legendFormat": "{{kind}}"
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "Job attempts per hour by outcome",
+      "description": "Ended attempts in the last hour, by kind and outcome (shelfy_job_duration_seconds): succeeded and failed end a job; retried, requeued, interrupted and lease_expired run again; cancelled is the user's.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum by (kind, outcome) (increase(shelfy_job_duration_seconds_count[1h]))",
+          "legendFormat": "{{kind}} {{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "Job duration p95 per kind",
+      "description": "p95 of the attempt run time over 30 min (shelfy_job_duration_seconds), all outcomes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (kind, le) (rate(shelfy_job_duration_seconds_bucket[30m])))",
+          "legendFormat": "{{kind}}"
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "row",
+      "title": "Storage",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "panels": []
+    },
+    {
+      "id": 19,
+      "type": "gauge",
+      "title": "Libraries vs budget",
+      "description": "shelfy_disk_bytes{area=\"users\"} against the 30 GB media budget (SHELFY_MEDIA_BUDGET_GB); new archives stop at 100 %.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 85
+              },
+              {
+                "color": "red",
+                "value": 100
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "100 * max(shelfy_disk_bytes{area=\"users\"}) / 30e9",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "gauge",
+      "title": "Root disk used",
+      "description": "Used share of / on the host (node-exporter); alerts at 85 % (warning) and 90 % (critical).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 85
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "100 * (1 - max(node_filesystem_avail_bytes{mountpoint=\"/\", fstype!~\"tmpfs|overlay|squashfs\"}) / max(node_filesystem_size_bytes{mountpoint=\"/\", fstype!~\"tmpfs|overlay|squashfs\"}))",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Disk by area",
+      "description": "shelfy_disk_bytes by area. Budgets (plan §3.1): libraries 30 GB, video cache 5 GB; work, uploads, exports and backup staging 3 GB together.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "max by (area) (shelfy_disk_bytes)",
+          "legendFormat": "{{area}}"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "SQLite busy",
+      "description": "SQLITE_BUSY results per second (shelfy_sqlite_busy_total).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum(rate(shelfy_sqlite_busy_total[5m]))",
+          "legendFormat": "busy/s"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Open user databases",
+      "description": "Libraries open in the handle cache (cap 64, 10 min idle).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 64
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "max(shelfy_open_user_dbs)",
+          "legendFormat": "open"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "g480 rendition size",
+      "description": "p50 and p95 of the g480 grid renditions written in the selected range (shelfy_rendition_bytes); budget p50 35 KB, p95 60 KB.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 48
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le) (increase(shelfy_rendition_bytes_bucket{variant=\"g480\"}[$__range])))",
+          "legendFormat": "p50",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (increase(shelfy_rendition_bytes_bucket{variant=\"g480\"}[$__range])))",
+          "legendFormat": "p95",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "row",
+      "title": "Containers and host",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "panels": []
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "CPU per container",
+      "description": "CPU cores used by the Shelfy containers and Hermes, side by side (limits: shelfy-api 1.5, Hermes 2).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 57
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{name=~\"osn-(shelfy-api|shelfy-capture|shelfy-egress|hermes)-1\"}[5m]))",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "timeseries",
+      "title": "Memory per container (% of limit)",
+      "description": "Working set over the memory limit; the Shelfy memory alert fires above 90 %.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 57
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "100 * sum by (name) (container_memory_working_set_bytes{name=~\"osn-(shelfy-api|shelfy-capture|shelfy-egress|hermes)-1\"}) / sum by (name) (container_spec_memory_limit_bytes{name=~\"osn-(shelfy-api|shelfy-capture|shelfy-egress|hermes)-1\"} > 0)",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "Host memory available",
+      "description": "MemAvailable on the host; the host-contention alert fires below 800 MB.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 65
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 800000000.0
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "min(node_memory_MemAvailable_bytes)",
+          "legendFormat": "available"
+        }
+      ]
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "Host load (5 min)",
+      "description": "5-minute load average on the 4 vCPUs; the host-contention alert fires above 6.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 65
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "line"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 6
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "max(node_load5)",
+          "legendFormat": "load5"
+        }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "row",
+      "title": "Backups",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 73
+      },
+      "panels": []
+    },
+    {
+      "id": 31,
+      "type": "stat",
+      "title": "Database backup age",
+      "description": "Time since the last successful run; red after 3 h, like its stale-backup alert. No data while backups are off.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 74
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 10800
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "time() - max(shelfy_backup_last_success_timestamp_seconds{set=\"db\"})",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "stat",
+      "title": "Media backup age",
+      "description": "Time since the last successful run; red after 36 h, like its stale-backup alert. No data while backups are off.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 74
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 129600
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "time() - max(shelfy_backup_last_success_timestamp_seconds{set=\"media\"})",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "stat",
+      "title": "Restic maintenance age",
+      "description": "Time since the last successful run; red after 8 days, like its stale-backup alert. No data while backups are off.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 74
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 691200
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "time() - max(shelfy_restic_check_last_success_timestamp_seconds)",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 34,
+      "type": "stat",
+      "title": "Restore drill age",
+      "description": "Time since the last successful run; red after 35 days, like its stale-backup alert. No data while backups are off.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 74
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 3024000
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "time() - max(shelfy_restore_drill_last_success_timestamp_seconds)",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 35,
+      "type": "stat",
+      "title": "Last run",
+      "description": "Result of the last run of each backup job (1 = success, 0 = failure).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 79
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "FAILED",
+                  "color": "red",
+                  "index": 0
+                },
+                "1": {
+                  "text": "OK",
+                  "color": "green",
+                  "index": 1
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "max(shelfy_backup_last_success{set=\"db\"})",
+          "legendFormat": "database",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "B",
+          "expr": "max(shelfy_backup_last_success{set=\"media\"})",
+          "legendFormat": "media",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "C",
+          "expr": "max(shelfy_restic_check_last_success)",
+          "legendFormat": "restic maintenance",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "D",
+          "expr": "max(shelfy_restore_drill_last_success)",
+          "legendFormat": "restore drill",
+          "instant": true,
+          "range": false
+        }
+      ]
+    }
+  ]
+}

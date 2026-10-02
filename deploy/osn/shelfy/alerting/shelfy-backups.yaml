@@ -1,0 +1,277 @@
+# =============================================================================
+# Shelfy web — stale-backup alert rules (plan §3.5, §3.6).
+# =============================================================================
+# Installed by the osn role `shelfy` only while shelfy_backups_enabled is true
+# (osn group_vars/all.yml), as
+# observability/grafana/provisioning/alerting/shelfy-backups.yaml on the host.
+# While backups are off the role writes a file with only the deleteRules for
+# the UIDs below, so turning backups off again removes these rules. osn keeps
+# a copy in shelfy/alerting/ (`just shelfy-sync` refreshes it from here).
+#
+# The metrics come from the backup jobs (deploy/osn/shelfy/backup/), through
+# node-exporter's textfile collector: <metric> (1 = the last run succeeded)
+# and <metric>_timestamp_seconds (the last success, 0 if none yet).
+#
+# After turning backups on, run `just shelfy-backup-now` and
+# `just shelfy-restore-drill` once: until each job has run, its metric is
+# missing and shelfy_backup_metrics_missing fires after 1 h.
+# =============================================================================
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: shelfy-backups
+    folder: OSN
+    interval: 300s
+    rules:
+      # -----------------------------------------------------------------------
+      # Database backup older than 3 h (hourly job, RPO 1 h).
+      # -----------------------------------------------------------------------
+      - uid: shelfy_backup_db_stale
+        title: 'Shelfy database backup stale'
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          scope: shelfy-backup
+        annotations:
+          summary: 'No successful Shelfy database backup for more than 3 h'
+          description: >-
+            The last successful run of shelfy-db-snapshot is older than 3 h:
+            the hourly backups of the accounts and libraries are failing. See
+            `journalctl -u shelfy-db-snapshot.service` and the backup runbook.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: time() - max(shelfy_backup_last_success_timestamp_seconds{set="db"})
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [10800] }
+
+      # -----------------------------------------------------------------------
+      # Media backup older than 36 h (daily job, RPO 24 h).
+      # -----------------------------------------------------------------------
+      - uid: shelfy_backup_media_stale
+        title: 'Shelfy media backup stale'
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          scope: shelfy-backup
+        annotations:
+          summary: 'No successful Shelfy media backup for more than 36 h'
+          description: >-
+            The last successful run of shelfy-media-backup is older than 36 h.
+            See `journalctl -u shelfy-media-backup.service` and the backup runbook.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: time() - max(shelfy_backup_last_success_timestamp_seconds{set="media"})
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [129600] }
+
+      # -----------------------------------------------------------------------
+      # Restore drill older than 35 days (monthly job).
+      # -----------------------------------------------------------------------
+      - uid: shelfy_restore_drill_stale
+        title: 'Shelfy restore drill stale'
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          scope: shelfy-backup
+        annotations:
+          summary: 'No successful Shelfy restore drill for more than 35 days'
+          description: >-
+            The last successful monthly restore drill is older than 35 days, so
+            the backups are not proven restorable. See
+            `journalctl -u shelfy-restore-drill.service`; rerun it with
+            `just shelfy-restore-drill`.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: time() - max(shelfy_restore_drill_last_success_timestamp_seconds)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [3024000] }
+
+      # -----------------------------------------------------------------------
+      # Weekly repository maintenance (retention, prune, 5 % check) older than
+      # 8 days. Not in §3.6: a repository that fails its check may not restore.
+      # -----------------------------------------------------------------------
+      - uid: shelfy_restic_check_stale
+        title: 'Shelfy restic maintenance stale'
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+          scope: shelfy-backup
+        annotations:
+          summary: 'No successful Shelfy restic maintenance for more than 8 days'
+          description: >-
+            The weekly forget, prune and check of the Shelfy restic repository
+            has not succeeded for more than 8 days. See
+            `journalctl -u shelfy-restic-maintenance.service`.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: time() - max(shelfy_restic_check_last_success_timestamp_seconds)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [691200] }
+
+      # -----------------------------------------------------------------------
+      # A backup metric is missing: the job never ran on this host, its .prom
+      # file was removed, or node-exporter lost the textfile directory. The
+      # stale rules above cannot see that case. One instance per metric.
+      # -----------------------------------------------------------------------
+      - uid: shelfy_backup_metrics_missing
+        title: 'Shelfy backup metric missing'
+        condition: C
+        for: 1h
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: critical
+          scope: shelfy-backup
+        annotations:
+          summary: 'The Shelfy {{ $labels.backup }} backup metric is missing'
+          description: >-
+            No {{ $labels.backup }} result has reached the textfile collector
+            for 1h, so its stale-backup alert cannot fire. Run the job once
+            (`just shelfy-backup-now` or `just shelfy-restore-drill`) and check
+            /data/observability/textfile.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: vmds
+            model:
+              datasource: { type: prometheus, uid: vmds }
+              editorMode: code
+              expr: >-
+                label_replace(absent(shelfy_backup_last_success_timestamp_seconds{set="db"}), "backup", "db", "", "")
+                or label_replace(absent(shelfy_backup_last_success_timestamp_seconds{set="media"}), "backup", "media", "", "")
+                or label_replace(absent(shelfy_restore_drill_last_success_timestamp_seconds), "backup", "restore-drill", "", "")
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              range: false
+              refId: A
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: reduce
+              reducer: last
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: B
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: B
+              datasource: { type: __expr__, uid: __expr__ }
+              refId: C
+              conditions:
+                - evaluator: { type: gt, params: [0] }
