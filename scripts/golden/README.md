@@ -13,7 +13,14 @@ what the desktop returns.
 | Set | Desktop function | Rust port |
 |---|---|---|
 | `extract-content-terms` | `electron/db.ts#extractContentTerms` | `shelfy_core::search::terms::extract_content_terms` |
+| `edits` | `electron/db.ts#updateUserContent`, `#updateAiAnalysis` | `shelfy_core::repo::posts::{update_user_content, update_ai}` |
 | `merge/*` (one file per scenario) | `electron/db.ts#bulkUpsert` | `shelfy_core::ingest::merge::upsert_batch` |
+
+The `edits` cases each start from a bare post on a fresh desktop library
+(`openDesktopDb()`, below), apply their steps with the real functions, and
+record the post's layers: columns, tag rows and entity rows. Each case carries
+the alias table it ran with. The header of `scripts/golden/edits.ts` lists the
+desktop behaviors the web changes on purpose, which the cases stay clear of.
 
 ### Stateful sets: `merge/`
 
