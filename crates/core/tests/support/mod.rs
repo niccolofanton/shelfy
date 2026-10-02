@@ -581,6 +581,10 @@ pub fn fixture_control(conn: &Connection) {
          INSERT INTO api_tokens (id, user_id, kind, token_hash, label, scopes, created_at)
          VALUES ('01J9Z3B8K4QW6TFX0V7G2N5RCB', '{user}', 'extension', X'ff01', 'Chrome',
                  'ingest tasks uploads lookup', {NOW});
+         INSERT INTO api_tokens (id, user_id, kind, token_hash, label, scopes, created_at,
+                                 expires_at)
+         VALUES ('01J9Z3B8K4QW6TFX0V7G2N5RCD', '{user}', 'migrate', X'ff02', 'migration',
+                 'migrate', {NOW}, {NOW} + 604800000);
          INSERT INTO pairing_codes (code_hash, user_id, kind, expires_at)
          VALUES (X'ab01', '{user}', 'extension', {NOW} + 60000);
          INSERT INTO provider_keys (user_id, provider_id, key_version, nonce, ciphertext, last4, created_at)

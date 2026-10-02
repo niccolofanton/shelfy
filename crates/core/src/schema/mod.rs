@@ -30,12 +30,16 @@ const LIBRARY_MIGRATIONS: &[M<'static>] =
             .foreign_key_check(),
     ];
 
-const CONTROL_MIGRATIONS: &[M<'static>] =
-    &[
-        M::up(include_str!("../../migrations/control/0001_schema_v1.sql"))
-            .comment("control schema v1")
-            .foreign_key_check(),
-    ];
+const CONTROL_MIGRATIONS: &[M<'static>] = &[
+    M::up(include_str!("../../migrations/control/0001_schema_v1.sql"))
+        .comment("control schema v1")
+        .foreign_key_check(),
+    M::up(include_str!(
+        "../../migrations/control/0002_api_token_expiry.sql"
+    ))
+    .comment("control schema v2: api_tokens.expires_at")
+    .foreign_key_check(),
+];
 
 /// Which database a connection belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
