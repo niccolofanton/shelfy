@@ -8,6 +8,7 @@
 //! |---|---|---|
 //! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library |
 //! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (T11 stub, P1-01), `POST /api/v1/search/chat` (P3) |
+//! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
 //! | ingest, uploads, STT | [`RouteLimits::INGEST`], [`RouteLimits::UPLOAD_CHUNK`], [`RouteLimits::STT`] | added with their routes (P2, T9, P3) |
 //!
 //! The read API (T11): [`posts`] (`GET /posts`, `GET /posts/{key}`),
@@ -30,6 +31,7 @@ pub mod events;
 pub mod health;
 pub mod listing;
 pub mod me;
+pub mod media;
 pub mod model;
 pub mod posts;
 pub mod search;
@@ -107,6 +109,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .merge(RouteLimits::STANDARD.apply(standard))
         .merge(RouteLimits::STREAM.apply(streams))
+        .merge(RouteLimits::STANDARD.apply(media::router()))
 }
 
 /// The OpenAPI document of [`router`], with the shared error response added
