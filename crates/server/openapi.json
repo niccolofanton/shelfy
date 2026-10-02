@@ -5196,7 +5196,7 @@
           },
           "filter": {
             "$ref": "#/components/schemas/FilterParams",
-            "description": "Every post `GET /posts` lists with these filters, over all its pages\n(`trash: true` selects in the trash)."
+            "description": "Every post `GET /posts` lists with these filters, over all its pages\n(`trash: true` selects in the trash). A member that is not a filter\nis refused."
           },
           "keys": {
             "type": "array",

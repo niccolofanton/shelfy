@@ -10,14 +10,24 @@
 //! same filters, every page of them. A test pins the three parameter sets to
 //! each other.
 //!
+//! **Strict selectors, lenient queries.** A selector picks the posts a write
+//! changes, so its `filter` refuses a member it does not know (422
+//! `validation_failed` naming `selector.filter.<member>`): a misspelled
+//! filter (`colection`) must not widen the selection to the whole library
+//! (P1-03 review, M1). Query strings (`GET /posts`, `GET /posts/count`,
+//! `GET /search`) still ignore unknown parameters, as HTTP tools and caches
+//! add their own: there a typo only widens a view, never a change.
+//!
 //! The selector resolves into [`shelfy_core::selector::Selector`], which
 //! compiles to one SQL condition. Used by `POST /collections/{id}/posts` and
 //! `POST /collections/from-query` (P1-03), and `POST /posts/bulk` (P1-11).
 
+use std::collections::BTreeSet;
 use std::fmt;
+use std::sync::LazyLock;
 
 use serde::de::{self, Deserializer, Unexpected, Visitor};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use shelfy_core::selector::{MAX_EXCEPT_KEYS, MAX_KEYS, Selector};
 use utoipa::{IntoParams, ToSchema};
 
@@ -109,6 +119,72 @@ impl FilterParams {
     pub fn into_query(self) -> PostsQuery {
         self.into()
     }
+
+    /// The members of a filter as JSON, `camelCase`: every field of the
+    /// type, as its derived `Serialize` names them (it skips none).
+    #[must_use]
+    pub fn members() -> &'static BTreeSet<String> {
+        static MEMBERS: LazyLock<BTreeSet<String>> =
+            LazyLock::new(|| match serde_json::to_value(FilterParams::default()) {
+                Ok(serde_json::Value::Object(members)) => members.keys().cloned().collect(),
+                _ => unreachable!("a struct serializes to an object"),
+            });
+        &MEMBERS
+    }
+}
+
+/// Most unknown members a refused selector filter names.
+const MAX_UNKNOWN_NAMED: usize = 10;
+/// Longest unknown member name repeated in a problem, in characters.
+const MAX_UNKNOWN_CHARS: usize = 64;
+
+/// The `filter` of a [`PostSelector`]: [`FilterParams`] as a JSON object,
+/// plus the names of the members it does not know, which
+/// [`PostSelector::resolve`] refuses (see the module docs). Serialized and
+/// documented as [`FilterParams`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SelectorFilter {
+    params: FilterParams,
+    unknown: Vec<String>,
+}
+
+impl SelectorFilter {
+    /// A filter with these parameters and no unknown member.
+    #[must_use]
+    pub fn new(params: FilterParams) -> Self {
+        Self {
+            params,
+            unknown: Vec::new(),
+        }
+    }
+}
+
+impl From<FilterParams> for SelectorFilter {
+    fn from(params: FilterParams) -> Self {
+        Self::new(params)
+    }
+}
+
+impl Serialize for SelectorFilter {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.params.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SelectorFilter {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut members = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        let known = FilterParams::members();
+        let unknown: Vec<String> = members
+            .keys()
+            .filter(|name| !known.contains(name.as_str()))
+            .cloned()
+            .collect();
+        members.retain(|name, _| known.contains(name.as_str()));
+        let params = FilterParams::deserialize(serde_json::Value::Object(members))
+            .map_err(de::Error::custom)?;
+        Ok(Self { params, unknown })
+    }
 }
 
 /// A boolean, as JSON (`true`) or as a query value (`true`, `1`, `false`,
@@ -155,9 +231,10 @@ pub struct PostSelector {
     #[schema(nullable = false)]
     pub keys: Option<Vec<String>>,
     /// Every post `GET /posts` lists with these filters, over all its pages
-    /// (`trash: true` selects in the trash).
-    #[schema(nullable = false)]
-    pub filter: Option<FilterParams>,
+    /// (`trash: true` selects in the trash). A member that is not a filter
+    /// is refused.
+    #[schema(value_type = Option<FilterParams>, nullable = false)]
+    pub filter: Option<SelectorFilter>,
     /// With `filter`: posts to leave out, by key, at most 1,000 ("select all
     /// matching" minus the ones unticked).
     #[schema(nullable = false)]
@@ -172,7 +249,8 @@ impl PostSelector {
     ///
     /// 422 `validation_failed`: neither or both of `keys` and `filter`,
     /// `exceptKeys` without `filter`, more than 500 keys or 1,000
-    /// exceptions, or an invalid filter value.
+    /// exceptions, a filter member that is not a filter, or an invalid
+    /// filter value.
     pub fn resolve(self, field: &str) -> Result<Selector, ApiError> {
         let invalid =
             |name: &str, reason: String| ApiError::invalid_field(format!("{field}{name}"), reason);
@@ -189,6 +267,9 @@ impl PostSelector {
                 Ok(Selector::Keys(keys))
             }
             (None, Some(filter)) => {
+                if !filter.unknown.is_empty() {
+                    return Err(unknown_members(field, &filter.unknown));
+                }
                 let except_keys = self.except_keys.unwrap_or_default();
                 if except_keys.len() > MAX_EXCEPT_KEYS {
                     return Err(invalid(
@@ -196,7 +277,7 @@ impl PostSelector {
                         format!("has more than {MAX_EXCEPT_KEYS} keys"),
                     ));
                 }
-                let query = filter.into_query();
+                let query = filter.params.into_query();
                 query
                     .validate()
                     .map_err(|err| nested(err, &format!("{field}.filter")))?;
@@ -204,6 +285,20 @@ impl PostSelector {
             }
         }
     }
+}
+
+/// 422 `validation_failed` naming each member of `<field>.filter` that is
+/// not a filter (at most [`MAX_UNKNOWN_NAMED`], names cut to
+/// [`MAX_UNKNOWN_CHARS`] characters).
+fn unknown_members(field: &str, unknown: &[String]) -> ApiError {
+    unknown
+        .iter()
+        .take(MAX_UNKNOWN_NAMED)
+        .map(|name| name.chars().take(MAX_UNKNOWN_CHARS).collect::<String>())
+        .fold(
+            ApiError::new(crate::error::ErrorCode::ValidationFailed),
+            |out, name| out.with_field(format!("{field}.filter.{name}"), "is not a filter"),
+        )
 }
 
 /// `err` with its fields under `prefix`.
@@ -298,6 +393,54 @@ mod tests {
             serde_json::from_value::<PostSelector>(json!({ "filter": { "platform": "tiktok" } }))
                 .is_err()
         );
+        assert!(serde_json::from_value::<PostSelector>(json!({ "filter": [] })).is_err());
+    }
+
+    /// Review M1: a misspelled filter member must not widen the selection to
+    /// the whole library.
+    #[test]
+    fn unknown_filter_members_are_named() {
+        let err = parse(json!({ "filter": { "colection": 999 } })).unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ValidationFailed);
+        assert_eq!(field_of(&err), "selector.filter.colection");
+
+        let err = parse(json!({
+            "filter": { "platfrom": "pinterest", "platform": "pinterest", "x".repeat(100): 1 },
+            "exceptKeys": ["ig_1"],
+        }))
+        .unwrap_err();
+        let fields: Vec<String> = err.problem().errors.into_iter().map(|f| f.field).collect();
+        assert_eq!(
+            fields,
+            [
+                "selector.filter.platfrom".to_owned(),
+                format!("selector.filter.{}", "x".repeat(MAX_UNKNOWN_CHARS)),
+            ]
+        );
+        // A known member with a null value is no filter, as in a query.
+        let all = parse(json!({ "filter": { "collection": null } })).unwrap();
+        assert_eq!(all, Selector::filter(Default::default()));
+    }
+
+    #[test]
+    fn filter_members_are_the_fields_of_filter_params() {
+        let members = FilterParams::members();
+        assert_eq!(members.len(), 17, "{members:?}");
+        for name in [
+            "collection",
+            "mediaType",
+            "aiTagged",
+            "conceptMode",
+            "trash",
+        ] {
+            assert!(members.contains(name), "{name}");
+        }
+        // The selector filter serializes as the parameters themselves.
+        let filter = SelectorFilter::new(FilterParams {
+            q: Some("lamp".into()),
+            ..FilterParams::default()
+        });
+        assert_eq!(serde_json::to_value(&filter).unwrap()["q"], "lamp");
     }
 
     #[test]

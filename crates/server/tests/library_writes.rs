@@ -890,6 +890,79 @@ async fn a_collection_is_made_from_a_query_and_deleted_without_its_posts() {
     assert_index_consistent(&t, ALICE, "deleting collections");
 }
 
+/// Review M1 of P1-03: a misspelled filter member in a selector used to be
+/// dropped, so the selection became the whole library (the reviewer's
+/// `a_misspelled_filter_field_selects_the_whole_library`, now refused).
+#[tokio::test]
+async fn a_misspelled_selector_filter_field_is_refused() {
+    let (t, ids) = two_libraries().await;
+    let app = t.app_as(ALICE);
+    let members = format!("/api/v1/collections/{}/posts", ids.inspiration);
+    let count = |collection: i64| format!("/api/v1/posts/count?collection={collection}");
+    let before = ok(&app, get(&count(ids.inspiration))).await;
+    assert_eq!(before["total"], 1);
+
+    // `colection` instead of `collection`: refused, nothing added.
+    invalid(
+        &app,
+        post(
+            &members,
+            &json!({ "selector": { "filter": { "colection": 999 } } }),
+        ),
+        "selector.filter.colection",
+    )
+    .await;
+    assert_eq!(ok(&app, get(&count(ids.inspiration))).await, before);
+
+    // "Save this view as a folder": refused, no folder made.
+    let refused = problem(
+        send(
+            &app,
+            post(
+                "/api/v1/collections/from-query",
+                &json!({
+                    "name": "Pins",
+                    "selector": { "filter": { "platfrom": "pinterest", "mediaTipe": "image" } },
+                }),
+            ),
+        )
+        .await,
+        StatusCode::UNPROCESSABLE_ENTITY,
+    )
+    .await;
+    assert_eq!(refused.code, ErrorCode::ValidationFailed);
+    let fields: Vec<&str> = refused.errors.iter().map(|f| f.field.as_str()).collect();
+    assert_eq!(
+        fields,
+        ["selector.filter.mediaTipe", "selector.filter.platfrom"]
+    );
+    let folders = ok(&app, get("/api/v1/collections")).await;
+    assert_eq!(folders["items"].as_array().unwrap().len(), 2);
+
+    // A misspelled selector key is refused too.
+    let response = send(
+        &app,
+        post(&members, &json!({ "selector": { "filtr": {} } })),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+    // Spelled right, the same filter selects its posts.
+    let added = ok(
+        &app,
+        post(
+            &members,
+            &json!({ "selector": { "filter": { "collection": ids.lighting } } }),
+        ),
+    )
+    .await;
+    assert_eq!(added["added"], 1);
+
+    // Query strings stay lenient: an unknown parameter is ignored.
+    let all = ok(&app, get("/api/v1/posts/count?colection=999")).await;
+    assert_eq!(all["total"], FIXTURE_NEWEST.len());
+}
+
 #[tokio::test]
 async fn counts_batches_and_lookups_answer_within_their_caps() {
     let (t, ids) = two_libraries().await;
