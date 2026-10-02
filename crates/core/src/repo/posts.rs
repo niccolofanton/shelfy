@@ -7,8 +7,11 @@
 //!
 //! - search uses the FTS5 index (plan D10) instead of `LIKE` + a JS function:
 //!   a post matches when any content term prefix-matches one of its indexed
-//!   columns; the relevance score is bm25 plus an exact-tag and a phrase bonus
-//!   (§2.14), and SPIKE-5 tunes it;
+//!   columns; the relevance score is the per-term model of
+//!   [`crate::search::query`] (clamped term weights over bm25's frequency
+//!   part, whole tokens above prefixes) plus an exact-tag and a phrase bonus
+//!   (§2.14, tuned by SPIKE-5); a term found only inside a longer token
+//!   (`#productdesign` for "design") no longer matches;
 //! - "downloaded" becomes [`PostFilter::stored`]: the post has at least one
 //!   archived object (cover, slide, poster or kept video);
 //! - trashed posts are hidden unless [`PostFilter::trash`] asks for them;
@@ -1270,7 +1273,8 @@ fn list_relevance(
         });
     }
     let take = limit.min(RELEVANCE_WINDOW - offset);
-    let (sql, params) = relevance_query(w, text, take, offset);
+    let scoring = scoring(conn, text)?;
+    let (sql, params) = relevance_query(w, text, &scoring, take, offset);
     let mut items: Vec<PostSummary> = conn
         .prepare_cached(&sql)?
         .query_map(params_from_iter(params.iter()), |row| {
@@ -1287,37 +1291,129 @@ fn list_relevance(
     Ok(Page { items, next_cursor })
 }
 
-/// The relevance query (plan §2.14): bm25 over every search unit, minus the
-/// exact-tag and phrase bonuses; lower is better. Fetches `take + 1` rows.
-fn relevance_query(w: WhereSql, text: &TextPlan, take: u32, offset: u32) -> (String, Vec<Value>) {
+/// One scored FTS5 match of the relevance query: the posts it matches add
+/// `bm25 × factor` to their score.
+#[derive(Clone, Debug, PartialEq)]
+struct ScoreArm {
+    expr: String,
+    /// `weight / idf`: replaces bm25's IDF with the term's clamped weight.
+    factor: f64,
+}
+
+/// The inputs of the relevance score that depend on the library's statistics.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Scoring {
+    arms: Vec<ScoreArm>,
+    /// Distinct boost terms that some post has as a tag, with their bonus.
+    tag_boosts: Vec<(String, f64)>,
+}
+
+/// The scoring of `text` (plan §2.14, [`crate::search::query`]), from document
+/// frequencies counted on the caller's snapshot:
+///
+/// - for every scored term that matches at least one post, its prefix match
+///   and, when some post has it as a whole token, its exact match;
+/// - for every boost term that is some post's tag, the exact-tag bonus scaled
+///   by the tag's weight (the desktop's `6 × idf(tag)`).
+fn scoring(conn: &Connection, text: &TextPlan) -> Result<Scoring> {
+    let mut out = Scoring::default();
+    if text.score_terms.is_empty() && text.boost_terms.is_empty() {
+        return Ok(out);
+    }
+    // The row count FTS5 uses for its IDF: one row per indexed post.
+    let rows: i64 = conn
+        .prepare_cached("SELECT count(*) FROM posts_fts_docsize")?
+        .query_row([], |r| r.get(0))?;
+    let rows = u64::try_from(rows).unwrap_or(0);
+    let mut count =
+        conn.prepare_cached("SELECT count(*) FROM posts_fts WHERE posts_fts MATCH ?1")?;
+    let mut df = |expr: &str| -> Result<u64> {
+        let n: i64 = count.query_row([expr], |r| r.get(0))?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    };
+    for term in &text.score_terms {
+        let Some((prefix, exact)) = query::term_matches(term) else {
+            continue;
+        };
+        let prefix_df = df(&prefix)?;
+        if prefix_df == 0 {
+            continue;
+        }
+        let weight = query::term_weight(rows, prefix_df);
+        out.arms.push(ScoreArm {
+            expr: prefix,
+            factor: weight / query::fts5_idf(rows, prefix_df),
+        });
+        let Some(exact) = exact else {
+            continue;
+        };
+        let exact_df = df(&exact)?;
+        if exact_df > 0 {
+            out.arms.push(ScoreArm {
+                expr: exact,
+                factor: query::EXACT_TOKEN_WEIGHT * weight / query::fts5_idf(rows, exact_df),
+            });
+        }
+    }
+    let mut tag_df =
+        conn.prepare_cached("SELECT count(DISTINCT post_id) FROM post_tags WHERE tag_norm = ?1")?;
+    for norm in dedupe(text.boost_terms.iter().cloned()) {
+        let n: i64 = tag_df.query_row([&norm], |r| r.get(0))?;
+        let n = u64::try_from(n).unwrap_or(0);
+        if n > 0 {
+            let bonus = query::EXACT_TAG_BOOST * query::term_weight(rows, n);
+            out.tag_boosts.push((norm, bonus));
+        }
+    }
+    Ok(out)
+}
+
+/// The relevance query (plan §2.14): the scored matches of every search unit,
+/// minus the exact-tag and phrase bonuses ([`scoring`]); lower is better.
+/// Fetches `take + 1` rows.
+fn relevance_query(
+    w: WhereSql,
+    text: &TextPlan,
+    scoring: &Scoring,
+    take: u32,
+    offset: u32,
+) -> (String, Vec<Value>) {
     // Parameters bind in the order their `?` appear: WITH, SELECT list, WHERE.
     let mut params: Vec<Value> = Vec::new();
     let mut with = String::new();
     let mut from = SUMMARY_FROM.to_owned();
-    if let Some(expr) = &text.score_expr {
+    let mut score = "0.0".to_owned();
+    if !scoring.arms.is_empty() {
         // Scored once and materialized: as a subquery inside the join, SQLite
-        // re-runs the FTS query for every candidate row (seconds at 6k posts).
-        with = format!(
-            "WITH hits (rid, bm) AS MATERIALIZED
-               (SELECT rowid, {} FROM posts_fts WHERE posts_fts MATCH ?) ",
+        // re-runs the FTS queries for every candidate row (seconds at 6k posts).
+        // The arms get their own CTE: a lone arm flattened into the aggregate
+        // makes bm25() fail ("unable to use function bm25 in the requested
+        // context").
+        let arm_sql = format!(
+            "SELECT rowid, {} * ? FROM posts_fts WHERE posts_fts MATCH ?",
             query::bm25_call()
         );
+        with = format!(
+            "WITH arms (rid, s) AS MATERIALIZED ({}),
+                  hits (rid, bm) AS MATERIALIZED (SELECT rid, sum(s) FROM arms GROUP BY rid) ",
+            vec![arm_sql; scoring.arms.len()].join(" UNION ALL ")
+        );
         from.push_str(" LEFT JOIN hits h ON h.rid = p.id");
-        params.push(Value::Text(expr.clone()));
+        score = "COALESCE(h.bm, 0.0)".to_owned();
+        for arm in &scoring.arms {
+            params.push(Value::Real(arm.factor));
+            params.push(Value::Text(arm.expr.clone()));
+        }
     }
-    let mut score = format!(
-        "COALESCE({}, 0.0) - {:.4} * (SELECT count(DISTINCT pt.tag_norm) FROM post_tags pt
-             WHERE pt.post_id = p.id AND pt.tag_norm IN (SELECT value FROM json_each(?)))",
-        if text.score_expr.is_some() {
-            "h.bm"
-        } else {
-            "NULL"
-        },
-        query::EXACT_TAG_BOOST
-    );
-    params.push(Value::Text(
-        serde_json::to_string(&text.boost_terms).expect("strings serialize"),
-    ));
+    if !scoring.tag_boosts.is_empty() {
+        score.push_str(
+            " - (SELECT total(b.value ->> 1) FROM json_each(?) b WHERE EXISTS
+                   (SELECT 1 FROM post_tags pt WHERE pt.post_id = p.id AND pt.tag_norm = b.value ->> 0))",
+        );
+        params.push(Value::Text(
+            serde_json::to_string(&scoring.tag_boosts).expect("tag boosts serialize"),
+        ));
+    }
     if let Some(phrase) = &text.phrase_expr {
         score.push_str(&format!(
             " - {:.4} * (p.id IN (SELECT rowid FROM posts_fts WHERE posts_fts MATCH ?))",
@@ -1346,8 +1442,8 @@ struct TextPlan {
     tags: Vec<String>,
     /// Tags join the search blocks instead of filtering.
     hybrid: bool,
-    /// Every FTS unit OR-ed, for bm25.
-    score_expr: Option<String>,
+    /// The scored units: the query's content terms, then the concepts.
+    score_terms: Vec<String>,
     phrase_expr: Option<String>,
     /// Exact-tag boost candidates.
     boost_terms: Vec<String>,
@@ -1364,14 +1460,14 @@ impl TextPlan {
         let concepts = clean_concepts(&filter.concepts);
         let hybrid = !tags.is_empty() && q.is_some();
         let mut blocks = Vec::new();
-        let mut units = Vec::new();
+        let mut score_terms = Vec::new();
         let mut boost_terms = Vec::new();
         let mut phrase_expr = None;
 
         if let Some(q) = q {
             let parsed = TextQuery::parse(q);
             blocks.push(fts_block(parsed.match_expr.clone()));
-            units.extend(parsed.terms.iter().filter_map(|t| query::prefix_unit(t)));
+            score_terms.extend(parsed.terms.iter().cloned());
             boost_terms.extend(parsed.terms);
             phrase_expr = parsed.phrase_expr;
         }
@@ -1381,7 +1477,7 @@ impl TextPlan {
                 unit.as_ref()
                     .and_then(|u| query::any_of(std::slice::from_ref(u))),
             ));
-            units.extend(unit);
+            score_terms.push(concept.clone());
             boost_terms.push(concept.to_lowercase());
         }
         if hybrid {
@@ -1402,7 +1498,7 @@ impl TextPlan {
             },
             tags,
             hybrid,
-            score_expr: query::any_of(&units),
+            score_terms,
             phrase_expr,
             boost_terms,
         }
@@ -1693,17 +1789,136 @@ mod tests {
         assert!(f.has_text());
     }
 
-    #[test]
-    fn relevance_scores_the_fts_query_once() {
+    fn memory_library() -> Connection {
         let mut conn = Connection::open_in_memory().unwrap();
         crate::schema::migrate(&mut conn, crate::schema::Kind::Library).unwrap();
+        conn
+    }
+
+    #[test]
+    fn scoring_follows_term_statistics() {
+        let conn = memory_library();
+        for (i, caption) in ["lampada vetro", "lampadario", "sedia", "tavolo"]
+            .into_iter()
+            .enumerate()
+        {
+            let mut post = NewPost::new(
+                format!("ig_{i}"),
+                Platform::Instagram,
+                i.to_string(),
+                "image",
+                0,
+            );
+            post.caption = Some(caption.into());
+            if i == 2 {
+                post.user_tags = vec!["Vetro".into()];
+            }
+            insert(&conn, &post, 0).unwrap();
+        }
+        let text = TextPlan::new(&PostFilter {
+            q: Some("lampada vetro assente".into()),
+            concepts: vec!["!!!".into()],
+            ..PostFilter::default()
+        });
+        let s = scoring(&conn, &text).unwrap();
+        let (lampada, lampada_exact) = query::term_matches("lampada").unwrap();
+        let (vetro, vetro_exact) = query::term_matches("vetro").unwrap();
+        let (lampada_exact, vetro_exact) = (lampada_exact.unwrap(), vetro_exact.unwrap());
+        let exprs: Vec<&str> = s.arms.iter().map(|a| a.expr.as_str()).collect();
+        // Terms without a match ("assente") or without an indexable character
+        // ("!!!") are not scored; "lampadario" is a prefix hit only.
+        assert_eq!(exprs, [&lampada, &lampada_exact, &vetro, &vetro_exact]);
+        // 4 rows: "lampada"* is in 2 of them, the token "lampada" in 1; "vetro"
+        // is in 2 (a caption and a tag).
+        let weight = query::term_weight(4, 2);
+        let expected = [
+            weight / query::fts5_idf(4, 2),
+            query::EXACT_TOKEN_WEIGHT * weight / query::fts5_idf(4, 1),
+            weight / query::fts5_idf(4, 2),
+            query::EXACT_TOKEN_WEIGHT * weight / query::fts5_idf(4, 2),
+        ];
+        for (arm, factor) in s.arms.iter().zip(expected) {
+            assert!((arm.factor - factor).abs() < 1e-9, "{arm:?}");
+        }
+        // Only "vetro" is a tag, of 1 post in 4.
+        assert_eq!(
+            s.tag_boosts,
+            [(
+                "vetro".to_owned(),
+                query::EXACT_TAG_BOOST * query::term_weight(4, 1)
+            )]
+        );
+        assert_eq!(
+            scoring(&conn, &TextPlan::new(&PostFilter::default())).unwrap(),
+            Scoring::default()
+        );
+    }
+
+    #[test]
+    fn relevance_runs_with_one_or_no_scored_match() {
+        let conn = memory_library();
+        let mut a = NewPost::new("ig_1", Platform::Instagram, "1", "image", 0);
+        a.caption = Some("posters on the wall".into());
+        let mut b = NewPost::new("ig_2", Platform::Instagram, "2", "image", 0);
+        b.user_tags = vec!["glass".into()];
+        insert(&conn, &a, 0).unwrap();
+        insert(&conn, &b, 0).unwrap();
+        let page = |filter: PostFilter| -> Vec<String> {
+            let req = PageRequest {
+                sort: Sort::Relevance,
+                ..PageRequest::default()
+            };
+            list(&conn, &filter, &req)
+                .unwrap()
+                .items
+                .into_iter()
+                .map(|p| p.key)
+                .collect()
+        };
+        // "poster" has a prefix match and no whole-token match: one arm.
+        let one = PostFilter {
+            q: Some("poster".into()),
+            ..PostFilter::default()
+        };
+        assert_eq!(scoring(&conn, &TextPlan::new(&one)).unwrap().arms.len(), 1);
+        assert_eq!(page(one), ["ig_1"]);
+        // No term matches: the hybrid tag alone admits and scores the post.
+        let none = PostFilter {
+            q: Some("zzz".into()),
+            tags: vec!["glass".into()],
+            ..PostFilter::default()
+        };
+        assert!(
+            scoring(&conn, &TextPlan::new(&none))
+                .unwrap()
+                .arms
+                .is_empty()
+        );
+        assert_eq!(page(none), ["ig_2"]);
+    }
+
+    #[test]
+    fn relevance_scores_the_fts_query_once() {
+        let conn = memory_library();
         let filter = PostFilter {
             q: Some("lampada vetro".into()),
             tags: vec!["glass".into()],
             ..PostFilter::default()
         };
         let text = TextPlan::new(&filter);
-        let (sql, params) = relevance_query(WhereSql::new(&filter, &text), &text, 60, 0);
+        let inputs = Scoring {
+            arms: text
+                .score_terms
+                .iter()
+                .filter_map(|t| query::term_matches(t))
+                .flat_map(|(prefix, exact)| std::iter::once(prefix).chain(exact))
+                .map(|expr| ScoreArm { expr, factor: 1.0 })
+                .collect(),
+            tag_boosts: vec![("glass".into(), 3.0)],
+        };
+        let arms = &inputs.arms;
+        assert_eq!(arms.len(), 4);
+        let (sql, params) = relevance_query(WhereSql::new(&filter, &text), &text, &inputs, 60, 0);
         let nodes: Vec<(i64, i64, String)> = conn
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
             .unwrap()
@@ -1715,16 +1930,18 @@ mod tests {
             .unwrap();
         let text: Vec<&str> = nodes.iter().map(|n| n.2.as_str()).collect();
         let plan = text.join("\n");
+        assert!(plan.contains("MATERIALIZE arms"), "{plan}");
         assert!(plan.contains("MATERIALIZE hits"), "{plan}");
-        // The FTS index (bm25 hits, search block, phrase bonus) is scanned three
-        // times per query, never inside a correlated (per-row) subquery: a
-        // per-row bm25 lookup made relevance take seconds at 6k posts.
+        // The FTS index is scanned once per scored match, once for the search
+        // block and once for the phrase bonus, never inside a correlated
+        // (per-row) subquery: a per-row bm25 lookup made relevance take seconds
+        // at 6k posts.
         let fts_scans: Vec<i64> = nodes
             .iter()
             .filter(|n| n.2.starts_with("SCAN posts_fts"))
             .map(|n| n.0)
             .collect();
-        assert_eq!(fts_scans.len(), 3, "{plan}");
+        assert_eq!(fts_scans.len(), arms.len() + 2, "{plan}");
         for id in fts_scans {
             let mut parent = nodes.iter().find(|n| n.0 == id).map_or(0, |n| n.1);
             while parent != 0 {
