@@ -412,6 +412,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn csrf_exempt_routes_are_public_ones() {
+        for (method, path) in CSRF_EXEMPT_ROUTES {
+            assert!(
+                PUBLIC_ROUTES.iter().any(|(m, p)| m == method && p == path),
+                "{method} {path} skips the CSRF check but is not public"
+            );
+        }
+    }
+
+    #[test]
     fn short_scalar_arrays_go_on_one_line_like_prettier() {
         let pretty = r#"{
   "tags": [
