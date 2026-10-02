@@ -625,13 +625,20 @@ pub const MANUAL_AI_MODEL: &str = "manual";
 /// Changes to the AI layer, with the semantics of the desktop's
 /// `updateAiAnalysis`: `None` leaves a field untouched, `Some(None)` writes
 /// `NULL`, and a list is stored as given (`[]` stays an empty JSON array).
+/// `provider`, `schema_version` and `error` are web-only columns.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AiPatch {
     /// Lifecycle status; `done` also stamps `ai_analyzed_at` unless
     /// `analyzed_at` is given.
     pub status: Option<Option<String>>,
+    /// Provider id.
+    pub provider: Option<Option<String>>,
     /// Model id.
     pub model: Option<Option<String>>,
+    /// Version of the AI output schema the layer follows.
+    pub schema_version: Option<Option<i64>>,
+    /// Code of the last AI error.
+    pub error: Option<Option<String>>,
     /// Description.
     pub description: Option<Option<String>>,
     /// Tags (display forms); their AI tag rows are rebuilt.
@@ -660,12 +667,18 @@ pub struct AiPatch {
 impl AiPatch {
     /// `self` as a manual edit (desktop `analyze:updateManual`): status
     /// `done` and model [`MANUAL_AI_MODEL`], so it also stamps the analysis
-    /// time.
+    /// time. The layer becomes the user's as a whole, as on the desktop, so
+    /// nothing of an earlier analysis stays attributed to it: no provider,
+    /// no error, and no output schema version, because the user's text
+    /// follows no model's schema.
     #[must_use]
     pub fn manual(self) -> Self {
         Self {
             status: Some(Some("done".to_owned())),
+            provider: Some(None),
             model: Some(Some(MANUAL_AI_MODEL.to_owned())),
+            schema_version: Some(None),
+            error: Some(None),
             ..self
         }
     }
@@ -1124,7 +1137,9 @@ pub fn update_ai(conn: &Connection, post_id: i64, patch: &AiPatch, now: i64) -> 
     let texts = [
         ("ai_description", &patch.description),
         ("ai_status", &patch.status),
+        ("ai_provider", &patch.provider),
         ("ai_model", &patch.model),
+        ("ai_error", &patch.error),
         ("ai_category", &patch.category),
         ("ai_content_type", &patch.content_type),
         ("ai_language", &patch.language),
@@ -1145,8 +1160,12 @@ pub fn update_ai(conn: &Connection, post_id: i64, patch: &AiPatch, now: i64) -> 
             columns.push((column, list(value)));
         }
     }
+    let int = |v: Option<i64>| v.map_or(Value::Null, Value::Integer);
+    if let Some(version) = patch.schema_version {
+        columns.push(("ai_schema_version", int(version)));
+    }
     if let Some(at) = patch.analyzed_at {
-        columns.push(("ai_analyzed_at", at.map_or(Value::Null, Value::Integer)));
+        columns.push(("ai_analyzed_at", int(at)));
     }
 
     let mut changed = false;

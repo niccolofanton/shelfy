@@ -396,6 +396,18 @@ async fn patch_writes_the_note_the_tags_and_a_manual_ai_edit() {
     );
     assert_index_consistent(&t, ALICE, "manual tags");
 
+    // An earlier analysis that failed, then the manual edit: the layer is
+    // the user's, with no provider, error or schema version left over.
+    t.write(ALICE, |tx| {
+        tx.execute(
+            "UPDATE posts SET ai_status = 'error', ai_provider = 'openai', ai_model = 'model-a',
+                              ai_schema_version = 2, ai_error = 'timeout'
+             WHERE key = 'x_2001'",
+            [],
+        )
+        .map_err(Into::into)
+    })
+    .await;
     let before = now_ms();
     let edit = ok(
         &app,
@@ -411,6 +423,9 @@ async fn patch_writes_the_note_the_tags_and_a_manual_ai_edit() {
     .await;
     assert_eq!(edit["aiStatus"], "done");
     assert_eq!(edit["aiModel"], "manual");
+    for field in ["aiProvider", "aiError", "aiSchemaVersion"] {
+        assert_eq!(edit[field], Value::Null, "{field}");
+    }
     assert!(edit["aiAnalyzedAt"].as_i64().unwrap() >= before);
     assert_eq!(edit["aiDescription"], "A typographic grid poster");
     assert_eq!(edit["aiTags"], json!(["type", "Poster"]));

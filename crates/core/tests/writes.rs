@@ -265,6 +265,43 @@ fn a_manual_edit_is_done_and_attributed_to_the_user() {
     assert_eq!(hits, [id], "the new description is searchable");
 }
 
+/// F6 (P1-03 review, L5): a manual edit makes the AI layer the user's, so no
+/// provider, output schema version or error of an earlier analysis stays
+/// attributed to it.
+#[test]
+fn a_manual_edit_drops_the_provider_schema_version_and_error() {
+    let conn = library();
+    let mut post = bare_post("ig_1", Platform::Instagram, NOW);
+    post.ai = Some(AiLayer {
+        status: Some("error".into()),
+        provider: Some("openai".into()),
+        model: Some("model-a".into()),
+        schema_version: Some(2),
+        description: Some("Wrong".into()),
+        ..AiLayer::default()
+    });
+    let id = posts::insert(&conn, &post, NOW).unwrap();
+    conn.execute("UPDATE posts SET ai_error = 'timeout' WHERE id = ?1", [id])
+        .unwrap();
+    let edit = AiPatch {
+        description: Some(Some("A blown-glass lamp".into())),
+        ..AiPatch::default()
+    }
+    .manual();
+    assert!(posts::update_ai(&conn, id, &edit, NOW + DAY).unwrap());
+    let detail = posts::get(&conn, "ig_1").unwrap().unwrap();
+    assert_eq!(detail.summary.ai_status.as_deref(), Some("done"));
+    assert_eq!(detail.ai_model.as_deref(), Some(MANUAL_AI_MODEL));
+    assert_eq!(
+        (
+            detail.ai_provider,
+            detail.ai_schema_version,
+            detail.ai_error
+        ),
+        (None, None, None)
+    );
+}
+
 /// F6 (P1-03 review, L4): an edit that sends the values the post already has
 /// changes no row, so the library generation, and with it every ETag and
 /// cached count, stays where it was. A difference in the derived tag rows

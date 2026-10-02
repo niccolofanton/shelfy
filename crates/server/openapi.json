@@ -2151,7 +2151,7 @@
       },
       "patch": {
         "tags": ["library"],
-        "summary": "Edits a post's note and tags, or its AI fields (a manual edit: the AI\nstatus becomes `done` and the model `manual`). Trashed posts can be\nedited too.",
+        "summary": "Edits a post's note and tags, or its AI fields (a manual edit: the AI\nstatus becomes `done` and the model `manual`, and the provider, error\nand schema version are cleared). Trashed posts can be edited too.",
         "operationId": "updatePost",
         "parameters": [
           {

@@ -346,6 +346,10 @@ fn edits_match_the_desktop() {
                     let f = *f;
                     let patch = AiPatch {
                         status: f.status,
+                        // Web-only columns: the desktop has none.
+                        provider: None,
+                        schema_version: None,
+                        error: None,
                         model: f.model,
                         description: f.description,
                         tags: f.tags,

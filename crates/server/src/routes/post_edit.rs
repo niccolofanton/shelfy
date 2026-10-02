@@ -12,6 +12,9 @@
 //!   edit of the AI layer. Any of them makes the post's AI status `done` and
 //!   its model `manual`, and stamps `aiAnalyzedAt` (the desktop's
 //!   `updateAiAnalysis` with status `done`); the fields not sent are kept.
+//!   The layer is the user's from then on: `aiProvider`, `aiError` and
+//!   `aiSchemaVersion` are cleared, since the user's text follows no
+//!   model's output schema.
 //!
 //! Absent fields are left alone; `null` clears a field (`userTags: null`
 //! like `[]`). An AI tag and a manual tag of the same name are two tags
@@ -214,8 +217,8 @@ impl PostPatch {
 }
 
 /// Edits a post's note and tags, or its AI fields (a manual edit: the AI
-/// status becomes `done` and the model `manual`). Trashed posts can be
-/// edited too.
+/// status becomes `done` and the model `manual`, and the provider, error
+/// and schema version are cleared). Trashed posts can be edited too.
 #[utoipa::path(
     patch,
     path = "/api/v1/posts/{key}",
@@ -286,6 +289,11 @@ mod tests {
         assert_eq!(ai.tags, Some(None));
         assert_eq!(ai.status, Some(Some("done".into())));
         assert_eq!(ai.model, Some(Some(posts::MANUAL_AI_MODEL.into())));
+        assert_eq!(
+            (ai.provider, ai.schema_version, ai.error),
+            (Some(None), Some(None), Some(None)),
+            "the layer is the user's"
+        );
         assert_eq!(ai.category, None, "absent fields are kept");
     }
 
