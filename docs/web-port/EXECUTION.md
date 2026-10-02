@@ -16,7 +16,7 @@ Live status of [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). The plan is the
 1. Read the plan sections your task cites before writing code. The plan is the spec.
 2. Branch from the integration tip: `git switch -c web/<task>-<slug> web/foundations`.
 3. Run `pnpm install --frozen-lockfile` once; it installs the git hooks and lets you run the desktop checks.
-4. Rust uses the toolchain pinned in `rust-toolchain.toml`. Run cargo with `CARGO_TARGET_DIR="$PWD/target"`: with a shared target dir, lanes overwrite each other's test binaries.
+4. Rust uses the toolchain pinned in `rust-toolchain.toml`. For the desktop e2e, rebuild with `npx electron-rebuild --force --only better-sqlite3`, because the plain command silently does nothing. Afterwards run `pnpm rebuild better-sqlite3` so vitest works again. Run cargo with `CARGO_TARGET_DIR="$PWD/target"`: with a shared target dir, lanes overwrite each other's test binaries.
 5. Scope is additive (D25): the desktop app (`electron/`, `src/`, root build config) stays untouched unless the task says otherwise. Do not change the root `package.json` or `pnpm-lock.yaml` unless the task needs a dependency, and say so.
 6. Commits: Conventional Commits in English, header ≤ 100 characters, no `Co-Authored-By` trailer. Stage explicit paths, never `git add -A`, never `--no-verify`, never `git stash` (the stash is shared across worktrees). Do not push or merge.
 7. Before finishing, rebase on `web/foundations` if it moved, re-run the checks, and leave the worktree clean.
@@ -98,7 +98,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-05 | Search and filters complete, search-eval gate, `admin synth`/`bench` | done | `web/p1-05-search` (d5e5df9…6cb1eef) |
 | P1-15 | Metrics, log redaction, rate limits | done | `web/p1-15-observability` (8ef7557…3ce52ee) |
 | P1-17 | Account API, API tokens, device-code flow | done | `web/p1-17-account` (47bbab0…64b9241) |
-| P1-02 | Responsive shell and a minimal web app manifest | running (Sonnet) | `web/p1-02-responsive` |
+| P1-02 | Responsive shell and a minimal web app manifest | done (Sonnet) | `web/p1-02-responsive` (960e246…33e7c5e) |
 | P1-18 | First osn PR, part 2: apply stage 1 (services) | done on 2026-10-02 at 23:20: [osn PR #29](https://github.com/niccolofanton/osn/pull/29) merged, `server-v0.1.0-rc.1` (fa3b286) deployed. `shelfy-api` is healthy and `refs` answers through the edge, behind Access. The edge subnet is `10.91.0.0/24` and equals `SHELFY_TRUSTED_PROXIES`. `up{job="shelfy"}` is 1. A restart is healthy within 1 s. Owner created, and the owner signed in through Access and a sign-in link. Hermes is unchanged: same start time, 0 restarts, 2 GiB / 2 CPU, node status online. Backups are still off. | osn `main` fa2066e |
 | P1-19 | Migration tool and install job complete | done | `web/p1-19-migration` (517c139…668dfc7) |
 | P1-20 | Sign-in, re-auth, device approval, Settings | running | `web/p1-20-auth-ui` |
@@ -163,6 +163,10 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P1-25 | Build or download `shelfy-migrate` from the same release as the deployed server: the server installs only bundles at its own library schema, which is now v2. Sequence: quit the desktop app; `login <url> --header @access.headers` (a 0600 file with the Access service-token headers from P1-23); `plan --redact`; `run --work-dir …`. If interrupted, re-run the same command. Uploads run at about 10 objects/s under the per-user limit, so about 9 minutes for the reference library; the install took 150 s locally. Expected reconciliation: see the P1-19 report in this file's history. Delete the headers file and the token afterwards. | P1-19 |
 | P2 | 220 Instagram covers that are still valid will expire before the archive drain exists. The archive drain and `refresh_media` are P2 (OI-7). | P1-19 |
 | P5 | With many users migrating, uploads may need their own rate budget, or tus creation-with-upload so that each object takes one request. | P1-19 |
+| P1-06 | Under 900 px, the post modal stacks through CSS in `src/index.css`. It is keyed on the `.postmodal-media-row` class and the `post-modal-meta` testid of `MetaColumn`, so keep both or update the CSS. `Sidebar.tsx` is now wrapped in a drawer: it has its own `drawerOpen` state and the testids `sidebar-open`, `sidebar-backdrop` and `sidebar-close`. Keep that wrapper when you edit folders. | P1-02 |
+| P1-08 | `PostCard.tsx` mounts one `window` listener per card for the tap-to-preview broadcast, plus pointer handlers. Count them in the per-card cost. | P1-02 |
+| P1-24 | The manifest and icons are served at `/manifest.webmanifest` and `/icons/*`, and `apple-mobile-web-app-capable` is set. Check on the live host that the CSP does not block the manifest or the icons. | P1-02 |
+| P1-14 | Long-press already calls `onQuickSelect`, as the hover checkbox does, so wiring `onQuickSelect` in Gallery on the web enables it with no `PostCard.tsx` change. | P1-02 |
 | P1-21 | The CSP blocks the inline `<style>` in `src/views/Browser.tsx`, a desktop-only view. | P1-09 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
 
