@@ -130,14 +130,18 @@ describe('electronClient — events', () => {
 });
 
 describe('electronClient — capabilities and media', () => {
-  it('has every capability; the window chrome follows the OS', () => {
+  it('has every capability but a server account; the window chrome follows the OS', () => {
     expect(desktopCapabilities('darwin')).toMatchObject({
       windowControls: false,
       trafficLights: true,
       localFiles: true,
       libraryEdit: true,
       bulkActions: true,
+      updates: true,
+      localModels: true,
+      account: false,
     });
+    expect(createElectronClient().account).toBeUndefined();
     expect(desktopCapabilities('win32')).toMatchObject({
       windowControls: true,
       trafficLights: false,

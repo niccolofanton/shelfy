@@ -18,7 +18,13 @@ function fakeHttp(routes: Record<string, unknown[]>) {
     if (answer instanceof Error) throw answer;
     return answer;
   });
-  const http: Http = { get: get as Http['get'], send: vi.fn(), onUnauthorized: () => () => {} };
+  const http: Http = {
+    get: get as Http['get'],
+    send: vi.fn(),
+    onUnauthorized: () => () => {},
+    sessionEnded: () => {},
+    onReauthRequired: () => () => {},
+  };
   return { http, calls };
 }
 

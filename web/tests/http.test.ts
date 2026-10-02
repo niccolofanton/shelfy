@@ -121,3 +121,78 @@ describe('http', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('http re-authentication', () => {
+  const reauthRequired = (): Response =>
+    json(403, { type: 'about:blank', title: 'Forbidden', status: 403, code: 'reauth_required' });
+
+  it('asks for a re-authentication, then sends the refused request again', async () => {
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(reauthRequired())
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const http = createHttp({ fetch });
+    const handler = vi.fn().mockResolvedValue(true);
+    http.onReauthRequired(handler);
+    const res = await http.send('POST', '/api/v1/auth/device/approve', { userCode: 'BCDF-GHJK' });
+    expect(res.status).toBe(204);
+    expect(handler).toHaveBeenCalledWith({ again: false });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1][0]).toBe('/api/v1/auth/device/approve');
+    expect(fetch.mock.calls[1][1].body).toBe('{"userCode":"BCDF-GHJK"}');
+  });
+
+  it('rejects with the 403 when the user cancels', async () => {
+    const fetch = vi.fn().mockResolvedValue(reauthRequired());
+    const http = createHttp({ fetch });
+    http.onReauthRequired(vi.fn().mockResolvedValue(false));
+    const err = await http.send('POST', '/api/v1/me/tokens', {}).catch((e: unknown) => e);
+    expect(isApiError(err, 'reauth_required')).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again while the request is still refused, then gives up', async () => {
+    const fetch = vi.fn().mockImplementation(async () => reauthRequired());
+    const http = createHttp({ fetch });
+    const handler = vi.fn().mockResolvedValue(true);
+    http.onReauthRequired(handler);
+    const err = await http.send('DELETE', '/api/v1/me/passkeys/3').catch((e: unknown) => e);
+    expect(isApiError(err, 'reauth_required')).toBe(true);
+    expect(handler.mock.calls.map(([context]) => context)).toEqual([
+      { again: false },
+      { again: true },
+      { again: true },
+    ]);
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('never asks for the re-authentication routes themselves, nor without a handler', async () => {
+    const fetch = vi.fn().mockImplementation(async () => reauthRequired());
+    const http = createHttp({ fetch });
+    const err = await http.send('POST', '/api/v1/me/tokens', {}).catch((e: unknown) => e);
+    expect(isApiError(err, 'reauth_required')).toBe(true);
+    const handler = vi.fn().mockResolvedValue(true);
+    const off = http.onReauthRequired(handler);
+    await http.send('POST', '/api/v1/auth/reauth/finish', {}).catch(() => {});
+    expect(handler).not.toHaveBeenCalled();
+    off();
+    await http.send('POST', '/api/v1/me/tokens', {}).catch(() => {});
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('treats a failing dialog as cancelled', async () => {
+    const fetch = vi.fn().mockResolvedValue(reauthRequired());
+    const http = createHttp({ fetch });
+    http.onReauthRequired(vi.fn().mockRejectedValue(new Error('dialog crashed')));
+    const err = await http.send('POST', '/api/v1/me/tokens', {}).catch((e: unknown) => e);
+    expect(isApiError(err, 'reauth_required')).toBe(true);
+  });
+
+  it('tells the session listeners about a sign-out', () => {
+    const http = createHttp({ fetch: vi.fn() });
+    const listener = vi.fn();
+    http.onUnauthorized(listener);
+    http.sessionEnded();
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+});

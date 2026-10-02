@@ -9,6 +9,7 @@ import type {
   ShelfyEvent,
   ViewErrorReport,
 } from '@ui/api/ShelfyClient';
+import { createAccountApi } from './account';
 import { createEventStream, type EventStream } from './events';
 import { isApiError, type Http } from './http';
 import {
@@ -24,12 +25,10 @@ import type { components } from './schema';
 
 type Schemas = components['schemas'];
 
-// What the web app can do so far: browse and read. Each capability turns on
-// with the task that brings its API (libraryEdit: P1-06, bulkActions: P1-14,
-// settings: P1-20, ai: P3…); the desktop-only ones (window chrome, local
-// files, in-app browsers, live page fallback) stay off. Until P1-20 they are
-// this static set; then the client is made with the `capabilities` of
-// `GET /me` (HttpClientOptions).
+// What the web app can do without an account: browse and read. Each
+// capability turns on with the task that brings its API (libraryEdit: P1-06,
+// bulkActions: P1-14, ai: P3…); the desktop-only ones (window chrome, local
+// files, in-app browsers, live page fallback, updates, local models) stay off.
 export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
   windowControls: false,
   trafficLights: false,
@@ -44,7 +43,21 @@ export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
   settings: false,
   activity: false,
   feedback: false,
+  account: false,
+  updates: false,
+  localModels: false,
 });
+
+// What the web app can do for a signed-in user, from `GET /me` (plan §2.19
+// Capabilities): their account. The server's other capabilities drive views
+// that still call the desktop bridge, so they stay off here until those views
+// move onto this client: `extension` (P2), `ai.tasks` → `ai` (P3), `capture`
+// → `websites` and `video.onDemand` (P4). `passkeys` and `emailLink` are the
+// account's sign-in methods (AccountApi.signIn).
+export function webCapabilities(me: Schemas['Me'] | null | undefined): ShelfyCapabilities {
+  if (!me) return WEB_CAPABILITIES;
+  return Object.freeze({ ...WEB_CAPABILITIES, account: true });
+}
 
 // Opens only http(s) URLs, in a new tab without access to this window.
 export function openExternalUrl(url: string, open: typeof window.open = window.open): void {
@@ -59,7 +72,11 @@ export function openExternalUrl(url: string, open: typeof window.open = window.o
 }
 
 export interface HttpClientOptions {
-  // What this client can do. Default: WEB_CAPABILITIES.
+  // The signed-in user (`GET /me`): the client gets their account
+  // (./account.ts) and the capabilities that go with it. Made once per
+  // session: the client owns the session's realtime stream.
+  me?: Schemas['Me'] | null;
+  // What this client can do. Default: webCapabilities(me).
   capabilities?: ShelfyCapabilities;
   // The realtime stream. Default: `/api/v1/events`, whose failed connections
   // check the session (`GET /me`), so an expired one signs the app out.
@@ -77,10 +94,12 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
       onConnectFailed: () => void http.get('/api/v1/me').catch(() => {}),
     });
   const reportError = options.reportError ?? (() => {});
+  const me = options.me ?? null;
 
   return {
-    capabilities: options.capabilities ?? WEB_CAPABILITIES,
+    capabilities: options.capabilities ?? webCapabilities(me),
     media: webMedia,
+    ...(me ? { account: createAccountApi(http, me, { events }) } : {}),
 
     // One window of `limit` posts: as many API pages as it takes (at most 200
     // each). The first page of a query also asks for the total.

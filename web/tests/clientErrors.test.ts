@@ -6,7 +6,13 @@ import { createErrorReporter, toClientErrorReport } from '../src/api/clientError
 
 function fakeHttp() {
   const send = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
-  const http: Http = { get: vi.fn(), send, onUnauthorized: () => () => {} };
+  const http: Http = {
+    get: vi.fn(),
+    send,
+    onUnauthorized: () => () => {},
+    sessionEnded: () => {},
+    onReauthRequired: () => () => {},
+  };
   return { http, send };
 }
 

@@ -7,6 +7,7 @@
 // need, in transport-neutral terms. Posts keep the desktop shape
 // (Shelfy.Post): the web client maps the API's posts onto it, with the post
 // `key` as `id` and same-origin `/media` URLs as the local file references.
+import type { AccountApi } from './account';
 
 // What a client can do. The UI hides what its client cannot do instead of
 // checking for `window.electronAPI` (plan §2.19 Capabilities). The desktop has
@@ -39,6 +40,14 @@ export interface ShelfyCapabilities {
   activity: boolean;
   // The feedback form.
   feedback: boolean;
+  // A signed-in account on a server (ShelfyClient.account): passkeys,
+  // sessions, tokens, storage, and settings and consent kept on the server.
+  account: boolean;
+  // App updates: the update channel and the installer (the desktop's updater).
+  updates: boolean;
+  // Local AI models on this machine: the model pickers, their runtime
+  // binaries and the performance tuning.
+  localModels: boolean;
 }
 
 // The gallery query, as toApiFilters (src/lib/postFilters.ts) normalizes it:
@@ -144,6 +153,9 @@ export interface ViewErrorReport {
 export interface ShelfyClient {
   readonly capabilities: ShelfyCapabilities;
   readonly media: MediaUrls;
+  // The signed-in account (src/api/account.ts), when the backend has one: the
+  // web client's. The desktop has none.
+  readonly account?: AccountApi;
 
   // One page of the library (or of a folder, a search…).
   listPosts(query: PostQuery, page: PageRequest): Promise<PostPage>;

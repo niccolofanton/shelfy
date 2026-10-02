@@ -55,7 +55,23 @@ export interface Http {
   // Called whenever the server answers 401: the session is gone. Returns the
   // unsubscribe function.
   onUnauthorized(listener: () => void): () => void;
+  // Tells the onUnauthorized listeners that the session is gone without a 401:
+  // the user signed out.
+  sessionEnded(): void;
+  // Who confirms the user's identity when the server answers 403
+  // `reauth_required` (a sensitive action needs a sign-in from the last 5
+  // minutes): the re-authentication dialog (web/src/auth/ReauthDialog.tsx).
+  // It resolves to true once the user confirmed, and the refused request is
+  // then sent again; false (cancelled) rejects it with the 403. A request
+  // still refused asks again (`again`), up to MAX_REAUTH_ROUNDS times. One
+  // handler at a time; returns the function that removes it.
+  onReauthRequired(handler: ReauthHandler): () => void;
 }
+
+export type ReauthHandler = (context: { again: boolean }) => Promise<boolean>;
+
+// How many times one request asks for a re-authentication.
+export const MAX_REAUTH_ROUNDS = 3;
 
 export interface HttpOptions {
   // The fetch to use (tests); defaults to the browser's.
@@ -88,10 +104,14 @@ async function errorOf(res: Response): Promise<ApiError> {
   );
 }
 
+// The routes that re-authenticate: their answers never open the dialog.
+const REAUTH_PREFIX = '/api/v1/auth/reauth/';
+
 export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
   // Called through a wrapper: a detached `window.fetch` throws "Illegal invocation".
   const doFetch: typeof fetch = fetchImpl ?? ((input, init) => fetch(input, init));
   const unauthorized = new Set<() => void>();
+  let reauth: ReauthHandler | null = null;
 
   async function request(
     method: 'GET' | UnsafeMethod,
@@ -101,6 +121,8 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
       body?: unknown;
       signal?: AbortSignal;
       keepalive?: boolean;
+      // How many re-authentications this request asked for already.
+      reauthRounds?: number;
     } = {},
   ): Promise<Response> {
     const qs = init.query?.toString();
@@ -122,8 +144,26 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
       throw new ApiError(0, 'network', err instanceof Error ? err.message : undefined);
     }
     if (res.status === 401) unauthorized.forEach((listener) => listener());
-    if (!res.ok) throw await errorOf(res);
-    return res;
+    if (res.ok) return res;
+    const error = await errorOf(res);
+    const confirm = reauth;
+    const rounds = init.reauthRounds ?? 0;
+    if (
+      error.code === 'reauth_required' &&
+      confirm &&
+      rounds < MAX_REAUTH_ROUNDS &&
+      !path.startsWith(REAUTH_PREFIX) &&
+      !init.signal?.aborted
+    ) {
+      let confirmed = false;
+      try {
+        confirmed = await confirm({ again: rounds > 0 });
+      } catch {
+        /* a failing dialog cancels */
+      }
+      if (confirmed) return request(method, path, { ...init, reauthRounds: rounds + 1 });
+    }
+    throw error;
   }
 
   return {
@@ -137,6 +177,15 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
       unauthorized.add(listener);
       return () => {
         unauthorized.delete(listener);
+      };
+    },
+    sessionEnded() {
+      unauthorized.forEach((listener) => listener());
+    },
+    onReauthRequired(handler) {
+      reauth = handler;
+      return () => {
+        if (reauth === handler) reauth = null;
       };
     },
   };

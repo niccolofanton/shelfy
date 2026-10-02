@@ -1,9 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, Mail } from 'lucide-react';
+import { Fingerprint, Loader2, Mail } from 'lucide-react';
+import { useFailureText } from '@ui/hooks/useFailureText';
 import { useT } from '@ui/i18n';
 import type { AuthApi, AuthMethods } from '../api/auth';
 import { isApiError } from '../api/http';
 import AuthLayout, { Notice, PRIMARY_BUTTON } from './AuthLayout';
+import { passkeysSupported } from './passkeys';
+
+const SECONDARY_BUTTON =
+  'u-press flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-[#2e2e2e] bg-[#1c1c1c] px-4 text-sm font-medium text-gray-200 transition-colors hover:bg-[#242424] disabled:cursor-not-allowed disabled:opacity-60';
 
 // The i18n key of a failed request's message.
 function errorKey(err: unknown): string {
@@ -13,24 +18,31 @@ function errorKey(err: unknown): string {
   return 'genericError';
 }
 
-// The sign-in page. With email sign-in on, the user asks for a link; without
-// it (E4: SMTP is optional), the operator mints one with
-// `shelfy-server admin login-link`. `error` is the `?error=` a failed link
-// redirect carries.
+// The sign-in page (plan §2.11 Login): a passkey of this device, username-less,
+// when the server and the browser have passkeys; "email me a link" when the
+// server sends email; otherwise (E4: SMTP is optional) the operator mints a
+// link with `shelfy-server admin login-link`. `error` is the `?error=` a failed
+// link redirect carries. `onSignedIn` runs once a passkey signed in: the app
+// checks the session again and goes on to `?next=`.
 export default function LoginScreen({
   auth,
   error,
+  onSignedIn,
 }: {
   auth: AuthApi;
   error?: string | null;
+  onSignedIn?: () => void;
 }): React.JSX.Element {
   const t = useT('auth');
+  const failure = useFailureText();
   const [methods, setMethods] = useState<AuthMethods | null>(null);
   const [methodsError, setMethodsError] = useState<string | null>(null);
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+  const [passkeyError, setPasskeyError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -59,6 +71,23 @@ export default function LoginScreen({
     }
   };
 
+  const signInWithPasskey = async (): Promise<void> => {
+    setPasskeyBusy(true);
+    setPasskeyError(null);
+    try {
+      await auth.signInWithPasskey();
+      onSignedIn?.();
+    } catch (err) {
+      setPasskeyBusy(false);
+      // A passkey the server does not know: removed from the account, or made
+      // for another server.
+      if (isApiError(err, 'passkey_invalid')) setPasskeyError(t('passkeyNotRegistered'));
+      else setPasskeyError(failure(err));
+    }
+  };
+
+  const withPasskey = !!methods?.passkeys && passkeysSupported();
+
   return (
     <AuthLayout title={t('title')}>
       <div className="space-y-4">
@@ -78,6 +107,39 @@ export default function LoginScreen({
           <p className="flex items-center gap-2 text-sm text-gray-500">
             <Loader2 size={14} className="animate-spin" /> {t('loading')}
           </p>
+        )}
+
+        {withPasskey && (
+          <div className="space-y-2">
+            <button
+              type="button"
+              data-testid="login-passkey"
+              onClick={signInWithPasskey}
+              disabled={passkeyBusy}
+              className={PRIMARY_BUTTON}
+            >
+              {passkeyBusy ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <Fingerprint size={15} />
+              )}
+              {passkeyBusy ? t('passkeySigningIn') : t('passkeySignIn')}
+            </button>
+            {passkeyError && (
+              <Notice tone="error" testId="login-passkey-error">
+                {passkeyError}
+              </Notice>
+            )}
+            <p className="text-[12px] leading-relaxed text-gray-500">{t('passkeyFirstTime')}</p>
+          </div>
+        )}
+
+        {withPasskey && methods && (
+          <div className="flex items-center gap-3 text-[11px] uppercase tracking-wider text-gray-600">
+            <span className="h-px flex-1 bg-[#2a2a2a]" />
+            {t('or')}
+            <span className="h-px flex-1 bg-[#2a2a2a]" />
+          </div>
         )}
 
         {methods && !methods.emailLink && (
@@ -122,7 +184,11 @@ export default function LoginScreen({
                 {t(sendError)}
               </Notice>
             )}
-            <button type="submit" disabled={sending || !email.trim()} className={PRIMARY_BUTTON}>
+            <button
+              type="submit"
+              disabled={sending || !email.trim()}
+              className={withPasskey ? SECONDARY_BUTTON : PRIMARY_BUTTON}
+            >
               {sending ? <Loader2 size={15} className="animate-spin" /> : <Mail size={15} />}
               {sending ? t('sending') : t('sendLink')}
             </button>

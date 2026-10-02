@@ -11,7 +11,9 @@ import {
   pathOf,
   patternOf,
   safeNext,
+  takeDeviceCode,
   takeMagicToken,
+  takeReauthToken,
   type WebRoute,
 } from '../src/routes';
 
@@ -43,6 +45,8 @@ describe('route table', () => {
     });
     expect(parseRoute('/login')).toEqual({ name: 'login', error: null, next: null });
     expect(parseRoute('/login/magic')).toEqual({ name: 'magic' });
+    expect(parseRoute('/login/reauth')).toEqual({ name: 'reauth' });
+    expect(patternOf(parseRoute('/login/reauth'))).toBe('/login/reauth');
   });
 
   it('opens the first Settings section and tolerates a trailing slash', () => {
@@ -92,6 +96,7 @@ describe('after sign-in', () => {
       'https://evil.example/c/1',
       '/login',
       '/login/magic',
+      '/login/reauth',
       '/nowhere',
     ]) {
       expect(safeNext(next), String(next)).toBeNull();
@@ -120,6 +125,25 @@ describe('sign-in link token', () => {
     expect(history.replaceState).not.toHaveBeenCalled();
     expect(takeMagicToken({ pathname: '/login/magic', hash: '#' }, history)).toBeNull();
     expect(history.replaceState).toHaveBeenCalledTimes(1);
+  });
+
+  it('takes a re-authentication token the same way, on its own page only', () => {
+    const history = { replaceState: vi.fn() };
+    expect(takeReauthToken({ pathname: '/login/reauth', hash: '#tok_r' }, history)).toBe('tok_r');
+    expect(history.replaceState).toHaveBeenCalledWith(null, '', '/login/reauth');
+    expect(takeReauthToken({ pathname: '/login/magic', hash: '#tok_m' }, history)).toBeNull();
+    expect(takeMagicToken({ pathname: '/login/reauth', hash: '#tok_r' }, history)).toBeNull();
+  });
+
+  it('takes a device code out of the address, decoded', () => {
+    const history = { replaceState: vi.fn() };
+    expect(takeDeviceCode({ pathname: '/device', hash: '#BCDF-GHJK' }, history)).toBe('BCDF-GHJK');
+    expect(history.replaceState).toHaveBeenCalledWith(null, '', '/device');
+    expect(takeDeviceCode({ pathname: '/device', hash: '#BCDF%20GHJK' }, history)).toBe(
+      'BCDF GHJK',
+    );
+    expect(takeDeviceCode({ pathname: '/device', hash: '#%E0%A4%A' }, history)).toBeNull();
+    expect(takeDeviceCode({ pathname: '/', hash: '#BCDF-GHJK' }, history)).toBeNull();
   });
 });
 

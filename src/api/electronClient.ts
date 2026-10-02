@@ -26,7 +26,8 @@ const DESKTOP_MEDIA: MediaUrls = {
   isStored: (src) => isAssetUrl(src),
 };
 
-// The desktop can do everything; only the window chrome depends on the OS.
+// The desktop can do everything but a server account; only the window chrome
+// depends on the OS.
 export function desktopCapabilities(platform: string | undefined): ShelfyCapabilities {
   return {
     windowControls: platform !== 'darwin',
@@ -42,6 +43,9 @@ export function desktopCapabilities(platform: string | undefined): ShelfyCapabil
     settings: true,
     activity: true,
     feedback: true,
+    account: false,
+    updates: true,
+    localModels: true,
   };
 }
 

@@ -8,15 +8,17 @@
 // | `/p/:key`              | a post, over the library                         |
 // | `/trash`               | the trash                                        |
 // | `/settings/:section`   | a Settings section; `/settings` is the first one |
-// | `/device`              | approving a device's sign-in code (the CLI's)    |
+// | `/device`              | approving a device's sign-in code (the CLI's);   |
+// |                        | `/device#<code>` fills the code in               |
 // | `/login`               | sign-in; `?error=invalid_link`, `?next=<path>`   |
 // | `/login/magic#<token>` | what a sign-in link opens                        |
+// | `/login/reauth#<token>`| what a re-authentication link opens              |
 //
-// A sign-in link's token stays in the fragment, so it never reaches a server
-// or its logs (EXECUTION.md L1).
+// A link's token stays in the fragment, so it never reaches a server or its
+// logs (EXECUTION.md L1); the app takes it out of the address at once.
 //
 // The first five are AppRoutes (src/api/navigation.tsx), which App renders. The
-// last three are web-only pages that Root shows around App. Anything else is
+// last four are web-only pages that Root shows around App. Anything else is
 // `notFound`. Adding a route is one PATHS entry, one row of APP_ROUTES (or a
 // line in parseRoute) and its case in pathOf.
 import React, { useCallback, useMemo, useRef } from 'react';
@@ -38,6 +40,7 @@ export const PATHS = {
   device: '/device',
   login: '/login',
   magic: '/login/magic',
+  reauth: '/login/reauth',
 } as const;
 
 export const LOGIN_PATH = PATHS.login;
@@ -49,7 +52,8 @@ export type WebRoute =
   | CurrentRoute
   | { name: 'device' }
   | { name: 'login'; error: string | null; next: string | null }
-  | { name: 'magic' };
+  | { name: 'magic' }
+  | { name: 'reauth' };
 
 type Params = Record<string, string>;
 
@@ -107,6 +111,7 @@ export function parseAppRoute(pathname: string): CurrentRoute {
 // The route of an address.
 export function parseRoute(pathname: string, search = ''): WebRoute {
   if (matchPattern(PATHS.magic, pathname)) return { name: 'magic' };
+  if (matchPattern(PATHS.reauth, pathname)) return { name: 'reauth' };
   if (matchPattern(PATHS.device, pathname)) return { name: 'device' };
   if (matchPattern(PATHS.login, pathname)) {
     const query = new URLSearchParams(search);
@@ -144,6 +149,7 @@ export function patternOf(route: WebRoute): string {
     case 'device':
     case 'login':
     case 'magic':
+    case 'reauth':
       return PATHS[route.name];
     case 'settings':
       return PATHS.settings;
@@ -158,7 +164,14 @@ export function safeNext(next: string | null | undefined): string | null {
   if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\'))
     return null;
   const route = parseRoute(next.split(/[?#]/)[0]);
-  if (route.name === 'notFound' || route.name === 'login' || route.name === 'magic') return null;
+  if (
+    route.name === 'notFound' ||
+    route.name === 'login' ||
+    route.name === 'magic' ||
+    route.name === 'reauth'
+  ) {
+    return null;
+  }
   return pathOf(route);
 }
 
@@ -168,17 +181,49 @@ export function loginPath(from?: string | null): string {
   return next && next !== '/' ? `${PATHS.login}?next=${encodeURIComponent(next)}` : PATHS.login;
 }
 
-// The token of a sign-in link (`/login/magic#<token>`), taken out of the
-// address at once so it does not linger in the history; null on any other
-// page or without a token.
+// The fragment of an address on the page `path`, taken out of the address at
+// once so it does not linger in the history; null on any other page or
+// without one.
+function takeFragment(
+  path: string,
+  location: Pick<Location, 'pathname' | 'hash'>,
+  history: Pick<History, 'replaceState'>,
+): string | null {
+  if (!matchPattern(path, location.pathname)) return null;
+  const fragment = location.hash.replace(/^#/, '').trim();
+  if (location.hash) history.replaceState(null, '', path);
+  return fragment || null;
+}
+
+// The token of a sign-in link (`/login/magic#<token>`).
 export function takeMagicToken(
   location: Pick<Location, 'pathname' | 'hash'>,
   history: Pick<History, 'replaceState'>,
 ): string | null {
-  if (!matchPattern(PATHS.magic, location.pathname)) return null;
-  const token = location.hash.replace(/^#/, '').trim();
-  if (location.hash) history.replaceState(null, '', PATHS.magic);
-  return token || null;
+  return takeFragment(PATHS.magic, location, history);
+}
+
+// The token of a re-authentication link (`/login/reauth#<token>`).
+export function takeReauthToken(
+  location: Pick<Location, 'pathname' | 'hash'>,
+  history: Pick<History, 'replaceState'>,
+): string | null {
+  return takeFragment(PATHS.reauth, location, history);
+}
+
+// The code of a device's sign-in (`/device#BCDF-GHJK`, the CLI's
+// `verificationUriComplete`), decoded; it only fills the form in.
+export function takeDeviceCode(
+  location: Pick<Location, 'pathname' | 'hash'>,
+  history: Pick<History, 'replaceState'>,
+): string | null {
+  const code = takeFragment(PATHS.device, location, history);
+  if (!code) return null;
+  try {
+    return decodeURIComponent(code).slice(0, 32);
+  } catch {
+    return null;
+  }
 }
 
 // History entries the app pushes carry their depth in the app, so `back`
