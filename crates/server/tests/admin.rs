@@ -12,7 +12,7 @@ use shelfy_core::repo::collections::{self, NewCollection};
 use shelfy_core::schema::{self, Kind};
 use shelfy_server::admin::invite::create_invite;
 use shelfy_server::admin::owner::{CreateOwnerOutcome, create_owner};
-use shelfy_server::admin::snapshot::snapshot;
+use shelfy_server::admin::snapshot::{SnapshotOptions, snapshot};
 use shelfy_server::config::{DataDir, PublicUrl};
 use shelfy_server::tokens::hash_token;
 use tempfile::TempDir;
@@ -199,7 +199,7 @@ fn snapshot_copies_consistent_self_contained_databases() {
     holding_rx.recv().unwrap();
 
     let out = data.root().join("snap");
-    let report = snapshot(&data, &out, &[]).unwrap();
+    let report = snapshot(&data, &out, &SnapshotOptions::default()).unwrap();
     release_tx.send(()).unwrap();
     writer.join().unwrap();
 
@@ -246,18 +246,30 @@ fn snapshot_copies_consistent_self_contained_databases() {
     drop(library);
 
     // Again into the same directory, for one user only: files are replaced.
-    let report = snapshot(&data, &out, std::slice::from_ref(&user)).unwrap();
+    let only = |users: &[String]| {
+        let options = SnapshotOptions {
+            users,
+            changed: false,
+        };
+        snapshot(&data, &out, &options)
+    };
+    let report = only(std::slice::from_ref(&user)).unwrap();
     assert_eq!(report.files.len(), 2);
-    let err = snapshot(&data, &out, &["../etc".to_owned()]).unwrap_err();
+    let err = only(&["../etc".to_owned()]).unwrap_err();
     assert!(err.to_string().contains("invalid user id"), "{err:#}");
-    let err = snapshot(&data, &out, &["01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()]).unwrap_err();
+    let err = only(&["01ARZ3NDEKTSV4RRFFQ69G5FAV".to_owned()]).unwrap_err();
     assert!(err.to_string().contains("has no library"), "{err:#}");
 }
 
 #[test]
 fn snapshot_refuses_a_data_directory_without_a_control_database() {
     let (_dir, data) = data_dir();
-    let err = snapshot(&data, &data.root().join("snap"), &[]).unwrap_err();
+    let err = snapshot(
+        &data,
+        &data.root().join("snap"),
+        &SnapshotOptions::default(),
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("no control database"), "{err:#}");
 }
 

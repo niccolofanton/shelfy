@@ -18,6 +18,13 @@ pub const SESSION_CREATE: &str = "session.create";
 pub const SESSION_DELETE: &str = "session.delete";
 /// An API token was minted. `meta`: `via` (`cli`) and `kind` (`migrate`).
 pub const API_TOKEN_CREATE: &str = "api_token.create";
+/// A user's library was locked for maintenance (`admin user lock`).
+pub const USER_LOCK: &str = "user.lock";
+/// A user's library was unlocked (`admin user unlock`).
+pub const USER_UNLOCK: &str = "user.unlock";
+/// A user's library was replaced by a restored copy (`admin user
+/// restore-db`). `meta`: `bytes` and `keptPrevious`.
+pub const LIBRARY_RESTORE: &str = "library.restore";
 
 /// One audit row.
 #[derive(Clone, Copy, Debug)]

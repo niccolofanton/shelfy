@@ -8,14 +8,22 @@
 //! `login-link` print their one-time link, and `migrate-token` its API token,
 //! the only copy of the secret (the database keeps its SHA-256).
 //!
+//! Backups and restores (plan §3.5): `snapshot` copies the databases for
+//! restic, `verify` checks restored copies against the live data, `user
+//! lock | unlock | restore-db` restores one user's library and
+//! `install-snapshots` restores a whole host.
+//!
 //! This file is the command dispatch: a new command adds its module and one
-//! line here (P1-05 `synth`/`bench`, P1-12 `verify`/`user`/`install-snapshots`).
+//! line here (P1-05 `synth`/`bench`).
 
+pub mod install;
 pub mod invite;
 pub mod login_link;
 pub mod migrate_token;
 pub mod owner;
 pub mod snapshot;
+pub mod user;
+pub mod verify;
 
 use std::io::Write;
 
@@ -53,6 +61,14 @@ pub enum AdminCommand {
     Snapshot(snapshot::SnapshotArgs),
     /// Print a `migrate`-scoped API token (7 days) for `shelfy-migrate run`.
     MigrateToken(migrate_token::MigrateTokenArgs),
+    /// Check restored database copies: integrity, row counts against the live
+    /// databases, media references.
+    Verify(verify::VerifyArgs),
+    /// Lock, unlock or restore one user's library.
+    User(user::UserArgs),
+    /// Install the database copies of a snapshot directory as the live
+    /// databases (full restore, server stopped).
+    InstallSnapshots(install::InstallArgs),
 }
 
 /// Runs an admin command, writing its output to stdout.
@@ -70,6 +86,9 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
         AdminCommand::LoginLink(args) => login_link::run(&data, &args, &mut out),
         AdminCommand::Snapshot(args) => snapshot::run(&data, &args, &mut out),
         AdminCommand::MigrateToken(args) => migrate_token::run(&data, &args, &mut out),
+        AdminCommand::Verify(args) => verify::run(&data, &args, &mut out),
+        AdminCommand::User(args) => user::run(&data, &args, &mut out),
+        AdminCommand::InstallSnapshots(args) => install::run(&data, &args, &mut out),
     }?;
     out.flush()?;
     Ok(())
