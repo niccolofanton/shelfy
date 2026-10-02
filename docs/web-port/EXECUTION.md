@@ -43,7 +43,7 @@ These owner decisions override the plan where they conflict.
 | T2 | SPIKE-1: legacy reader, canonical keys, `shelfy-migrate plan` | T1 | running | `web/t2-legacy-reader` |
 | T3 | Schema v1, `UserDb`, repositories, FTS maintenance, golden harness | T1 | running | `web/t3-schema-v1` |
 | T4 | SPIKE-5: FTS relevance against `search-eval` | T3 | todo | |
-| T5 | SPIKE-3 build: minimal MV3 extension and comparison tooling | — | running | `web/t5-extension-spike` |
+| T5 | SPIKE-3 build: minimal MV3 extension and comparison tooling | — | done (owner run pending, O1) | `web/t5-extension-spike` (a35f4fe…6b8dbf4) |
 | T6 | SPIKE-2 and SPIKE-10 on the osn VPS (E1) | — | running | `web/t6-spikes-vps` |
 | T7 | `crates/server`: axum app, config, health, metrics, errors, OpenAPI, admin CLI | T3 | todo | |
 | T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | todo | |
@@ -64,6 +64,6 @@ Each phase is broken down into tasks when the previous one is close to done.
 
 | # | Action | Needed by | Status |
 |---|---|---|---|
-| O1 | Load the unpacked extension and run the SPIKE-3 comparison on your own accounts | P2 | after T5 |
+| O1 | Load the unpacked extension and run the SPIKE-3 comparison on your own accounts: steps in [spikes/03-extension-capture.md](spikes/03-extension-capture.md) §5 | P2 | ready |
 | O2 | Appendix B prerequisites: DNS Edit on the OpenTofu token; R2 bucket `osn-backups` with a scoped token | first osn PR (P1) | pending |
 | O3 | Optional: fix Homebrew permissions so local tools such as mailpit can be installed | T10 | optional |
