@@ -15,8 +15,12 @@
 //!
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.4.
 
+pub mod db;
 pub mod ids;
 pub mod legacy;
+pub mod repo;
+pub mod schema;
+pub mod search;
 
 #[cfg(test)]
 mod tests {
