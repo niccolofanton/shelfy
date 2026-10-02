@@ -103,6 +103,9 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-19 | Migration tool and install job complete | done | `web/p1-19-migration` (517c139…668dfc7) |
 | P1-20 | Sign-in, re-auth, device approval, Settings | done | `web/p1-20-auth-ui` (rebased onto P1-02 by the lead; typecheck, lint, vitest and web Playwright 33/33 pass after the rebase) |
 | P1-11 | Trash and bulk by selector | running | `web/p1-11-trash-bulk` |
+| P1-23 | First osn PR, part 3: apply stage 2 (DNS, Access, backups) | running (lead): `server-v0.1.0-rc.2` (61c7898) deployed on 2026-10-03, control schema upgraded to v3 and libraries to v2, Hermes unchanged. Backups are on: the first db and media snapshots are saved in `restic/shelfy`, the restore drill verified 2 databases with 0 problems, and `shelfy_backup_last_success` is 1 for db and media. Still missing: the Access service token (`just cf-apply` gets 403 because the token lacks Access: Service Tokens Edit), then the SSE probe through Access. | osn 44926e5 |
+| P1-06 | Post modal, folders and Sidebar on the seam | running (Sonnet) | `web/p1-06-modal-folders` |
+| P1-08 | Gallery performance and the JS budget | running (Sonnet) | `web/p1-08-gallery-perf` |
 | P1-16 | First osn PR, part 1: prepare (code only) | done; draft [osn PR #29](https://github.com/niccolofanton/osn/pull/29) | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` (967c83a…b5b94af) |
 | P1-22 | O2: R2 bucket and scoped token for backups | done | owner action O2 (osn `1ce0abe`) |
 
