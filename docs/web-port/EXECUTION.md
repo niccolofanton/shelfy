@@ -61,7 +61,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | running | `web/t9-migration` |
 | T10 | Owner auth v0: magic link, sessions, CSRF | T7 | done | `web/t10-auth` (c7d33ae…03a6cf8) |
 | T11 | Read API and generated TS client | T4, T7 | done | `web/t11-read-api` (fc1c3b7…9b0f643) |
-| T12 | SPA slice behind `ShelfyClient` | T10, T11 | running | `web/t12-spa` |
+| T12 | SPA slice behind `ShelfyClient` | T10, T11 | done | `web/t12-spa` (0a54f97…a1315a0) |
 
 ### P1 — Library on the web
 
@@ -80,6 +80,7 @@ Work that a review or a later finding added to an integrated task.
 | # | What | From | Status | Branch |
 |---|---|---|---|---|
 | F1 | T10 hardening: links redeem only by POST with the token in the URL fragment, CSRF check on every unsafe request, trusted-proxy client IPs, no re-caching of revoked sessions, deny-by-default authentication, mail and cookie fixes | the T10 security review (no critical or high finding) | done | `web/t10-hardening` (b8503e0…0d66c7b) |
+| F2 | Fix the 7 desktop e2e failures that predate the port: 6 in "Downloads – job list" (the spec expects `download-job` rows; the view now groups jobs per post) and 1 in "Browser – URL bar shows Twitter bookmarks URL after switching tab". CI does not run e2e, so nothing caught them. | T12 (reproduced on `7ba4ea2`) | todo | |
 
 ### P2–P6
 
