@@ -7,7 +7,8 @@ Live status of [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). The plan is the
 - **Integration branch:** `web/foundations`, branched from `dev`. Every task lands on it as a fast-forward and is pushed; CI must be green.
 - **Lanes:** one task per lane. A lane is a Claude Code subagent in its own git worktree, on branch `web/<task>-<slug>`, started from the tip of `web/foundations`.
 - **Lead:** one session plans the waves, reviews each lane (diff, checks, and an independent reviewer for substantive tasks), integrates it and updates this file.
-- **Concurrency:** a new lane starts only while 8 GB of local disk stay free. Even with line tables only in dev builds (7ba4ea2), a Rust lane's target dir reaches 3.5–6 GB, 1.3–2.5 GB of it incremental.
+- **Concurrency:** a new lane starts only while 8 GB of local disk stay free. Even with line tables only in dev builds (7ba4ea2), a Rust lane's target dir reaches 3.5–6 GB, 1.3–2.5 GB of it incremental, so lanes started after 2026-10-02 18:10 build with `CARGO_INCREMENTAL=0`.
+- **Restarts:** lanes run inside the lead's process. Anything that restarts it, such as a permission-mode change, stops every running lane. Worktrees and transcripts survive: the lead resumes each lane with a message, as on 2026-10-02 at 18:05.
 
 ## Lane rules
 
@@ -43,6 +44,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | L1 | 2026-10-02 | Sign-in links are `<public URL>/login/magic#<token>`. The SPA page redeems them with `POST /auth/magic-links/redeem` after a click; there is no GET route that signs in. | §2.9 `GET /auth/magic/{token}` that sets the cookie and redirects | Mail scanners and link previews fetch URLs and would spend the link or sign themselves in; a token in the path lands in the nginx and Cloudflare logs (T10 security review, M1). |
 | L2 | 2026-10-02 | Authentication is deny-by-default. A route answers 401 unless it is listed in `routes::PUBLIC_ROUTES` or `routes::TOKEN_ROUTES`; the authz test pins the OpenAPI document to those lists. | Per-route opt-in through the `CurrentUser` extractor | A route that forgets the extractor, or one missing from the document, would ship public (T10 security review, L5). |
 | L3 | 2026-10-02 | `CF-Connecting-IP` is trusted only when the TCP peer is inside `SHELFY_TRUSTED_PROXIES`; IPv6 clients are rate-limited per /64. | The header was trusted from any peer | Any container on the Docker network could set the header, and IPv6 clients rotate addresses inside their /64 (T10 security review, L3). |
+| L4 | 2026-10-02 | P1-04 creates `web/playwright.config.ts` for its deep-link smoke test; P1-02 extends it. | P1-02 owns the file "if T12 left none" | T12 left none, and P1-04 runs before P1-02 because both edit `src/App.tsx`. |
 
 ## Status
 
@@ -84,6 +86,8 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-12 | Backup, restore and schema-upgrade tooling | running | `web/p1-12-backup` |
 | P1-09 | Deployable server: SPA hosting, headers, image, release workflow, `compose.test` | running | `web/p1-09-deploy` |
 | P1-13 | Owner passkeys, re-auth, login-link bootstrap, optional SMTP | running | `web/p1-13-passkeys` |
+| P1-03 | Library writes, folders, selector, stats, ETags | running | `web/p1-03-writes` |
+| P1-04 | Client seam: routes, SSE client, error boundary, error codes | running | `web/p1-04-client-seam` |
 
 ### Follow-ups
 
