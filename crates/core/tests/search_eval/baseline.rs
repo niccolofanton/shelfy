@@ -25,6 +25,9 @@ pub struct Baseline {
     /// When the desktop harness ran.
     pub ts: String,
     pub cases: HashMap<String, BaselineCase>,
+    /// The fingerprint of the library the report was measured on, when the
+    /// report records it (the committed report of the synthetic library).
+    pub library_digest: Option<String>,
 }
 
 impl Baseline {
@@ -63,6 +66,7 @@ impl Baseline {
         Self {
             ts: json["ts"].as_str().unwrap_or("?").to_owned(),
             cases,
+            library_digest: json["libraryDigest"].as_str().map(str::to_owned),
         }
     }
 }

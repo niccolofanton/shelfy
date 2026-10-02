@@ -1,0 +1,151 @@
+{
+  "about": "The desktop's numbers on the synthetic library of crates/core/tests/search_eval/synthetic.rs: scripts/search-eval/run.ts run on the file that write_the_synthetic_library writes. Aggregates only; all data is synthetic. How to regenerate: docs/web-port/spikes/05-fts-relevance.md.",
+  "libraryDigest": "8a2adbe0a17764fd1ba01974095cb8b8",
+  "results": [
+    {
+      "goldPostCount": 18,
+      "id": "cuffie",
+      "kind": "hard",
+      "metrics": {
+        "hy_mrr": 1,
+        "hy_ndcg@10": 0.6274092458891772,
+        "hy_p@10": 0.5,
+        "hy_p@5": 0.8,
+        "hy_r@10": 0.5,
+        "hy_r@5": 0.8,
+        "mrr": 1,
+        "ndcg@10": 0.6274092458891772,
+        "p@10": 0.5,
+        "p@5": 0.8,
+        "r@10": 0.5,
+        "r@5": 0.8,
+        "searchPrecision": 0.13333333333333333,
+        "searchRecall": 0.4444444444444444
+      },
+      "sample": {
+        "searchTotal": 127
+      }
+    },
+    {
+      "goldPostCount": 210,
+      "id": "product",
+      "kind": "hard",
+      "metrics": {
+        "hy_mrr": 1,
+        "hy_ndcg@10": 1,
+        "hy_p@10": 1,
+        "hy_p@5": 1,
+        "hy_r@10": 1,
+        "hy_r@5": 1,
+        "mrr": 1,
+        "ndcg@10": 1,
+        "p@10": 1,
+        "p@5": 1,
+        "r@10": 1,
+        "r@5": 1,
+        "searchPrecision": 1,
+        "searchRecall": 1
+      },
+      "sample": {
+        "searchTotal": 419
+      }
+    },
+    {
+      "goldPostCount": 84,
+      "id": "tipografia",
+      "kind": "mid",
+      "metrics": {
+        "hy_mrr": 1,
+        "hy_ndcg@10": 1,
+        "hy_p@10": 1,
+        "hy_p@5": 1,
+        "hy_r@10": 1,
+        "hy_r@5": 1,
+        "mrr": 1,
+        "ndcg@10": 1,
+        "p@10": 1,
+        "p@5": 1,
+        "r@10": 1,
+        "r@5": 1,
+        "searchPrecision": 0.5094339622641509,
+        "searchRecall": 0.45
+      },
+      "sample": {
+        "searchTotal": 53
+      }
+    },
+    {
+      "goldPostCount": 77,
+      "id": "shader",
+      "kind": "control",
+      "metrics": {
+        "hy_mrr": 1,
+        "hy_ndcg@10": 1,
+        "hy_p@10": 1,
+        "hy_p@5": 1,
+        "hy_r@10": 1,
+        "hy_r@5": 1,
+        "mrr": 1,
+        "ndcg@10": 1,
+        "p@10": 1,
+        "p@5": 1,
+        "r@10": 1,
+        "r@5": 1,
+        "searchPrecision": 1,
+        "searchRecall": 1
+      },
+      "sample": {
+        "searchTotal": 71
+      }
+    },
+    {
+      "goldPostCount": 25,
+      "id": "fluidi",
+      "kind": "control",
+      "metrics": {
+        "hy_mrr": 1,
+        "hy_ndcg@10": 0.800693766409882,
+        "hy_p@10": 0.7,
+        "hy_p@5": 1,
+        "hy_r@10": 0.7,
+        "hy_r@5": 1,
+        "mrr": 1,
+        "ndcg@10": 0.800693766409882,
+        "p@10": 0.7,
+        "p@5": 1,
+        "r@10": 0.7,
+        "r@5": 1,
+        "searchPrecision": 0.5517241379310345,
+        "searchRecall": 0.64
+      },
+      "sample": {
+        "searchTotal": 29
+      }
+    },
+    {
+      "goldPostCount": 42,
+      "id": "p8-idf",
+      "kind": "control",
+      "metrics": {
+        "hy_mrr": 1,
+        "hy_ndcg@10": 1,
+        "hy_p@10": 1,
+        "hy_p@5": 1,
+        "hy_r@10": 1,
+        "hy_r@5": 1,
+        "mrr": 1,
+        "ndcg@10": 1,
+        "p@10": 1,
+        "p@5": 1,
+        "r@10": 1,
+        "r@5": 1,
+        "searchPrecision": 0.38333333333333336,
+        "searchRecall": 0.5476190476190477
+      },
+      "sample": {
+        "searchTotal": 91
+      }
+    }
+  ],
+  "ts": "2026-10-02T20:40:50.719Z"
+}

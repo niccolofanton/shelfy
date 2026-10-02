@@ -2,27 +2,37 @@
 //! (`scripts/search-eval`) ported to the web core, and the gate the FTS5 search
 //! must pass: mean nDCG@10 and mean MRR at least the desktop's minus 0.02.
 //!
-//! The cases need a real library, so the gate only runs when
-//! `SHELFY_SEARCH_EVAL_DB` names a desktop library (`shelfy.sqlite`, opened
-//! read-only). Without it the test is skipped and passes, as in CI.
+//! The gate runs on two kinds of library (P1-05):
+//!
+//! - **The synthetic library**, always, CI included
+//!   (`search_eval_gate_on_the_synthetic_library`): a desktop library written
+//!   from a fixed seed (`search_eval/synthetic.rs`), against the desktop's own
+//!   numbers on it, committed in `search_eval/synthetic-report.json` with the
+//!   library's fingerprint.
+//! - **A real library**, when `SHELFY_SEARCH_EVAL_DB` names a desktop library
+//!   (`shelfy.sqlite`, opened read-only), such as the frozen pairs of the
+//!   owner's library outside the repository. Without it that test is skipped.
 //!
 //! | Variable | Meaning |
 //! |---|---|
 //! | `SHELFY_SEARCH_EVAL_DB` | desktop library to evaluate on |
 //! | `SHELFY_SEARCH_EVAL_BASELINE` | desktop report measured on the same library (default `scripts/search-eval/last-report.json`) |
 //! | `SHELFY_SEARCH_EVAL_REPORT` | optional path for a JSON report (aggregate numbers only) |
+//! | `SHELFY_SEARCH_EVAL_SYNTHETIC_OUT` | where `write_the_synthetic_library` (ignored by default) writes the synthetic library, for the desktop harness |
 //!
 //! The run mirrors `scripts/search-eval/run.ts`: the gold set of a case is
 //! computed from the desktop library by raw SQL on a separate read-only
 //! connection; the search under test is `repo::posts::list` with relevance
-//! order (the builder behind `GET /search` and `GET /posts?q=`), first page of
-//! 60, on a web library built from the same rows. The desktop's AI tag
-//! retrieval metrics (`poolRelevance`, `poolNoise`, `keywordRelevance`), its
-//! composite pass/fail score and its tag-only probe measure the AI views, not
-//! the FTS search, and are not ported.
+//! order (the builder behind `GET /search` and `GET /posts?q=`: `posts::rank`
+//! and `posts::ranked_page`), first page of 60, on a web library built from
+//! the same rows. The server's `search_ranking` test checks that both routes
+//! return this ranking. The desktop's AI tag retrieval metrics
+//! (`poolRelevance`, `poolNoise`, `keywordRelevance`), its composite
+//! pass/fail score and its tag-only probe measure the AI views, not the FTS
+//! search, and are not ported.
 //!
-//! Nothing from the library is printed or written: only counts and metrics.
-//! How to run it: `docs/web-port/spikes/05-fts-relevance.md`.
+//! Nothing from a real library is printed or written: only counts and
+//! metrics. How to run it: `docs/web-port/spikes/05-fts-relevance.md`.
 
 #[path = "search_eval/baseline.rs"]
 mod baseline;
@@ -34,6 +44,8 @@ mod corpus;
 mod metrics;
 #[path = "search_eval/oracle.rs"]
 mod oracle;
+#[path = "search_eval/synthetic.rs"]
+mod synthetic;
 
 use std::collections::HashSet;
 use std::fmt::Write as _;
@@ -55,8 +67,11 @@ const PAGE: u32 = 60;
 const TOLERANCE: f64 = 0.02;
 /// `GET /search` p95 budget (plan §6.2).
 const SEARCH_P95_BUDGET: Duration = Duration::from_millis(60);
-/// Timed runs per case, after one warm-up run.
-const TIMED_RUNS: usize = 20;
+/// Timed runs per case, after one warm-up run. A debug build checks no
+/// latency, so it times only a couple.
+const TIMED_RUNS: usize = if cfg!(debug_assertions) { 2 } else { 20 };
+/// The desktop's numbers on the synthetic library.
+const SYNTHETIC_REPORT: &str = "crates/core/tests/search_eval/synthetic-report.json";
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -138,9 +153,117 @@ fn search_eval_gate() {
         || repo_root().join("scripts/search-eval/last-report.json"),
         PathBuf::from,
     );
-    let baseline = Baseline::read(&baseline_path);
-    let oracle = Oracle::open(&library).expect("open the desktop library for the oracle");
-    let corpus = corpus::build(&library);
+    gate(&library, &baseline_path);
+}
+
+/// The gate in CI: the synthetic library against the desktop's numbers on
+/// it.
+#[test]
+fn search_eval_gate_on_the_synthetic_library() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let library = dir.path().join("shelfy.sqlite");
+    let digest = synthetic::write(&library);
+    let report = repo_root().join(SYNTHETIC_REPORT);
+    let baseline = Baseline::read(&report);
+    assert_eq!(
+        baseline.library_digest.as_deref(),
+        Some(digest.as_str()),
+        "the synthetic library changed since {SYNTHETIC_REPORT} was measured: write it with \
+         `write_the_synthetic_library` and run the desktop harness on it again \
+         (docs/web-port/spikes/05-fts-relevance.md)"
+    );
+    gate(&library, &report);
+}
+
+/// Writes the synthetic library to `SHELFY_SEARCH_EVAL_SYNTHETIC_OUT` and
+/// prints its fingerprint, for a run of the desktop harness on it.
+#[test]
+#[ignore = "writes a file for the desktop harness; run it on request"]
+fn write_the_synthetic_library() {
+    let out = std::env::var_os("SHELFY_SEARCH_EVAL_SYNTHETIC_OUT")
+        .map(PathBuf::from)
+        .expect("set SHELFY_SEARCH_EVAL_SYNTHETIC_OUT to the file to write");
+    assert!(!out.exists(), "{} exists", out.display());
+    let digest = synthetic::write(&out);
+    println!(
+        "wrote {} ({} posts), libraryDigest {digest}",
+        out.display(),
+        synthetic::POSTS
+    );
+}
+
+/// Rewrites `synthetic-report.json` from the desktop report
+/// `SHELFY_SEARCH_EVAL_BASELINE` (default `scripts/search-eval/last-report.json`)
+/// that the desktop harness wrote on the synthetic library: the aggregate
+/// fields the gate reads, and the library's fingerprint. It refuses a report
+/// whose gold sets do not match the synthetic library's.
+#[test]
+#[ignore = "rewrites synthetic-report.json; run it on request"]
+fn record_the_synthetic_report() {
+    let source = std::env::var_os("SHELFY_SEARCH_EVAL_BASELINE").map_or_else(
+        || repo_root().join("scripts/search-eval/last-report.json"),
+        PathBuf::from,
+    );
+    let report: Value =
+        serde_json::from_str(&std::fs::read_to_string(&source).expect("read the desktop report"))
+            .expect("a search-eval report");
+    let dir = tempfile::tempdir().expect("temp dir");
+    let library = dir.path().join("shelfy.sqlite");
+    let digest = synthetic::write(&library);
+    let oracle = Oracle::open(&library).expect("open the synthetic library");
+    let results: Vec<Value> = report["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .map(|r| {
+            let id = r["id"].as_str().expect("case id");
+            let case = CASES.iter().find(|c| c.id == id).expect("a known case");
+            let gold = oracle.gold_posts(case.gold_terms).expect("gold posts");
+            assert_eq!(
+                r["goldPostCount"].as_u64(),
+                Some(gold.len() as u64),
+                "{id}: the report was measured on another library"
+            );
+            let metrics: serde_json::Map<String, Value> = r["metrics"]
+                .as_object()
+                .expect("metrics")
+                .iter()
+                .filter(|(name, _)| {
+                    let name = name.strip_prefix("hy_").unwrap_or(name);
+                    NAMES.contains(&name)
+                })
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
+            json!({
+                "id": id,
+                "kind": r["kind"],
+                "goldPostCount": r["goldPostCount"],
+                "metrics": metrics,
+                "sample": { "searchTotal": r["sample"]["searchTotal"] },
+            })
+        })
+        .collect();
+    let trimmed = json!({
+        "about": "The desktop's numbers on the synthetic library of crates/core/tests/search_eval/\
+                  synthetic.rs: scripts/search-eval/run.ts run on the file that \
+                  write_the_synthetic_library writes. Aggregates only; all data is synthetic. \
+                  How to regenerate: docs/web-port/spikes/05-fts-relevance.md.",
+        "ts": report["ts"],
+        "libraryDigest": digest,
+        "results": results,
+    });
+    let out = repo_root().join(SYNTHETIC_REPORT);
+    let text = serde_json::to_string_pretty(&trimmed).expect("the report serializes");
+    std::fs::write(&out, text + "\n").expect("write the report");
+    println!("wrote {}", out.display());
+}
+
+/// Runs the cases on the desktop library at `library`, prints the report
+/// and checks the gate against the desktop report at `baseline_path`.
+fn gate(library: &Path, baseline_path: &Path) {
+    let baseline = Baseline::read(baseline_path);
+    let oracle = Oracle::open(library).expect("open the desktop library for the oracle");
+    let corpus = corpus::build(library);
 
     let runs: Vec<CaseRun> = CASES
         .iter()
@@ -349,6 +472,12 @@ fn render(runs: &[CaseRun], baseline: &Baseline, corpus: &Corpus) -> String {
     );
     let _ = writeln!(
         out,
+        "index sizes: posts_fts {:.1} MB, posts_infix {:.1} MB",
+        s.fts_bytes as f64 / 1e6,
+        s.infix_bytes as f64 / 1e6
+    );
+    let _ = writeln!(
+        out,
         "\n{:<11} {:<8} {:>5} {:>11} {:>22} {:>22} {:>12} {:>12}",
         "case",
         "kind",
@@ -469,6 +598,7 @@ fn json_report(runs: &[CaseRun], baseline: &Baseline, corpus: &Corpus) -> Value 
         "baselineTs": baseline.ts,
         "posts": s.posts,
         "postsWithAi": s.with_ai,
+        "indexBytes": { "postsFts": s.fts_bytes, "postsInfix": s.infix_bytes },
         "build": if cfg!(debug_assertions) { "debug" } else { "release" },
         "cases": cases,
         "groups": groups,

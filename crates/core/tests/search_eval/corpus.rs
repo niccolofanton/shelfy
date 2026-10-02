@@ -41,10 +41,30 @@ pub struct Stats {
     /// Captions longer than the web limit, cut to it.
     pub truncated_captions: usize,
     pub build_seconds: f64,
+    /// Bytes of the token index (`posts_fts`) and of the infix index
+    /// (`posts_infix`): the sizes of their data blocks.
+    pub fts_bytes: u64,
+    pub infix_bytes: u64,
 }
 
 /// Builds the evaluation library from the desktop library at `legacy`.
 pub fn build(legacy: &Path) -> Corpus {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let db = UserDb::open(dir.path().join("library.sqlite"), &UserDbConfig::default())
+        .expect("open the evaluation library");
+    let (legacy_id, stats) = fill(legacy, &db);
+    Corpus {
+        db,
+        legacy_id,
+        stats,
+        _dir: dir,
+    }
+}
+
+/// Writes every row of the desktop library at `legacy` into the empty web
+/// library `db`; returns the way back to the desktop ids (web key →
+/// desktop `posts.id`) and the counts.
+pub fn fill(legacy: &Path, db: &UserDb) -> (HashMap<String, String>, Stats) {
     let started = Instant::now();
     let source = LegacyDb::open(legacy).expect("open the desktop library read-only");
     assert!(
@@ -55,9 +75,6 @@ pub fn build(legacy: &Path) -> Corpus {
     let tiers = tiers(&source);
     let aliases: Vec<TagAliasRow> = source.read_all().expect("read tag aliases");
 
-    let dir = tempfile::tempdir().expect("temp dir");
-    let db = UserDb::open(dir.path().join("library.sqlite"), &UserDbConfig::default())
-        .expect("open the evaluation library");
     let mut stats = Stats::default();
     let mut legacy_id = HashMap::with_capacity(rows.len());
     db.write(|tx| {
@@ -95,12 +112,20 @@ pub fn build(legacy: &Path) -> Corpus {
     })
     .expect("write the evaluation library");
     stats.build_seconds = started.elapsed().as_secs_f64();
-    Corpus {
-        db,
-        legacy_id,
-        stats,
-        _dir: dir,
-    }
+    (stats.fts_bytes, stats.infix_bytes) = db
+        .read(|conn| {
+            let bytes = |table: &str| -> rusqlite::Result<u64> {
+                conn.query_row(
+                    &format!("SELECT coalesce(sum(length(block)), 0) FROM {table}_data"),
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )
+                .map(|n| u64::try_from(n).unwrap_or(0))
+            };
+            Ok::<_, RepoError>((bytes("posts_fts")?, bytes("posts_infix")?))
+        })
+        .expect("index sizes");
+    (legacy_id, stats)
 }
 
 /// AI tag tiers per desktop post: `(general, specific)`.
