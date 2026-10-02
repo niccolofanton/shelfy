@@ -22,6 +22,17 @@ Live status of [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). The plan is the
 9. Privacy: the reference library snapshot (outside the repo, in `../shelfy-web-local/ref/`) is the owner's personal data. Read it read-only and never commit its content; fixtures are synthetic or scrubbed, and only aggregate counts appear in docs.
 10. A lane that runs a server uses its own data dir (`../shelfy-web-local/data/<task>`) and port `18080 + n`, where `n` is the task number.
 
+## Decisions during execution
+
+These owner decisions override the plan where they conflict.
+
+| # | Date | Decision | Replaces in the plan |
+|---|---|---|---|
+| E1 | 2026-10-02 | No throwaway servers. SPIKE-2, 4, 10 and 11 and the P5 capacity run happen on the osn VPS itself, inside resource-limited containers. | D20 "throwaway CX33s"; §6.3; §9 methods |
+| E2 | 2026-10-02 | The lead may deploy, restart and reconfigure on the osn VPS without asking. The one hard constraint: Hermes, the AI agent, must keep working. Restarting it is fine. | Appendix B sign-offs |
+| E3 | 2026-10-02 | The extension is tested as an unpacked build. No Chrome Web Store submission for now. | SPIKE-7; the store steps in P2 and P5 |
+| E4 | 2026-10-02 | Owner-only until further notice: no invites and no closed beta. The owner account is created with the admin CLI; its email lives in the osn secrets, not in this repo. | P2 closed beta; P5 invites |
+
 ## Status
 
 ### P0 — Foundations and spikes
@@ -33,7 +44,7 @@ Live status of [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). The plan is the
 | T3 | Schema v1, `UserDb`, repositories, FTS maintenance, golden harness | T1 | todo | |
 | T4 | SPIKE-5: FTS relevance against `search-eval` | T3 | todo | |
 | T5 | SPIKE-3 build: minimal MV3 extension and comparison tooling | — | running | `web/t5-extension-spike` |
-| T6 | SPIKE-2 and SPIKE-10 on a throwaway CX33 | T5, owner | blocked on owner | |
+| T6 | SPIKE-2 and SPIKE-10 on the osn VPS (E1) | — | todo | |
 | T7 | `crates/server`: axum app, config, health, metrics, errors, OpenAPI, admin CLI | T3 | todo | |
 | T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | todo | |
 | T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | todo | |
@@ -49,7 +60,6 @@ Each phase is broken down into tasks when the previous one is close to done.
 
 | # | Action | Needed by | Status |
 |---|---|---|---|
-| O1 | Run the SPIKE-3 comparison with the extension on your own accounts | P2 | after T5 |
-| O2 | Throwaway CX33 for SPIKE-2 and SPIKE-10: a Hetzner Cloud API token, or create the box yourself | T6 | pending |
-| O3 | Appendix B prerequisites: DNS Edit on the OpenTofu token; R2 bucket `osn-backups` with a scoped token | first osn PR (P1) | pending |
-| O4 | Optional: fix Homebrew permissions so local tools such as mailpit can be installed | T10 | optional |
+| O1 | Load the unpacked extension and run the SPIKE-3 comparison on your own accounts | P2 | after T5 |
+| O2 | Appendix B prerequisites: DNS Edit on the OpenTofu token; R2 bucket `osn-backups` with a scoped token | first osn PR (P1) | pending |
+| O3 | Optional: fix Homebrew permissions so local tools such as mailpit can be installed | T10 | optional |

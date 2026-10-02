@@ -2,6 +2,8 @@
 
 > **Status:** adopted plan of record (2026-10-02). It was written by an independent reviewer who had no access to the earlier proposal, and it was adopted after a side-by-side comparison: see [review/plan-comparison.md](review/plan-comparison.md). The superseded proposal is in [review/plan-v1-superseded.md](review/plan-v1-superseded.md).
 >
+> **Execution:** owner decisions taken during implementation override this plan where they conflict. They are listed in [EXECUTION.md](EXECUTION.md#decisions-during-execution), together with the live task status.
+>
 > **Date:** 2026-10-02 · **Scope:** bring Shelfy online as an invite-only, self-hosted web product on the existing Hetzner CX33, with a Rust server core, while the Electron desktop app keeps working and later converges on the same core.
 >
 > **Inputs:** `docs/web-port/README.md` and `features/01…05` (381 verified features), the `dev` working tree (including the uncommitted capture v2 in `electron/webcap/`), `docs/website-analyzer-audit.md`, the `osn` infra repo (read for conventions only), and aggregate counts from a reference desktop library (Appendix C).
