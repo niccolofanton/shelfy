@@ -70,6 +70,8 @@ struct PathEntry {
     raw: String,
     classes: Vec<FileClass>,
     state: FileState,
+    /// Where the file was looked up, under the media root.
+    full: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +110,7 @@ impl FileRefs {
                     raw: path.to_owned(),
                     classes: Vec::new(),
                     state: FileState::Unchecked,
+                    full: None,
                 });
                 self.index.insert(path.to_owned(), id);
                 id
@@ -122,6 +125,35 @@ impl FileRefs {
 
     pub fn state(&self, id: PathId) -> FileState {
         self.entries[id].state
+    }
+
+    /// The id of a referenced path, as stored in the library.
+    pub fn find(&self, path: &str) -> Option<PathId> {
+        self.index.get(path).copied()
+    }
+
+    /// Where the file of `id` is on this machine, once [`FileRefs::check`]
+    /// found it.
+    pub fn full_path(&self, id: PathId) -> Option<&Path> {
+        match self.entries[id].state {
+            FileState::Present { .. } => self.entries[id].full.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Every class that references the path `id`.
+    pub fn classes(&self, id: PathId) -> &[FileClass] {
+        &self.entries[id].classes
+    }
+
+    /// Number of distinct paths.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether no path is referenced.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     /// Detects the desktop root and looks every path up under `media_root`
@@ -144,6 +176,7 @@ impl FileRefs {
                 Ok(meta) if meta.is_file() => FileState::Present { bytes: meta.len() },
                 _ => FileState::Missing,
             };
+            entry.full = Some(full);
             referenced.insert(relative.join("/"));
         }
         referenced
@@ -151,6 +184,19 @@ impl FileRefs {
 
     pub fn legacy_root_detected(&self) -> bool {
         self.legacy_root.is_some()
+    }
+
+    /// The checked paths relative to `assets/` (`/`-separated): what the
+    /// orphan scan treats as referenced.
+    pub fn referenced(&self) -> HashSet<String> {
+        let Some(root) = self.legacy_root.as_deref() else {
+            return HashSet::new();
+        };
+        self.entries
+            .iter()
+            .filter_map(|e| relative_to_assets(&e.raw, root))
+            .map(|parts| parts.join("/"))
+            .collect()
     }
 
     /// Per-class and total counts.
@@ -247,6 +293,48 @@ fn relative_to_assets(path: &str, root: &str) -> Option<Vec<String>> {
 /// Lists `<media root>/assets` and counts the files no row references.
 pub fn scan_orphans(media_root: &Path, referenced: &HashSet<String>) -> OrphanCounts {
     let mut out = OrphanCounts::default();
+    walk_orphans(
+        media_root,
+        referenced,
+        |relative, bytes| {
+            out.files += 1;
+            out.bytes += bytes;
+            let top = if relative.len() > 1 {
+                relative[0].clone()
+            } else {
+                ".".to_owned()
+            };
+            let slot = out.by_dir.entry(top).or_default();
+            slot.0 += 1;
+            slot.1 += bytes;
+        },
+        &mut out.ignored,
+    );
+    out
+}
+
+/// The files under `<media root>/assets` that no row references, as paths
+/// relative to `assets/`, sorted (OI-11: so the owner can delete them on the
+/// desktop).
+pub fn orphan_paths(media_root: &Path, referenced: &HashSet<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut ignored = 0;
+    walk_orphans(
+        media_root,
+        referenced,
+        |relative, _| out.push(relative.join("/")),
+        &mut ignored,
+    );
+    out.sort();
+    out
+}
+
+fn walk_orphans(
+    media_root: &Path,
+    referenced: &HashSet<String>,
+    mut found: impl FnMut(&[String], u64),
+    ignored: &mut u64,
+) {
     let assets = media_root.join("assets");
     let mut stack: Vec<(PathBuf, Vec<String>)> = vec![(assets, Vec::new())];
     while let Some((dir, prefix)) = stack.pop() {
@@ -261,25 +349,15 @@ pub fn scan_orphans(media_root: &Path, referenced: &HashSet<String>) -> OrphanCo
             let mut relative = prefix.clone();
             relative.push(name.clone());
             if file_type.is_symlink() || is_os_metadata(&name) {
-                out.ignored += 1;
+                *ignored += 1;
             } else if file_type.is_dir() {
                 stack.push((entry.path(), relative));
             } else if file_type.is_file() && !referenced.contains(&relative.join("/")) {
                 let bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                out.files += 1;
-                out.bytes += bytes;
-                let top = if relative.len() > 1 {
-                    relative[0].clone()
-                } else {
-                    ".".to_owned()
-                };
-                let slot = out.by_dir.entry(top).or_default();
-                slot.0 += 1;
-                slot.1 += bytes;
+                found(&relative, bytes);
             }
         }
     }
-    out
 }
 
 fn is_os_metadata(name: &str) -> bool {

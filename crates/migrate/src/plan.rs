@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 
-use shelfy_core::ids::{Platform, ig, manual, pinterest, web, x};
+use shelfy_core::ids::{CanonicalId, Platform, ig, manual, pinterest, web, x};
 use shelfy_core::legacy::catalog::{self, Disposition, ValueType};
 use shelfy_core::legacy::convert::{
     self, EpochClass, JsonArrayClass, Timestamp, classify_epoch_seconds, classify_json_array,
@@ -40,6 +40,15 @@ pub struct PlanOptions {
 /// Runs the dry run. Reads only: the library is opened read-only by the
 /// caller and files are only looked up.
 pub fn plan(db: &LegacyDb, opts: &PlanOptions) -> Result<PlanReport, LegacyError> {
+    plan_with_mapping(db, opts).map(|(report, _)| report)
+}
+
+/// Runs the dry run and also returns the decisions behind it, which `run`
+/// builds the bundle from: so the bundle and the report always agree.
+pub fn plan_with_mapping(
+    db: &LegacyDb,
+    opts: &PlanOptions,
+) -> Result<(PlanReport, PlanMapping), LegacyError> {
     let mut planner = Planner::new(db, opts);
     planner.scan_posts()?;
     planner.scan_post_media()?;
@@ -52,12 +61,38 @@ pub fn plan(db: &LegacyDb, opts: &PlanOptions) -> Result<PlanReport, LegacyError
     planner.finish()
 }
 
+/// The decisions of a dry run, by desktop row.
+#[derive(Debug, Default)]
+pub struct PlanMapping {
+    /// Legacy post id → its canonical identity. Posts without one (errors)
+    /// are absent.
+    pub posts: HashMap<String, PostMapping>,
+    /// Legacy collection id → the id of the collection it merges into (its
+    /// own id when it is kept).
+    pub collections: HashMap<i64, i64>,
+    /// Every referenced file and what was found on disk.
+    pub files: FileRefs,
+}
+
+/// The canonical identity of one desktop post.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PostMapping {
+    pub platform: Platform,
+    /// `posts.key`.
+    pub key: String,
+    /// `posts.native_id`.
+    pub native_id: String,
+    /// False when the row is folded into another row of its duplicate group.
+    pub kept: bool,
+}
+
 /// What the planner remembers about one post, by legacy id.
 #[derive(Debug, Default)]
 struct PostInfo {
     platform: Option<Platform>,
     /// `None`: no canonical key (an error).
     key: Option<String>,
+    native_id: Option<String>,
     source: &'static str,
     archived_files: u64,
     has_capture: bool,
@@ -93,6 +128,7 @@ struct Planner<'a> {
     files_report: FilesReport,
     orphan_slides: u64,
     post_media_kinds: BTreeMap<String, u64>,
+    collection_map: HashMap<i64, i64>,
 }
 
 impl<'a> Planner<'a> {
@@ -113,6 +149,7 @@ impl<'a> Planner<'a> {
             files_report: FilesReport::default(),
             orphan_slides: 0,
             post_media_kinds: BTreeMap::new(),
+            collection_map: HashMap::new(),
         }
     }
 
@@ -247,12 +284,13 @@ impl<'a> Planner<'a> {
         }
 
         // Identity.
-        let (key, source) = self.identify(&p, platform);
+        let (id, source) = self.identify(&p, platform);
 
         // Files of the row.
         let mut info = PostInfo {
             platform,
-            key,
+            key: id.as_ref().map(|id| id.key().to_owned()),
+            native_id: id.map(|id| id.native_id().to_owned()),
             source,
             has_ai,
             has_note,
@@ -327,13 +365,13 @@ impl<'a> Planner<'a> {
         self.posts.insert(p.id, info);
     }
 
-    /// The canonical key of a post and which identifier it came from.
+    /// The canonical identity of a post and which identifier it came from.
     fn identify(
         &mut self,
         p: &PostRow,
         platform: Option<Platform>,
-    ) -> (Option<String>, &'static str) {
-        let result: Result<(String, &'static str), String> = match platform {
+    ) -> (Option<CanonicalId>, &'static str) {
+        let result: Result<(CanonicalId, &'static str), String> = match platform {
             Some(Platform::Instagram) => match ig::parse_legacy_id(&p.id, p.shortcode.as_deref()) {
                 Ok(decoded) => {
                     if decoded.form != ig::LegacyIdForm::Shortcode {
@@ -348,17 +386,14 @@ impl<'a> Planner<'a> {
                             },
                         }
                     }
-                    Ok((
-                        decoded.pk.canonical().key().to_owned(),
-                        decoded.form.as_str(),
-                    ))
+                    Ok((decoded.pk.canonical(), decoded.form.as_str()))
                 }
                 Err(e) => Err(format!("instagram: {e}")),
             },
             Some(Platform::Twitter) => x::from_legacy(&p.id, p.post_url.as_deref())
                 .map(|id| {
                     let source = if id.native_id() == p.id { "id" } else { "url" };
-                    (id.key().to_owned(), source)
+                    (id, source)
                 })
                 .map_err(|e| format!("twitter: {e}")),
             Some(Platform::Pinterest) => pinterest::from_legacy(&p.id, p.post_url.as_deref())
@@ -371,7 +406,7 @@ impl<'a> Planner<'a> {
                         (true, false) => "id_non_numeric",
                         (false, _) => "url",
                     };
-                    (id.key().to_owned(), source)
+                    (id, source)
                 })
                 .map_err(|e| format!("pinterest: {e}")),
             Some(Platform::Web) => {
@@ -390,7 +425,7 @@ impl<'a> Planner<'a> {
                     .find_map(|(name, url)| non_empty(url).map(|u| (*name, u)))
                 {
                     Some((name, url)) => web::from_url(url)
-                        .map(|id| (id.key().to_owned(), name))
+                        .map(|id| (id, name))
                         .map_err(|e| format!("web: {e}")),
                     None => Err("web: the site has no URL".to_owned()),
                 }
@@ -398,7 +433,7 @@ impl<'a> Planner<'a> {
             Some(Platform::Manual) => {
                 let imported_ms = convert::epoch_to_ms(p.imported_at).unwrap_or(0);
                 manual::from_legacy(&p.id, imported_ms)
-                    .map(|id| (id.key().to_owned(), "new_ulid"))
+                    .map(|id| (id, "new_ulid"))
                     .map_err(|e| format!("manual: {e}"))
             }
             None => Err(
@@ -413,9 +448,9 @@ impl<'a> Planner<'a> {
             .or_default();
         entry.rows += 1;
         match result {
-            Ok((key, source)) => {
+            Ok((id, source)) => {
                 bump(&mut entry.sources, source);
-                (Some(key), source)
+                (Some(id), source)
             }
             Err(reason) => {
                 bump(&mut entry.sources, "unmappable");
@@ -624,6 +659,7 @@ impl<'a> Planner<'a> {
         }
         self.outcome("collections", "insert", collections.len() as u64 - merged);
         self.outcome("collections", "merge", merged);
+        self.collection_map = id_map.clone();
 
         let mut seen: HashSet<(String, i64)> = HashSet::new();
         let mut counts: BTreeMap<&'static str, u64> = BTreeMap::new();
@@ -884,7 +920,7 @@ impl<'a> Planner<'a> {
 
     // ── report ───────────────────────────────────────────────────────────
 
-    fn finish(mut self) -> Result<PlanReport, LegacyError> {
+    fn finish(mut self) -> Result<(PlanReport, PlanMapping), LegacyError> {
         let schema = self.db.schema();
         let coverage = schema.coverage();
 
@@ -1132,7 +1168,7 @@ impl<'a> Planner<'a> {
         };
         let mut posts = self.posts_report;
         posts.slides_by_kind = self.post_media_kinds;
-        Ok(PlanReport {
+        let report = PlanReport {
             tool: format!("shelfy-migrate {}", env!("CARGO_PKG_VERSION")),
             dry_run: true,
             redacted: self.opts.redact,
@@ -1148,7 +1184,25 @@ impl<'a> Planner<'a> {
             errors,
             warnings,
             verdict,
-        })
+        };
+        let mapping = PlanMapping {
+            posts: self
+                .posts
+                .into_iter()
+                .filter_map(|(legacy_id, info)| {
+                    let mapping = PostMapping {
+                        platform: info.platform?,
+                        key: info.key?,
+                        native_id: info.native_id?,
+                        kept: info.kept,
+                    };
+                    Some((legacy_id, mapping))
+                })
+                .collect(),
+            collections: self.collection_map,
+            files: self.files,
+        };
+        Ok((report, mapping))
     }
 }
 
