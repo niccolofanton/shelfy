@@ -90,7 +90,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-12 | Backup, restore and schema-upgrade tooling | done; the independent review found 2 high, 5 medium and 7 low issues, fixed in F4 | `web/p1-12-backup` (6989b13…61da797) |
 | P1-09 | Deployable server: SPA hosting, headers, image, release workflow, `compose.test` | done | `web/p1-09-deploy` (0f35249…04f00a5) |
 | P1-13 | Owner passkeys, re-auth, login-link bootstrap, optional SMTP | done | `web/p1-13-passkeys` (fcd5cd7…c887a3c) |
-| P1-03 | Library writes, folders, selector, stats, ETags | done; independent review running | `web/p1-03-writes` (cde994f…232539f) |
+| P1-03 | Library writes, folders, selector, stats, ETags | done; the independent review found no critical or high issue, 1 medium (fixed in P1-05) and 6 low (fixed in F6) | `web/p1-03-writes` (cde994f…232539f) |
 | P1-04 | Client seam: routes, SSE client, error boundary, error codes | running | `web/p1-04-client-seam` |
 | P1-10 | Merge rules in the core and golden parity | done | `web/p1-10-merge` (ab6efbd, 2364d64) |
 | P1-05 | Search and filters complete, search-eval gate, `admin synth`/`bench` | running | `web/p1-05-search` |
@@ -109,6 +109,15 @@ Work that a review or a later finding added to an integrated task.
 | F3 | The scheduler spends a try on `user_locked`: a lock longer than about 2–3 minutes fails that user's queued jobs (3 tries, 30 s then 60 s backoff). A locked user's tries should not count, or should wait for the unlock. | P1-12 report | moved into F4 (review finding M2) | |
 | F4 | Fix the P1-12 review findings. **High:** `restore-db` can be written to or corrupted through handles that reopen a locked library (H1); a backup job killed by a signal records success (H2). **Medium:** concurrent opens run a migration twice (M1); locked users' jobs fail during a restore (M2, = F3); a migration install writes into a locked library (M3); a full restore accepts a snapshot without a user's library (M4); rollback writes are never reconciled (M5, latent: record and document only). **Low:** L1–L7. | independent review of P1-12 | running | `web/f4-backup-fixes` |
 | F5 | Passkey row ids can be reused after the newest passkey is deleted (`INTEGER PRIMARY KEY` without AUTOINCREMENT), which makes audit ids ambiguous. It needs a control-schema change. | P1-13 report | todo, folded into P1-17, which changes the control schema | |
+| F6 | Fix the P1-03 review findings L1–L6:
+  - a write racing an explicit eviction leaves a stale 304 and stale cached stats (L1);
+  - a request dropped mid-write commits but never announces (L2);
+  - an orphan generation cell can come back after a restore (L3);
+  - an identical PATCH still bumps every ETag (L4);
+  - manual AI edits keep the old provider (L5);
+  - the text caps can exceed the body limit (L6).
+  
+  F6 also fixes P1-10's property test "merging a batch twice equals merging it once", which fails when one key appears twice in a batch with `overwrite_ai`. Review M1 (a misspelled selector filter field selects the whole library) went to P1-05, which owns `FilterParams`. | independent review of P1-03 | running | `web/f6-writes-fixes` |
 | F2 | Fix the 7 desktop e2e failures that predate the port: 6 in "Downloads – job list" (the spec expects `download-job` rows; the view now groups jobs per post) and 1 in "Browser – URL bar shows Twitter bookmarks URL after switching tab". CI does not run e2e, so nothing caught them. | T12 (reproduced on `7ba4ea2`) | todo | |
 
 ### Carry-over notes
@@ -130,6 +139,8 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P1-20 | Login page: a passkey button, then on `reauth_required` a dialog offering passkey, email (if `emailLink`) or the CLI link. New SPA route `/login/reauth#<token>` posts `{method:"link", token}`. Settings: list, add (within 5 minutes of a sign-in) and delete passkeys. Options and credentials use the WebAuthn L3 JSON names, so the SPA can use `parse…OptionsFromJSON()` and `credential.toJSON()`. Playwright's virtual authenticator needs resident keys and user verification. | P1-13 |
 | P1-24 | Steps: sign in once with `admin login-link`, register a passkey within 5 minutes, sign out, then sign in without a username on macOS Safari and Chrome, on iOS as a home-screen app, on Android, and on a desktop through the phone's QR flow. It must run on `refs.niccolofanton.dev`: the RP ID is the host, and moving hosts orphans every passkey. | P1-13 |
 | P1-18 | The first Docker build since L7 compiles the vendored OpenSSL, which needs perl and make; `rust:1.99.0-bookworm` has both. A `Permissions-Policy` header, if any lane adds one, must allow `publickey-credentials-create` and `publickey-credentials-get` for `self`. | P1-13 |
+| P1-19 | Map the desktop's manual AI model `manuale` (provider `desktop-local`) to `manual`; T9 copies `ai_model` verbatim. | P1-03 review, L5 |
+| P1-11 | Run destructive bulk operations only after P1-05's strict selector filters have landed (review M1). | P1-03 review |
 | P1-21 | The CSP blocks the inline `<style>` in `src/views/Browser.tsx`, a desktop-only view. | P1-09 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
 
