@@ -464,7 +464,7 @@
     "/api/v1/collections/{id}": {
       "delete": {
         "tags": ["library"],
-        "summary": "Deletes a collection. Its posts stay in the library, out of the\ncollection.",
+        "summary": "Deletes a collection. With `mode=label` (the default) its posts stay in\nthe library, out of the collection; with `mode=withPosts` they move to\nthe trash (UI-17), restorable for 30 days.",
         "operationId": "deleteCollection",
         "parameters": [
           {
@@ -1852,6 +1852,76 @@
         }
       }
     },
+    "/api/v1/posts/bulk": {
+      "post": {
+        "tags": ["library"],
+        "summary": "Runs one action on many posts: a list of keys, or every post a filter\nlists (minus some). Up to 500 posts it runs in the request and answers\n200 with what changed; a larger selection answers 202 with the `bulk`\njob that runs it in chunks, reported by `job.updated`. Send an\n`Idempotency-Key` so that a repeat acts once.",
+        "description": "`analyze`, `fetchMedia` and `removeStoredMedia` answer 422\n`not_available` until the server can do them. A collection that is not\nthe user's is a 404.",
+        "operationId": "bulkPosts",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BulkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The action ran; what it changed. For a repeated `Idempotency-Key`, the first answer.",
+            "headers": {
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`true` on a replayed response."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Over 500 posts: the `bulk` job that runs the action.",
+            "headers": {
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`true` on a replayed response."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/posts/count": {
       "get": {
         "tags": ["library"],
@@ -2562,6 +2632,195 @@
         }
       }
     },
+    "/api/v1/trash": {
+      "get": {
+        "tags": ["library"],
+        "summary": "The trashed posts, most recently trashed first. Paging is by keyset: a\npost trashed or restored between two pages shifts no other. The response\nis conditional: send the `ETag` back in `If-None-Match` and an unchanged\npage answers 304.",
+        "operationId": "listTrash",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1–200 (larger values are clamped). Default 60.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`nextCursor` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the trash.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`private, no-cache`."
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Weak ETag of this page of this library state."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrashPage"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The page is unchanged since the ETag in `If-None-Match`; no body.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The same ETag."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/trash/empty": {
+      "post": {
+        "tags": ["library"],
+        "summary": "Empties the trash: starts the `purge` job that deletes for good every\npost trashed until this request (posts trashed later stay), with their\ntags, folder memberships and search rows. Their media are released for\nthe storage cleanup. Answers 202 at once; the job's progress arrives as\n`job.updated`. Send an `Idempotency-Key` so that a repeat starts one job.",
+        "operationId": "emptyTrash",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The purge is queued. For a repeated `Idempotency-Key`, the first answer.",
+            "headers": {
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`true` on a replayed response."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrashEmptying"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/trash/restore": {
+      "post": {
+        "tags": ["library"],
+        "summary": "Brings posts back from the trash, with their folders and search text as\nthey were: some by key, all those a filter selects in the trash, or all\nthose of one delete (its `deletedAt`, the undo). Up to 500 posts it runs\nin the request and answers 200; a larger selection answers 202 with the\n`bulk` job that runs it, reported by `job.updated`. Send an\n`Idempotency-Key` so that a repeat acts once.",
+        "operationId": "restoreTrash",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The posts are back; `changed` counts them. For a repeated `Idempotency-Key`, the first answer.",
+            "headers": {
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`true` on a replayed response."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkResult"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Over 500 posts: the `bulk` job that brings them back.",
+            "headers": {
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`true` on a replayed response."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BulkResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/uploads": {
       "post": {
         "tags": ["migration"],
@@ -3218,6 +3477,100 @@
         },
         "additionalProperties": false
       },
+      "BulkAction": {
+        "type": "string",
+        "description": "What a bulk action does to the selected posts.",
+        "enum": [
+          "delete",
+          "restore",
+          "addToCollections",
+          "removeFromCollection",
+          "clearAiDescription",
+          "clearAiTags",
+          "analyze",
+          "fetchMedia",
+          "removeStoredMedia"
+        ]
+      },
+      "BulkParams": {
+        "type": "object",
+        "description": "The arguments of an action; members another action takes are refused.",
+        "properties": {
+          "collectionId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "`removeFromCollection`: the collection, by id."
+          },
+          "collectionIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "`addToCollections`: the collections, by id, 1 to 50."
+          }
+        },
+        "additionalProperties": false
+      },
+      "BulkRequest": {
+        "type": "object",
+        "description": "One action on many posts.",
+        "required": ["selector", "action"],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/BulkAction",
+            "description": "What to do to them."
+          },
+          "params": {
+            "$ref": "#/components/schemas/BulkParams",
+            "description": "The action's arguments, for the actions that take some."
+          },
+          "selector": {
+            "$ref": "#/components/schemas/PostSelector",
+            "description": "Which posts."
+          }
+        },
+        "additionalProperties": false
+      },
+      "BulkResult": {
+        "type": "object",
+        "description": "The outcome of a bulk action: what it changed (200), or the job that\nruns it (202).",
+        "required": ["action", "selected", "changed", "deletedAt", "job"],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/BulkAction",
+            "description": "The action."
+          },
+          "changed": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Posts the action changed (posts it left as they were, such as a post\nalready in the trash for `delete`, are not counted); `null` when a\njob runs it.",
+            "minimum": 0
+          },
+          "deletedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "`delete` only: the `deletedAt` of every post it moves to the trash.\n`POST /trash/restore {deletedAt}` brings them back (undo)."
+          },
+          "job": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Job",
+                "description": "The `bulk` job that runs the action (202): its progress arrives as\n`job.updated`. `null` when the action ran in the request (200)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts the selector selected when the action started; unknown keys\nare not counted.",
+            "minimum": 0
+          }
+        }
+      },
       "Capabilities": {
         "type": "object",
         "description": "What the account can do on this server (plan §2.19). A capability turns\non with the phase that brings it; until then it is `false`.",
@@ -3380,13 +3733,18 @@
       "CollectionDeleteMode": {
         "type": "string",
         "description": "What happens to the posts of a deleted collection.",
-        "enum": ["label"]
+        "enum": ["label", "withPosts"]
       },
       "CollectionDeleted": {
         "type": "object",
         "description": "The outcome of deleting a collection.",
-        "required": ["trashed"],
+        "required": ["trashed", "deletedAt"],
         "properties": {
+          "deletedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "With `mode=withPosts`: the `deletedAt` of the posts moved to the\ntrash; `POST /trash/restore {deletedAt}` brings them back (not the\ncollection). `null` when none moved."
+          },
           "trashed": {
             "type": "integer",
             "format": "int64",
@@ -3700,6 +4058,7 @@
           "validation_failed",
           "provider_key_invalid",
           "capture_blocked",
+          "not_available",
           "user_locked",
           "extension_outdated",
           "rate_limited",
@@ -6059,6 +6418,22 @@
           }
         }
       },
+      "RestoreRequest": {
+        "type": "object",
+        "description": "The posts to bring back from the trash: exactly one of `selector` and\n`deletedAt`.",
+        "properties": {
+          "deletedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The posts one delete moved to the trash: the `deletedAt` its answer\ngave (`POST /posts/bulk` `delete`, `DELETE /collections/{id}` with\nposts). This is the undo of that delete."
+          },
+          "selector": {
+            "$ref": "#/components/schemas/PostSelector",
+            "description": "Which posts: keys (at most 500), or a filter over the trash, which\nmust say `trash: true` (the filter of `GET /posts?trash=1`), minus\nsome keys. Posts outside the trash are left alone."
+          }
+        },
+        "additionalProperties": false
+      },
       "ResyncEvent": {
         "type": "object",
         "description": "`resync`: events were lost. Reload every view (posts, stats, jobs,\nnotifications), then carry on with the stream.",
@@ -6422,6 +6797,53 @@
         "type": "string",
         "description": "What a token may do (§2.9).",
         "enum": ["ingest", "tasks", "uploads", "lookup", "links:create", "migrate"]
+      },
+      "TrashEmptying": {
+        "type": "object",
+        "description": "The purge that empties the trash.",
+        "required": ["selected", "job"],
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/Job",
+            "description": "The `purge` job: its progress arrives as `job.updated`."
+          },
+          "selected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts in the trash when the request came: what the job deletes.",
+            "minimum": 0
+          }
+        }
+      },
+      "TrashPage": {
+        "type": "object",
+        "description": "One page of the trash.",
+        "required": ["items", "nextCursor", "total", "retentionDays"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Post"
+            },
+            "description": "The trashed posts, most recently trashed first; each has its\n`deletedAt`."
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Pass it as `cursor` to get the next page; `null` on the last page."
+          },
+          "retentionDays": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Days a post stays in the trash: the nightly purge deletes it after\n`deletedAt` plus this many days.",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts in the trash.",
+            "minimum": 0
+          }
+        }
       },
       "UploadCreated": {
         "type": "object",

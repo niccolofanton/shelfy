@@ -6,7 +6,7 @@
 //! | `GET /collections` | every collection, in manual order, then creation order (conditional) |
 //! | `POST /collections` | 201: a new collection |
 //! | `PATCH /collections/{id}` | the collection renamed, recolored or moved in the manual order |
-//! | `DELETE /collections/{id}` | the collection deleted; its posts stay (`trashed` is 0) |
+//! | `DELETE /collections/{id}?mode=label\|withPosts` | the collection deleted; its posts stay (`label`), or go to the trash with it (`withPosts`, UI-17) |
 //! | `POST /collections/{id}/posts` | the posts of a selector added (one statement, trash skipped) |
 //! | `DELETE /collections/{id}/posts/{key}` | one post taken out (DATA-27) |
 //! | `POST /collections/from-query` | 201: a new collection holding the posts of a selector |
@@ -15,7 +15,10 @@
 //! changes something announces `posts.changed` (`edit`; the posts whose
 //! membership changed, `[]` when only collections changed, `null` past 200)
 //! and `stats.changed`, so other tabs reload their folder list and counts.
-//! Deleting a collection with its posts (`mode=withPosts`) comes in P1-11.
+//! Deleting a collection with its posts (`mode=withPosts`, P1-11) moves them
+//! to the trash ([`shelfy_core::trash`]) in the same transaction, announced
+//! with the reason `delete`; the answer's `deletedAt` undoes it through
+//! `POST /trash/restore` (the posts come back, the collection does not).
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -195,9 +198,20 @@ pub async fn update_collection(
 #[serde(rename_all = "camelCase")]
 pub enum CollectionDeleteMode {
     /// Only the collection goes; its posts stay in the library (default).
-    /// Moving them to the trash with it (`withPosts`) comes later.
     #[default]
     Label,
+    /// The collection goes, and its posts move to the trash, where they stay
+    /// 30 days (UI-17). Posts already in the trash stay as they are.
+    WithPosts,
+}
+
+impl From<CollectionDeleteMode> for DeleteMode {
+    fn from(mode: CollectionDeleteMode) -> Self {
+        match mode {
+            CollectionDeleteMode::Label => Self::KeepPosts,
+            CollectionDeleteMode::WithPosts => Self::TrashPosts,
+        }
+    }
 }
 
 /// How to delete a collection.
@@ -215,10 +229,16 @@ pub struct DeleteCollectionQuery {
 pub struct CollectionDeleted {
     /// Posts moved to the trash with the collection: 0 with `mode=label`.
     pub trashed: u64,
+    /// With `mode=withPosts`: the `deletedAt` of the posts moved to the
+    /// trash; `POST /trash/restore {deletedAt}` brings them back (not the
+    /// collection). `null` when none moved.
+    #[schema(required = true)]
+    pub deleted_at: Option<i64>,
 }
 
-/// Deletes a collection. Its posts stay in the library, out of the
-/// collection.
+/// Deletes a collection. With `mode=label` (the default) its posts stay in
+/// the library, out of the collection; with `mode=withPosts` they move to
+/// the trash (UI-17), restorable for 30 days.
 #[utoipa::path(
     delete,
     path = "/api/v1/collections/{id}",
@@ -238,19 +258,26 @@ pub async fn delete_collection(
     Path(id): Path<i64>,
     Query(query): Query<DeleteCollectionQuery>,
 ) -> Result<Json<CollectionDeleted>, ApiError> {
-    // The one mode until `withPosts` (P1-11).
-    let CollectionDeleteMode::Label = query.mode.unwrap_or_default();
-    let written = library::write(&state, user.id(), ChangeReason::Edit, move |tx| {
+    let mode = query.mode.unwrap_or_default();
+    let reason = match mode {
+        CollectionDeleteMode::Label => ChangeReason::Edit,
+        CollectionDeleteMode::WithPosts => ChangeReason::Delete,
+    };
+    // One stamp for every post this delete moves to the trash.
+    let now = now_ms();
+    let written = library::write(&state, user.id(), reason, move |tx| {
         let members = collections::member_keys(tx, id, MAX_EVENT_KEYS + 1)?;
-        let trashed = collections::delete(tx, id, DeleteMode::KeepPosts, now_ms())?;
+        let trashed = collections::delete(tx, id, mode.into(), now)?;
         Ok(Change {
             value: trashed,
             keys: event_keys(members),
         })
     })
     .await?;
+    let trashed = u64::try_from(written.value).unwrap_or(u64::MAX);
     Ok(Json(CollectionDeleted {
-        trashed: u64::try_from(written.value).unwrap_or(u64::MAX),
+        trashed,
+        deleted_at: (trashed > 0).then_some(now),
     }))
 }
 

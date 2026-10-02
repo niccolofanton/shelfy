@@ -9,8 +9,8 @@
 //!
 //! | Kind | Task | Global | Per user | Tries | Lease | Notes |
 //! |---|---|---|---|---|---|---|
-//! | `bulk` | P1-11 | | | | | new kind, bulk actions over 500 posts (G6) |
-//! | `purge` | P1-11 | 1 | — | 3 | 60 min | `nightly` |
+//! | `bulk` | P1-11 | 2 | 1 | 3 | 5 min | new kind, bulk actions over 500 posts (G6) ([`super::bulk`]) |
+//! | `purge` | P1-11 | 1 | — | 3 | 60 min | `nightly` (30-day retention), and `POST /trash/empty` ([`super::purge`]) |
 //! | `usage.recompute` | P1-17 | 2 | 1 | 3 | 5 min | new kind, `nightly` and after an install or a purge ([`super::usage`]) |
 //! | `migrate` | P1-19 | 1 | 1 | 2 | 60 min | the install of a migration bundle ([`super::migrate`]) |
 //! | `archive.drain` | P2 | 4 fetches, 2 encodes | 2 | 5 per item | 5 min | a drain: dedupe key = the kind, plus a [`Sweep`](super::Sweep) check |
@@ -33,7 +33,7 @@
 //! ))
 //! ```
 
-use super::{Registry, migrate, usage};
+use super::{Registry, bulk, migrate, purge, usage};
 
 /// Every kind this server runs.
 #[must_use]
@@ -41,4 +41,6 @@ pub fn registry() -> Registry {
     Registry::new()
         .register(usage::kind())
         .register(migrate::kind())
+        .register(bulk::kind())
+        .register(purge::kind())
 }

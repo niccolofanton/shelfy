@@ -358,8 +358,9 @@ export interface paths {
     put?: never;
     post?: never;
     /**
-     * Deletes a collection. Its posts stay in the library, out of the
-     *     collection.
+     * Deletes a collection. With `mode=label` (the default) its posts stay in
+     *     the library, out of the collection; with `mode=withPosts` they move to
+     *     the trash (UI-17), restorable for 30 days.
      */
     delete: operations['deleteCollection'];
     options?: never;
@@ -955,6 +956,32 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/posts/bulk': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Runs one action on many posts: a list of keys, or every post a filter
+     *     lists (minus some). Up to 500 posts it runs in the request and answers
+     *     200 with what changed; a larger selection answers 202 with the `bulk`
+     *     job that runs it in chunks, reported by `job.updated`. Send an
+     *     `Idempotency-Key` so that a repeat acts once.
+     * @description `analyze`, `fetchMedia` and `removeStoredMedia` answer 422
+     *     `not_available` until the server can do them. A collection that is not
+     *     the user's is a 404.
+     */
+    post: operations['bulkPosts'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/posts/count': {
     parameters: {
       query?: never;
@@ -1126,6 +1153,75 @@ export interface paths {
     get: operations['getStats'];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/trash': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * The trashed posts, most recently trashed first. Paging is by keyset: a
+     *     post trashed or restored between two pages shifts no other. The response
+     *     is conditional: send the `ETag` back in `If-None-Match` and an unchanged
+     *     page answers 304.
+     */
+    get: operations['listTrash'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/trash/empty': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Empties the trash: starts the `purge` job that deletes for good every
+     *     post trashed until this request (posts trashed later stay), with their
+     *     tags, folder memberships and search rows. Their media are released for
+     *     the storage cleanup. Answers 202 at once; the job's progress arrives as
+     *     `job.updated`. Send an `Idempotency-Key` so that a repeat starts one job.
+     */
+    post: operations['emptyTrash'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/trash/restore': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Brings posts back from the trash, with their folders and search text as
+     *     they were: some by key, all those a filter selects in the trash, or all
+     *     those of one delete (its `deletedAt`, the undo). Up to 500 posts it runs
+     *     in the request and answers 200; a larger selection answers 202 with the
+     *     `bulk` job that runs it, reported by `job.updated`. Send an
+     *     `Idempotency-Key` so that a repeat acts once.
+     */
+    post: operations['restoreTrash'];
     delete?: never;
     options?: never;
     head?: never;
@@ -1425,6 +1521,67 @@ export interface components {
       keys: string[];
     };
     /**
+     * @description What a bulk action does to the selected posts.
+     * @enum {string}
+     */
+    BulkAction:
+      | 'delete'
+      | 'restore'
+      | 'addToCollections'
+      | 'removeFromCollection'
+      | 'clearAiDescription'
+      | 'clearAiTags'
+      | 'analyze'
+      | 'fetchMedia'
+      | 'removeStoredMedia';
+    /** @description The arguments of an action; members another action takes are refused. */
+    BulkParams: {
+      /**
+       * Format: int64
+       * @description `removeFromCollection`: the collection, by id.
+       */
+      collectionId?: number;
+      /** @description `addToCollections`: the collections, by id, 1 to 50. */
+      collectionIds?: number[];
+    };
+    /** @description One action on many posts. */
+    BulkRequest: {
+      /** @description What to do to them. */
+      action: components['schemas']['BulkAction'];
+      /** @description The action's arguments, for the actions that take some. */
+      params?: components['schemas']['BulkParams'];
+      /** @description Which posts. */
+      selector: components['schemas']['PostSelector'];
+    };
+    /**
+     * @description The outcome of a bulk action: what it changed (200), or the job that
+     *     runs it (202).
+     */
+    BulkResult: {
+      /** @description The action. */
+      action: components['schemas']['BulkAction'];
+      /**
+       * Format: int64
+       * @description Posts the action changed (posts it left as they were, such as a post
+       *     already in the trash for `delete`, are not counted); `null` when a
+       *     job runs it.
+       */
+      changed: number | null;
+      /**
+       * Format: int64
+       * @description `delete` only: the `deletedAt` of every post it moves to the trash.
+       *     `POST /trash/restore {deletedAt}` brings them back (undo).
+       */
+      deletedAt: number | null;
+      job: components['schemas']['Job'] | null;
+      /**
+       * Format: int64
+       * @description Posts the selector selected when the action started; unknown keys
+       *     are not counted.
+       */
+      selected: number;
+    };
+    /**
      * @description What the account can do on this server (plan §2.19). A capability turns
      *     on with the phase that brings it; until then it is `false`.
      */
@@ -1533,9 +1690,16 @@ export interface components {
      * @description What happens to the posts of a deleted collection.
      * @enum {string}
      */
-    CollectionDeleteMode: 'label';
+    CollectionDeleteMode: 'label' | 'withPosts';
     /** @description The outcome of deleting a collection. */
     CollectionDeleted: {
+      /**
+       * Format: int64
+       * @description With `mode=withPosts`: the `deletedAt` of the posts moved to the
+       *     trash; `POST /trash/restore {deletedAt}` brings them back (not the
+       *     collection). `null` when none moved.
+       */
+      deletedAt: number | null;
       /**
        * Format: int64
        * @description Posts moved to the trash with the collection: 0 with `mode=label`.
@@ -1722,6 +1886,7 @@ export interface components {
       | 'validation_failed'
       | 'provider_key_invalid'
       | 'capture_blocked'
+      | 'not_available'
       | 'user_locked'
       | 'extension_outdated'
       | 'rate_limited'
@@ -3191,6 +3356,25 @@ export interface components {
       wanted: number;
     };
     /**
+     * @description The posts to bring back from the trash: exactly one of `selector` and
+     *     `deletedAt`.
+     */
+    RestoreRequest: {
+      /**
+       * Format: int64
+       * @description The posts one delete moved to the trash: the `deletedAt` its answer
+       *     gave (`POST /posts/bulk` `delete`, `DELETE /collections/{id}` with
+       *     posts). This is the undo of that delete.
+       */
+      deletedAt?: number;
+      /**
+       * @description Which posts: keys (at most 500), or a filter over the trash, which
+       *     must say `trash: true` (the filter of `GET /posts?trash=1`), minus
+       *     some keys. Posts outside the trash are left alone.
+       */
+      selector?: components['schemas']['PostSelector'];
+    };
+    /**
      * @description `resync`: events were lost. Reload every view (posts, stats, jobs,
      *     notifications), then carry on with the stream.
      */
@@ -3411,6 +3595,37 @@ export interface components {
      * @enum {string}
      */
     TokenScope: 'ingest' | 'tasks' | 'uploads' | 'lookup' | 'links:create' | 'migrate';
+    /** @description The purge that empties the trash. */
+    TrashEmptying: {
+      /** @description The `purge` job: its progress arrives as `job.updated`. */
+      job: components['schemas']['Job'];
+      /**
+       * Format: int64
+       * @description Posts in the trash when the request came: what the job deletes.
+       */
+      selected: number;
+    };
+    /** @description One page of the trash. */
+    TrashPage: {
+      /**
+       * @description The trashed posts, most recently trashed first; each has its
+       *     `deletedAt`.
+       */
+      items: components['schemas']['Post'][];
+      /** @description Pass it as `cursor` to get the next page; `null` on the last page. */
+      nextCursor: string | null;
+      /**
+       * Format: int32
+       * @description Days a post stays in the trash: the nightly purge deletes it after
+       *     `deletedAt` plus this many days.
+       */
+      retentionDays: number;
+      /**
+       * Format: int64
+       * @description Posts in the trash.
+       */
+      total: number;
+    };
     /** @description An upload, as `POST /uploads` answers it. */
     UploadCreated: {
       /** @description Upload id (ULID); the upload's URL is `/api/v1/uploads/{id}`. */
@@ -4824,6 +5039,54 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  bulkPosts: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['BulkRequest'];
+      };
+    };
+    responses: {
+      /** @description The action ran; what it changed. For a repeated `Idempotency-Key`, the first answer. */
+      200: {
+        headers: {
+          /** @description `true` on a replayed response. */
+          'Idempotent-Replayed'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BulkResult'];
+        };
+      };
+      /** @description Over 500 posts: the `bulk` job that runs the action. */
+      202: {
+        headers: {
+          /** @description `true` on a replayed response. */
+          'Idempotent-Replayed'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BulkResult'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   countPosts: {
     parameters: {
       query?: {
@@ -5203,6 +5466,132 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  listTrash: {
+    parameters: {
+      query?: {
+        /** @description Page size, 1–200 (larger values are clamped). Default 60. */
+        limit?: number;
+        /** @description `nextCursor` of the previous page. */
+        cursor?: string;
+      };
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description One page of the trash. */
+      200: {
+        headers: {
+          /** @description `private, no-cache`. */
+          'Cache-Control'?: string;
+          /** @description Weak ETag of this page of this library state. */
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TrashPage'];
+        };
+      };
+      /** @description The page is unchanged since the ETag in `If-None-Match`; no body. */
+      304: {
+        headers: {
+          /** @description The same ETag. */
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  emptyTrash: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The purge is queued. For a repeated `Idempotency-Key`, the first answer. */
+      202: {
+        headers: {
+          /** @description `true` on a replayed response. */
+          'Idempotent-Replayed'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TrashEmptying'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  restoreTrash: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RestoreRequest'];
+      };
+    };
+    responses: {
+      /** @description The posts are back; `changed` counts them. For a repeated `Idempotency-Key`, the first answer. */
+      200: {
+        headers: {
+          /** @description `true` on a replayed response. */
+          'Idempotent-Replayed'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BulkResult'];
+        };
+      };
+      /** @description Over 500 posts: the `bulk` job that brings them back. */
+      202: {
+        headers: {
+          /** @description `true` on a replayed response. */
+          'Idempotent-Replayed'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BulkResult'];
+        };
       };
       default: components['responses']['Problem'];
     };

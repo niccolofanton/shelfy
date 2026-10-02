@@ -75,6 +75,10 @@ pub enum ErrorCode {
     ProviderKeyInvalid,
     /// 422: the egress policy or the site refused the capture.
     CaptureBlocked,
+    /// 422: the action exists in the API but not on this server yet: a later
+    /// release brings it, and `capabilities` in `GET /me` says when it is
+    /// there.
+    NotAvailable,
     /// 423: the account is locked for maintenance (an operator is restoring
     /// its library); retry after `Retry-After` seconds.
     UserLocked,
@@ -111,9 +115,10 @@ impl ErrorCode {
             Self::Conflict => StatusCode::CONFLICT,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            Self::ValidationFailed | Self::ProviderKeyInvalid | Self::CaptureBlocked => {
-                StatusCode::UNPROCESSABLE_ENTITY
-            }
+            Self::ValidationFailed
+            | Self::ProviderKeyInvalid
+            | Self::CaptureBlocked
+            | Self::NotAvailable => StatusCode::UNPROCESSABLE_ENTITY,
             Self::UserLocked => StatusCode::LOCKED,
             Self::ExtensionOutdated => StatusCode::UPGRADE_REQUIRED,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
@@ -170,6 +175,7 @@ impl ErrorCode {
             Self::ValidationFailed => "validation_failed",
             Self::ProviderKeyInvalid => "provider_key_invalid",
             Self::CaptureBlocked => "capture_blocked",
+            Self::NotAvailable => "not_available",
             Self::UserLocked => "user_locked",
             Self::ExtensionOutdated => "extension_outdated",
             Self::RateLimited => "rate_limited",
@@ -515,6 +521,7 @@ mod tests {
             ErrorCode::ValidationFailed,
             ErrorCode::ProviderKeyInvalid,
             ErrorCode::CaptureBlocked,
+            ErrorCode::NotAvailable,
             ErrorCode::UserLocked,
             ErrorCode::ExtensionOutdated,
             ErrorCode::RateLimited,

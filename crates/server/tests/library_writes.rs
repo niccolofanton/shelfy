@@ -851,7 +851,7 @@ async fn a_collection_is_made_from_a_query_and_deleted_without_its_posts() {
     )
     .await;
     assert_schema(&deleted, "CollectionDeleted");
-    assert_eq!(deleted, json!({ "trashed": 0 }));
+    assert_eq!(deleted, json!({ "trashed": 0, "deletedAt": null }));
     let shown = ok(&app, get("/api/v1/posts/ig_1001")).await;
     assert_eq!(shown["deletedAt"], Value::Null);
     assert_eq!(shown["collectionIds"], json!([]));
@@ -868,20 +868,17 @@ async fn a_collection_is_made_from_a_query_and_deleted_without_its_posts() {
         delete(&format!("/api/v1/collections/{}", ids.lighting)),
     )
     .await;
-    let with_posts = problem(
+    // `mode=withPosts` (P1-11) is checked in `trash_bulk.rs`.
+    let unknown = problem(
         send(
             &app,
-            delete(&format!("/api/v1/collections/{id}?mode=withPosts")),
+            delete(&format!("/api/v1/collections/{id}?mode=everything")),
         )
         .await,
         StatusCode::BAD_REQUEST,
     )
     .await;
-    assert_eq!(
-        with_posts.code,
-        ErrorCode::BadRequest,
-        "withPosts comes in P1-11"
-    );
+    assert_eq!(unknown.code, ErrorCode::BadRequest, "an unknown mode");
     ok(
         &app,
         delete(&format!("/api/v1/collections/{id}?mode=label")),

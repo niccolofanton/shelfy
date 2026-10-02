@@ -55,17 +55,21 @@
 //! | [`kinds`] | the job-kind registry of the server |
 //! | [`usage`] | `usage.recompute`: a user's storage (P1-17) |
 //! | [`migrate`] | `migrate`: the install of a migrated desktop library (P1-19) |
+//! | [`bulk`] | `bulk`: a bulk action over more than 500 posts (P1-11) |
+//! | [`purge`] | `purge`: emptying the trash, and the nightly 30-day retention (P1-11) |
 //! | [`idempotency`] | the `Idempotency-Key` middleware of job-creating routes |
 //! | `registry`, `context`, `clock` | [`Registry`], [`KindSpec`], [`Worker`]; [`JobContext`], [`JobError`]; [`Clock`] |
 //!
 //! The control-database queries are in [`crate::control::jobs`] and
 //! [`crate::control::idempotency`]; the routes in [`crate::routes::jobs`].
 
+pub mod bulk;
 mod clock;
 mod context;
 pub mod idempotency;
 pub mod kinds;
 pub mod migrate;
+pub mod purge;
 mod queues;
 mod registry;
 mod scheduler;
