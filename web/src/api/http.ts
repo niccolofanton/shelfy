@@ -52,17 +52,26 @@ export interface HttpOptions {
   fetch?: typeof fetch;
 }
 
+// The code of an error answer that is not a problem document (a proxy's page).
+function codeOfStatus(status: number): ErrorCode {
+  if (status === 401) return 'unauthorized';
+  if (status === 403) return 'forbidden';
+  if (status === 404) return 'not_found';
+  if (status === 429) return 'rate_limited';
+  return status >= 500 ? 'unavailable' : 'bad_request';
+}
+
 async function errorOf(res: Response): Promise<ApiError> {
   let problem: Partial<Problem> = {};
   try {
     problem = (await res.json()) as Partial<Problem>;
   } catch {
-    /* not a problem document (a proxy error page…) */
+    /* not a problem document */
   }
   const retry = Number(res.headers.get('Retry-After'));
   return new ApiError(
     res.status,
-    problem.code ?? (res.status >= 500 ? 'unavailable' : 'bad_request'),
+    problem.code ?? codeOfStatus(res.status),
     problem.detail,
     Number.isFinite(retry) && retry > 0 ? retry : null,
   );

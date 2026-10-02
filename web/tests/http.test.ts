@@ -54,13 +54,22 @@ describe('http', () => {
   });
 
   it('maps an answer that is not a problem by its status', async () => {
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(new Response('<html>Bad gateway</html>', { status: 502 }))
-      .mockResolvedValueOnce(new Response('nope', { status: 404 }));
+    const page = (status: number) => new Response('<html>proxy page</html>', { status });
+    const fetch = vi.fn();
+    for (const status of [502, 401, 403, 404, 429, 400]) fetch.mockResolvedValueOnce(page(status));
     const http = createHttp({ fetch });
-    expect(await http.get('/api/v1/stats').catch((e: ApiError) => e.code)).toBe('unavailable');
-    expect(await http.get('/api/v1/stats').catch((e: ApiError) => e.code)).toBe('bad_request');
+    const codes = [];
+    for (let i = 0; i < 6; i++) {
+      codes.push(await http.get('/api/v1/stats').catch((e: ApiError) => e.code));
+    }
+    expect(codes).toEqual([
+      'unavailable',
+      'unauthorized',
+      'forbidden',
+      'not_found',
+      'rate_limited',
+      'bad_request',
+    ]);
   });
 
   it('reports a request that got no answer as a network error', async () => {
