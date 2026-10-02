@@ -272,6 +272,13 @@ pub struct UpsertSummary {
 /// inserted, then merged. Stops at the first invalid post; run it in the
 /// transaction of [`UserDb::write`] so the batch applies whole or not at all.
 ///
+/// Merging a batch twice leaves the library as merging it once, with one
+/// exception that the desktop has too: a batch that repeats a key with
+/// [`UpsertOptions::overwrite_ai`]. A copy that carries no analysis applies
+/// only while the post is unanalyzed, and the batch's own first run may
+/// change that, so a second run can end differently. A caller that merges
+/// such batches more than once dedupes their keys first.
+///
 /// # Errors
 ///
 /// [`RepoError::Invalid`] for an invalid post (see [`upsert_post`]); database

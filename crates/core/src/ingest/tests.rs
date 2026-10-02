@@ -662,17 +662,32 @@ fn seeded_library(seed: &[IncomingPost]) -> Connection {
     conn
 }
 
+/// The first copy of each key of `batch`, in order.
+fn first_copies(batch: Vec<IncomingPost>) -> Vec<IncomingPost> {
+    let mut seen = std::collections::HashSet::new();
+    batch
+        .into_iter()
+        .filter(|p| seen.insert(p.key.clone()))
+        .collect()
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(96))]
 
     /// Merging a batch twice leaves the library as merging it once does, even
     /// when the batch repeats a key with other values.
+    ///
+    /// Except with `overwrite_ai`: there a batch that repeats a key is not
+    /// idempotent on the desktop either, and the port keeps the desktop's
+    /// merge (see `a_key_twice_in_an_overwriting_batch_merges_as_on_the_desktop`),
+    /// so such a batch keeps the first copy of each key here.
     #[test]
     fn merging_a_batch_twice_equals_merging_it_once(
         seed in proptest::collection::vec(arb_post(), 0..4),
         batch in proptest::collection::vec(arb_post(), 1..8),
         overwrite_ai in any::<bool>(),
     ) {
+        let batch = if overwrite_ai { first_copies(batch) } else { batch };
         let options = UpsertOptions { overwrite_ai };
         let once = seeded_library(&seed);
         upsert_batch(&once, &batch, options, NOW).unwrap();
@@ -689,9 +704,7 @@ proptest! {
         batch in proptest::collection::vec(arb_post(), 1..6),
         overwrite_ai in any::<bool>(),
     ) {
-        let mut seen = std::collections::HashSet::new();
-        let batch: Vec<IncomingPost> =
-            batch.into_iter().filter(|p| seen.insert(p.key.clone())).collect();
+        let batch = first_copies(batch);
         let options = UpsertOptions { overwrite_ai };
         let conn = seeded_library(&seed);
         upsert_batch(&conn, &batch, options, NOW).unwrap();
@@ -700,6 +713,57 @@ proptest! {
         prop_assert_eq!(again.changed, 0);
         prop_assert_eq!(dump(&conn), before);
     }
+}
+
+/// The input `merging_a_batch_twice_equals_merging_it_once` shrank to before
+/// it left such batches out (F6): one key twice in a batch with
+/// `overwrite_ai`. The first copy carries an analysis (an empty
+/// specific-tier list) and writes a NULL model; the second has only a
+/// status and a model. The first merge applies both copies (the post is
+/// new, then still unanalyzed); the second applies only the first (the post
+/// is analyzed now, and the second copy carries no analysis), so the model
+/// ends NULL. The desktop's `bulkUpsert`, run on the same batches through
+/// `openDesktopDb` (`scripts/golden/lib.ts`), returns the same counts and
+/// ends the same way: the port keeps its merge, which leaves a library
+/// alone unless the import carries an analysis.
+#[test]
+fn a_key_twice_in_an_overwriting_batch_merges_as_on_the_desktop() {
+    let mut first = IncomingPost::new("ig_12", Platform::Instagram, "12", "image");
+    first.ai.model = Some(None);
+    first.ai.specific_tags = Some(Some(Vec::new()));
+    let mut second = IncomingPost::new("ig_12", Platform::Instagram, "12", "image");
+    second.ai.status = Some(Some("done".to_owned()));
+    second.ai.model = Some(Some("m1".to_owned()));
+    let batch = [first, second];
+    let ai = |conn: &Connection| -> (Option<String>, Option<String>) {
+        conn.query_row(
+            "SELECT ai_status, ai_model FROM posts WHERE key = 'ig_12'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+    };
+    let counts = |s: &super::merge::UpsertSummary| (s.inserted, s.merged, s.ai_updated);
+    let done = |model: Option<&str>| (Some("done".to_owned()), model.map(str::to_owned));
+
+    let overwrite = UpsertOptions { overwrite_ai: true };
+    let conn = seeded_library(&[]);
+    let once = upsert_batch(&conn, &batch, overwrite, NOW).unwrap();
+    assert_eq!(counts(&once), (1, 1, 2));
+    assert_eq!(ai(&conn), done(Some("m1")));
+    let twice = upsert_batch(&conn, &batch, overwrite, NOW).unwrap();
+    assert_eq!(counts(&twice), (0, 2, 1));
+    assert_eq!(ai(&conn), done(None), "as on the desktop");
+
+    // Without `overwrite_ai`, a merge never touches an analyzed post's AI
+    // layer, and the same batch is idempotent.
+    let conn = seeded_library(&[]);
+    upsert_batch(&conn, &batch, UpsertOptions::default(), NOW).unwrap();
+    let after_once = dump(&conn);
+    let twice = upsert_batch(&conn, &batch, UpsertOptions::default(), NOW).unwrap();
+    assert_eq!(counts(&twice), (0, 2, 0));
+    assert_eq!(dump(&conn), after_once);
+    assert_eq!(ai(&conn), done(Some("m1")));
 }
 
 // ── duplicates ──────────────────────────────────────────────────────────────
