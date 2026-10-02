@@ -2,12 +2,13 @@ name: CI
 
 # Runs on every push to main, dev and the web/** integration branches, and on every PR
 # into main.
-# - test: unit tests + lint + typecheck for the desktop app. This is the status check
-#   required by main's branch protection: main only accepts PRs whose CI is green.
-#   Mirrors the local pre-push hook (.husky/pre-push) so the cloud gate and the
-#   developer's local gate run the same suite. It also checks that the generated
-#   artifacts are current: the golden fixtures and the API client types
-#   (web/src/api/schema.d.ts, from crates/server/openapi.json).
+# - test: unit tests + lint + typecheck for the desktop app and the web app (web/),
+#   plus the web app's production build. This is the status check required by main's
+#   branch protection: main only accepts PRs whose CI is green. Mirrors the local
+#   pre-push hook (.husky/pre-push) so the cloud gate and the developer's local gate
+#   run the same suite. It also checks that the generated artifacts are current: the
+#   golden fixtures and the API client types (web/src/api/schema.d.ts, from
+#   crates/server/openapi.json).
 # - rust: the Cargo workspace (crates/): rustfmt, clippy with warnings as errors, tests
 #   and cargo-deny, on the toolchain pinned in rust-toolchain.toml. Its tests include
 #   the check that crates/server/openapi.json matches the Rust routes.
@@ -35,6 +36,7 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run typecheck
       - run: pnpm run test:run
+      - run: pnpm run web:build
       - run: pnpm exec tsx scripts/golden/run.ts --check
       - run: pnpm exec tsx scripts/api-client/generate.ts --check
 
