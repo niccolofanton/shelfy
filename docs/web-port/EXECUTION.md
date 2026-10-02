@@ -47,8 +47,8 @@ These owner decisions override the plan where they conflict.
 | T5 | SPIKE-3 build: minimal MV3 extension and comparison tooling | — | done (owner run pending, O1) | `web/t5-extension-spike` (a35f4fe…6b8dbf4) |
 | T6 | SPIKE-2 and SPIKE-10 on the osn VPS (E1) | — | done | `web/t6-spikes-vps` (861e361, 5e3b64f) |
 | T7 | `crates/server`: axum app, config, health, metrics, errors, OpenAPI, admin CLI | T3 | done | `web/t7-server` (f95b212…bfb0dbc) |
-| T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | running | `web/t8-media` |
-| T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | todo | |
+| T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | done | `web/t8-media` (6dd9433…1ddb6d9) |
+| T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | running | `web/t9-migration` |
 | T10 | Owner auth v0: magic link, sessions, CSRF | T7 | done | `web/t10-auth` (c7d33ae…03a6cf8) |
 | T11 | Read API and generated TS client | T4, T7 | done | `web/t11-read-api` (fc1c3b7…9b0f643) |
 | T12 | SPA slice behind `ShelfyClient` | T10, T11 | running | `web/t12-spa` |
