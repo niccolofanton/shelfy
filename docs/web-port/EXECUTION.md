@@ -44,7 +44,7 @@ These owner decisions override the plan where they conflict.
 | T3 | Schema v1, `UserDb`, repositories, FTS maintenance, golden harness | T1 | running | `web/t3-schema-v1` |
 | T4 | SPIKE-5: FTS relevance against `search-eval` | T3 | todo | |
 | T5 | SPIKE-3 build: minimal MV3 extension and comparison tooling | — | done (owner run pending, O1) | `web/t5-extension-spike` (a35f4fe…6b8dbf4) |
-| T6 | SPIKE-2 and SPIKE-10 on the osn VPS (E1) | — | running | `web/t6-spikes-vps` |
+| T6 | SPIKE-2 and SPIKE-10 on the osn VPS (E1) | — | done | `web/t6-spikes-vps` (861e361, 5e3b64f) |
 | T7 | `crates/server`: axum app, config, health, metrics, errors, OpenAPI, admin CLI | T3 | todo | |
 | T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | todo | |
 | T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | todo | |
@@ -60,6 +60,13 @@ These owner decisions override the plan where they conflict.
 
 Each phase is broken down into tasks when the previous one is close to done.
 
+## Spike outcomes
+
+| Spike | Result | Consequence |
+|---|---|---|
+| SPIKE-2 ([note](spikes/02-cdn-from-datacenter.md)) | From the VPS: Instagram 280/280 and X 300/300 of the URLs that work from a residential IP; no blocks or throttling. No Pinterest sample yet. | Archive mode: Instagram `server`, X `server`, Pinterest `auto` until O1 provides a sample. Start at 2 req/s per host and raise only while the breaker stays quiet. A 403 for an expired signature is not a breaker signal: check `oe` first and turn expired URLs into extension refresh tasks. Archive right after ingest: 73 % of the library's IG URLs had already expired. |
+| SPIKE-10 ([note](spikes/10-sse-tunnel.md)) | Through nginx: SSE p95 8 ms and a lossless `Last-Event-ID` resume. Through Cloudflare: a stream with no heartbeat is cut at about 125 s; the 20 s heartbeat keeps it open. Bearer calls were never challenged, and 16 MiB uploads arrive intact. Quick tunnels buffer SSE, so latency through Cloudflare is still unmeasured. | Measure live SSE latency, a long stream and a resume on the real hostname in P1-23. Bot Fight Mode must be off before P2 removes Access (O4). |
+
 ## Owner actions
 
 | # | Action | Needed by | Status |
@@ -67,3 +74,4 @@ Each phase is broken down into tasks when the previous one is close to done.
 | O1 | Load the unpacked extension and run the SPIKE-3 comparison on your own accounts: steps in [spikes/03-extension-capture.md](spikes/03-extension-capture.md) §5 | P2 | ready |
 | O2 | Appendix B prerequisites: DNS Edit on the OpenTofu token; R2 bucket `osn-backups` with a scoped token | first osn PR (P1) | pending |
 | O3 | Optional: fix Homebrew permissions so local tools such as mailpit can be installed | T10 | optional |
+| O4 | Confirm Bot Fight Mode is off for `niccolofanton.dev` (Security → Bots). Our tokens cannot read zone settings, and with it on, the extension, Shortcut and CLI calls could be challenged | before P2 removes Access | pending |
