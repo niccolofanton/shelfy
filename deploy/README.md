@@ -126,7 +126,9 @@ Over a rate limit (§2.9) the API answers 429 `rate_limited` with `Retry-After`:
 | every `/api/v1/*` route of a signed-in user (session or API token) | 20 a second, 60 at once | user |
 | searches: `GET /api/v1/search`, and `GET /api/v1/posts` or `/posts/count` with `q` or `concept` | 5 a second | user |
 | `POST /api/v1/client-errors` | 10 a minute | user |
-| every `/api/v1/auth/*` route | 10 a minute | client address (`SHELFY_TRUSTED_PROXIES`; IPv6 by /64) |
+| every `/api/v1/auth/*` route but the device poll | 10 a minute | client address (`SHELFY_TRUSTED_PROXIES`; IPv6 by /64) |
+| `POST /api/v1/auth/device/poll` (the migration CLI's sign-in) | 20 a minute, and `slow_down` below the 5 s interval | device code |
+| `POST /api/v1/auth/device/approve` | 10 every 10 minutes, on top of the sign-in limit | user |
 
 `/media/*`, `/health` and the web app's files are not limited.
 
@@ -200,8 +202,10 @@ to the VPS with `docker save` and `docker load` under the same tag (P1 assumptio
 ## Moving a desktop library
 
 `shelfy-migrate run` uploads a desktop library to the server (plan §4.1) and installs it into
-an empty web library. Until its own device-code sign-in arrives (P1-17, P1-19), it takes an API
-token with the `migrate` scope, valid 7 days, that the operator mints:
+an empty web library. It takes an API token with the `migrate` scope, valid 7 days. The server
+side of the CLI's own sign-in is in place (P1-17): a device flow (RFC 8628) whose code the owner
+approves on the web app's `/device` page after a re-authentication, and whose token the CLI gets
+once. Until `shelfy-migrate login` drives it (P1-19), the operator mints the token:
 
 ```sh
 shelfy-server admin migrate-token --email you@example.com > migrate-token   # keep it private
