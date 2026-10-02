@@ -9,8 +9,11 @@
 //!
 //! [`RepoError`]: shelfy_core::repo::RepoError
 
+pub mod api_tokens;
 pub mod audit;
 pub mod invites;
+pub mod magic_links;
+pub mod sessions;
 pub mod users;
 
 use rusqlite::ErrorCode;
@@ -30,5 +33,64 @@ fn conflict_on_unique(err: rusqlite::Error, what: &'static str) -> RepoError {
             RepoError::Conflict(what)
         }
         _ => err.into(),
+    }
+}
+
+/// A control database on a temporary directory, for the unit tests of the
+/// query modules.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::ops::Deref;
+
+    use shelfy_core::db::{ControlDb, ControlDbConfig};
+    use tempfile::TempDir;
+
+    use super::users::{self, NewUser, Role};
+
+    /// A fixed "now" (2026-10-02), unix ms.
+    pub const NOW: i64 = 1_790_899_200_000;
+
+    /// The database and the directory that holds it.
+    pub struct TestControl {
+        db: ControlDb,
+        _dir: TempDir,
+    }
+
+    impl Deref for TestControl {
+        type Target = ControlDb;
+
+        fn deref(&self) -> &ControlDb {
+            &self.db
+        }
+    }
+
+    /// A fresh control database with an owner and a member; returns it and
+    /// their ids.
+    pub fn control_with_users() -> (TestControl, String, String) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let config = ControlDbConfig {
+            readers: 1,
+            ..ControlDbConfig::default()
+        };
+        let db = ControlDb::open(dir.path().join("control.sqlite"), &config).expect("open");
+        let owner = "01OWNER0000000000000000000".to_owned();
+        let member = "01MEMBER000000000000000000".to_owned();
+        db.write(|tx| {
+            for (id, email, role) in [
+                (&owner, "owner@example.test", Role::Owner),
+                (&member, "member@example.test", Role::Member),
+            ] {
+                let user = NewUser {
+                    id,
+                    email,
+                    role,
+                    quota_bytes: 0,
+                };
+                users::insert(tx, &user, NOW)?;
+            }
+            Ok::<_, shelfy_core::repo::RepoError>(())
+        })
+        .expect("users");
+        (TestControl { db, _dir: dir }, owner, member)
     }
 }

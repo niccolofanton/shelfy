@@ -1,9 +1,9 @@
 //! Secret tokens (plan §2.6): 256-bit random values handed out once and
 //! stored only as their SHA-256.
 //!
-//! Invites use them now; sessions, magic links, API tokens and pairing codes
-//! (T10, P1-13, P1-17) build on the same two functions, so every secret is
-//! generated and hashed one way.
+//! Invites, sessions and sign-in links use them; API tokens and pairing codes
+//! (P1-17) build on the same functions, so every secret is generated and
+//! hashed one way.
 
 use std::fmt;
 
@@ -53,6 +53,19 @@ impl fmt::Debug for SecretToken {
 /// The SHA-256 of a token, as stored in the control database.
 pub type TokenHash = [u8; 32];
 
+/// Length of a token's transport form.
+pub const TOKEN_LEN: usize = 43;
+
+/// Whether `value` has the shape of a [`SecretToken`] (43 base64url
+/// characters): a cheap filter before hashing and querying.
+#[must_use]
+pub fn is_token_shaped(value: &str) -> bool {
+    value.len() == TOKEN_LEN
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 /// The stored form of a token presented by a client: the SHA-256 of its
 /// transport form.
 #[must_use]
@@ -67,7 +80,10 @@ mod tests {
     #[test]
     fn tokens_are_url_safe_and_hashed_consistently() {
         let token = SecretToken::generate();
-        assert_eq!(token.expose().len(), 43);
+        assert_eq!(token.expose().len(), TOKEN_LEN);
+        assert!(is_token_shaped(token.expose()));
+        assert!(!is_token_shaped(&token.expose()[1..]));
+        assert!(!is_token_shaped(&format!("{}=", &token.expose()[1..])));
         assert!(
             token
                 .expose()

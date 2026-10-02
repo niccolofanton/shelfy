@@ -26,7 +26,9 @@ impl Role {
         }
     }
 
-    fn parse(value: &str) -> Option<Self> {
+    /// The role stored as `value`.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "owner" => Some(Self::Owner),
             "member" => Some(Self::Member),
@@ -47,7 +49,9 @@ pub enum Status {
 }
 
 impl Status {
-    fn parse(value: &str) -> Option<Self> {
+    /// The status stored as `value`.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
         match value {
             "active" => Some(Self::Active),
             "disabled" => Some(Self::Disabled),

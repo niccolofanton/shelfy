@@ -9,6 +9,13 @@ use shelfy_core::repo::Result;
 pub const OWNER_CREATE: &str = "owner.create";
 /// An invite was created.
 pub const INVITE_CREATE: &str = "invite.create";
+/// A sign-in link was minted. `meta`: `via` (`email` or `cli`) and `purpose`.
+pub const MAGIC_LINK_CREATE: &str = "magic_link.create";
+/// A user signed in: a session was created. `meta`: `method` (`magic_link`).
+pub const SESSION_CREATE: &str = "session.create";
+/// Sessions ended. `meta`: `scope` (`current` for a sign-out, `all` for a
+/// sign-out everywhere) and `count`.
+pub const SESSION_DELETE: &str = "session.delete";
 
 /// One audit row.
 #[derive(Clone, Copy, Debug)]
