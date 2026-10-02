@@ -6,7 +6,7 @@
 //!
 //! | Group | Limits | Routes |
 //! |---|---|---|
-//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01) |
+//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07) |
 //! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
 //! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
 //! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, [`uploads`]) |
@@ -28,6 +28,11 @@
 //! [`crate::events`]), [`notifications`], [`client_errors`] and [`version`],
 //! all behind [`CurrentUser`](crate::current_user::CurrentUser).
 //!
+//! The job routes (P1-07): [`jobs`] (`/jobs` and `/queues/{kind}/…`) over
+//! [`crate::jobs`]. A job-creating route that takes `Idempotency-Key` is
+//! listed in [`IDEMPOTENT_ROUTES`] and declares the header with
+//! `params(IdempotencyHeader)`.
+//!
 //! The committed copy of the document, `crates/server/openapi.json`, is what
 //! the TypeScript client is generated from (T11). After changing a route,
 //! regenerate it with
@@ -41,6 +46,7 @@ pub mod collections;
 pub mod docs;
 pub mod events;
 pub mod health;
+pub mod jobs;
 pub mod listing;
 pub mod me;
 pub mod media;
@@ -70,6 +76,7 @@ use crate::auth::bearer::Scope;
 use crate::auth::openapi::SecuritySchemes;
 use crate::error::{ErrorCode, FieldError, PROBLEM_JSON, Problem};
 use crate::events::model as event;
+use crate::jobs::idempotency::IdempotentRoute;
 use crate::limits::RouteLimits;
 use crate::state::AppState;
 
@@ -125,6 +132,8 @@ const PROBLEM_RESPONSE: &str = "Problem";
             name = "migration",
             description = "Moving a desktop library: resumable uploads (tus 1.0) and the install."
         ),
+        (name = "jobs", description = "The signed-in user's background jobs and their queues: \
+                                       progress, cancel, retry, pause and resume."),
     )
 )]
 pub struct ApiDoc;
@@ -167,6 +176,17 @@ pub const TOKEN_ROUTES: &[(Method, &str, Scope, bool)] = &[
     ),
 ];
 
+/// Job-creating routes that take `Idempotency-Key` (plan §2.9): a repeat
+/// with the same key gets the first response back
+/// ([`crate::jobs::idempotency`]). Such a route also declares
+/// `params(IdempotencyHeader)` in its `#[utoipa::path]`; a test checks that
+/// this list and the document agree. `body_bytes` is the route's body limit.
+pub const IDEMPOTENT_ROUTES: &[IdempotentRoute] = &[IdempotentRoute {
+    method: Method::POST,
+    path: "/api/v1/jobs/{id}/retry",
+    body_bytes: RouteLimits::STANDARD.body_bytes,
+}];
+
 /// The access policy of [`router`]: [`PUBLIC_ROUTES`] and [`TOKEN_ROUTES`];
 /// every other route needs a session.
 #[must_use]
@@ -204,7 +224,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(migrations::start_migration))
         .routes(routes!(migrations::get_migration))
         .merge(auth::router())
-        .merge(me::router());
+        .merge(me::router())
+        .merge(jobs::router());
     // Streams end when the shutdown token fires instead of on a timer.
     let streams = OpenApiRouter::default().routes(routes!(events::stream_events));
     let upload_chunks = OpenApiRouter::default().routes(routes!(uploads::append_upload));
@@ -237,8 +258,9 @@ pub fn openapi_json() -> String {
 
 /// Rewrites `serde_json`'s pretty output (2-space indent, every array item on
 /// its own line) into prettier's JSON layout at print width 100: an array of
-/// scalars that fits goes on one line, `["a", "b"]`. Objects stay expanded,
-/// as prettier keeps them. Ends with a newline.
+/// scalars (or of empty objects, such as the public routes' `security: [{}]`)
+/// that fits goes on one line, `["a", "b"]`. Objects with members stay
+/// expanded, as prettier keeps them. Ends with a newline.
 fn prettier_layout(pretty: &str) -> String {
     const PRINT_WIDTH: usize = 100;
     let lines: Vec<&str> = pretty.lines().collect();
@@ -281,7 +303,11 @@ fn prettier_layout(pretty: &str) -> String {
 }
 
 fn is_scalar(text: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(text).is_ok_and(|v| !v.is_array() && !v.is_object())
+    serde_json::from_str::<serde_json::Value>(text).is_ok_and(|v| match v {
+        serde_json::Value::Array(items) => items.is_empty(),
+        serde_json::Value::Object(members) => members.is_empty(),
+        _ => true,
+    })
 }
 
 fn add_problem_responses(doc: &mut OpenApiDoc) {
@@ -353,6 +379,9 @@ mod tests {
     "[",
     1.5,
     null
+  ],
+  "security": [
+    {}
   ]
 }"#;
         let expected = r#"{
@@ -369,7 +398,8 @@ mod tests {
     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "cccccccccccc"
   ],
-  "tricky": ["a,", "[", 1.5, null]
+  "tricky": ["a,", "[", 1.5, null],
+  "security": [{}]
 }
 "#;
         let laid_out = prettier_layout(pretty);

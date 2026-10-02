@@ -16,8 +16,11 @@
 //!    The route's access (a session unless [`routes::PUBLIC_ROUTES`] or
 //!    [`routes::TOKEN_ROUTES`] say otherwise) is checked, and the user put in
 //!    the request extensions and span, or the request answers 401;
-//! 7. the route group's body limit and time limit ([`crate::limits`]);
-//! 8. the handler, which takes the user as an extractor.
+//! 7. on the routes of [`routes::IDEMPOTENT_ROUTES`], a route layer too: the
+//!    `Idempotency-Key` middleware ([`jobs::idempotency`]), which replays the
+//!    stored response of a repeated request;
+//! 8. the route group's body limit and time limit ([`crate::limits`]);
+//! 9. the handler, which takes the user as an extractor.
 //!
 //! The stack is applied after routing, so the route template is known to the
 //! logs and metrics. Rate limits (P1-15) and the security headers (P1-09)
@@ -34,6 +37,8 @@ use utoipa_axum::router::OpenApiRouter;
 use crate::auth;
 use crate::auth::access::{AccessPolicy, Gate};
 use crate::error::{self, ApiError};
+use crate::jobs;
+use crate::jobs::idempotency::Idempotency;
 use crate::routes;
 use crate::state::AppState;
 use crate::telemetry;
@@ -62,8 +67,15 @@ pub fn build_with_access(
 ) -> Router {
     let (router, _document) = routes.split_for_parts();
     let gate = Gate::new(state.clone(), access);
+    let idempotency = Idempotency::new(state.clone(), routes::IDEMPOTENT_ROUTES);
     let router = if router.has_routes() {
-        router.route_layer(middleware::from_fn_with_state(gate, auth::access::gate))
+        // The later layer runs first: the gate, then the Idempotency-Key.
+        router
+            .route_layer(middleware::from_fn_with_state(
+                idempotency,
+                jobs::idempotency::layer,
+            ))
+            .route_layer(middleware::from_fn_with_state(gate, auth::access::gate))
     } else {
         router
     };

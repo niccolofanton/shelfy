@@ -273,6 +273,187 @@
         }
       }
     },
+    "/api/v1/jobs": {
+      "get": {
+        "tags": ["jobs"],
+        "summary": "The user's jobs, newest first.",
+        "operationId": "listJobs",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Only jobs of these kinds. Repeatable: any of them.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "Only jobs in these states. Repeatable: any of them.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/JobState"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1–200 (larger values are clamped). Default 60.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`nextCursor` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of jobs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobPage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/summary": {
+      "get": {
+        "tags": ["jobs"],
+        "summary": "Every queue of the user, with its jobs counted by state.",
+        "operationId": "getJobsSummary",
+        "responses": {
+          "200": {
+            "description": "The queues.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobsSummary"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/cancel": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Cancels a queued or running job: it never runs, or its worker is told\nto stop. Cancelling a cancelled job changes nothing; a job that already\nsucceeded or failed answers 409 `conflict`.",
+        "operationId": "cancelJob",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The job's id.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job, cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{id}/retry": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Queues a failed or cancelled job again, with every try available and its\nerror cleared. Any other state answers 409 `conflict`, as does a job\nwhose duplicate is already queued or running.",
+        "description": "Send an `Idempotency-Key` to make a repeated click retry once.",
+        "operationId": "retryJob",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The job's id.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The job, queued again; or, for a repeated `Idempotency-Key`, the first response.",
+            "headers": {
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`true` on a replayed response."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/me": {
       "get": {
         "tags": ["account"],
@@ -878,6 +1059,138 @@
                   "type": "string"
                 },
                 "description": "The same ETag."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/queues/{kind}/cancel-all": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Cancels every queued and running job of a queue.",
+        "operationId": "cancelQueue",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "The kind of job.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The queue; `affected` counts the jobs cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/queues/{kind}/clear-finished": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Deletes the finished (succeeded, failed and cancelled) jobs of a queue.",
+        "operationId": "clearFinishedJobs",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "The kind of job.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The queue; `affected` counts the jobs deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/queues/{kind}/pause": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Pauses a queue: its queued jobs wait until it is resumed. Running jobs\ngo on; a long one (a drain) stops at its next step and waits too.",
+        "operationId": "pauseQueue",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "The kind of job, for example `archive.drain`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The queue, paused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/queues/{kind}/resume": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Resumes a paused queue.",
+        "operationId": "resumeQueue",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "description": "The kind of job.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The queue, running again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueResult"
+                }
               }
             }
           },
@@ -1800,6 +2113,107 @@
           }
         }
       },
+      "Job": {
+        "type": "object",
+        "description": "A background job.",
+        "required": [
+          "id",
+          "kind",
+          "state",
+          "progress",
+          "stage",
+          "postKey",
+          "errorCode",
+          "attempts",
+          "maxAttempts",
+          "runAt",
+          "createdAt",
+          "updatedAt",
+          "finishedAt"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Tries that ended without success.",
+            "minimum": 0
+          },
+          "createdAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time."
+          },
+          "errorCode": {
+            "type": ["string", "null"],
+            "description": "Why the job failed (`failed`), or why its last try failed before a\nretry. A stable code (`lease_expired`, `unavailable`, …), never prose."
+          },
+          "finishedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "When the job finished (succeeded, failed or cancelled)."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Job id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Kind (`archive.drain`, `migrate`, …)."
+          },
+          "maxAttempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Tries allowed before the job fails for good.",
+            "minimum": 0
+          },
+          "postKey": {
+            "type": ["string", "null"],
+            "description": "The post the job works on, if one."
+          },
+          "progress": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Progress from 0 to 1, when known."
+          },
+          "runAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Not before this time (a delayed job, or the backoff before a retry)."
+          },
+          "stage": {
+            "type": ["string", "null"],
+            "description": "Current stage, a code, when the job has stages."
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState",
+            "description": "State."
+          },
+          "updatedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last change."
+          }
+        }
+      },
+      "JobPage": {
+        "type": "object",
+        "description": "One page of jobs, newest first.",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Job"
+            },
+            "description": "The jobs of this page."
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Pass it as `cursor` to get the next page; `null` on the last page."
+          }
+        }
+      },
       "JobState": {
         "type": "string",
         "description": "State of a job (plan §2.6 `jobs.state`).",
@@ -1839,6 +2253,20 @@
           "state": {
             "$ref": "#/components/schemas/JobState",
             "description": "State."
+          }
+        }
+      },
+      "JobsSummary": {
+        "type": "object",
+        "description": "Every queue of the user: each kind this server runs, and any other kind\nthe user has jobs of.",
+        "required": ["queues"],
+        "properties": {
+          "queues": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueSummary"
+            },
+            "description": "The queues, by kind."
           }
         }
       },
@@ -2730,6 +3158,68 @@
           }
         }
       },
+      "QueueResult": {
+        "type": "object",
+        "description": "The outcome of an action on a queue.",
+        "required": ["queue", "affected"],
+        "properties": {
+          "affected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What the action changed: 1 when pause or resume changed the queue\n(0 when it already was so), the jobs cancelled, or the jobs deleted.",
+            "minimum": 0
+          },
+          "queue": {
+            "$ref": "#/components/schemas/QueueSummary",
+            "description": "The queue after the action."
+          }
+        }
+      },
+      "QueueSummary": {
+        "type": "object",
+        "description": "One queue: a kind of job of the user.",
+        "required": ["kind", "paused", "queued", "running", "succeeded", "failed", "cancelled"],
+        "properties": {
+          "cancelled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs cancelled.",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs failed for good.",
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "description": "The kind."
+          },
+          "paused": {
+            "type": "boolean",
+            "description": "Whether the user paused it: its queued jobs wait."
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs waiting to run.",
+            "minimum": 0
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs running.",
+            "minimum": 0
+          },
+          "succeeded": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs finished.",
+            "minimum": 0
+          }
+        }
+      },
       "RedeemRequest": {
         "type": "object",
         "description": "Body of `POST /api/v1/auth/magic-links/redeem`.",
@@ -3216,6 +3706,10 @@
     {
       "name": "migration",
       "description": "Moving a desktop library: resumable uploads (tus 1.0) and the install."
+    },
+    {
+      "name": "jobs",
+      "description": "The signed-in user's background jobs and their queues: progress, cancel, retry, pause and resume."
     }
   ]
 }
