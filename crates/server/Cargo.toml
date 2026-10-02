@@ -30,11 +30,14 @@ thiserror.workspace = true
 # `fs`, `io-util` and tokio-util's `io`: media files are streamed from disk.
 tokio = { workspace = true, features = ["fs", "io-util"] }
 tokio-util = { workspace = true, features = ["io"] }
-tower.workspace = true
+# `util`: the web app's fallback service (`service_fn`, `oneshot`, boxed).
+tower = { workspace = true, features = ["util"] }
+# `fs`: the web app's files, with their precompressed siblings (`ServeDir`).
 tower-http = { workspace = true, features = [
   "catch-panic",
   "compression-br",
   "compression-gzip",
+  "fs",
   "limit",
   "timeout",
 ] }

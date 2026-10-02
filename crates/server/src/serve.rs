@@ -209,12 +209,14 @@ impl Server {
         } = self;
         let token = state.shutdown_token().clone();
         let config = state.config();
+        let web_dir = config.web.as_ref().map(|web| web.root().display());
         tracing::info!(
             version = crate::VERSION,
             api = %api_listener.local_addr()?,
             metrics = %metrics_listener.local_addr()?,
             data_dir = %config.data_dir.root().display(),
             public_url = %config.public_url,
+            web_dir = web_dir.map(tracing::field::display),
             "listening"
         );
         let drain_timeout = config.shutdown_grace.saturating_sub(CLOSE_RESERVE);

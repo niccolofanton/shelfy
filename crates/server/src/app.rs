@@ -5,7 +5,7 @@
 //! 1. [`observe`](crate::telemetry::http::observe): request id, `request`
 //!    span, response log line, HTTP metrics;
 //! 2. compression (gzip, brotli) of responses over 1 KiB, except images,
-//!    audio, video and event streams;
+//!    audio, video, fonts and event streams;
 //! 3. [`problem_fallback`](crate::error::problem_fallback): error responses
 //!    from any layer become problems;
 //! 4. panic catching: a panicking handler answers 500 `internal`;
@@ -21,6 +21,10 @@
 //!    stored response of a repeated request;
 //! 8. the route group's body limit and time limit ([`crate::limits`]);
 //! 9. the handler, which takes the user as an extractor.
+//!
+//! A request that no route matches goes to the fallback, behind layers 1–5:
+//! the web app's files when `SHELFY_WEB_DIR` is set
+//! ([`static_files`](crate::static_files)), otherwise a 404 problem.
 //!
 //! The stack is applied after routing, so the route template is known to the
 //! logs and metrics. Rate limits (P1-15) and the security headers (P1-09)
@@ -85,10 +89,15 @@ pub fn build_with_access(
             .and(NotForContentType::IMAGES)
             .and(NotForContentType::SSE)
             .and(NotForContentType::const_new("audio/"))
-            .and(NotForContentType::const_new("video/")),
+            .and(NotForContentType::const_new("video/"))
+            // The web app's fonts are WOFF2, compressed already.
+            .and(NotForContentType::const_new("font/")),
     );
+    let router = match &state.config().web {
+        Some(web) => router.fallback_service(web.service()),
+        None => router.fallback(not_found),
+    };
     router
-        .fallback(not_found)
         .layer(
             ServiceBuilder::new()
                 .layer(middleware::from_fn(telemetry::http::observe))

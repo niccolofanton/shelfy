@@ -20,6 +20,7 @@
 //! | `SHELFY_SMTP_USER`, `SHELFY_SMTP_PASSWORD` | none | SMTP credentials, set together |
 //! | `SHELFY_SMTP_FROM` | none | sender, required with SMTP |
 //! | `SHELFY_DEV_MAILBOX` | `false` | write emails to `<data>/dev-mailbox/*.eml` instead; loopback public URL only |
+//! | `SHELFY_WEB_DIR` | none | the built web app (`web/dist`) to serve; `/app/web` in the image. Unset: the API only |
 //!
 //! [`crate::mail`] validates the email settings. Later tasks add their
 //! variables here (master key, capture and egress endpoints, media budgets).
@@ -38,6 +39,7 @@ use crate::auth::AuthConfig;
 use crate::jobs::JobsConfig;
 use crate::mail::{MailArgs, MailConfig};
 use crate::net::TrustedProxies;
+use crate::static_files::WebApp;
 
 /// Default of `SHELFY_DATA_DIR`.
 pub const DEFAULT_DATA_DIR: &str = "/data/shelfy";
@@ -140,6 +142,12 @@ pub struct ServeArgs {
 
     #[command(flatten)]
     pub mail: MailArgs,
+
+    /// The built web app (`web/dist`) to serve to browsers: its
+    /// `index.html` answers every path no route takes. The image sets
+    /// `/app/web`. Unset: the API only.
+    #[arg(long = "web-dir", env = "SHELFY_WEB_DIR", value_name = "DIR")]
+    pub web_dir: Option<PathBuf>,
 }
 
 /// Format of the logs on stdout (plan §3.7).
@@ -181,6 +189,8 @@ pub struct Config {
     pub auth: AuthConfig,
     /// The job kinds and the clock of the job system (plan §2.12).
     pub jobs: JobsConfig,
+    /// The web app to serve, if any (P1-09).
+    pub web: Option<WebApp>,
 }
 
 impl Config {
@@ -197,6 +207,12 @@ impl Config {
         let public_url = args.public.public_url;
         let mail =
             MailConfig::from_args(args.mail, &data_dir, &public_url).map_err(ConfigError::Mail)?;
+        let web = args
+            .web_dir
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .map(WebApp::load)
+            .transpose()
+            .map_err(ConfigError::WebDir)?;
         Ok(Self {
             listen: args.listen,
             metrics_listen: args.metrics_listen,
@@ -204,6 +220,7 @@ impl Config {
             log_format: args.log_format,
             trusted_proxies: args.trusted_proxies,
             mail,
+            web,
             ..Self::with_data_dir(data_dir)
         })
     }
@@ -225,6 +242,7 @@ impl Config {
             mail: MailConfig::Disabled,
             auth: AuthConfig::default(),
             jobs: JobsConfig::default(),
+            web: None,
         }
     }
 }
@@ -251,6 +269,9 @@ pub enum ConfigError {
     /// The email settings are inconsistent.
     #[error("{0}")]
     Mail(String),
+    /// The web app directory is unusable.
+    #[error("SHELFY_WEB_DIR: {0}")]
+    WebDir(io::Error),
 }
 
 /// The public origin of the web app: `http(s)://host[:port]`, no trailing slash.

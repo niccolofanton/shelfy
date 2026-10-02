@@ -132,6 +132,21 @@ mod tests {
     }
 
     #[test]
+    fn serve_takes_a_web_app_with_an_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_str().unwrap();
+        let err = serve(&["--web-dir", path]).unwrap_err();
+        assert!(
+            err.contains("SHELFY_WEB_DIR") && err.contains("index.html"),
+            "{err}"
+        );
+        std::fs::write(dir.path().join("index.html"), "<!doctype html>").unwrap();
+        let config = serve(&["--web-dir", path]).unwrap();
+        assert_eq!(config.web.unwrap().root(), dir.path());
+        assert!(serve(&[]).unwrap().web.is_none(), "API only by default");
+    }
+
+    #[test]
     fn admin_commands_take_the_data_dir_anywhere() {
         let cli = Cli::try_parse_from([
             "shelfy-server",
