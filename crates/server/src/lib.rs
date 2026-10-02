@@ -31,6 +31,7 @@
 //! | [`telemetry`] | JSON logs, redaction, request ids, Prometheus metrics |
 //! | [`control`] | queries on the control database |
 //! | [`admin`] | the operator commands |
+//! | [`migrations`] | installing a desktop library uploaded by `shelfy-migrate` (T9) |
 //! | [`events`] | the per-user realtime bus behind SSE: publish, replay, throttles |
 //! | [`jobs`] | the seam for the scheduler (P1-07) |
 //!
@@ -51,6 +52,7 @@ pub mod ids;
 pub mod jobs;
 pub mod limits;
 pub mod mail;
+pub mod migrations;
 pub mod net;
 pub mod routes;
 pub mod serve;

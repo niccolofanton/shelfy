@@ -15,9 +15,10 @@
 //! including routes outside the OpenAPI document (`/media/{file}`). It does
 //! not run for the router's fallback, which is not a route: an unknown path
 //! answers 404 (and P1-09's SPA files, served as the fallback, stay public).
-//! A `HEAD` request is checked as the `GET` that serves it. A method the
-//! route does not serve is checked like any other: an anonymous
-//! `DELETE /health` answers 401, a signed-in one 405.
+//! A `HEAD` request is checked as the `GET` that serves it, unless the route
+//! has an explicit `HEAD` rule (tus `HEAD /api/v1/uploads/{id}`, which has no
+//! `GET`). A method the route does not serve is checked like any other: an
+//! anonymous `DELETE /health` answers 401, a signed-in one 405.
 //!
 //! On a session route the gate resolves the session cookie and inserts
 //! [`CurrentUser`] and [`SessionUser`](super::SessionUser); on a token route
@@ -130,15 +131,19 @@ impl AccessPolicy {
     /// [`Access::Session`].
     #[must_use]
     pub fn access(&self, method: &Method, path: &str) -> Access {
-        let method = if *method == Method::HEAD {
-            &Method::GET
-        } else {
-            method
+        let rule = |method: &Method| {
+            self.rules
+                .iter()
+                .find(|rule| rule.method == *method && rule.path == path)
+                .map(|rule| rule.access)
         };
-        self.rules
-            .iter()
-            .find(|rule| rule.method == *method && rule.path == path)
-            .map_or(Access::Session, |rule| rule.access)
+        rule(method)
+            .or_else(|| {
+                (*method == Method::HEAD)
+                    .then(|| rule(&Method::GET))
+                    .flatten()
+            })
+            .unwrap_or(Access::Session)
     }
 
     /// The rules, in the order they were added.
@@ -286,5 +291,26 @@ mod tests {
             policy.access(&Method::GET, "/health"),
             Access::Token { .. }
         ));
+    }
+
+    #[test]
+    fn an_explicit_head_rule_wins_over_the_get_one() {
+        let migrate = Access::Token {
+            scope: Scope::Migrate,
+            session: false,
+        };
+        let policy = AccessPolicy::new()
+            .token(Method::HEAD, "/api/v1/uploads/{id}", Scope::Migrate, false)
+            .public(Method::GET, "/health");
+        assert_eq!(
+            policy.access(&Method::HEAD, "/api/v1/uploads/{id}"),
+            migrate
+        );
+        assert_eq!(
+            policy.access(&Method::GET, "/api/v1/uploads/{id}"),
+            Access::Session,
+            "HEAD does not open GET"
+        );
+        assert_eq!(policy.access(&Method::HEAD, "/health"), Access::Public);
     }
 }

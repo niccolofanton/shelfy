@@ -9,7 +9,14 @@
 //! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01) |
 //! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
 //! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
-//! | ingest, uploads, STT | [`RouteLimits::INGEST`], [`RouteLimits::UPLOAD_CHUNK`], [`RouteLimits::STT`] | added with their routes (P2, T9, P3) |
+//! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, [`uploads`]) |
+//! | ingest, STT | [`RouteLimits::INGEST`], [`RouteLimits::STT`] | added with their routes (P2, P3) |
+//!
+//! The migration routes (T9): [`uploads`] (tus creation, `HEAD` to resume,
+//! `PATCH` chunks) and [`migrations`] (missing objects, install, status).
+//! They take a `migrate` token and nothing else ([`TOKEN_ROUTES`]), and
+//! share the in-process state of [`crate::migrations`] through request
+//! extensions.
 //!
 //! The read API (T11): [`posts`] (`GET /posts`, `GET /posts/{key}`),
 //! [`search`], [`stats`] and [`collections`], all behind
@@ -37,13 +44,18 @@ pub mod health;
 pub mod listing;
 pub mod me;
 pub mod media;
+pub mod migrations;
 pub mod model;
 pub mod notifications;
 pub mod posts;
 pub mod search;
 pub mod stats;
+pub mod uploads;
 pub mod version;
 
+use std::sync::Arc;
+
+use axum::Extension;
 use axum::http::Method;
 use utoipa::OpenApi;
 use utoipa::openapi::path::Operation;
@@ -109,6 +121,10 @@ const PROBLEM_RESPONSE: &str = "Problem";
         (name = "account", description = "The signed-in user."),
         (name = "library", description = "The signed-in user's posts, stats and collections."),
         (name = "search", description = "Ranked search over the signed-in user's library."),
+        (
+            name = "migration",
+            description = "Moving a desktop library: resumable uploads (tus 1.0) and the install."
+        ),
     )
 )]
 pub struct ApiDoc;
@@ -130,9 +146,26 @@ pub const PUBLIC_ROUTES: &[(Method, &str)] = &[
 /// Routes that take a scoped API token: method, route template, the scope,
 /// and whether a signed-in session works too. Such a route also declares
 /// `security(("bearer" = ["<scope>"]))` in its `#[utoipa::path]`, plus
-/// `("session" = [])` when sessions work too. Empty until the migration
-/// routes (T9) and the extension routes (P2) arrive.
-pub const TOKEN_ROUTES: &[(Method, &str, Scope, bool)] = &[];
+/// `("session" = [])` when sessions work too. The migration routes (T9)
+/// take the CLI's `migrate` token only; the extension routes join in P2.
+pub const TOKEN_ROUTES: &[(Method, &str, Scope, bool)] = &[
+    (Method::POST, "/api/v1/uploads", Scope::Migrate, false),
+    (Method::HEAD, "/api/v1/uploads/{id}", Scope::Migrate, false),
+    (Method::PATCH, "/api/v1/uploads/{id}", Scope::Migrate, false),
+    (
+        Method::POST,
+        "/api/v1/migrations/missing-objects",
+        Scope::Migrate,
+        false,
+    ),
+    (Method::POST, "/api/v1/migrations", Scope::Migrate, false),
+    (
+        Method::GET,
+        "/api/v1/migrations/{id}",
+        Scope::Migrate,
+        false,
+    ),
+];
 
 /// The access policy of [`router`]: [`PUBLIC_ROUTES`] and [`TOKEN_ROUTES`];
 /// every other route needs a session.
@@ -165,14 +198,23 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(notifications::mark_notifications_read))
         .routes(routes!(client_errors::report_client_error))
         .routes(routes!(version::get_version))
+        .routes(routes!(uploads::create_upload))
+        .routes(routes!(uploads::upload_offset))
+        .routes(routes!(migrations::find_missing_objects))
+        .routes(routes!(migrations::start_migration))
+        .routes(routes!(migrations::get_migration))
         .merge(auth::router())
         .merge(me::router());
     // Streams end when the shutdown token fires instead of on a timer.
     let streams = OpenApiRouter::default().routes(routes!(events::stream_events));
+    let upload_chunks = OpenApiRouter::default().routes(routes!(uploads::append_upload));
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .merge(RouteLimits::STANDARD.apply(standard))
         .merge(RouteLimits::STREAM.apply(streams))
+        .merge(RouteLimits::UPLOAD_CHUNK.apply(upload_chunks))
         .merge(RouteLimits::STANDARD.apply(media::router()))
+        .layer(Extension(Arc::new(uploads::UploadLocks::default())))
+        .layer(Extension(Arc::new(crate::migrations::Installs::default())))
 }
 
 /// The OpenAPI document of [`router`], with the shared error response added

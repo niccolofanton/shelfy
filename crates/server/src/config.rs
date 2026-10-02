@@ -361,6 +361,19 @@ impl DataDir {
         self.0.join("backup-staging").join("db")
     }
 
+    /// `work/uploads/`: tus uploads, in progress and complete (§2.5).
+    #[must_use]
+    pub fn uploads_dir(&self) -> PathBuf {
+        self.0.join("work").join("uploads")
+    }
+
+    /// `work/migrations/`: scratch space of migration installs, one directory
+    /// per install, removed when it ends.
+    #[must_use]
+    pub fn migrations_dir(&self) -> PathBuf {
+        self.0.join("work").join("migrations")
+    }
+
     /// Creates `control/` and `users/` (mode 0750) if they are missing.
     ///
     /// # Errors
@@ -453,6 +466,11 @@ mod tests {
         assert_eq!(
             dir.snapshot_dir(),
             Path::new("/data/shelfy/backup-staging/db")
+        );
+        assert_eq!(dir.uploads_dir(), Path::new("/data/shelfy/work/uploads"));
+        assert_eq!(
+            dir.migrations_dir(),
+            Path::new("/data/shelfy/work/migrations")
         );
         assert!(DataDir::new("").is_err());
         assert!(DataDir::new("relative/dir").unwrap().root().is_absolute());
