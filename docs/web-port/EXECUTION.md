@@ -88,6 +88,8 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-13 | Owner passkeys, re-auth, login-link bootstrap, optional SMTP | running | `web/p1-13-passkeys` |
 | P1-03 | Library writes, folders, selector, stats, ETags | running | `web/p1-03-writes` |
 | P1-04 | Client seam: routes, SSE client, error boundary, error codes | running | `web/p1-04-client-seam` |
+| P1-10 | Merge rules in the core and golden parity | running | `web/p1-10-merge` |
+| P1-22 | O2: R2 bucket and scoped token for backups | done | owner action O2 (osn `1ce0abe`) |
 
 ### Follow-ups
 
