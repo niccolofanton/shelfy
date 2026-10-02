@@ -54,8 +54,8 @@ validated at start: a bad one stops the process with a message.
 Empty values count as unset, so a compose file may pass `SHELFY_SMTP_HOST=` when email is off.
 Later tasks add the master key, the capture and egress endpoints and the media budgets (§3.2,
 §3.4). The operator commands (`shelfy-server admin create-owner | invite | login-link |
-snapshot | verify | user | install-snapshots | migrate-token`) use `SHELFY_DATA_DIR` too and
-print their results on stdout, never to the logs.
+snapshot | verify | user | install-snapshots | migrate-token | synth | bench`) use
+`SHELFY_DATA_DIR` too and print their results on stdout, never to the logs.
 
 To sign in, create the owner once, then mint a one-time link (valid 15 minutes):
 
@@ -198,6 +198,23 @@ cosign verify ghcr.io/niccolofanton/shelfy-api@sha256:<digest> \
 
 The GHCR package starts private. Until it is public or the VPS has a pull token, the image goes
 to the VPS with `docker save` and `docker load` under the same tag (P1 assumption G4).
+
+## Synthetic libraries and the latency bench
+
+`admin synth` fills one user's empty library with synthetic posts and media, for benchmarks and
+tests (plan §6.3, App. C). `admin bench` times the read routes on a library against the §6.2
+server budgets:
+
+```sh
+shelfy-server admin create-owner --email owner@example.test
+shelfy-server admin synth --email owner@example.test --posts 20000 --profile reference
+shelfy-server admin bench --user "$USER_ID" [--requests 400] [--strict]
+```
+
+| Command | What it does |
+| --- | --- |
+| `admin synth (--user ID \| --email EMAIL) --posts N [--profile reference] [--seed S]` | The `reference` profile is the reference library's shape: platform and media-type mix, two posts in three with stored media, captions about 150 topics. Renditions are real `g480` WebP files of about 25 KB; masters are sparse placeholders of realistic sizes that take almost no disk. Posts carry no remote URL, so a browser makes no third-party request. Fills an empty library only. Run it with the server stopped, or restart the server afterwards: a running server's ETags and caches do not see another process's writes |
+| `admin bench --user ID [--requests N] [--strict] [--seed S]` | Runs the work of `GET /posts`, `GET /search`, `GET /posts?q=`, `GET /posts/{key}` and `GET /media/<sha>.g480.webp` after authentication, in process, one request at a time. It prints p50, p95 and p99 per route, the budget and the result, and search times per kind of query. It prints aggregates only, never a key, caption or query. `--strict` exits 1 when a route misses its budget. Use a release build or the image; it reads only |
 
 ## Moving a desktop library
 

@@ -14,15 +14,20 @@
 //! lock | unlock | restore-db` restores one user's library and
 //! `install-snapshots` restores a whole host.
 //!
+//! Test libraries and budgets (P1-05): `synth` fills a user's empty library
+//! with synthetic posts and media, `bench` times the read routes on it.
+//!
 //! This file is the command dispatch: a new command adds its module and one
-//! line here (P1-05 `synth`/`bench`).
+//! line here.
 
+pub mod bench;
 pub mod install;
 pub mod invite;
 pub mod login_link;
 pub mod migrate_token;
 pub mod owner;
 pub mod snapshot;
+pub mod synth;
 pub mod user;
 pub mod verify;
 
@@ -71,6 +76,12 @@ pub enum AdminCommand {
     /// Install the database copies of a snapshot directory as the live
     /// databases (full restore, server stopped).
     InstallSnapshots(install::InstallArgs),
+    /// Fill a user's empty library with synthetic posts and media (for
+    /// benchmarks and tests; run it with the server stopped).
+    Synth(synth::SynthArgs),
+    /// Time the read routes on a user's library against the §6.2 budgets
+    /// (aggregates only).
+    Bench(bench::BenchArgs),
 }
 
 /// Runs an admin command, writing its output to stdout.
@@ -91,6 +102,8 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
         AdminCommand::Verify(args) => verify::run(&data, &args, &mut out),
         AdminCommand::User(args) => user::run(&data, &args, &mut out),
         AdminCommand::InstallSnapshots(args) => install::run(&data, &args, &mut out),
+        AdminCommand::Synth(args) => synth::run(&data, &args, &mut out),
+        AdminCommand::Bench(args) => bench::run(&data, &args, &mut out),
     }?;
     out.flush()?;
     Ok(())
