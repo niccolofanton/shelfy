@@ -44,6 +44,11 @@ lettre = { version = "0.11.23", default-features = false, features = [
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 moka = { version = "0.12.16", features = ["sync"] }
+# The crypto library under webauthn-rs (passkeys, §2.21). `vendored` compiles OpenSSL from
+# source (needs perl and make) and links it statically: the runtime image needs no libssl,
+# and cargo-deny's advisories cover the vendored OpenSSL version. The server's tests also use
+# it for their software authenticator.
+openssl = { version = "0.10.81", features = ["vendored"] }
 proptest = "1.11.0"
 rayon = "1.12.0"
 regex = "1.13.1"
@@ -72,6 +77,11 @@ ureq = { version = "3.4.2", default-features = false, features = ["json", "rustl
 url = "2.5.8"
 utoipa = "6.0.0"
 utoipa-axum = "0.3.0"
+# Passkeys (§2.11, D8): the passkey-first API. No default features (`attestation`: attested
+# passkeys, unused); `conditional-ui` adds the discoverable (username-less) sign-in. The proto
+# crate names the option types the server adjusts.
+webauthn-rs = { version = "0.5.5", default-features = false, features = ["conditional-ui"] }
+webauthn-rs-proto = "0.5.5"
 # Lossy WebP encoding through libwebp, compiled from source by `libwebp-sys` (needs a C
 # compiler). No default features: they only add `image` conversions.
 webp = { version = "0.3.1", default-features = false }

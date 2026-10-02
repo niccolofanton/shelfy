@@ -18,6 +18,9 @@ lettre.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 moka.workspace = true
+# Enables `vendored` for webauthn-rs's OpenSSL (see the workspace manifest); the tests' software
+# authenticator signs with it.
+openssl.workspace = true
 # `backup`: the SQLite online backup API behind `admin snapshot`.
 rusqlite = { workspace = true, features = ["backup"] }
 serde.workspace = true
@@ -46,6 +49,8 @@ tracing-subscriber.workspace = true
 url.workspace = true
 utoipa.workspace = true
 utoipa-axum.workspace = true
+webauthn-rs.workspace = true
+webauthn-rs-proto.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
@@ -59,6 +64,8 @@ tempfile.workspace = true
 # `test-util`: paused time for the SSE heartbeat test.
 tokio = { workspace = true, features = ["io-util", "test-util"] }
 tower = { workspace = true, features = ["util"] }
+# HTTP to a running server, in the ignored live passkey test.
+ureq.workspace = true
 
 [lints]
 workspace = true
