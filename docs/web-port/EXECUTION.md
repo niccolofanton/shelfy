@@ -109,15 +109,7 @@ Work that a review or a later finding added to an integrated task.
 | F3 | The scheduler spends a try on `user_locked`: a lock longer than about 2–3 minutes fails that user's queued jobs (3 tries, 30 s then 60 s backoff). A locked user's tries should not count, or should wait for the unlock. | P1-12 report | moved into F4 (review finding M2) | |
 | F4 | Fix the P1-12 review findings. **High:** `restore-db` can be written to or corrupted through handles that reopen a locked library (H1); a backup job killed by a signal records success (H2). **Medium:** concurrent opens run a migration twice (M1); locked users' jobs fail during a restore (M2, = F3); a migration install writes into a locked library (M3); a full restore accepts a snapshot without a user's library (M4); rollback writes are never reconciled (M5, latent: record and document only). **Low:** L1–L7. | independent review of P1-12 | running | `web/f4-backup-fixes` |
 | F5 | Passkey row ids can be reused after the newest passkey is deleted (`INTEGER PRIMARY KEY` without AUTOINCREMENT), which makes audit ids ambiguous. It needs a control-schema change. | P1-13 report | todo, folded into P1-17, which changes the control schema | |
-| F6 | Fix the P1-03 review findings L1–L6:
-  - a write racing an explicit eviction leaves a stale 304 and stale cached stats (L1);
-  - a request dropped mid-write commits but never announces (L2);
-  - an orphan generation cell can come back after a restore (L3);
-  - an identical PATCH still bumps every ETag (L4);
-  - manual AI edits keep the old provider (L5);
-  - the text caps can exceed the body limit (L6).
-  
-  F6 also fixes P1-10's property test "merging a batch twice equals merging it once", which fails when one key appears twice in a batch with `overwrite_ai`. Review M1 (a misspelled selector filter field selects the whole library) went to P1-05, which owns `FilterParams`. | independent review of P1-03 | running | `web/f6-writes-fixes` |
+| F6 | Fix the P1-03 review findings L1–L6: a write racing an explicit eviction leaves a stale 304 and stale cached stats (L1); a request dropped mid-write commits but never announces (L2); an orphan generation cell can come back after a restore (L3); an identical PATCH still bumps every ETag (L4); manual AI edits keep the old provider (L5); the text caps can exceed the body limit (L6). F6 also fixes P1-10's property test "merging a batch twice equals merging it once", which fails when one key appears twice in a batch with `overwrite_ai`. Review M1 (a misspelled selector filter field selects the whole library) went to P1-05, which owns `FilterParams`. | independent review of P1-03 | running | `web/f6-writes-fixes` |
 | F2 | Fix the 7 desktop e2e failures that predate the port: 6 in "Downloads – job list" (the spec expects `download-job` rows; the view now groups jobs per post) and 1 in "Browser – URL bar shows Twitter bookmarks URL after switching tab". CI does not run e2e, so nothing caught them. | T12 (reproduced on `7ba4ea2`) | todo | |
 
 ### Carry-over notes
