@@ -113,6 +113,21 @@ export const OWNER: Schemas['Me'] = {
   email: 'owner@example.test',
   role: 'owner',
   createdAt: T0,
+  capabilities: {
+    admin: true,
+    passkeys: true,
+    emailLink: false,
+    extension: false,
+    'ai.tasks': false,
+    capture: false,
+    'video.onDemand': false,
+  },
+  consent: {
+    disclaimerVersion: null,
+    disclaimerAcceptedAt: null,
+    privacyVersion: null,
+    privacyAcceptedAt: null,
+  },
 };
 
 function library(): Pick<MockApi, 'posts' | 'details' | 'collections'> {

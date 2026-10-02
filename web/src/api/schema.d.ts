@@ -7,6 +7,82 @@
 // Regenerate with `pnpm exec tsx scripts/api-client/generate.ts`.
 
 export interface paths {
+  '/api/v1/auth/device/approve': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Approves a device sign-in for the signed-in account: the device that
+     *     shows this code gets a `migrate` token for this account's library, valid
+     *     7 days.
+     * @description Needs a sign-in or a re-authentication from the last 5 minutes (403
+     *     `reauth_required` otherwise). 400 `invalid_device_code` for a code that
+     *     is unknown, expired, used or approved by another account; approving a
+     *     code again is a no-op. Limit: 10 tries per 10 minutes per account (429).
+     */
+    post: operations['approveDeviceSignIn'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/device/poll': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Asks whether a device sign-in was approved.
+     * @description `pending`: wait `interval` seconds and poll again. `slow_down`: the poll
+     *     came too soon; wait the new `interval`. `approved`: the `migrate` token,
+     *     delivered once; the codes stop working. 400 `invalid_device_code` for a
+     *     device code that is unknown, expired or used: start again. 429
+     *     `rate_limited` with `Retry-After` past 20 polls a minute of one device
+     *     code. The sign-in limit per client does not count polls. No cookie and no
+     *     CSRF headers are needed.
+     */
+    post: operations['pollDeviceSignIn'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/device/start': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Starts signing a device in: the migration CLI's `login`.
+     * @description Show the user `userCode` and `verificationUri` (or open
+     *     `verificationUriComplete`), then poll `POST /auth/device/poll` with
+     *     `deviceCode` every `interval` seconds until it is approved, for at most
+     *     `expiresIn` seconds. Limit: the sign-in limit, 10 requests per minute per
+     *     client over every `/auth` route (429). No cookie and no CSRF headers are
+     *     needed.
+     */
+    post: operations['startDeviceSignIn'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/auth/logout': {
     parameters: {
       query?: never;
@@ -463,12 +539,33 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Who is signed in. 401 `unauthorized` without a session: the SPA shows
-     *     its sign-in page.
+     * Who is signed in, what the account can do, and what it accepted. 401
+     *     `unauthorized` without a session: the SPA shows its sign-in page.
      */
     get: operations['getMe'];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/consent': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Records that the user accepted the disclaimer and the privacy notice of
+     *     these versions, now. Accepting again (a new version) replaces both, with
+     *     the new time. 422 for a malformed version.
+     */
+    post: operations['acceptConsent'];
     delete?: never;
     options?: never;
     head?: never;
@@ -541,6 +638,135 @@ export interface paths {
      *     sign in with it.
      */
     delete: operations['deletePasskey'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/sessions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The account's signed-in sessions, the current one flagged. */
+    get: operations['listSessions'];
+    put?: never;
+    post?: never;
+    /** Signs out every session of the account but this one. */
+    delete: operations['endOtherSessions'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/sessions/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Signs out one of the account's sessions: it stops working at once.
+     *     Signing out the current one is a sign-out, and clears the cookie. Another
+     *     account's session is a 404, like a missing one.
+     */
+    delete: operations['endSession'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/settings': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The account's settings. */
+    get: operations['getSettings'];
+    /**
+     * Changes some of the account's settings; answers all of them. A setting
+     *     that already has the value is not written again.
+     */
+    put: operations['updateSettings'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/tokens': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * The account's working API tokens (not revoked, not expired), with their
+     *     last use.
+     */
+    get: operations['listApiTokens'];
+    put?: never;
+    /**
+     * Creates an API token for the extension or the iOS Shortcut; the answer
+     *     is the only time its value is shown.
+     * @description Needs a sign-in or a re-authentication from the last 5 minutes (403
+     *     `reauth_required` otherwise). 422 for the kind `migrate` (the migration
+     *     CLI signs in with the device flow), for scopes that are not the kind's,
+     *     or for a label over 64 characters; 409 `conflict` when the account holds
+     *     50 working tokens already.
+     */
+    post: operations['createApiToken'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/tokens/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Revokes one of the account's tokens: it stops working at once. Another
+     *     account's token, or one that no longer works, is a 404.
+     */
+    delete: operations['revokeApiToken'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/usage': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * The storage the account uses and its quota, as last counted. When it was
+     *     never counted, the count starts now (`usage.recompute`).
+     */
+    get: operations['getUsage'];
+    put?: never;
+    post?: never;
+    delete?: never;
     options?: never;
     head?: never;
     patch?: never;
@@ -745,8 +971,8 @@ export interface paths {
      *     already saved (desktop `savedByKeys`): the "already saved" badges of the
      *     selection overlay. An Instagram id matches by the media pk it stands for
      *     or by the post's stored shortcode.
-     * @description Signed-in sessions only for now; the extension's `lookup` token joins in
-     *     P1-17.
+     * @description A signed-in session, or an API token with the `lookup` scope (the
+     *     extension's).
      */
     post: operations['lookupPosts'];
     delete?: never;
@@ -981,6 +1207,59 @@ export interface components {
       /** @description Which posts. */
       selector: components['schemas']['PostSelector'];
     };
+    /** @description An API token of the account. Its value is never shown again. */
+    ApiToken: {
+      /**
+       * Format: int64
+       * @description Creation time, unix ms.
+       */
+      createdAt: number;
+      /**
+       * Format: int64
+       * @description When it stops working, unix ms; `null` until revoked.
+       */
+      expiresAt: number | null;
+      /** @description Its id (ULID), for `DELETE /me/tokens/{id}`. */
+      id: string;
+      /** @description Who holds it. */
+      kind: components['schemas']['TokenKind'];
+      /** @description The user's name for it. */
+      label: string | null;
+      /**
+       * Format: int64
+       * @description Last request it authenticated, unix ms (recorded at most once a
+       *     minute).
+       */
+      lastUsedAt: number | null;
+      /** @description What it may do. */
+      scopes: components['schemas']['TokenScope'][];
+    };
+    /** @description The account's working API tokens. */
+    ApiTokenList: {
+      /** @description Newest first. */
+      items: components['schemas']['ApiToken'][];
+    };
+    /** @description Body of `POST /api/v1/me/tokens`. */
+    ApiTokenRequest: {
+      /** @description Who will hold it: `extension` or `shortcut`. */
+      kind: components['schemas']['TokenKind'];
+      /** @description A name for the list, up to 64 characters; trimmed, and blank is none. */
+      label?: string;
+      /** @description What it may do: some of the kind's scopes; all of them when left out. */
+      scopes?: components['schemas']['TokenScope'][];
+    };
+    /**
+     * @description Which assets of a post are archived: the desktop's "asset types to
+     *     download".
+     */
+    ArchiveAssetTypes: {
+      /** @description Image slides. */
+      image: boolean;
+      /** @description Covers and video posters. */
+      thumbnail: boolean;
+      /** @description Videos. */
+      video: boolean;
+    };
     /** @description Archive work left for the workers (P1-19, P2), by class (OI-6, OI-7). */
     ArchiveCounts: {
       /** @description Posts by `archive_state`. */
@@ -1103,6 +1382,32 @@ export interface components {
     BatchGetRequest: {
       /** @description The posts' keys, at most 200. */
       keys: string[];
+    };
+    /**
+     * @description What the account can do on this server (plan §2.19). A capability turns
+     *     on with the phase that brings it; until then it is `false`.
+     */
+    Capabilities: {
+      /** @description The owner's administration (`/api/v1/admin`). */
+      admin: boolean;
+      /** @description AI analysis and its tasks (P3). */
+      'ai.tasks': boolean;
+      /** @description Website capture (P4). */
+      capture: boolean;
+      /**
+       * @description "Email me a link" works: email is configured. Without it, sign-in and
+       *     re-authentication links come from the operator (`admin login-link`).
+       */
+      emailLink: boolean;
+      /** @description The browser extension can pair and capture (P2). */
+      extension: boolean;
+      /**
+       * @description Passkeys work on this server: sign-in, re-authentication and
+       *     registration (`GET /auth/methods` says the same before sign-in).
+       */
+      passkeys: boolean;
+      /** @description Videos fetched on demand (P4). */
+      'video.onDemand': boolean;
     };
     /**
      * @description What changed posts (plan §2.10).
@@ -1241,6 +1546,115 @@ export interface components {
        */
       position?: number;
     };
+    /** @description What the user accepted; `null` until accepted. */
+    Consent: {
+      /**
+       * Format: int64
+       * @description When the disclaimer was accepted, unix ms.
+       */
+      disclaimerAcceptedAt: number | null;
+      /** @description The disclaimer's version. */
+      disclaimerVersion: string | null;
+      /**
+       * Format: int64
+       * @description When the privacy notice was accepted, unix ms.
+       */
+      privacyAcceptedAt: number | null;
+      /** @description The privacy notice's version. */
+      privacyVersion: string | null;
+    };
+    /** @description Body of `POST /api/v1/me/consent`. */
+    ConsentRequest: {
+      /**
+       * @description The version of the disclaimer the app showed (`2026-10`): 1–32
+       *     characters among `A–Z`, `a–z`, `0–9`, `.`, `_` and `-`.
+       */
+      disclaimerVersion: string;
+      /** @description The version of the privacy notice the app showed (`1`), alike. */
+      privacyVersion: string;
+    };
+    /** @description A new API token. */
+    CreatedApiToken: {
+      /** @description The token as the list shows it. */
+      apiToken: components['schemas']['ApiToken'];
+      /**
+       * @description The value (`shx_…`), for `Authorization: Bearer`. Shown only now:
+       *     the server keeps its hash.
+       */
+      token: string;
+    };
+    /** @description Body of `POST /api/v1/auth/device/approve`. */
+    DeviceApproval: {
+      /** @description The code the CLI shows (`BCDF-GHJK`). */
+      userCode: string;
+    };
+    /**
+     * @description What `POST /auth/device/start` answers: RFC 8628's device authorization
+     *     response, in camelCase.
+     */
+    DeviceAuthorization: {
+      /** @description The CLI's secret: it polls with it. Never show or log it. */
+      deviceCode: string;
+      /**
+       * Format: int64
+       * @description Seconds both codes stay valid.
+       */
+      expiresIn: number;
+      /**
+       * Format: int64
+       * @description Seconds to wait between polls.
+       */
+      interval: number;
+      /**
+       * @description What the user approves: 8 letters as `XXXX-XXXX`; case, dashes and
+       *     spaces do not matter.
+       */
+      userCode: string;
+      /** @description The page that approves it: `<public url>/device`. */
+      verificationUri: string;
+      /** @description The same page with the code filled in: `<public url>/device#XXXX-XXXX`. */
+      verificationUriComplete: string;
+    };
+    /** @description What a poll finds, by `status`. */
+    DevicePoll:
+      | {
+          /**
+           * Format: int64
+           * @description Seconds to wait before the next poll.
+           */
+          interval: number;
+          /** @enum {string} */
+          status: 'pending';
+        }
+      | {
+          /**
+           * Format: int64
+           * @description Seconds to wait before the next poll.
+           */
+          interval: number;
+          /** @enum {string} */
+          status: 'slow_down';
+        }
+      | {
+          /**
+           * Format: int64
+           * @description When it stops working, unix ms.
+           */
+          expiresAt: number;
+          /** @description What it may do: `["migrate"]`. */
+          scopes: components['schemas']['TokenScope'][];
+          /** @enum {string} */
+          status: 'approved';
+          /** @description The `migrate` token (`shx_…`), for `Authorization: Bearer`. */
+          token: string;
+          /** @description Its id, as the account's token list names it. */
+          tokenId: string;
+        };
+    /** @description Body of `POST /api/v1/auth/device/poll`. */
+    DevicePollRequest: {
+      /** @description The `deviceCode` of `POST /auth/device/start`. */
+      deviceCode: string;
+    };
     /**
      * @description Stable, machine-readable error codes. Each one has a fixed HTTP status.
      *
@@ -1253,6 +1667,7 @@ export interface components {
       | 'invalid_link'
       | 'challenge_expired'
       | 'passkey_invalid'
+      | 'invalid_device_code'
       | 'unauthorized'
       | 'forbidden'
       | 'csrf_failed'
@@ -1535,6 +1950,11 @@ export interface components {
       /** @description The queues, by kind. */
       queues: components['schemas']['QueueSummary'][];
     };
+    /**
+     * @description A language of the app's interface.
+     * @enum {string}
+     */
+    Language: 'it' | 'en';
     /** @description A saved post found by `POST /posts/lookup`. */
     LookupMatch: {
       /** @description The id as asked for. */
@@ -1600,6 +2020,13 @@ export interface components {
     MatchMode: 'or' | 'and';
     /** @description The signed-in user. */
     Me: {
+      /**
+       * @description What the account can do on this server: the web app shows what it
+       *     can use and hides the rest.
+       */
+      capabilities: components['schemas']['Capabilities'];
+      /** @description The disclaimer and privacy notice the user accepted. */
+      consent: components['schemas']['Consent'];
       /**
        * Format: int64
        * @description Account creation time, unix ms.
@@ -2489,6 +2916,55 @@ export interface components {
           /** @enum {string} */
           event: 'notification';
         };
+    /** @description A signed-in session of the account. */
+    Session: {
+      /**
+       * Format: int64
+       * @description Sign-in time, unix ms.
+       */
+      createdAt: number;
+      /** @description Whether this is the session of the request. */
+      current: boolean;
+      /**
+       * Format: int64
+       * @description When it ends unless used again, unix ms: 30 days after its last use,
+       *     and never more than 90 days after sign-in.
+       */
+      expiresAt: number;
+      /**
+       * @description Its id, for `DELETE /me/sessions/{id}`: 32 hex digits, derived from
+       *     the session; it is not the cookie.
+       */
+      id: string;
+      /**
+       * Format: int64
+       * @description Last use, unix ms (recorded at most hourly).
+       */
+      lastSeenAt: number;
+      /** @description The browser's `User-Agent` at sign-in, cut to 256 bytes. */
+      userAgent: string | null;
+    };
+    /** @description The account's sessions. */
+    SessionList: {
+      /** @description The current session first, then the most recently used. */
+      items: components['schemas']['Session'][];
+    };
+    /** @description The account's settings, defaults filled in. */
+    Settings: {
+      /** @description The asset types to archive; all of them by default. */
+      archiveAssetTypes: components['schemas']['ArchiveAssetTypes'];
+      language: components['schemas']['Language'] | null;
+    };
+    /**
+     * @description Body of `PUT /api/v1/me/settings`: the settings to change; the others
+     *     keep their values. Other keys are refused (422).
+     */
+    SettingsUpdate: {
+      /** @description The asset types to archive, all three. */
+      archiveAssetTypes?: components['schemas']['ArchiveAssetTypes'];
+      /** @description The interface language. */
+      language?: components['schemas']['Language'];
+    };
     /**
      * @description Kind of slide (`post_media.kind`).
      * @enum {string}
@@ -2555,6 +3031,16 @@ export interface components {
      * @enum {string}
      */
     TagSource: 'ai' | 'manual';
+    /**
+     * @description Who holds a token.
+     * @enum {string}
+     */
+    TokenKind: 'extension' | 'shortcut' | 'migrate';
+    /**
+     * @description What a token may do (§2.9).
+     * @enum {string}
+     */
+    TokenScope: 'ingest' | 'tasks' | 'uploads' | 'lookup' | 'links:create' | 'migrate';
     /** @description An upload, as `POST /uploads` answers it. */
     UploadCreated: {
       /** @description Upload id (ULID); the upload's URL is `/api/v1/uploads/{id}`. */
@@ -2569,6 +3055,34 @@ export interface components {
        * @description Bytes received so far (0).
        */
       offset: number;
+    };
+    /** @description The account's storage. */
+    Usage: {
+      /**
+       * Format: int64
+       * @description The library database, in bytes.
+       */
+      dbBytes: number;
+      /**
+       * Format: int64
+       * @description The stored media (masters and kept videos), in bytes.
+       */
+      mediaBytes: number;
+      /**
+       * Format: int64
+       * @description The quota in bytes; 0 means unlimited (the owner).
+       */
+      quotaBytes: number;
+      /**
+       * Format: int64
+       * @description When the use was counted, unix ms; `null` until the first count.
+       */
+      updatedAt: number | null;
+      /**
+       * Format: int64
+       * @description Media plus database, in bytes.
+       */
+      usedBytes: number;
     };
     /**
      * @description What a user may do on the instance.
@@ -2641,6 +3155,75 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  approveDeviceSignIn: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['DeviceApproval'];
+      };
+    };
+    responses: {
+      /** @description Approved: the device's next poll gets its token. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  pollDeviceSignIn: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['DevicePollRequest'];
+      };
+    };
+    responses: {
+      /** @description Where the sign-in stands. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DevicePoll'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  startDeviceSignIn: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The codes of a new device sign-in. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DeviceAuthorization'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   logout: {
     parameters: {
       query?: never;
@@ -3238,6 +3821,31 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  acceptConsent: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ConsentRequest'];
+      };
+    };
+    responses: {
+      /** @description The consent, as recorded. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Consent'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   listPasskeys: {
     parameters: {
       query?: never;
@@ -3323,6 +3931,203 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  listSessions: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The sessions. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SessionList'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  endOtherSessions: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Every other session is signed out. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  endSession: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The session's id. */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Signed out; for the current session, the cookie is cleared. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The settings. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Settings'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  updateSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SettingsUpdate'];
+      };
+    };
+    responses: {
+      /** @description The settings after the change. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Settings'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  listApiTokens: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The tokens. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ApiTokenList'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  createApiToken: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ApiTokenRequest'];
+      };
+    };
+    responses: {
+      /** @description The new token, with its value. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CreatedApiToken'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  revokeApiToken: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The token's id. */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Revoked. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getUsage: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The storage used and the quota. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Usage'];
+        };
       };
       default: components['responses']['Problem'];
     };
