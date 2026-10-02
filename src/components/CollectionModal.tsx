@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
 import { useT } from '../i18n';
+import { useCapabilities } from '../api/ShelfyProvider';
 
 // Curated palette so custom sources stay visually consistent with the app.
 export const COLLECTION_COLORS: string[] = [
@@ -72,6 +73,10 @@ export default function CollectionModal({
 }: CollectionModalProps) {
   const t = useT('collectionModal');
   const tc = useT('common');
+  // "Label and posts" moves every linked post to the trash: on the web that
+  // needs the trash/bulk API (P1-11), which isn't live until the gallery's own
+  // bulk actions are (`bulkActions`); offer the choice only once it is.
+  const { bulkActions } = useCapabilities();
   const [name, setName] = useState<string>(initial?.name ?? '');
   const [color, setColor] = useState<string>(initial?.color ?? COLLECTION_COLORS[0]);
   const [saving, setSaving] = useState<boolean>(false);
@@ -299,7 +304,11 @@ export default function CollectionModal({
                 data-testid="collection-delete-mode-label"
                 onClick={() => setDeleteMode('label')}
                 onKeyDown={(e) => {
-                  if ((e.key === 'ArrowDown' || e.key === 'ArrowRight') && postCount > 0)
+                  if (
+                    (e.key === 'ArrowDown' || e.key === 'ArrowRight') &&
+                    postCount > 0 &&
+                    bulkActions
+                  )
                     setDeleteMode('posts');
                 }}
                 className={`w-full flex items-start gap-3 px-3 py-2.5 rounded-lg border text-left u-press u-transition ${
@@ -317,7 +326,7 @@ export default function CollectionModal({
                 </span>
               </button>
 
-              {postCount > 0 && (
+              {postCount > 0 && bulkActions && (
                 <button
                   type="button"
                   role="radio"

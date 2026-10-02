@@ -261,7 +261,7 @@ export default function ActionsMenu({
   }
 
   // Nothing this client can do with the post: no menu at all.
-  if (!url && !localFiles && !bulkActions) return null;
+  if (!url && !localFiles && !bulkActions && !primaryLocalPath) return null;
 
   /* Actions collapsed under a "more" menu, keeping the header uncluttered.
      Toggles on click; closes on outside click (see effect above). */
@@ -297,6 +297,22 @@ export default function ActionsMenu({
                 <FolderOpen size={14} className="shrink-0" />
                 {t('openFile')}
               </button>
+            )}
+            {/* The web has no local disk to open/reveal: a stored object is
+              downloaded instead, through a plain same-origin <a download> (no
+              server change needed). "Open original" below still covers a post
+              whose media isn't archived yet. */}
+            {!localFiles && primaryLocalPath && (
+              <a
+                data-testid="post-modal-download-original"
+                href={client.media.file(primaryLocalPath) ?? undefined}
+                download
+                onClick={() => setMenuOpen(false)}
+                className="u-press flex items-center gap-2.5 px-3 py-2 text-xs text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white text-left"
+              >
+                <HardDriveDownload size={14} className="shrink-0" />
+                {t('downloadOriginal')}
+              </a>
             )}
             {/* Manual bookmarks (and any post without a captured URL) have no
               original page to open — hide the entry instead of failing silently. */}
