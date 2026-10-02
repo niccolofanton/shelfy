@@ -19,7 +19,7 @@ pub mod media;
 pub mod notifications;
 pub mod posts;
 pub mod stats;
-mod tags;
+pub(crate) mod tags;
 
 use std::fmt;
 use std::str::FromStr;

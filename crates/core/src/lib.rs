@@ -17,6 +17,7 @@
 
 pub mod db;
 pub mod ids;
+pub mod ingest;
 pub mod legacy;
 pub mod repo;
 pub mod schema;
