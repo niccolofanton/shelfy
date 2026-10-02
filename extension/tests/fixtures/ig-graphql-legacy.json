@@ -1,0 +1,41 @@
+{
+  "data": {
+    "user": {
+      "edge_saved_media": {
+        "page_info": { "has_next_page": false, "end_cursor": null },
+        "edges": [
+          {
+            "node": {
+              "id": "3400000000000000001",
+              "shortcode": "C8vOfxsVAAB",
+              "__typename": "GraphSidecar",
+              "taken_at_timestamp": 1758000000,
+              "owner": { "username": "synthetic_author_a" },
+              "display_url": "https://scontent-synth1-1.cdninstagram.com/v/t51.2885-15/synthetic_a_cover_v2.jpg?stp=dst-jpg_e35&oh=00_SYNTHETIC&oe=69000000",
+              "edge_sidecar_to_children": {
+                "edges": [
+                  {
+                    "node": {
+                      "__typename": "GraphImage",
+                      "display_url": "https://scontent-synth1-1.cdninstagram.com/v/t51.2885-15/synthetic_a_1_v2.jpg?stp=dst-jpg_e35&oh=00_SYNTHETIC&oe=69000000"
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "node": {
+              "id": "3400000000000000004",
+              "shortcode": "C8vOfxsVAAE",
+              "__typename": "GraphImage",
+              "taken_at_timestamp": 1758300000,
+              "owner": { "username": "synthetic_author_c" },
+              "display_url": "https://scontent-synth1-1.cdninstagram.com/v/t51.2885-15/synthetic_d.jpg?stp=dst-jpg_e35&oh=00_SYNTHETIC&oe=69000000"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

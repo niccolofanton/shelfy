@@ -1,0 +1,102 @@
+{
+  "data": {
+    "bookmark_timeline_v2": {
+      "timeline": {
+        "instructions": [
+          {
+            "type": "TimelineAddEntries",
+            "entries": [
+              {
+                "entryId": "tweet-1800000000000000001",
+                "content": {
+                  "itemContent": {
+                    "tweet_results": {
+                      "result": {
+                        "rest_id": "1800000000000000001",
+                        "core": {
+                          "user_results": {
+                            "result": {
+                              "core": { "screen_name": "synthetic_x_user", "name": "Synthetic X" },
+                              "legacy": {}
+                            }
+                          }
+                        },
+                        "legacy": {
+                          "full_text": "Synthetic tweet with two photos",
+                          "created_at": "Wed Sep 17 10:00:00 +0000 2025",
+                          "extended_entities": {
+                            "media": [
+                              {
+                                "type": "photo",
+                                "media_url_https": "https://pbs.twimg.com/media/SyntheticPhotoA1.jpg"
+                              },
+                              {
+                                "type": "photo",
+                                "media_url_https": "https://pbs.twimg.com/media/SyntheticPhotoA2.jpg"
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "entryId": "tweet-1800000000000000002",
+                "content": {
+                  "itemContent": {
+                    "tweet_results": {
+                      "result": {
+                        "__typename": "TweetWithVisibilityResults",
+                        "tweet": {
+                          "rest_id": "1800000000000000002",
+                          "core": {
+                            "user_results": {
+                              "result": {
+                                "core": {
+                                  "screen_name": "synthetic_x_other",
+                                  "name": "Synthetic Other"
+                                },
+                                "legacy": {}
+                              }
+                            }
+                          },
+                          "legacy": {
+                            "full_text": "Synthetic video tweet",
+                            "created_at": "Thu Sep 18 11:30:00 +0000 2025",
+                            "extended_entities": {
+                              "media": [
+                                {
+                                  "type": "video",
+                                  "media_url_https": "https://pbs.twimg.com/ext_tw_video_thumb/1800000000000000002/pu/img/SyntheticPoster.jpg",
+                                  "video_info": {
+                                    "variants": [
+                                      {
+                                        "content_type": "video/mp4",
+                                        "bitrate": 832000,
+                                        "url": "https://video.twimg.com/ext_tw_video/1800000000000000002/pu/vid/avc1/640x360/Synthetic.mp4"
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "entryId": "cursor-bottom-SYNTHETIC",
+                "content": { "cursorType": "Bottom", "value": "SYNTHETIC_BOTTOM_CURSOR" }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

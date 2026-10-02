@@ -31,6 +31,7 @@ export default tseslint.config(
       '.claude/**',
       'dist/**',
       'dist-electron/**',
+      'extension/dist/**',
       'release/**',
       'out/**',
       'coverage/**',

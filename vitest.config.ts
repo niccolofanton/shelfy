@@ -6,9 +6,10 @@ export default defineConfig({
   test: {
     globals: true,
     setupFiles: ['tests/setup.ts'],
-    // Only the real suite under tests/. Keeps Playwright specs (e2e/) and stale
-    // agent-worktree copies (.claude/worktrees/) out of the unit run.
-    include: ['tests/**/*.{test,spec}.{js,jsx,ts,tsx}'],
+    // Only the real suites under tests/ and extension/tests/ (web port MV3 extension). Keeps
+    // Playwright specs (e2e/) and stale agent-worktree copies (.claude/worktrees/) out of the
+    // unit run.
+    include: ['tests/**/*.{test,spec}.{js,jsx,ts,tsx}', 'extension/tests/**/*.test.ts'],
     exclude: ['**/node_modules/**', 'dist/**', 'release/**', '.claude/**', 'e2e/**'],
     environmentMatchGlobs: [
       ['tests/components/**', 'jsdom'],

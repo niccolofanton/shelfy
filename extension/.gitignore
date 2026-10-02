@@ -1,0 +1,2 @@
+# Output of `pnpm exec tsx extension/build.ts` (load this folder unpacked in Chrome).
+dist/

@@ -1,0 +1,74 @@
+{
+  "items": [
+    {
+      "media": {
+        "id": "3400000000000000001_9000000001",
+        "pk": "3400000000000000001",
+        "code": "C8vOfxsVAAB",
+        "media_type": 8,
+        "taken_at": 1758000000,
+        "user": { "username": "synthetic_author_a" },
+        "caption": { "text": "Synthetic caption A" },
+        "image_versions2": {
+          "candidates": [
+            {
+              "url": "https://scontent-synth1-1.cdninstagram.com/v/t51.2885-15/synthetic_a_cover.jpg?stp=dst-jpg_e35&_nc_ht=scontent-synth1-1.cdninstagram.com&oh=00_SYNTHETIC&oe=68F00000"
+            }
+          ]
+        },
+        "carousel_media": [
+          {
+            "media_type": 1,
+            "image_versions2": {
+              "candidates": [
+                {
+                  "url": "https://scontent-synth1-1.cdninstagram.com/v/t51.2885-15/synthetic_a_1.jpg?stp=dst-jpg_e35&oh=00_SYNTHETIC&oe=68F00000"
+                }
+              ]
+            }
+          },
+          {
+            "media_type": 2,
+            "image_versions2": {
+              "candidates": [
+                {
+                  "url": "https://scontent-synth1-1.cdninstagram.com/v/t51.2885-15/synthetic_a_2.jpg?stp=dst-jpg_e35&oh=00_SYNTHETIC&oe=68F00000"
+                }
+              ]
+            },
+            "video_versions": [
+              {
+                "url": "https://scontent-synth1-1.cdninstagram.com/o1/v/t16/f2/m69/synthetic_a_2.mp4?oh=00_SYNTHETIC&oe=68F00000"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "media": {
+        "id": "3400000000000000002_9000000002",
+        "code": "C8vOfxsVAAC",
+        "media_type": 2,
+        "taken_at": 1758100000,
+        "user": { "username": "synthetic_author_b" },
+        "caption": { "text": "Synthetic caption B" },
+        "image_versions2": {
+          "candidates": [
+            {
+              "url": "https://scontent-synth1-1.cdninstagram.com/v/t51.2885-15/synthetic_b.jpg?stp=dst-jpg_e35&oh=00_SYNTHETIC&oe=68F00000"
+            }
+          ]
+        },
+        "video_versions": [
+          {
+            "url": "https://scontent-synth1-1.cdninstagram.com/o1/v/t16/f2/m69/synthetic_b.mp4?oh=00_SYNTHETIC&oe=68F00000"
+          }
+        ]
+      }
+    }
+  ],
+  "more_available": true,
+  "next_max_id": "SYNTHETIC_CURSOR_1",
+  "status": "ok"
+}

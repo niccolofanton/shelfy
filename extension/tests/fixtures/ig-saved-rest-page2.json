@@ -1,0 +1,23 @@
+{
+  "items": [
+    {
+      "media": {
+        "id": "3400000000000000003_9000000001",
+        "code": "C8vOfxsVAAD",
+        "media_type": 1,
+        "taken_at": 1758200000,
+        "user": { "username": "synthetic_author_a" },
+        "caption": { "text": "Synthetic caption C" },
+        "image_versions2": {
+          "candidates": [
+            {
+              "url": "https://scontent-synth1-1.cdninstagram.com/v/t51.2885-15/synthetic_c.jpg?stp=dst-jpg_e35&oh=00_SYNTHETIC&oe=6A000000"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "more_available": false,
+  "status": "ok"
+}

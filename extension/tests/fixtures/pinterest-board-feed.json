@@ -1,0 +1,31 @@
+{
+  "resource_response": {
+    "data": [
+      {
+        "id": "900000000000000001",
+        "type": "pin",
+        "title": "Synthetic pin one",
+        "images": {
+          "236x": { "url": "https://i.pinimg.com/236x/aa/bb/cc/synthetic1.jpg" },
+          "736x": { "url": "https://i.pinimg.com/736x/aa/bb/cc/synthetic1.jpg" }
+        },
+        "pinner": { "username": "synthetic_pinner", "full_name": "Synthetic Pinner" },
+        "created_at": "Mon, 15 Sep 2025 08:00:00 +0000"
+      },
+      {
+        "id": "900000000000000002",
+        "type": "pin",
+        "images": { "736x": { "url": "https://i.pinimg.com/736x/dd/ee/ff/synthetic2.jpg" } },
+        "videos": {
+          "video_list": {
+            "V_720P": { "url": "https://v1.pinimg.com/videos/mc/720p/dd/ee/ff/synthetic2.mp4" }
+          }
+        },
+        "pinner": { "username": "synthetic_pinner", "full_name": "Synthetic Pinner" }
+      },
+      { "id": "SYNTHETIC_BOARD_ROW", "type": "board", "name": "not a pin" }
+    ],
+    "bookmark": "SYNTHETIC_PIN_CURSOR"
+  },
+  "resource": { "options": { "bookmarks": ["SYNTHETIC_PIN_CURSOR"] } }
+}

@@ -1,0 +1,142 @@
+:root {
+  color-scheme: light dark;
+  --fg: #1b1b1f;
+  --muted: #6b6b76;
+  --line: #d9d9e0;
+  --accent: #3d5afe;
+  --danger: #c62828;
+  --ok: #2e7d32;
+  font:
+    13px/1.4 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #ececf1;
+    --muted: #9a9aa6;
+    --line: #34343c;
+    --accent: #8c9eff;
+    --danger: #ef5350;
+    --ok: #66bb6a;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 12px;
+  color: var(--fg);
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0 0 2px;
+}
+
+h2 {
+  font-size: 13px;
+  margin: 18px 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+p {
+  margin: 4px 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+button {
+  font: inherit;
+  padding: 5px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+input[type='number'] {
+  font: inherit;
+  width: 4.5em;
+}
+
+.status {
+  min-height: 1.4em;
+  color: var(--muted);
+}
+
+.ok {
+  color: var(--ok);
+}
+
+.warn {
+  color: var(--danger);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: right;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+th:first-child,
+td:first-child {
+  text-align: left;
+  white-space: normal;
+  word-break: break-word;
+}
+
+th {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.log {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.log li {
+  padding: 2px 0;
+  border-bottom: 1px solid var(--line);
+  word-break: break-word;
+}

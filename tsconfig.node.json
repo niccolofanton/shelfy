@@ -10,6 +10,7 @@
     "scripts/**/*.ts",
     "build/**/*.ts",
     "workers/**/*.ts",
+    "extension/**/*.ts",
     "types/**/*.d.ts",
     "vite.config.ts",
     "vitest.config.ts",
