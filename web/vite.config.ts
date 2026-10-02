@@ -9,6 +9,7 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
 import tailwindcss from 'tailwindcss';
 import autoprefixer from 'autoprefixer';
 import tailwindConfig from '../tailwind.config';
@@ -33,10 +34,34 @@ function buildTimePlugin(): Plugin {
   };
 }
 
+// The service worker (web/src/sw.ts, plan §2.17 PWA): `injectManifest` so the
+// navigation and `/media` caching rules can be exact Workbox code instead of
+// `generateSW`'s declarative config (see sw.ts's header comment for why).
+// `manifest: false` keeps web/public/manifest.webmanifest (P1-02, P1-24: the
+// minimal manifest and icons, the share target this task adds) as the single
+// source of truth instead of generating a second one.
+const pwaPlugin = VitePWA({
+  strategies: 'injectManifest',
+  srcDir: 'src',
+  filename: 'sw.ts',
+  manifest: false,
+  injectManifest: {
+    // The default (js/css/html only) would skip the manifest and the icons;
+    // include them so the installed shell has its own icon offline too.
+    globPatterns: ['**/*.{js,css,html,webmanifest,png,svg,ico}'],
+  },
+  // "A new version prompts a reload" (acceptance 1): the worker never
+  // activates on its own. web/src/main.tsx asks the user first.
+  registerType: 'prompt',
+  // Only the production build ships a service worker; the dev server already
+  // proxies everything live, and an SW there would fight Vite's HMR.
+  devOptions: { enabled: false },
+});
+
 export default defineConfig({
   root: webDir,
   base: '/',
-  plugins: [react(), buildTimePlugin()],
+  plugins: [react(), buildTimePlugin(), pwaPlugin],
   resolve: { alias: { '@ui': uiDir } },
   css: {
     postcss: {

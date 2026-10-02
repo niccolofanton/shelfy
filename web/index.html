@@ -7,9 +7,12 @@
     <meta name="theme-color" content="#0f0f0f" />
     <meta name="referrer" content="no-referrer" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
-    <!-- Minimal web app manifest (web port plan §2.17; assumption G7): no
-         service worker yet, the PWA itself is a P2 deliverable. SPIKE-8 (P1-24)
-         needs the iOS home-screen app meta tags below regardless. -->
+    <!-- The web app manifest (plan §2.17, §2.19; P1-02, P1-24, P2-07: the
+         share target and the service worker). SPIKE-8 (P1-24) needs the iOS
+         home-screen app meta tags below regardless of the manifest. The
+         service worker itself (web/src/sw.ts) registers from main.tsx, not
+         from a tag here — vite-plugin-pwa's `injectRegister` detects that
+         self-registration and adds none of its own. -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
