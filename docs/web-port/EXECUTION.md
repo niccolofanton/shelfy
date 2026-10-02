@@ -98,7 +98,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-15 | Metrics, log redaction, rate limits | done | `web/p1-15-observability` (8ef7557…3ce52ee) |
 | P1-17 | Account API, API tokens, device-code flow | running | `web/p1-17-account` |
 | P1-02 | Responsive shell and a minimal web app manifest | running (Sonnet) | `web/p1-02-responsive` |
-| P1-16 | First osn PR, part 1: prepare (code only) | done; draft osn PR open | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` (967c83a…b5b94af) |
+| P1-16 | First osn PR, part 1: prepare (code only) | done; draft [osn PR #29](https://github.com/niccolofanton/osn/pull/29) | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` (967c83a…b5b94af) |
 | P1-22 | O2: R2 bucket and scoped token for backups | done | owner action O2 (osn `1ce0abe`) |
 
 ### Follow-ups
@@ -169,5 +169,5 @@ Each phase is broken down into tasks when the previous one is close to done.
 | O1 | Load the unpacked extension and run the SPIKE-3 comparison on your own accounts: steps in [spikes/03-extension-capture.md](spikes/03-extension-capture.md) §5 | P2 | partial on 2026-10-02: the IG folder is done. Still to do: X bookmarks to the end with a desktop X import, and a Pinterest board if the owner uses Pinterest. IG saved (all posts) is skipped, because it uses the same replay as the folder over about 4,000 posts. |
 | O2 | Appendix B prerequisite: R2 bucket `osn-backups` with a scoped token for restic. DNS Edit is no longer needed: OpenTofu manages DNS records with the existing DNS-scoped token (osn `ebd2de8`) | backups (P1-23) | done on 2026-10-02: the lead created the bucket (WEUR); the owner created the token (Object Read & Write, `osn-backups` only) and stored it with `just r2-backup-secrets`; `just r2-backup-check` passes (osn `1ce0abe`) |
 | O3 | Optional: fix Homebrew permissions so local tools such as mailpit can be installed | T10 | not needed: T10 writes sign-in emails to a dev mailbox (`SHELFY_DEV_MAILBOX`) |
-| O5 | Add `Access: Service Tokens = Edit` to the Cloudflare API token that OpenTofu uses (Account API Tokens). Without it, P1-23 cannot create the service token for non-browser clients (G2). | P1-23 | pending |
+| O5 | Add `Access: Service Tokens = Edit` to the Cloudflare API token that OpenTofu uses for Access (a user token, My Profile → API Tokens). Without it, P1-23 cannot create the service token for non-browser clients (G2). | P1-23 | done on 2026-10-02: the token can list Access service tokens |
 | O4 | Confirm Bot Fight Mode is off for `niccolofanton.dev` (Security → Bots). Our tokens cannot read zone settings, and with it on, the extension, Shortcut and CLI calls could be challenged | before P2 removes Access | done: the owner confirmed it is off (2026-10-02) |
