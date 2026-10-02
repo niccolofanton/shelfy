@@ -112,7 +112,8 @@ describe('AiOnboarding — wizard iniziale', () => {
     expect(screen.getByText('16 GB')).toBeInTheDocument();
     expect(screen.getByText('Apple Metal')).toBeInTheDocument();
     // Recommended model (hardware-fit) preselected and badged.
-    const selected = screen.getByTestId('ai-onb-model-qwen3vl-8b');
+    // The model list renders after the hardware chips; wait for it (flaky on CI otherwise).
+    const selected = await screen.findByTestId('ai-onb-model-qwen3vl-8b');
     expect(selected).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByText('Consigliato per il tuo computer')).toBeInTheDocument();
     // CTA carries the missing volume.
