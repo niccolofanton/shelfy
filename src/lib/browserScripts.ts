@@ -27,7 +27,7 @@ export interface ScriptWebview {
 //
 // A pass ends at the real bottom (no new captures AND no scroll progress); we never
 // stall while still advancing. Stall-detects via window.__lastInterceptAt.
-function gradualScroll(lastSelector: string, settleMs: number): string {
+function gradualScroll(lastSelector: string, settleMs: number, scanExpression = ''): string {
   return `
     window.__syncStop = false;
     window.__lastInterceptAt = window.__lastInterceptAt || Date.now();
@@ -41,10 +41,12 @@ function gradualScroll(lastSelector: string, settleMs: number): string {
       const PASSES = 2;
       const sel = ${JSON.stringify(lastSelector)};
       const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      const scan = () => { try { ${scanExpression} } catch (_) {} };
       const startedAt = Date.now();
       let iters = 0, done = false;
       for (let pass = 0; pass < PASSES && !window.__syncStop && !done; pass++) {
         if (pass > 0) { window.scrollTo(0, 0); await sleep(900); } // 2nd pass: re-scan from top
+        scan();
         let stalls = 0, noGrowth = 0;
         let lastCount = (window.__ssCapturedOrder || []).length;
         while (!window.__syncStop) {
@@ -59,6 +61,7 @@ function gradualScroll(lastSelector: string, settleMs: number): string {
             extra = 500;
           }
           await sleep(SETTLE_MS + extra);
+          scan();
           const count = (window.__ssCapturedOrder || []).length;
           const advanced = window.scrollY > beforeY + 2;
           const grew = count > lastCount || advanced;
@@ -80,7 +83,11 @@ function gradualScroll(lastSelector: string, settleMs: number): string {
 
 export const SCROLL_SCRIPTS: Record<'instagram' | 'twitter' | 'pinterest', string> = {
   instagram: gradualScroll('a[href^="/p/"]', 650),
-  twitter: gradualScroll('article[data-testid="tweet"]', 750),
+  twitter: gradualScroll(
+    'article[data-testid="tweet"]',
+    750,
+    'window.__ssScanTwitterBookmarks?.();',
+  ),
   pinterest: gradualScroll(
     'div[data-test-id="pin"], div[data-grid-item="true"], a[href*="/pin/"]',
     650,

@@ -43,7 +43,7 @@ export function useAiSuggestions(): UseAiSuggestions {
   useEffect(() => {
     const fn = (v: boolean): void => setEnabled(v);
     listeners.add(fn);
-    if (current !== enabled) setEnabled(current);
+    setEnabled(current);
     return () => {
       listeners.delete(fn);
     };

@@ -75,7 +75,6 @@ const MAX_PAGES_HARD = 8; // clamp for maxPages
 // Capture (F2)
 const VIEWPORT_W = 1280,
   VIEWPORT_H = 900;
-const TEXTURE_CAP_PX = 16384; // Chromium per-side texture ceiling (conservative)
 const DEFAULT_MAX_HEIGHT = 12000; // app-level cap; beyond → capped:true
 const SLICE_OVERLAP = 80; // px overlap between slices (cropped out before stitch)
 const NAV_TIMEOUT_MS = 30_000;

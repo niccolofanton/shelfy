@@ -25,8 +25,12 @@
 import * as db from './db';
 import * as jobstore from './jobstore';
 import * as webcapture from './webcapture';
-import * as captureEngine from './capture-engine';
-import * as enrich from './web-enrich';
+import { captureSite, BlockedError, type CapturedPage, type SiteCapture } from './webcap/capture';
+import type { SiteSession } from './webcap/driver';
+import * as meta from './webcap/metadata';
+import { ElectronSession } from './webcap/electron-driver';
+import { SystemChromeUnblock } from './webcap/system-chrome';
+import { JS_DETECT_BLOCKED } from './webcap/scripts';
 import * as analyzer from './analyzer';
 import { assertSafeUrl } from './net-safety';
 
@@ -40,9 +44,8 @@ const KIND = 'web'; // jobstore namespace for this queue
 // store them verbatim and PostCard/WebMetaPanel read .hex/.family/.usage. The
 // concrete element interfaces live in web-enrich; derive them from its return
 // type so this file stays the single source of truth without re-declaring them.
-type WebMetadata = Awaited<ReturnType<typeof enrich.buildWebMetadata>>;
-type WebPalette = WebMetadata['palette'];
-type WebFonts = WebMetadata['fonts'];
+type WebPalette = meta.PaletteSwatch[];
+type WebFonts = meta.FontInfo[];
 
 // The pipeline phases / job statuses. `phase` and `status` are distinct fields
 // that draw from this same set: `status` uses 'pending' for the resting queued
@@ -57,6 +60,7 @@ type Phase =
   | 'queued'
   | 'done'
   | 'cancelled'
+  | 'blocked'
   | 'error';
 
 // Phases that carry a progress weight (the four active pipeline stages).
@@ -120,6 +124,9 @@ interface WebJobRecord {
   awards: Shelfy.WebAward[];
   pages: JobPage[];
   events: JobEvent[];
+  // Set when the site answered with an anti-bot check: the user can pass it in a
+  // visible window (unblockJob) and the capture resumes in that session.
+  blocked?: { vendor: string; url: string; reason: string } | null;
 }
 
 // The progress emitter set by main: receives a fresh snapshot on every transition.
@@ -132,52 +139,6 @@ interface ListRefreshPayload {
   refresh?: boolean;
 }
 type ListRefreshEmitter = (payload: ListRefreshPayload) => void;
-
-// A captured page, internal to the pipeline (richer than the renderer's JobPage):
-// keeps the raw html + extracted content + the WebGL probe so QC/re-capture and
-// enrichment can use them.
-interface CapturedPage {
-  url: string;
-  screenshotPath: string;
-  chunks?: Shelfy.WebPageChunk[];
-  width: number;
-  height: number;
-  html: string;
-  content: WebContent | null;
-  webglHeavy: boolean;
-  usedOgImage?: boolean;
-}
-
-// The shape enrich.extractContent returns (the subset this module reads).
-interface WebContent {
-  url: string;
-  title: string;
-  metaDescription: string;
-  og: { image?: string; [k: string]: unknown };
-  twitter: { image?: string; [k: string]: unknown };
-  jsonld: unknown;
-  headings: unknown;
-  mainText: string;
-  textLength: number;
-  truncated: boolean;
-  lang: string;
-}
-
-// The aggregate enrich.aggregateSiteText returns. webMeta mirrors the exact
-// closed shape that function produces (siteName/title/description/…); it's a
-// structural instance of Shelfy.WebMeta but, lacking that type's open index
-// signature, can't be *typed* as it directly — see the cast at the upsert site.
-type SiteAggregate = ReturnType<typeof enrich.aggregateSiteText>;
-
-// The QC verdict analyzer.assessScreenshot returns; `midBand` is set locally when
-// a tall page's middle band fails (see assessPage).
-interface QcVerdict {
-  ok?: boolean;
-  status: string;
-  ready?: boolean;
-  reason?: string;
-  midBand?: boolean;
-}
 
 // Options accepted by captureWebReference().
 interface CaptureOptions {
@@ -192,6 +153,7 @@ interface CaptureOptions {
   }) => void;
   overwrite?: boolean;
   singlePage?: boolean;
+  session?: SiteSession; // visible-window session from the unblock flow
 }
 
 // Options accepted by enqueueWeb().
@@ -213,39 +175,8 @@ interface EnqueueResult {
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const WEB_CONCURRENCY = 1; // one site/job at a time
-// Within a single site, capture this many pages concurrently. Each page renders in
-// its own Playwright context inside the shared browser (isolated cookies/storage),
-// so 4-up parallelism cuts the per-page ~15s settle from a long sequential sum to
-// roughly ceil(pages/4) batches of wall-clock.
-const CAPTURE_PAGE_CONCURRENCY = 4;
-// WebGL-heavy sites: N concurrent Three.js/OGL scenes contend for ONE GPU —
-// intros/preloaders slow down, timeouts multiply, and the shared browser's GPU
-// process can crash. The home capture probes the site (pageCtx.webglHeavy) and
-// the remaining pages then run at this reduced parallelism.
-const CAPTURE_PAGE_CONCURRENCY_WEBGL = 2;
 const DEFAULT_MAX_PAGES = 6;
 const MAX_PAGES_CLAMP = 8;
-
-// Per-phase timeouts (abort the phase, not necessarily the whole job — partial
-// persistence keeps a job alive past a failed enrichment phase). Composed with
-// the job's own abort signal via AbortSignal.any (pattern from downloader.js).
-const DISCOVER_TIMEOUT_MS = 15_000;
-// A capture can legitimately take: goto ≤45s + networkidle ≤20s + preloader wait
-// ≤30s + autoscroll ≤30s + settles ~6s + shot ≤30s. The old 60s budget killed
-// precisely the heavy (WebGL/preloader) sites this feature targets — and a
-// timed-out page gets no QC re-capture nor og:image fallback. Generous beats
-// truncated here; typical pages finish far earlier.
-const CAPTURE_TIMEOUT_PER_PAGE_MS = 150_000;
-const EXTRACT_TIMEOUT_MS = 20_000;
-// Re-capture of a page the QC model flagged as black/loading: open it again and
-// wait 30s for it to finish rendering, with a correspondingly longer budget
-// (nav ≤45s + ready ≤30s + autoscroll ≤30s + settle 30s + shot ≤30s).
-const RECAPTURE_WAIT_MS = 30_000;
-const RECAPTURE_TIMEOUT_MS = 180_000;
-// Screenshot-QC assessment pool: verdicts are independent per page and the VLM
-// server is spawned with --parallel slots, so a few checks can run at once.
-// Kept small so a concurrent tag-analysis batch isn't starved of slots.
-const QC_ASSESS_CONCURRENCY = 3;
 
 // Progress weights per phase (sum to 1.0); see spec F10 §2.3.
 const PHASE_WEIGHTS: Record<WeightedPhase, number> = {
@@ -268,6 +199,14 @@ const urlCache = new Map<string, string>(); // key → original url (needed for 
 const abortMap = new Map<string, AbortController>(); // key → AbortController (active jobs only)
 const pendingQueue: string[] = []; // ordered keys awaiting execution
 const pausedKeys = new Set<string>(); // keys aborted by pause → re-queue instead of cancel
+// Sessions opened by unblockJob (the user's real Chrome, or a visible Electron
+// window as fallback), consumed by the next run of that job.
+interface UnblockHandle {
+  session: SiteSession | null;
+  dispose: () => Promise<void>;
+}
+const unblockSessions = new Map<string, UnblockHandle>();
+const unblockWaiting = new Set<string>();
 
 let isPaused = false;
 let runningCount = 0;
@@ -340,85 +279,6 @@ function pushEvent(key: string, kind: EventKind, text: string, data?: unknown): 
   setJob({ ...j, events: base });
 }
 
-// Human-readable label for how discovery found the pages.
-const SOURCE_LABEL: Record<string, string> = {
-  sitemap: 'Pagine trovate dalla sitemap',
-  crawl: 'Pagine trovate esplorando la home',
-  'seed-only': 'Nessuna sitemap: solo la pagina iniziale',
-  'single-page': 'Solo questa pagina',
-};
-
-// Run `worker(item, i)` over `items` with at most `limit` in flight at once.
-// Results are returned positionally (results[i] = worker's return for item i), so
-// ordering is preserved regardless of completion order. A worker that throws
-// rejects the whole pool (used here only for a genuine job-abort; per-page failures
-// are swallowed inside the worker and surface as a null result).
-//
-// When `signal` is given, each runner loop bails BEFORE pulling the next item once
-// the signal is aborted: a cancelled job must not keep spinning up (and tearing
-// down) fresh Playwright contexts for the remaining indices after one in-flight
-// worker has rethrown the abort.
-async function runPool<T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T, i: number) => Promise<R>,
-  signal?: AbortSignal,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  async function runner(): Promise<void> {
-    for (;;) {
-      if (signal?.aborted) return; // job cancelled → stop claiming new items
-      const i = next++;
-      if (i >= items.length) return;
-      results[i] = await worker(items[i], i);
-    }
-  }
-  const n = Math.max(1, Math.min(limit, items.length));
-  await Promise.all(Array.from({ length: n }, () => runner()));
-  return results;
-}
-
-// Map an internal captured page → the slim shape the renderer consumes (job.pages
-// and, after upsert, post.webPages). Carries the screenshot chunks so the gallery
-// thumbnail uses the light top band while the lightbox can stack every band.
-function toJobPage(p: CapturedPage): JobPage {
-  return {
-    url: p.url,
-    screenshotPath: p.screenshotPath,
-    chunks: Array.isArray(p.chunks) ? p.chunks : undefined,
-    width: p.width,
-    height: p.height,
-  };
-}
-
-// Trim a URL to "/path" (origin stripped) for compact log lines; keep "/" for home.
-function shortPath(u: string): string {
-  try {
-    const x = new URL(u);
-    return (x.pathname || '/') + (x.search || '');
-  } catch {
-    return String(u || '');
-  }
-}
-
-// Compose the job abort signal with a per-phase timeout. Returns { signal, done }
-// where done() clears the timer. Falls back gracefully when AbortSignal.any is
-// unavailable (old runtimes).
-function withTimeout(
-  jobSignal: AbortSignal | undefined,
-  ms: number,
-): { signal: AbortSignal; done: () => void } {
-  const timeoutAc = new AbortController();
-  const timer = setTimeout(() => timeoutAc.abort(), ms);
-  const signals = [timeoutAc.signal, ...(jobSignal ? [jobSignal] : [])];
-  const signal =
-    typeof AbortSignal.any === 'function'
-      ? AbortSignal.any(signals)
-      : jobSignal || timeoutAc.signal;
-  return { signal, done: () => clearTimeout(timer) };
-}
-
 function isAbortErr(err: unknown): boolean {
   const e = err as { name?: unknown; message?: unknown } | null | undefined;
   return e?.name === 'AbortError' || e?.message === 'AbortError';
@@ -430,21 +290,9 @@ function clampMaxPages(n: unknown): number {
   return Math.max(1, Math.min(MAX_PAGES_CLAMP, v));
 }
 
-// Vertical screenshot bands. The capture-engine PageCtx contract does not declare
-// `chunks` (only the OSR/Playwright engines may attach it opportunistically), so
-// read it defensively off the live ctx — exactly as the original code did with the
-// `Array.isArray(ctx.chunks)` guard — and return undefined when absent.
-function ctxChunks(ctx: unknown): Shelfy.WebPageChunk[] | undefined {
-  const c = (ctx as { chunks?: unknown } | null | undefined)?.chunks;
-  return Array.isArray(c) ? (c as Shelfy.WebPageChunk[]) : undefined;
-}
-
 // ─── Pipeline executor ────────────────────────────────────────────────────────
 
-// The single job run by the queue. Placeholder already exists (created at
-// enqueue). Drives the phases, persists, and delegates AI. Returns nothing —
-// state lives in the job record. Throws on a non-recoverable failure so runJob's
-// catch can decide cancelled vs error.
+// The single job run by the queue (v2 capture). Placeholder already exists.
 async function captureWebReference(
   url: string,
   {
@@ -453,15 +301,13 @@ async function captureWebReference(
     onProgress,
     overwrite = false,
     singlePage = false,
+    session,
   }: CaptureOptions = {},
 ): Promise<void> {
   const key = jobKey(db.webPostId(url));
-  // Single-page mode captures exactly the pasted URL — no sitemap/crawl, so a max
-  // of one page regardless of the maxPages hint.
   const cap = singlePage ? 1 : clampMaxPages(maxPages);
-  // One epoch for the whole capture: used both as web_captured_at and as the
-  // screenshot filename prefix, so this version's files never collide with a
-  // prior capture's (version history).
+  // One epoch for the whole capture: web_captured_at AND the asset filename
+  // prefix, so this version's files never collide with a prior capture's.
   const captureStamp = Math.floor(Date.now() / 1000);
   const report = (phase: WeightedPhase, frac: number, extra?: PhaseExtra): void => {
     emitPhase(key, phase, frac, extra);
@@ -470,446 +316,124 @@ async function captureWebReference(
     } catch {}
   };
 
-  // ── Phase 1: discovering ──────────────────────────────────────────────────
-  report('discovering', 0, { stage: singlePage ? 'Pagina singola…' : 'Ricerca delle pagine…' });
-  pushEvent(key, 'read', `Apertura di ${url}`);
-  let discovery: {
-    finalUrl: string;
-    domain: string | null;
-    origin: string | null;
-    source: string;
-    pages: { url: string }[];
-  } | null;
-  if (singlePage) {
-    // Skip sitemap discovery/ranking entirely: capture only the pasted URL (an
-    // article/guide). The redirect-resolved finalUrl + domain come from the
-    // capture step itself; here we just seed the single page.
-    let domainHint: string | null = null;
-    try {
-      domainHint = new URL(url).hostname.replace(/^www\./, '');
-    } catch {}
-    discovery = {
-      finalUrl: url,
-      domain: domainHint,
-      origin: null,
-      source: 'single-page',
-      pages: [{ url }],
-    };
-  } else {
-    const { signal: s, done } = withTimeout(signal, DISCOVER_TIMEOUT_MS);
-    try {
-      discovery = await webcapture.discoverPages(url, { maxPages: cap, signal: s });
-    } catch (err) {
-      // A genuine cancel propagates; a discovery failure degrades to seed-only.
-      if (isAbortErr(err) && signal?.aborted) throw err;
-      discovery = null;
-    } finally {
-      done();
-    }
-  }
-  signal?.throwIfAborted?.();
-
-  const finalUrl = (discovery && discovery.finalUrl) || url;
-  const domain = (discovery && discovery.domain) || null;
-  const source = (discovery && discovery.source) || 'seed-only';
-  const discPages =
-    discovery && Array.isArray(discovery.pages) && discovery.pages.length
-      ? discovery.pages
-      : [{ url: finalUrl }];
-  report('discovering', 1, {
-    finalUrl,
-    domain,
-    source,
-    pagesTotal: discPages.length,
-    pagesDone: 0,
-  });
-  if (domain && finalUrl !== url) pushEvent(key, 'read', `Risolto in ${finalUrl}`, { finalUrl });
-  pushEvent(
-    key,
-    'info',
-    `${SOURCE_LABEL[source] || 'Pagine individuate'} — ${discPages.length} pagine`,
-    {
-      source,
-      pages: discPages.map((p) => p.url || finalUrl),
-    },
-  );
-
-  // ── Phase 2: capturing ──────────────────────────────────────────────────────
-  // Up to CAPTURE_PAGE_CONCURRENCY pages render at once, each in its own Playwright
-  // context inside the shared browser. The home (index 0) additionally harvests
-  // buildWebMetadata WHILE its context is alive. Results are placed by index so the
-  // hero stays first; failed pages become null and are compacted out afterwards.
-  const total = discPages.length;
-  let webMetadata: WebMetadata | null = null; // { palette, fonts, techStack } from the home
-  let homeFinalUrl = finalUrl;
-  let pagesDone = 0;
-  // Positional results (live[i] filled as page i lands) → incremental thumbnails in
-  // discovery order regardless of which page finishes first.
-  const live: (CapturedPage | null)[] = new Array(total).fill(null);
-
-  report('capturing', 0, { stage: `Cattura di ${total} pagine`, pagesTotal: total, pagesDone: 0 });
-
-  const capturePageTask = async (
-    discPage: { url: string } | undefined,
-    i: number,
-  ): Promise<CapturedPage | null> => {
-    const pageUrl = (discPage && discPage.url) || finalUrl;
-    pushEvent(key, 'read', `Cattura pagina ${i + 1}/${total}: ${shortPath(pageUrl)}`);
-    const { signal: s, done } = withTimeout(signal, CAPTURE_TIMEOUT_PER_PAGE_MS);
-    let ctx: Awaited<ReturnType<typeof captureEngine.capturePage>> | null = null;
-    try {
-      ctx = await captureEngine.capturePage(pageUrl, {
-        format: 'webp',
-        quality: 82,
-        signal: s,
-        captureStamp,
-        onStep: (label: string, delta: number, tot: number) => {
-          if (delta >= 2000)
-            pushEvent(
-              key,
-              'info',
-              `⏱ ${label}: ${(delta / 1000).toFixed(1)}s (tot ${(tot / 1000).toFixed(1)}s)`,
-            );
+  // ── Phase 1+2: capture (primary page, page selection, inner pages) ──────────
+  report('discovering', 0, { stage: singlePage ? 'Pagina singola…' : 'Apertura del sito…' });
+  const livePages: JobPage[] = [];
+  let site: SiteCapture;
+  try {
+    site = await captureSite(url, {
+      maxPages: cap,
+      singlePage,
+      stamp: captureStamp,
+      video: true,
+      signal,
+      session,
+      hooks: {
+        onEvent: (e) => pushEvent(key, e.kind === 'error' ? 'error' : e.kind, e.text, e.data),
+        onStage: (stage, frac) => {
+          if (stage === 'primary')
+            report('discovering', 0.5, { stage: 'Cattura della pagina principale…' });
+          else report('capturing', frac, { stage: 'Cattura delle pagine interne…' });
         },
-      });
-      const shotUrl = ctx.finalUrl || pageUrl;
-      pushEvent(
-        key,
-        'artifact',
-        `Screenshot ${ctx.width}×${ctx.height}px (webp${ctx.capped ? ', altezza limitata' : ''})`,
-        { screenshotPath: ctx.screenshotPath, width: ctx.width, height: ctx.height, url: shotUrl },
-      );
-      // The context stays alive until dispose(): harvest live-DOM signals first.
-      if (i === 0) {
-        homeFinalUrl = ctx.finalUrl || finalUrl;
-        try {
-          // Pass the per-page signal so CAPTURE_TIMEOUT_PER_PAGE_MS can cancel the
-          // ffmpeg palette fallback (web-enrich also self-bounds it to 10s).
-          webMetadata = await enrich.buildWebMetadata(ctx, s);
-        } catch {
-          webMetadata = null;
-        }
-        if (webMetadata) {
-          const pal = webMetadata.palette || [];
-          const fnt = webMetadata.fonts || [];
-          const tech = webMetadata.techStack || [];
-          patchJob(key, { title: ctx.title || null, palette: pal, fonts: fnt, techStack: tech });
-          pushEvent(
-            key,
-            'branding',
-            `Branding: ${pal.length} colori, ${fnt.length} font, ${tech.length} tecnologie`,
-            { palette: pal, fonts: fnt, techStack: tech },
-          );
-        }
-      }
-      let content: WebContent | null = null;
-      try {
-        content = enrich.extractContent(ctx.html, shotUrl);
-      } catch {
-        content = null;
-      }
-      if (content) {
-        pushEvent(
-          key,
-          'read',
-          `Contenuto: ${content.textLength || 0} caratteri${content.lang ? `, lingua ${content.lang}` : ''}`,
-          { title: content.title || '', lang: content.lang || '', chars: content.textLength || 0 },
-        );
-      }
-      live[i] = {
-        url: shotUrl,
-        screenshotPath: ctx.screenshotPath,
-        // Vertical screenshot bands (≤2000px each): the renderer stacks several
-        // light images instead of decoding one heavyweight full-page frame.
-        chunks: ctxChunks(ctx),
-        width: ctx.width,
-        height: ctx.height,
-        html: ctx.html,
-        content,
-        // WebGL probe from the engine — drives the per-site parallelism choice.
-        webglHeavy: !!ctx.webglHeavy,
-      };
-      return live[i];
-    } catch (err) {
-      // A cancel of the WHOLE job stops everything → rethrow so the pool rejects.
-      if (isAbortErr(err) && signal?.aborted) {
-        try {
-          await ctx?.dispose?.();
-        } catch {}
-        done();
-        throw err;
-      }
-      // A single page failing (per-page timeout / nav error) just skips that page.
-      const e = err as { name?: unknown; message?: unknown } | null | undefined;
-      const reason =
-        isAbortErr(err) || e?.name === 'TimeoutError' || /timeout/i.test(String(e?.message || ''))
-          ? 'timeout'
-          : (typeof e?.message === 'string' && e.message) || 'errore';
-      pushEvent(key, 'info', `Pagina saltata: ${shortPath(pageUrl)} (${reason})`);
-      return null;
-    } finally {
-      try {
-        await ctx?.dispose?.();
-      } catch {}
-      done();
-      // Progress + incremental thumbnails as each page lands (any completion order).
-      pagesDone++;
-      report('capturing', pagesDone / total, { pagesTotal: total, pagesDone });
-      patchJob(key, { pages: live.filter(Boolean).map((p) => toJobPage(p!)) });
-    }
-  };
-
-  // Home FIRST, alone: it harvests the branding metadata anyway, and its capture
-  // probes whether the site is WebGL-heavy — if so, the remaining pages run at
-  // reduced parallelism to avoid GPU contention (slower intros → timeouts).
-  await capturePageTask(discPages[0], 0);
-  if (discPages.length > 1) {
-    signal?.throwIfAborted?.();
-    const limit = live[0]?.webglHeavy ? CAPTURE_PAGE_CONCURRENCY_WEBGL : CAPTURE_PAGE_CONCURRENCY;
-    if (limit < CAPTURE_PAGE_CONCURRENCY)
-      pushEvent(key, 'info', `Sito WebGL: parallelismo ridotto a ${limit} pagine per volta`);
-    await runPool(discPages.slice(1), limit, (p, i) => capturePageTask(p, i + 1), signal);
-  }
-  // Compact out skipped pages, preserving discovery order (hero first).
-  const captured = live.filter((p): p is CapturedPage => Boolean(p));
-  signal?.throwIfAborted?.();
-
-  // ── Phase 2b: screenshot QC + re-capture ──────────────────────────────────────
-  // The local VLM looks at each screenshot for the SOLE purpose of telling whether
-  // the page actually rendered, or is black / blank / a loading screen / partial.
-  // Any flagged page is re-captured once, opening it again and waiting 30s so a
-  // slow (WebGL/lazy) page can finish. Fail-open: if the model isn't ready the
-  // assessment returns 'unknown' and nothing is re-captured.
-
-  // Part A — og:image fallback: when a page never yields a usable frame, the
-  // site's own curated social preview beats a black/blank screenshot, both as
-  // tagging input and as gallery thumbnail. Shared by the "re-capture still bad"
-  // and "re-capture itself failed (timeout)" paths.
-  const applyOgFallback = async (cap: CapturedPage): Promise<boolean> => {
-    const ogImg = cap.content?.og?.image || cap.content?.twitter?.image || '';
-    if (!ogImg) return false;
-    const ogPath = await webcapture
-      .fetchImageToWebp(ogImg, { pageUrl: cap.url, stamp: captureStamp, signal })
-      .catch(() => null);
-    if (!ogPath) return false;
-    cap.screenshotPath = ogPath;
-    // The og:image is a single light frame → one chunk.
-    cap.chunks = [{ screenshotPath: ogPath, width: 0, height: 0 } as Shelfy.WebPageChunk];
-    cap.usedOgImage = true;
-    pushEvent(key, 'artifact', `Schermata vuota: uso l'og:image di ${shortPath(cap.url)}`, {
-      screenshotPath: ogPath,
-      url: cap.url,
-    });
-    return true;
-  };
-
-  // Assessment pre-pass, PARALLEL: the QC verdicts are independent per page and
-  // the local VLM server exposes multiple slots (llama-server --parallel), so the
-  // hero/mid-band checks for all pages run through a small pool instead of one
-  // page at a time. Only the (rare) re-captures below stay serial.
-  const assessPage = async (cap: CapturedPage | null): Promise<QcVerdict | null> => {
-    if (!cap || !cap.screenshotPath) return null;
-    let qc: QcVerdict;
-    try {
-      qc = await analyzer.assessScreenshot(cap.screenshotPath, { signal });
-    } catch {
-      qc = { ok: true, status: 'unknown' };
-    }
-    // The hero band alone can't expose a page whose below-the-fold sections were
-    // captured pre-reveal (un-triggered/reversed scroll animations → blank bands):
-    // on tall captures ALSO probe a middle band and treat a bad verdict there as
-    // a QC failure, so the page gets its re-capture.
-    if (qc.ok && Array.isArray(cap.chunks) && cap.chunks.length >= 3) {
-      const mid = cap.chunks[Math.floor(cap.chunks.length / 2)];
-      if (mid?.screenshotPath && mid.screenshotPath !== cap.screenshotPath) {
-        let qcMid: QcVerdict;
-        try {
-          qcMid = await analyzer.assessScreenshot(mid.screenshotPath, { signal });
-        } catch {
-          qcMid = { ok: true, status: 'unknown' };
-        }
-        if (!qcMid.ok) qc = { ...qcMid, midBand: true };
-      }
-    }
-    return qc;
-  };
-  const qcByIndex = await runPool(captured, QC_ASSESS_CONCURRENCY, assessPage, signal);
-  signal?.throwIfAborted?.();
-
-  for (let i = 0; i < captured.length; i++) {
-    const cap = captured[i];
-    if (!cap || !cap.screenshotPath) continue;
-    signal?.throwIfAborted?.();
-
-    const qc = qcByIndex[i] || { ok: true, status: 'unknown' };
-    pushEvent(
-      key,
-      'info',
-      `Controllo qualità ${shortPath(cap.url)}: ${qc.status}${qc.midBand ? ' (sezione centrale)' : ''}${qc.reason ? ` — ${qc.reason}` : ''}`,
-    );
-    if (qc.ok) continue; // 'ok' or 'unknown' (model not ready / failed) → keep as-is
-
-    pushEvent(
-      key,
-      'info',
-      `Schermata "${qc.status}": ricattura di ${shortPath(cap.url)} con attesa di ${RECAPTURE_WAIT_MS / 1000}s`,
-    );
-    report('capturing', 1, { stage: `Ricattura ${shortPath(cap.url)}` });
-    const { signal: s2, done: done2 } = withTimeout(signal, RECAPTURE_TIMEOUT_MS);
-    let ctx2: Awaited<ReturnType<typeof captureEngine.capturePage>> | null = null;
-    try {
-      ctx2 = await captureEngine.capturePage(cap.url, {
-        format: 'webp',
-        quality: 82,
-        signal: s2,
-        captureStamp,
-        settleBeforeShotMs: RECAPTURE_WAIT_MS,
-        onStep: (label: string, delta: number, t: number) => {
-          if (delta >= 2000)
-            pushEvent(
-              key,
-              'info',
-              `⏱ ${label}: ${(delta / 1000).toFixed(1)}s (tot ${(t / 1000).toFixed(1)}s)`,
-            );
-        },
-      });
-      cap.screenshotPath = ctx2.screenshotPath;
-      cap.chunks = ctxChunks(ctx2);
-      cap.width = ctx2.width;
-      cap.height = ctx2.height;
-      cap.html = ctx2.html;
-      try {
-        cap.content = enrich.extractContent(ctx2.html, ctx2.finalUrl || cap.url);
-      } catch {
-        /* keep prior content */
-      }
-      // Home: re-harvest palette/fonts/tech from the now-rendered page.
-      if (i === 0) {
-        try {
-          const m = await enrich.buildWebMetadata(ctx2, s2);
-          if (m) {
-            webMetadata = m;
-            patchJob(key, {
-              palette: m.palette || [],
-              fonts: m.fonts || [],
-              techStack: m.techStack || [],
+        onPage: (p, done, total) => {
+          if (!livePages.some((x) => x.url === p.url)) livePages.push(toJobPageV2(p));
+          if (done === 0) {
+            report('discovering', 1, {
+              finalUrl: p.url,
+              domain: webHost(p.url),
+              title: p.title || null,
+              screenshotPath: p.hero?.path || null,
             });
           }
-        } catch {
-          /* keep prior metadata */
-        }
-      }
-      let qc2: QcVerdict;
-      try {
-        qc2 = await analyzer.assessScreenshot(cap.screenshotPath, { signal });
-      } catch {
-        qc2 = { status: 'unknown' };
-      }
-      pushEvent(
-        key,
-        'artifact',
-        `Ricattura ${shortPath(cap.url)}: ${ctx2.width}×${ctx2.height}px (qualità: ${qc2.status})`,
-        {
-          screenshotPath: cap.screenshotPath,
-          width: ctx2.width,
-          height: ctx2.height,
-          url: cap.url,
+          report('capturing', Math.min(1, (done + 1) / Math.max(1, total)), {
+            pagesTotal: total,
+            pagesDone: done + 1,
+            pages: livePages.slice(),
+          });
         },
-      );
-
-      // If the re-capture STILL isn't a usable frame (a page so WebGL-bound it
-      // never paints a stable still even under the real browser), fall back to
-      // the site's own social-preview image.
-      if (!qc2.ok && qc2.status !== 'unknown') {
-        await applyOgFallback(cap);
-      }
-    } catch (err) {
-      if (isAbortErr(err) && signal?.aborted) {
-        try {
-          await ctx2?.dispose?.();
-        } catch {}
-        done2();
-        throw err;
-      }
-      pushEvent(key, 'info', `Ricattura non riuscita: ${shortPath(cap.url)}`);
-      // The original screenshot was already QC-flagged: a re-capture that FAILED
-      // outright (typically the per-page timeout on a heavy site) must still fall
-      // back to the og:image rather than silently keeping the black/loading frame.
-      // Exception: a mid-band-only failure means the hero is fine — keeping the
-      // original full capture beats degrading to a lone social-preview image.
-      if (!qc.midBand) await applyOgFallback(cap);
-    } finally {
-      try {
-        await ctx2?.dispose?.();
-      } catch {}
-      done2();
-    }
-    patchJob(key, {
-      pages: captured.filter((p) => p && p.screenshotPath).map(toJobPage),
+      },
     });
-  }
-  signal?.throwIfAborted?.();
-
-  const withShots = captured.filter((p) => p && p.screenshotPath);
-  if (!withShots.length) {
-    // Nothing usable captured AND discovery gave us nothing → hard error (retryable).
-    // Tagged so runJob's error path can delete a placeholder THIS enqueue created
-    // (a save failure below, by contrast, keeps the placeholder for retry).
-    throw Object.assign(new Error('Cattura non riuscita: nessuno screenshot prodotto.'), {
+  } catch (err) {
+    if (err instanceof BlockedError) throw err;
+    if (isAbortErr(err)) throw err;
+    const e = err as { message?: unknown } | null | undefined;
+    throw Object.assign(new Error(`Cattura non riuscita: ${e?.message || err}`), {
       noScreenshot: true,
     });
   }
-  const partial = withShots.length < total; // at least one page failed to capture
-
-  // ── Phase 3: extracting (enrich + awards) ─────────────────────────────────────
-  report('extracting', 0, { stage: 'Estrazione contenuti e premi…' });
-  pushEvent(key, 'info', `Aggregazione di ${withShots.length} pagine catturate`);
-  let aggregate: SiteAggregate | null = null;
-  let awards: Shelfy.WebAward[] = [];
-  let awardTagsEntities: { tags: string[]; entities: string[] } = { tags: [], entities: [] };
-  {
-    const { signal: s, done } = withTimeout(signal, EXTRACT_TIMEOUT_MS);
-    try {
-      // aggregateSiteText accepts [{ title, content }] or PageContent[]; our
-      // captured entries expose { content } → use the {title, content} shape.
-      const pagesForText = captured.map((p) => ({
-        title: p.content?.title || '',
-        content: p.content || undefined,
-      }));
-      try {
-        aggregate = enrich.aggregateSiteText(pagesForText);
-      } catch {
-        aggregate = null;
-      }
-
-      // detectAwards wants [{ url, html }]; pure & deterministic on the home HTML.
-      try {
-        const pagesForAwards = captured
-          .filter((p) => typeof p.html === 'string')
-          .map((p) => ({ url: p.url, html: p.html }));
-        awards = enrich.detectAwards(pagesForAwards, homeFinalUrl) || [];
-        awardTagsEntities = enrich.awardsToTagsEntities(awards) || { tags: [], entities: [] };
-      } catch {
-        awards = [];
-        awardTagsEntities = { tags: [], entities: [] };
-      }
-    } finally {
-      done();
-    }
-  }
   signal?.throwIfAborted?.();
-  if (aggregate) {
-    pushEvent(
-      key,
-      'read',
-      `Testo del sito: ${(aggregate.contentText || '').length} caratteri${aggregate.lang ? `, lingua ${aggregate.lang}` : ''}`,
-      {
-        chars: (aggregate.contentText || '').length,
-        lang: aggregate.lang || '',
-      },
-    );
-  }
-  patchJob(key, { lang: aggregate?.lang || null, awards });
+  const pages = site.pages;
+  const primary = site.primary;
+  const finalUrl = primary.url;
+  const domain = webHost(finalUrl);
+  patchJob(key, {
+    finalUrl,
+    domain,
+    source: site.discoverySource,
+    pagesTotal: pages.length,
+    pagesDone: pages.length,
+    pages: pages.map(toJobPageV2),
+  });
+
+  // ── Phase 3: design metadata ───────────────────────────────────────────────
+  report('extracting', 0, { stage: 'Analisi di colori, font e tecnologie…' });
+  const head = (primary.probe.head || {}) as ProbeHead;
+  const jsonld = meta.parseJsonLd(Array.isArray(head.jsonld) ? head.jsonld : []);
+  const siteName =
+    head.ogSiteName ||
+    jsonld.organization?.name ||
+    head.applicationName ||
+    titleCase(domain.split('.').slice(0, -1).join('.') || domain);
+  const palette = await meta.computePalette(pages, signal).catch(() => null);
+  report('extracting', 0.4);
+  const typo = meta.computeTypography(pages, domain);
+  const tech = meta.computeTech(pages);
+  const awards = meta.computeAwards(pages, domain, siteName);
+  const traits = meta.computeTraits(pages, tech);
+  const awardTE = meta.awardTags(awards);
+  const digests = pages.map((p, i) => meta.pageDigest(p, i === 0 ? 1600 : 700));
+  const probeOf = (p: CapturedPage): ProbeExtras => p.probe as ProbeExtras;
+  const ogLocal = head.ogImage
+    ? await webcapture
+        .fetchImageToWebp(head.ogImage, { pageUrl: finalUrl, stamp: captureStamp, signal })
+        .catch(() => null)
+    : null;
+  const iconUrl = pickIcon(head.icons || [], finalUrl);
+  const faviconLocal = iconUrl
+    ? await webcapture
+        .fetchImageToWebp(iconUrl, { pageUrl: finalUrl, stamp: captureStamp, quality: 92, signal })
+        .catch(() => null)
+    : null;
+  signal?.throwIfAborted?.();
+  const title =
+    meta.cleanTitle(head.ogTitle || head.title || primary.title || siteName, siteName) || siteName;
+  const description =
+    head.description || head.ogDescription || jsonld.organization?.description || '';
+  const lang = (head.lang || '').split('-')[0].toLowerCase() || null;
+  const languages = Array.from(
+    new Set(
+      (head.hreflang || [])
+        .map((h) => String(h.lang || '').toLowerCase())
+        .filter((l) => l && l !== 'x-default'),
+    ),
+  ).slice(0, 20);
+  const fontsLegacy = typo.fonts;
+  const techNames = tech.filter((t) => t.confidence >= 0.8).map((t) => t.name);
+  const video = primary.video;
+  pushEvent(
+    key,
+    'branding',
+    `Design: ${palette?.swatches.length || 0} colori (${palette?.scheme || '—'}), ${typo.fonts.length} font, ${tech.length} tecnologie`,
+    { palette: palette?.swatches || [], fonts: typo.fonts, techStack: techNames },
+  );
+  patchJob(key, {
+    title,
+    lang,
+    palette: (palette?.swatches || []) as unknown as WebPalette,
+    fonts: fontsLegacy as unknown as WebFonts,
+    techStack: techNames,
+    awards: awards as unknown as Shelfy.WebAward[],
+  });
   pushEvent(
     key,
     'awards',
@@ -920,107 +444,149 @@ async function captureWebReference(
   );
   report('extracting', 1);
 
-  // ── Phase upsert (promote placeholder → full reference) ───────────────────────
-  // aggregate.webMeta is a closed shape; widen it to the open Shelfy.WebMeta the
-  // row carries (only the index signature is structurally absent — values match).
-  const webMeta: Shelfy.WebMeta = (aggregate?.webMeta as Shelfy.WebMeta | undefined) || {};
+  // ── Phase upsert ───────────────────────────────────────────────────────────
+  // Searchable site text: every page's digest (headings, CTAs, readable copy).
+  const siteText = digests
+    .map((d) =>
+      [
+        d.h1,
+        d.headings.filter((h) => h !== d.h1).join(' · '),
+        d.ctas.length ? `CTA: ${d.ctas.join(' · ')}` : '',
+        d.text,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    )
+    .join('\n\n')
+    .slice(0, 12000);
+  const cover =
+    primary.qc.status === 'ok' || !ogLocal ? primary.hero?.path || primary.bands[0]?.path : ogLocal;
+  const webPages = pages.map((p, i) => {
+    const d = digests[i];
+    return {
+      url: p.url,
+      requestedUrl: p.requestedUrl,
+      pageType: p.pageType,
+      title: meta.cleanTitle(p.title, siteName),
+      status: p.status,
+      // Legacy single image (gallery slide, v1 consumers) = the untouched hero.
+      screenshotPath: (i === 0 ? cover : p.hero?.path) || p.bands[0]?.path || '',
+      hero: p.hero,
+      chunks: p.bands.map((b) => ({
+        screenshotPath: b.path,
+        width: b.width,
+        height: b.height,
+        top: b.top,
+        cssHeight: b.cssHeight,
+      })),
+      footer: p.footer,
+      sections: p.sections.map((s) => ({
+        kind: s.kind,
+        heading: s.heading,
+        top: s.top,
+        cssHeight: s.cssHeight,
+        path: s.path,
+        width: s.width,
+        height: s.height,
+      })),
+      heightCss: p.heightCss,
+      capped: p.capped,
+      jacked: p.jacked,
+      qc: p.qc,
+      contentText: i === 0 ? siteText : d.text,
+      digest: { h1: d.h1, headings: d.headings, ctas: d.ctas },
+      meta: { ogImage: String((probeOf(p).head || {}).ogImage || '') },
+    };
+  });
+  const webMeta: Shelfy.WebMeta = {
+    schema: 2,
+    siteName,
+    title,
+    description: description.slice(0, 400),
+    lang: lang || undefined,
+    languages,
+    ogImage: head.ogImage || '',
+    ogImagePath: ogLocal || null,
+    favicon: faviconLocal || null,
+    themeColor: head.themeColor || null,
+    canonical: head.canonical || null,
+    rss: head.rss || null,
+    jsonldTypes: jsonld.types,
+    organization: jsonld.organization,
+    social: probeOf(primary).social || [],
+    credits: probeOf(primary).credits || [],
+    scheme: palette?.scheme || null,
+    contrast: palette?.contrast || null,
+    typeScale: typo.scale,
+    baseSize: typo.baseSize,
+    scaleRatio: typo.ratio,
+    tech,
+    traits,
+    video,
+    pageCount: pages.length,
+    awardTags: awardTE.tags,
+    awardEntities: awardTE.entities,
+    capture: {
+      engine: site.engine,
+      userAgent: site.userAgent,
+      viewport: { width: 1440, height: 900, scale: 2 },
+      discovery: site.discoverySource,
+      skipped: site.skipped,
+      consent: primary.consent,
+      timings: Object.fromEntries(pages.map((p) => [p.url, p.timings.total])),
+    },
+    ...(singlePage ? { singlePage: true } : {}),
+  };
   const ref = {
-    // Stable identity = the id assigned at enqueue (from the pasted URL), the same
-    // one the placeholder row and the live job carry. Keeping it fixed (instead of
-    // re-deriving from finalUrl) is what stops a home redirect ("/" → "/it") from
-    // splitting the site into two records — see webRefToPost.
     id: db.webPostId(url),
     url,
-    finalUrl: homeFinalUrl,
-    domain: domain || (webMeta.siteName as string | undefined) || null,
-    title:
-      (webMeta.title as string | undefined) ||
-      (webMeta.siteName as string | undefined) ||
-      domain ||
-      null,
-    description:
-      (webMeta.description as string | undefined) || captured[0]?.content?.metaDescription || null,
-    lang: aggregate?.lang || captured[0]?.content?.lang || null,
-    // Same epoch used for the screenshot filename prefix, so web_captured_at and
-    // the on-disk files agree.
+    finalUrl,
+    domain,
+    title,
+    description: description || null,
+    lang,
     capturedAt: captureStamp,
-    // One slide per captured page; hero first (discovery order preserved).
-    pages: withShots.map((p) => ({
-      url: p.url,
-      screenshotPath: p.screenshotPath,
-      // Vertical screenshot bands, persisted so the lightbox can lazy-stack them.
-      chunks: Array.isArray(p.chunks) ? p.chunks : undefined,
-      contentText: p.content?.mainText || '',
-      meta: p.content ? { ogImage: p.content.og?.image || '' } : undefined,
-    })),
-    // Deterministic enrichment (no AI yet).
-    palette: webMetadata?.palette,
-    fonts: webMetadata?.fonts,
-    techStack: webMetadata?.techStack,
+    pages: webPages,
+    palette: palette?.swatches || [],
+    fonts: fontsLegacy,
+    techStack: techNames,
     awards,
-    // Award-derived tags/entities feed post_tags/post_entities via the AI mapping
-    // later; persist them here as part of webMeta so they survive even if AI fails.
-    // singlePage rides along too (→ web_meta_json → post.webSinglePage), so a
-    // later "reanalyze" replays the same mode instead of a full sitemap crawl.
-    meta: {
-      ...webMeta,
-      awardTags: awardTagsEntities.tags,
-      awardEntities: awardTagsEntities.entities,
-      ...(singlePage ? { singlePage: true } : {}),
-    },
+    meta: webMeta,
   };
-  // The aggregated site text becomes the post caption (searchable + AI input).
-  if (aggregate?.contentText && ref.pages[0]) {
-    ref.pages[0].contentText = aggregate.contentText;
-  }
-
-  // ref.id pins the row to the placeholder's stable id (== the live job's postId),
-  // so the enriched row REPLACES the placeholder in place — never a second row.
   let postId = ref.id;
   try {
-    // db.WebReference is file-internal and intentionally loose: absent fields are
-    // typed `string | undefined` (we build `string | null` — same falsy result
-    // through webRefToPost's `||`), and palette is typed `string[]` while we (and
-    // the renderer, via paletteHexes) carry rich { hex, role, weight } swatches.
-    // Cast to the function's own parameter type so no data is lost on the way in.
     const res = db.upsertWebReference(
       ref as unknown as Parameters<typeof db.upsertWebReference>[0],
-      { overwriteAi: overwrite },
+      {
+        overwriteAi: overwrite,
+      },
     );
     postId = res.id || postId;
     pushEvent(
       key,
       'write',
-      `Reference salvata: ${ref.pages.length} screenshot, ${(webMetadata?.palette || []).length} colori, ${(webMetadata?.fonts || []).length} font, ${(webMetadata?.techStack || []).length} tecnologie, ${awards.length} premi`,
+      `Reference salvata: ${pages.length} pagine, ${pages.reduce((s, p) => s + p.sections.length, 0)} sezioni${video ? ', video di scroll' : ''}`,
       { postId },
     );
   } catch (err) {
-    // Persistence itself failed — but we DID capture screenshots. Re-throw so the
-    // job lands in 'error' (retryable); the placeholder row is still present.
     const e = err as { message?: unknown } | null | undefined;
     throw new Error(`Salvataggio reference non riuscito: ${e?.message || err}`);
   }
-  // The promoted row replaced the placeholder in the SAME id → refresh the list.
   onListRefresh?.({ count: 0, platform: 'web', refresh: true });
 
   // ── Phase analyzing (delegated to the shared AI queue) ────────────────────────
-  // We hand the full, freshly-persisted post to analyzer.enqueuePost (it takes a
-  // post object, NOT a postId). The AI runs on the analyzer's own queue and emits
-  // its own analyze:progress; our 'analyzing' phase closes as "delegated".
+  const partial = site.skipped.length > 0;
   report('analyzing', 0, { stage: 'Analisi AI in coda…', partial });
   try {
     const post = db.getPost(postId);
     if (post) {
       analyzer.enqueuePost(post);
-      pushEvent(key, 'info', 'Analisi AI (categoria + tag) messa in coda');
+      pushEvent(key, 'info', 'Analisi AI messa in coda');
     }
   } catch (err) {
-    // AI delegation failing is never fatal — the reference is already saved.
     const e = err as { message?: unknown } | null | undefined;
     console.warn('[weborchestrator] analyzer enqueue failed:', e?.message);
   }
-
-  // ── done ──────────────────────────────────────────────────────────────────────
   pushEvent(key, 'info', partial ? 'Cattura completata (parziale)' : 'Cattura completata');
   emitPhase(key, 'analyzing', 1, { partial });
   patchJob(key, {
@@ -1030,10 +596,84 @@ async function captureWebReference(
     phaseProgress: 1,
     partial,
     error: null,
+    blocked: null,
     finishedAt: Date.now(),
-    title: ref.title,
-    screenshotPath: withShots[0].screenshotPath,
+    title,
+    screenshotPath: cover || null,
   });
+}
+
+// ─── v2 helpers ───────────────────────────────────────────────────────────────
+
+interface ProbeHead {
+  title?: string;
+  lang?: string;
+  description?: string;
+  ogTitle?: string;
+  ogDescription?: string;
+  ogImage?: string;
+  ogSiteName?: string;
+  applicationName?: string;
+  themeColor?: string;
+  canonical?: string;
+  rss?: string;
+  icons?: { href: string; rel: string; sizes: string; type: string }[];
+  hreflang?: { lang?: string; href?: string }[];
+  jsonld?: string[];
+}
+
+interface ProbeExtras {
+  head?: ProbeHead;
+  social?: { platform: string; href: string }[];
+  credits?: { text: string; href: string }[];
+}
+
+function webHost(u: string): string {
+  try {
+    return new URL(u).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+function titleCase(s: string): string {
+  return s.replace(/(^|[\s.-])([a-z])/g, (_, a: string, b: string) => a + b.toUpperCase());
+}
+
+// Best raster icon: apple-touch-icon / largest PNG; SVG and ICO as fallbacks.
+function pickIcon(
+  icons: { href: string; rel: string; sizes: string; type: string }[],
+  pageUrl: string,
+): string | null {
+  const scored = icons
+    .filter((i) => i.href && !/^data:/.test(i.href))
+    .map((i) => {
+      const size = Number((/(\d+)x\d+/.exec(i.sizes || '') || [])[1]) || 0;
+      const svg = /svg/.test(i.type) || /\.svg(\?|$)/i.test(i.href);
+      const apple = /apple-touch-icon/i.test(i.rel);
+      return { href: i.href, score: (apple ? 300 : 0) + Math.min(size, 512) + (svg ? -400 : 0) };
+    })
+    .sort((a, b) => b.score - a.score);
+  if (scored.length) return scored[0].href;
+  try {
+    return new URL('/favicon.ico', pageUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
+function toJobPageV2(p: CapturedPage): JobPage {
+  return {
+    url: p.url,
+    screenshotPath: p.hero?.path || p.bands[0]?.path || '',
+    chunks: p.bands.map((b) => ({
+      screenshotPath: b.path,
+      width: b.width,
+      height: b.height,
+    })) as Shelfy.WebPageChunk[],
+    width: p.hero?.width || p.bands[0]?.width || 0,
+    height: p.hero?.height || p.bands[0]?.height || 0,
+  };
 }
 
 // ─── Worker / queue ─────────────────────────────────────────────────────────
@@ -1073,8 +713,30 @@ async function runJob(key: string): Promise<void> {
       maxPages: job.maxPages,
       overwrite: job.overwrite,
       singlePage: job.singlePage,
+      session: unblockSessions.get(key)?.session || undefined,
     });
   } catch (err) {
+    if (err instanceof BlockedError) {
+      // Anti-bot interstitial: not an error the user can fix by retrying. Keep
+      // the placeholder; the panel offers a visible window to pass the check.
+      pushEvent(
+        key,
+        'error',
+        `${err.message}: aprila in una finestra visibile per superare la verifica`,
+        {
+          vendor: err.vendor,
+        },
+      );
+      patchJob(key, {
+        status: 'blocked',
+        phase: 'blocked',
+        progress: 0,
+        error: err.message,
+        blocked: { vendor: err.vendor, url: err.url, reason: err.reason },
+        finishedAt: Date.now(),
+      });
+      return;
+    }
     if (isAbortErr(err)) {
       if (pausedKeys.has(key)) {
         // Paused, not cancelled: re-queue so resume restarts from scratch.
@@ -1118,6 +780,11 @@ async function runJob(key: string): Promise<void> {
       });
     }
   } finally {
+    const h = unblockSessions.get(key);
+    if (h) {
+      unblockSessions.delete(key);
+      h.dispose().catch(() => {});
+    }
     abortMap.delete(key);
     runningCount--;
     pumpQueue();
@@ -1299,7 +966,8 @@ function cancelAll(): { cancelled: boolean } {
 
 function retryJob(key: string | undefined): { retried: boolean } {
   const job = jobsMap.get(key as string);
-  if (!job || (job.status !== 'error' && job.status !== 'cancelled')) return { retried: false };
+  if (!job || (job.status !== 'error' && job.status !== 'cancelled' && job.status !== 'blocked'))
+    return { retried: false };
   patchJob(key as string, {
     status: 'pending',
     phase: 'queued',
@@ -1326,7 +994,12 @@ function retryJob(key: string | undefined): { retried: boolean } {
 
 function clearCompleted(): { ok: boolean } {
   for (const [key, job] of jobsMap) {
-    if (job.status === 'done' || job.status === 'cancelled' || job.status === 'error') {
+    if (
+      job.status === 'done' ||
+      job.status === 'cancelled' ||
+      job.status === 'error' ||
+      job.status === 'blocked'
+    ) {
       jobsMap.delete(key);
       urlCache.delete(key);
       jobstore.forget(KIND, key);
@@ -1381,6 +1054,91 @@ function recover(): { recovered: number } {
   return { recovered };
 }
 
+// Anti-bot unblock: open the blocked page in a VISIBLE window of the app, wait
+// for the user to pass the check, then re-run the capture in that very window
+// (same browser + cookies + fingerprint, so the clearance stays valid). Shelfy
+// never solves the challenge itself.
+const UNBLOCK_TIMEOUT_MS = 5 * 60_000;
+async function unblockJob(key: string | undefined): Promise<{ ok: boolean; reason?: string }> {
+  const job = jobsMap.get(key as string);
+  if (!key || !job || job.status !== 'blocked' || !job.blocked)
+    return { ok: false, reason: 'not-blocked' };
+  if (unblockWaiting.has(key)) return { ok: true }; // already waiting for the user
+  unblockWaiting.add(key);
+  const blockedUrl = job.blocked.url;
+  const domain = job.domain || webHost(blockedUrl);
+  try {
+    // 1) The user's real Chrome (dedicated profile): checks pass there.
+    const chrome = await SystemChromeUnblock.open(blockedUrl);
+    let passed = false;
+    let handle: UnblockHandle | null = null;
+    patchJob(key, { stage: 'In attesa che tu superi la verifica nella finestra del browser…' });
+    if (chrome) {
+      pushEvent(
+        key,
+        'info',
+        `Aperto ${domain} nel browser: completa la verifica, poi la cattura riparte da sola`,
+      );
+      passed = await chrome.waitUntilUnblocked({ timeoutMs: UNBLOCK_TIMEOUT_MS });
+      if (passed) {
+        try {
+          handle = { session: await chrome.attach(), dispose: () => chrome.close() };
+        } catch (err) {
+          passed = false;
+          pushEvent(
+            key,
+            'error',
+            `Collegamento al browser non riuscito: ${(err as Error)?.message || err}`,
+          );
+        }
+      }
+      if (!passed) await chrome.close().catch(() => {});
+    } else {
+      // 2) No Chrome-family browser installed: a visible window of the app.
+      const win = await ElectronSession.create({
+        visible: true,
+        url: blockedUrl,
+        title: `Shelfy — ${domain}: supera la verifica, la cattura riprenderà da sola`,
+      });
+      pushEvent(
+        key,
+        'info',
+        'Finestra di verifica aperta: completa il controllo, poi la cattura riparte',
+      );
+      passed = await win.waitUntilUnblocked(JS_DETECT_BLOCKED, { timeoutMs: UNBLOCK_TIMEOUT_MS });
+      if (passed) handle = { session: win, dispose: () => win.close() };
+      else await win.close().catch(() => {});
+    }
+    if (!passed || !handle) {
+      patchJob(key, { stage: null });
+      pushEvent(
+        key,
+        'info',
+        'Verifica non completata: la finestra è stata chiusa o il tempo è scaduto',
+      );
+      return { ok: false, reason: 'not-passed' };
+    }
+    unblockSessions.set(key, handle);
+    pushEvent(key, 'info', 'Verifica superata: riprendo la cattura nella stessa sessione');
+    patchJob(key, {
+      status: 'pending',
+      phase: 'queued',
+      progress: 0,
+      phaseProgress: 0,
+      error: null,
+      stage: null,
+      queuedAt: Date.now(),
+      startedAt: null,
+      finishedAt: null,
+    });
+    if (!pendingQueue.includes(key)) pendingQueue.unshift(key);
+    pumpQueue();
+    return { ok: true };
+  } finally {
+    unblockWaiting.delete(key);
+  }
+}
+
 function getJobs(): WebJobRecord[] {
   return Array.from(jobsMap.values());
 }
@@ -1414,6 +1172,7 @@ export {
   pauseAll,
   resumeAll,
   retryJob,
+  unblockJob,
   clearCompleted,
   recover,
   discover,

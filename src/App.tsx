@@ -13,6 +13,7 @@ import AiTagsQueue from './views/AiTagsQueue';
 import AiWebsites from './views/AiWebsites';
 import AiSearch from './views/AiSearch';
 import AiOnboarding from './views/AiOnboarding';
+import RemoteAiBanner from './components/RemoteAiBanner';
 import { useAiSetupStatus } from './hooks/useAiSetup';
 import PostModal from './components/PostModal';
 import DisclaimerGate from './components/DisclaimerGate';
@@ -222,7 +223,9 @@ function AppInner(): React.JSX.Element {
   const [aiGate, setAiGate] = useState<boolean>(false);
   const aiGateSkipped = useRef<boolean>(false);
   useEffect(() => {
-    if (!aiGateSkipped.current && aiSetup.status && !aiSetup.complete) setAiGate(true);
+    // A working remote AI node replaces the local setup: never show the wizard.
+    if (aiSetup.status?.remoteReady) setAiGate(false);
+    else if (!aiGateSkipped.current && aiSetup.status && !aiSetup.complete) setAiGate(true);
   }, [aiSetup.status, aiSetup.complete]);
   const dismissAiGate = (skip: boolean): void => {
     if (skip) aiGateSkipped.current = true;
@@ -535,6 +538,7 @@ function AppInner(): React.JSX.Element {
     return res;
   };
 
+  const currentBuild = buildTime;
   useEffect(() => {
     if (!devBarMounted.current) {
       devBarMounted.current = true;
@@ -543,7 +547,7 @@ function AppInner(): React.JSX.Element {
     setDevBarVisible(true);
     const t = setTimeout(() => setDevBarVisible(false), 1000);
     return () => clearTimeout(t);
-  }, [buildTime]);
+  }, [currentBuild]);
 
   // Load stats on mount and subscribe to new posts events
   useEffect(() => {
@@ -695,6 +699,7 @@ function AppInner(): React.JSX.Element {
           onActivityAction={handleActivityAction}
         />
         <main className="flex-1 overflow-hidden relative">
+          <RemoteAiBanner />
           {/* Browser is always mounted so its webviews keep syncing in the background,
             even when another view is on screen; an opaque overlay covers it meanwhile.
             zIndex:0 makes this an isolated stacking context so the Browser's own

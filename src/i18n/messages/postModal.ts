@@ -49,8 +49,8 @@ export default {
 
     // ── AI analyze status ──────────────────────────────────────────────────
     statusPending: 'In coda…',
-    statusExtracting: 'Estrazione fotogrammi…',
-    statusAnalyzing: 'Analisi del video…',
+    statusExtracting: 'Preparazione media…',
+    statusAnalyzing: 'Analisi del post…',
     processing: 'Elaborazione…',
 
     // ── AI section ─────────────────────────────────────────────────────────
@@ -90,7 +90,7 @@ export default {
 
     // ── AI analyze (initial) ───────────────────────────────────────────────
     errorPrefix: 'Errore: {error}',
-    analyzeVideo: 'Analizza video',
+    analyzePost: 'Analizza post',
     downloadModelAndAnalyze: 'Scarica modello AI (~3 GB) e analizza',
 
     // ── Close-with-unsaved-edits confirm ───────────────────────────────────
@@ -189,8 +189,8 @@ export default {
 
     // ── AI analyze status ──────────────────────────────────────────────────
     statusPending: 'Queued…',
-    statusExtracting: 'Extracting frames…',
-    statusAnalyzing: 'Analyzing video…',
+    statusExtracting: 'Preparing media…',
+    statusAnalyzing: 'Analyzing post…',
     processing: 'Processing…',
 
     // ── AI section ─────────────────────────────────────────────────────────
@@ -230,7 +230,7 @@ export default {
 
     // ── AI analyze (initial) ───────────────────────────────────────────────
     errorPrefix: 'Error: {error}',
-    analyzeVideo: 'Analyze video',
+    analyzePost: 'Analyze post',
     downloadModelAndAnalyze: 'Download AI model (~3 GB) and analyze',
 
     // ── Close-with-unsaved-edits confirm ───────────────────────────────────

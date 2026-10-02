@@ -432,7 +432,7 @@ const JobRow = React.memo(function JobRow({
   // it stays stable as analysis fills in. Falls back to the post id only when the
   // handle is genuinely missing.
   const label = authorUsername ? `@${authorUsername}` : String(postId);
-  const tagList = Array.isArray(tags) ? tags : [];
+  const tagList = useMemo(() => (Array.isArray(tags) ? tags : []), [tags]);
 
   // Running: read from the partial streamed JSON (description forming, tags
   // popping in). Done: the final fields. So a finished row keeps the exact same
@@ -442,7 +442,10 @@ const JobRow = React.memo(function JobRow({
     : isDone
       ? description || ''
       : '';
-  const liveTags = running ? streamedArray(job.streamText, 'tags') : isDone ? tagList : [];
+  const liveTags = useMemo(
+    () => (running ? streamedArray(job.streamText, 'tags') : isDone ? tagList : []),
+    [running, job.streamText, isDone, tagList],
+  );
 
   // Tags overflow off the right end (the row isn't scrollable), so they fade on
   // the right — again only when there are more pills than fit.

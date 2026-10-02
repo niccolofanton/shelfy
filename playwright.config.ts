@@ -4,12 +4,8 @@ export default defineConfig({
   testDir: './e2e',
   timeout: 40_000,
   expect: { timeout: 10_000 },
-  // Each e2e spec launches a real Electron process whose main.js opens (and runs
-  // DDL/migrations against) the SAME <userData>/shelfy.sqlite. The fixture does
-  // not isolate userData per worker, so parallel workers would race on the
-  // exclusive SQLite write lock during initialize() → SQLITE_BUSY → fatal "The
-  // database could not be opened" with no retries (retries: 0) → flaky e2e.
-  // Serialize the runs until the fixture isolates userData per worker.
+  // Each case starts an Electron process in its own temporary profile. Keep a
+  // single worker to avoid overloading Electron/Chromium on local machines.
   fullyParallel: false,
   workers: 1,
   retries: 0,

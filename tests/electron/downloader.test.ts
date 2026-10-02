@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+import { EventEmitter } from 'node:events';
 
 // ─── ESM module mocking ─────────────────────────────────────────────────────────
 // downloader.ts is now an ESM module, so its dependencies are intercepted with
@@ -70,7 +71,14 @@ const fsMock = vi.hoisted(() => {
     createWriteStream: vi.fn(() => writableStub()),
     renameSync: vi.fn(),
     unlinkSync: vi.fn(),
-    promises: { rm: vi.fn(async () => {}) },
+    promises: {
+      rm: vi.fn(async () => {}),
+      readdir: vi.fn(
+        async (_dir: string): Promise<Array<{ name: string; isDirectory: () => boolean }>> => [],
+      ),
+      unlink: vi.fn(async () => {}),
+      rmdir: vi.fn(async () => {}),
+    },
   };
 });
 vi.mock('fs', () => ({ ...fsMock, default: fsMock }));
@@ -96,6 +104,7 @@ const dbMock = vi.hoisted(() => ({
   updatePaths: vi.fn(),
   updateMediaPath: vi.fn(),
   getPost: vi.fn(),
+  getProtectedAssetPaths: vi.fn(() => [] as string[]),
 }));
 vi.mock('../../electron/db', () => dbMock);
 
@@ -132,10 +141,13 @@ vi.mock('../../electron/interceptor', () => ({
 
 interface DownloadPostInput {
   id: string;
+  platform?: string;
+  postUrl?: string;
   shortcode?: string;
   thumbnailUrl?: string;
+  thumbnailPath?: string;
   mediaType?: string;
-  media?: Array<{ type: string; url: string }>;
+  media?: Array<{ type: string; url: string; localPath?: string }>;
 }
 
 interface DownloadJobRecord {
@@ -159,7 +171,10 @@ interface Downloader {
   enqueueMany: (
     posts: DownloadPostInput[],
     assetTypes: string[],
+    options?: { missingOnly?: boolean },
   ) => { queued: number; skipped: number };
+  suspendPosts: (ids: string[]) => Promise<() => void>;
+  clearAllAssets: () => Promise<void>;
 }
 
 // Load downloader as an ESM module; the vi.mock factories above intercept its
@@ -229,6 +244,7 @@ const fetchMock = (): Mock => global.fetch as unknown as Mock;
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
 beforeEach(async () => {
+  spawnMock.mockReset();
   fsMock.existsSync.mockReturnValue(false);
   fsMock.mkdirSync.mockReset();
   fsMock.writeFileSync.mockReset();
@@ -236,6 +252,12 @@ beforeEach(async () => {
   fsMock.unlinkSync.mockReset();
   fsMock.createWriteStream.mockReset();
   fsMock.createWriteStream.mockImplementation(() => makeWritableStub());
+  fsMock.promises.readdir.mockReset();
+  fsMock.promises.readdir.mockResolvedValue([]);
+  fsMock.promises.unlink.mockReset();
+  fsMock.promises.rmdir.mockReset();
+  dbMock.getProtectedAssetPaths.mockReset();
+  dbMock.getProtectedAssetPaths.mockReturnValue([]);
   global.fetch = vi.fn().mockResolvedValue(makeFetchResponse()) as unknown as typeof fetch;
   dbMock.updatePaths.mockReset();
   dbMock.updateMediaPath.mockReset();
@@ -245,6 +267,195 @@ beforeEach(async () => {
   // and re-registering an emitter below actually takes effect.
   await resetQueue();
   setProgressEmitter(null);
+});
+
+describe('account isolation', () => {
+  it('never retries a login-walled video with account cookies or yt-dlp config', async () => {
+    const probe = new EventEmitter();
+    const video = Object.assign(new EventEmitter(), {
+      stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      kill: vi.fn(),
+    });
+    spawnMock
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => probe.emit('close', 0));
+        return probe as never;
+      })
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => {
+          video.stderr.emit('data', 'ERROR: login required\n');
+          video.emit('close', 1);
+        });
+        return video as never;
+      });
+
+    await downloadPost(
+      {
+        id: 'private-video',
+        platform: 'instagram',
+        postUrl: 'https://www.instagram.com/reel/example/',
+        mediaType: 'video',
+      },
+      ['video'],
+      vi.fn(),
+    );
+    await waitForIdle();
+
+    expect(getStatus().find((job) => job.postId === 'private-video')?.status).toBe('error');
+    expect(spawnMock).toHaveBeenCalledTimes(2); // probe + one anonymous attempt
+    const args = (spawnMock.mock.calls[1] as unknown as [string, string[]])[1];
+    expect(args).toContain('--ignore-config');
+    expect(args).toContain('--no-cookies');
+    expect(args).toContain('--no-cookies-from-browser');
+    expect(args).toContain('--no-cache-dir');
+    expect(args).toContain('--no-plugin-dirs');
+    expect(args).toEqual(expect.arrayContaining(['--use-extractors', 'Instagram']));
+    expect(args).not.toContain('--cookies');
+    expect(args).not.toContain('--cookies-from-browser');
+    expect(fsMock.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('queues both image and video slides of a mixed carousel', async () => {
+    const video = Object.assign(new EventEmitter(), {
+      stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      kill: vi.fn(),
+    });
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => video.emit('close', 1));
+      return video as never;
+    });
+
+    await downloadPost(
+      {
+        id: 'mixed-media',
+        platform: 'instagram',
+        postUrl: 'https://www.instagram.com/p/example/',
+        mediaType: 'carousel',
+        media: [
+          { type: 'image', url: 'https://cdn.instagram.com/cover.jpg' },
+          { type: 'video', url: 'https://cdn.instagram.com/poster.jpg' },
+        ],
+      },
+      ['image', 'video'],
+      vi.fn(),
+    );
+    await waitForIdle();
+
+    const jobs = getStatus().filter((job) => job.postId === 'mixed-media');
+    expect(jobs.map((job) => job.assetType).sort()).toEqual(['image', 'video']);
+    expect(jobs.find((job) => job.assetType === 'image')?.status).toBe('done');
+    const args = (spawnMock.mock.calls[0] as unknown as [string, string[]])[1];
+    expect(args).toEqual(expect.arrayContaining(['--yes-playlist', '--playlist-items', '2']));
+    expect(args).not.toContain('--cookies');
+  });
+
+  it('downloads a mixed X post as one video, without Instagram playlist indexing', async () => {
+    const video = Object.assign(new EventEmitter(), {
+      stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      stderr: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      kill: vi.fn(),
+    });
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => video.emit('close', 1));
+      return video as never;
+    });
+
+    await downloadPost(
+      {
+        id: 'mixed-x',
+        platform: 'twitter',
+        postUrl: 'https://x.com/example/status/123456',
+        mediaType: 'images',
+        media: [
+          { type: 'image', url: 'https://pbs.twimg.com/media/example.jpg' },
+          { type: 'video', url: 'https://pbs.twimg.com/media/poster.jpg' },
+        ],
+      },
+      ['image', 'video'],
+      vi.fn(),
+    );
+    await waitForIdle();
+
+    const jobs = getStatus().filter((job) => job.postId === 'mixed-x');
+    expect(jobs.map((job) => job.assetType).sort()).toEqual(['image', 'video']);
+    const args = (spawnMock.mock.calls[0] as unknown as [string, string[]])[1];
+    expect(args).toContain('--no-playlist');
+    expect(args).not.toContain('--playlist-items');
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '--ignore-config',
+        '--no-cookies',
+        '--no-cookies-from-browser',
+        '--no-cache-dir',
+        '--no-plugin-dirs',
+        '--use-extractors',
+        'twitter',
+      ]),
+    );
+  });
+
+  it('rejects a video URL outside its social platform before yt-dlp downloads it', async () => {
+    await downloadPost(
+      {
+        id: 'untrusted-video-host',
+        platform: 'twitter',
+        postUrl: 'https://untrusted.example/redirect',
+        mediaType: 'video',
+      },
+      ['video'],
+      vi.fn(),
+    );
+    await waitForIdle();
+    expect(getStatus().find((job) => job.postId === 'untrusted-video-host')?.status).toBe('error');
+    expect(
+      spawnMock.mock.calls.some((call) =>
+        (call as unknown as [string, string[]])[1]?.includes('--use-extractors'),
+      ),
+    ).toBe(false);
+  });
+
+  it('repairs an expired Instagram image URL without account cookies', async () => {
+    const oldUrl = 'https://old.cdninstagram.com/expired.jpg';
+    const freshUrl = 'https://fresh.cdninstagram.com/current.jpg';
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 403, body: null })
+      .mockResolvedValue(makeFetchResponse()) as unknown as typeof fetch;
+    const extractor = Object.assign(new EventEmitter(), {
+      stdout: Object.assign(new EventEmitter(), { setEncoding: vi.fn() }),
+      stderr: new EventEmitter(),
+      kill: vi.fn(),
+    });
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        extractor.stdout.emit('data', `1\t${freshUrl}\n`);
+        extractor.emit('close', 0);
+      });
+      return extractor as never;
+    });
+
+    await downloadPost(
+      {
+        id: 'expired-image',
+        platform: 'instagram',
+        postUrl: 'https://www.instagram.com/p/expiredImage/',
+        thumbnailUrl: oldUrl,
+        mediaType: 'image',
+      },
+      ['image'],
+      vi.fn(),
+    );
+    await waitForIdle();
+
+    expect(getStatus().find((job) => job.postId === 'expired-image')?.status).toBe('done');
+    expect(fetchMock().mock.calls.map((call) => call[0])).toEqual([oldUrl, freshUrl]);
+    const args = (spawnMock.mock.calls[0] as unknown as [string, string[]])[1];
+    expect(args).toContain('--no-cookies');
+    expect(args).toContain('--no-cookies-from-browser');
+    expect(args).not.toContain('--cookies');
+  });
 });
 
 // ─── 1. getStatus() ───────────────────────────────────────────────────────────
@@ -581,13 +792,11 @@ describe('downloadPost — error handling', () => {
   });
 
   it('does not throw when HTTP response is not ok', async () => {
-    global.fetch = vi
-      .fn()
-      .mockResolvedValue({
-        ok: false,
-        status: 403,
-        arrayBuffer: vi.fn(),
-      }) as unknown as typeof fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      arrayBuffer: vi.fn(),
+    }) as unknown as typeof fetch;
 
     const post: DownloadPostInput = {
       id: 'error-post-2',
@@ -637,6 +846,147 @@ describe('enqueueMany()', () => {
 
     await waitForIdle();
   });
+
+  it('downloads a missing file even when the database still stores its old path', async () => {
+    const post: DownloadPostInput = {
+      id: 'stale-path',
+      platform: 'twitter',
+      thumbnailUrl: 'https://pbs.twimg.com/media/stale.jpg',
+      thumbnailPath: '/tmp/no-longer-there.jpg',
+      mediaType: 'image',
+    };
+    expect(downloader.enqueueMany([post], ['thumbnail'], { missingOnly: true }).queued).toBe(1);
+    await waitForIdle();
+    expect(global.fetch).toHaveBeenCalled();
+  });
+
+  it('does not enqueue manual bookmarks as remote downloads', () => {
+    expect(
+      downloader.enqueueMany(
+        [
+          {
+            id: 'manual-1',
+            platform: 'manual',
+            thumbnailUrl: '/tmp/manual.jpg',
+            mediaType: 'image',
+          },
+        ],
+        ['thumbnail', 'image'],
+        { missingOnly: true },
+      ),
+    ).toEqual({ queued: 0, skipped: 1 });
+  });
+
+  it('blocks new jobs and waits for an active download before deleting a post', async () => {
+    global.fetch = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () =>
+            reject(Object.assign(new Error('AbortError'), { name: 'AbortError' })),
+          );
+        }),
+    ) as unknown as typeof fetch;
+    const post: DownloadPostInput = {
+      id: 'delete-in-flight',
+      platform: 'twitter',
+      thumbnailUrl: 'https://pbs.twimg.com/media/delete.jpg',
+      mediaType: 'image',
+    };
+    downloader.enqueueMany([post], ['thumbnail']);
+    await tick();
+    const resume = await downloader.suspendPosts([post.id]);
+    expect(getStatus().some((job) => job.postId === post.id)).toBe(false);
+    expect(downloader.enqueueMany([post], ['thumbnail']).queued).toBe(0);
+    resume();
+  });
+
+  it('keeps a post blocked until every overlapping deletion releases it', async () => {
+    const post: DownloadPostInput = {
+      id: 'overlapping-delete',
+      platform: 'twitter',
+      thumbnailUrl: 'https://pbs.twimg.com/media/delete.jpg',
+      mediaType: 'image',
+    };
+    const releaseFirst = await downloader.suspendPosts([post.id]);
+    const releaseSecond = await downloader.suspendPosts([post.id]);
+    releaseFirst();
+    expect(downloader.enqueueMany([post], ['thumbnail']).queued).toBe(0);
+    releaseSecond();
+    expect(downloader.enqueueMany([post], ['thumbnail']).queued).toBe(1);
+  });
+});
+
+describe('asset cleanup', () => {
+  it('keeps imported originals while removing downloaded files', async () => {
+    const root = '/tmp/vitest-downloader-test/assets';
+    const manual = `${root}/images/manual.jpg`;
+    const downloaded = `${root}/images/downloaded.jpg`;
+    dbMock.getProtectedAssetPaths.mockReturnValue([manual]);
+    fsMock.promises.readdir.mockImplementation(async (dir: string) => {
+      if (dir === root) return [{ name: 'images', isDirectory: () => true }];
+      if (dir === `${root}/images`)
+        return [
+          { name: 'manual.jpg', isDirectory: () => false },
+          { name: 'downloaded.jpg', isDirectory: () => false },
+        ];
+      return [];
+    });
+
+    await downloader.clearAllAssets();
+
+    expect(fsMock.promises.unlink).toHaveBeenCalledWith(downloaded);
+    expect(fsMock.promises.unlink).not.toHaveBeenCalledWith(manual);
+  });
+});
+
+describe('media redirects', () => {
+  it('rejects a redirect to loopback before making a second request', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      status: 302,
+      headers: { get: () => 'http://127.0.0.1:8080/private' },
+      body: { cancel: vi.fn() },
+    }) as unknown as typeof fetch;
+    downloader.enqueueMany(
+      [
+        {
+          id: 'redirect-private',
+          thumbnailUrl: 'https://cdn.example.com/cover.jpg',
+          mediaType: 'image',
+        },
+      ],
+      ['thumbnail'],
+    );
+    await waitForIdle();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(getStatus().find((job) => job.postId === 'redirect-private')?.status).toBe('error');
+  });
+
+  it('follows a public redirect after validating the next host', async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: { get: () => 'https://images.example.com/cover.jpg' },
+        body: { cancel: vi.fn() },
+      })
+      .mockResolvedValueOnce(makeFetchResponse()) as unknown as typeof fetch;
+    downloader.enqueueMany(
+      [
+        {
+          id: 'redirect-public',
+          thumbnailUrl: 'https://cdn.example.com/cover.jpg',
+          mediaType: 'image',
+        },
+      ],
+      ['thumbnail'],
+    );
+    await waitForIdle();
+    expect(fetchMock().mock.calls.map((call) => call[0])).toEqual([
+      'https://cdn.example.com/cover.jpg',
+      'https://images.example.com/cover.jpg',
+    ]);
+    expect(fetchMock().mock.calls[0][1]).toEqual(expect.objectContaining({ redirect: 'manual' }));
+  });
 });
 
 // ─── 8. Twitter ?name=orig URL rewriting ──────────────────────────────────────
@@ -653,6 +1003,11 @@ describe('twitterOriginalUrl — via downloadImage', () => {
       'https://pbs.twimg.com/media/test.jpg?name=orig',
       expect.any(Object),
     );
+    const init = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    expect(init.credentials).toBe('omit');
+    const headers = new Headers(init.headers);
+    expect(headers.get('cookie')).toBeNull();
+    expect(headers.get('authorization')).toBeNull();
   });
 
   it('does NOT rewrite URL for Instagram image downloads', async () => {

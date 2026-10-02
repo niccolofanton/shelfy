@@ -125,8 +125,9 @@ export default function Popover({
   // Measure before paint (avoids a flash at 0,0) and keep tracking the anchor.
   // place() reads the menu's own box (ref.current) to flip/clamp, but on the very
   // first pass the menu isn't in the DOM yet (pos null ⇒ render returns null). The
-  // `pos != null` dependency below re-runs this effect once setPos mounts the menu,
+  // `hasPosition` dependency below re-runs this effect once setPos mounts the menu,
   // so the ResizeObserver actually attaches to ref.current and a self re-place runs.
+  const hasPosition = pos != null;
   useLayoutEffect(() => {
     if (!open) return undefined;
     place();
@@ -156,7 +157,7 @@ export default function Popover({
     // `pos != null` is intentional: it flips false→true exactly once (after the
     // first setPos mounts the menu), re-running the effect so ro.observe(ref.current)
     // attaches to the now-mounted node. It can't loop — the boolean stays true.
-  }, [open, place, anchorRef, pos != null]);
+  }, [open, place, anchorRef, hasPosition]);
 
   // Dismiss on outside click or Escape. Clicks on the anchor or inside the menu
   // are ignored so the trigger's own toggle/hover handlers stay in charge.

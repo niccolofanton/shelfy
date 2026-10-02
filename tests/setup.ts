@@ -39,6 +39,9 @@ const API_DEFAULTS: Record<string, unknown> = {
   // Bulk / id helpers
   getPostIds: [],
   getPostsByIds: [],
+  repairPreview: true,
+  getSearchProviders: [{ id: 'local', name: 'Locale', selected: true }],
+  selectSearchProvider: [{ id: 'local', name: 'Locale', selected: true }],
   // Analysis (local VLM)
   analyzePost: { queued: true },
   analyzePosts: { queued: 0 },

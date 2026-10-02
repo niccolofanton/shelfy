@@ -68,6 +68,7 @@ declare global {
     __ssCapturedOrder?: string[];
     __ssPinLastCursor?: string;
     __ssReplayPinterest?: () => void;
+    __ssScanTwitterBookmarks?: () => void;
   }
   interface XMLHttpRequest {
     __swUrl?: string;
@@ -675,6 +676,84 @@ declare global {
     _relay(items, hasNextPage, platform);
   }
 
+  // X now renders Bookmarks at /i/history. Its API responses can arrive before
+  // this hook is injected or change shape without changing the visible tweet
+  // cards. Scan only the already-rendered Bookmarks tab as the sync scrolls; no
+  // extra authenticated request is made. API-captured records still win because
+  // the store check below skips their richer versions.
+  function scanTwitterBookmarksDom(): void {
+    const pathname = location.pathname;
+    if (!/^\/i\/(?:history|bookmarks)\/?$/.test(pathname)) return;
+    if (/^\/i\/history\/?$/.test(pathname)) {
+      const tabs = document.querySelectorAll('[role="tab"]');
+      if (!tabs.length || tabs[0].getAttribute('aria-selected') !== 'true') return;
+    }
+    const stored = window.__ssCapturedItems || {};
+    const items: InterceptItem[] = [];
+    for (const article of document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
+      const time = article.querySelector('time');
+      const statusLink = time?.closest('a[href*="/status/"]');
+      const href = statusLink?.getAttribute('href') || '';
+      const match = href.match(/^\/?([^/?#]+)\/status\/(\d+)(?:[/?#]|$)/);
+      if (!match || stored[match[2]]) continue;
+      const [, authorUsername, id] = match;
+      const media: InterceptMedia[] = [];
+      const seenUrls = new Set<string>();
+      for (const image of article.querySelectorAll<HTMLImageElement>(
+        'img[src*="pbs.twimg.com/media/"]',
+      )) {
+        // A quoted post can appear inside the card. Its images belong to the
+        // quoted author and must not be archived as media of this bookmark.
+        const owner = image.closest('a[href*="/status/"]')?.getAttribute('href') || '';
+        if (owner && !owner.includes(`/status/${id}`)) continue;
+        const url = image.currentSrc || image.src;
+        if (url && !seenUrls.has(url)) {
+          media.push({ type: 'image', url });
+          seenUrls.add(url);
+        }
+      }
+      const video = article.querySelector('video');
+      const videoOwner = video?.closest('a[href*="/status/"]')?.getAttribute('href') || '';
+      const hasVideo = !!video && (!videoOwner || videoOwner.includes(`/status/${id}`));
+      const poster = hasVideo ? video?.poster || '' : '';
+      if (hasVideo) media.push({ type: 'video', url: poster });
+      const text =
+        article.querySelector<HTMLElement>('[data-testid="tweetText"]')?.innerText ||
+        article.querySelector<HTMLElement>('[data-testid="tweetText"]')?.textContent ||
+        '';
+      const created = time?.getAttribute('datetime') || '';
+      const timestamp =
+        created && !Number.isNaN(Date.parse(created)) ? new Date(created).toISOString() : '';
+      const authorName =
+        article
+          .querySelector<HTMLElement>('[data-testid="User-Name"]')
+          ?.textContent?.split('@')[0]
+          ?.trim() || '';
+      items.push({
+        id,
+        platform: 'twitter',
+        shortcode: '',
+        postUrl: `https://x.com/${authorUsername}/status/${id}`,
+        profileUrl: `https://x.com/${authorUsername}`,
+        authorUsername,
+        authorName,
+        text: text.trim(),
+        thumbnailUrl: media.find((m) => m.url)?.url || '',
+        mediaType: hasVideo
+          ? 'video'
+          : media.length > 1
+            ? 'images'
+            : media.length
+              ? 'image'
+              : 'text',
+        media,
+        timestamp,
+      });
+    }
+    if (items.length) emit(items, null, 'twitter');
+  }
+  window.__ssScanTwitterBookmarks = scanTwitterBookmarksDom;
+
   function handleResponse(url: string, rawText: string): void {
     const platform = matchPlatform(url);
     if (!platform) return;
@@ -759,7 +838,7 @@ declare global {
         // the end via their cursor.
         if (items.length) emit(items, null, 'pinterest');
       }
-    } catch (_) {}
+    } catch {}
   }
   window.__ssReplayPinterest = replayPinterestSSR;
 
@@ -775,7 +854,7 @@ declare global {
       const cloned = response.clone();
       const text = await cloned.text();
       handleResponse(url, text);
-    } catch (_) {}
+    } catch {}
     return response;
   };
 
@@ -818,7 +897,7 @@ declare global {
                     ? JSON.stringify(this.response)
                     : '';
               if (text) handleResponse(url, text);
-            } catch (_) {}
+            } catch {}
           },
           { once: true },
         );

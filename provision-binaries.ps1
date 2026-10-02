@@ -25,13 +25,13 @@ param(
   [string]$WhisperTag  = "v1.8.5",
   # yt-dlp è PINNATO a un tag (non releases/latest) per download riproducibili e
   # verificabili. Tieni allineato con electron/binaries.js YTDLP_VERSION e build-windows.ps1.
-  [string]$YtDlpVersion = "2026.03.17"
+  [string]$YtDlpVersion = "2026.08.19"
 )
 
 # SHA256 atteso di yt-dlp.exe per $YtDlpVersion, dal file SHA2-256SUMS della release:
 # https://github.com/yt-dlp/yt-dlp/releases/download/<TAG>/SHA2-256SUMS
 # Aggiorna questo valore ogni volta che cambi $YtDlpVersion.
-$YtDlpExeSha256 = "3db811b366b2da47337d2fcfdfe5bbd9a258dad3f350c54974f005df115a1545"
+$YtDlpExeSha256 = "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
 
 $ErrorActionPreference = "Stop"
 

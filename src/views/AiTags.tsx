@@ -523,7 +523,7 @@ export default function AiTags({
     try {
       const res = await analyzeMissing();
       showToast(t('queuedToAnalyze', { n: res?.queued ?? 0 }));
-    } catch (err) {
+    } catch {
       showToast(t('analyzeStartError'));
     } finally {
       setAnalyzing(false);
@@ -536,7 +536,7 @@ export default function AiTags({
       try {
         const res = await mergeTags(sources, target);
         showToast(t('mergedRefs', { n: res?.updated ?? 0, target }));
-      } catch (err) {
+      } catch {
         showToast(t('mergeError'));
       } finally {
         setBusy(false);
@@ -553,7 +553,7 @@ export default function AiTags({
         showToast(t('renamedRefs', { n: res?.updated ?? 0, from, to }));
         // keep filter in sync if the renamed tag was selected
         setSelectedTags((prev) => prev.map((tag) => (tag === from ? to : tag)));
-      } catch (err) {
+      } catch {
         showToast(t('renameError'));
       } finally {
         setBusy(false);

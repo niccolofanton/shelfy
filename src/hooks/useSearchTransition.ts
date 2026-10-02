@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type SearchPhase = 'idle' | 'out' | 'in';
 
@@ -51,15 +51,15 @@ export function useSearchSequence<T extends { id: string }>(
   const optsRef = useRef(options);
   optsRef.current = options;
   const timers = useRef<number[]>([]);
-  const clearTimers = (): void => {
+  const clearTimers = useCallback((): void => {
     timers.current.forEach((id) => window.clearTimeout(id));
     timers.current = [];
-  };
+  }, []);
 
   // The ordered out → (swap) → [settle] → in → idle run. Reads postsRef at SWAP
   // time (not now): `loading` can flip false a render before usePosts' transitional
   // setPosts commits, so capturing here would swap in the STALE list.
-  const runSequence = (): void => {
+  const runSequence = useCallback((): void => {
     const { outMs, settleMs, inMs } = { ...DEFAULTS, ...optsRef.current };
     clearTimers();
     setPhase('out'); // step 3: current results disappear
@@ -80,7 +80,7 @@ export function useSearchSequence<T extends { id: string }>(
         }
       }, outMs),
     );
-  };
+  }, [clearTimers]);
 
   // Query changed → queue a search. Don't start here — `posts`/`loading` aren't
   // ready yet; the effect below starts it. Cap so we never hold forever.
@@ -116,9 +116,9 @@ export function useSearchSequence<T extends { id: string }>(
     awaiting.current = false;
     runSequence();
     return undefined;
-  }, [posts, loading, phase]);
+  }, [posts, loading, phase, runSequence]);
 
-  useEffect(() => () => clearTimers(), []);
+  useEffect(() => () => clearTimers(), [clearTimers]);
 
   return { displayed, phase };
 }

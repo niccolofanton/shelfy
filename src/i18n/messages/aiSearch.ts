@@ -23,6 +23,11 @@ export default {
     chatTitle: 'Chat',
     newConversation: 'Nuova conversazione',
     newConversationShort: 'Nuova',
+    remoteSearchHint: 'Usa il nodo AI remoto per cercare immagini nell’archivio.',
+    remoteVisionHint:
+      'Usa il nodo remoto anche per analizzare immagini e video: i frame vengono inviati al nodo.',
+    remoteSearchError: 'Impossibile cambiare il nodo AI.',
+    remoteProvider: 'Nodo AI remoto',
     // AI model status banner
     modelDownloading: 'Download del modello in corso…',
     modelUnavailable: 'Modello AI non disponibile.',
@@ -103,6 +108,11 @@ export default {
     chatTitle: 'Chat',
     newConversation: 'New conversation',
     newConversationShort: 'New',
+    remoteSearchHint: 'Use the remote AI node to search images in the archive.',
+    remoteVisionHint:
+      'Use the remote node to analyze images and videos too: frames are sent to the node.',
+    remoteSearchError: 'Could not switch AI node.',
+    remoteProvider: 'Remote AI node',
     modelDownloading: 'Downloading the model…',
     modelUnavailable: 'AI model unavailable.',
     modelTextFallback: 'You can still type: the search will be text-based.',

@@ -66,6 +66,7 @@ declare global {
       mediaType: MediaType | null;
       timestamp: string | null; // ISO 8601 string (lexically sortable)
       thumbnailPath: string | null; // local file path once downloaded
+      previewPath?: string | null; // small automatic cover cache; not an offline download
       imagePath: string | null;
       videoPath: string | null;
       thumbBlur: string | null; // blur-up data URI ('' sentinel mapped to null)
@@ -84,6 +85,7 @@ declare global {
       aiKeywords: string[];
       aiLanguage: string | null;
       aiSaveReason: string | null;
+      aiWeb: WebAiCatalog | null; // v2 design catalog (web references only)
 
       // User-authored layer (independent of AI; survives regeneration).
       userNote: string | null;
@@ -93,7 +95,7 @@ declare global {
       webUrl: string | null;
       webDomain: string | null;
       webFinalUrl: string | null;
-      webPalette: string[]; // HEX colors
+      webPalette: WebSwatch[]; // v2 swatches (v1 rows: { hex, role, weight } or bare HEX)
       webFonts: WebFont[];
       webTech: string[];
       webAwards: WebAward[];
@@ -347,9 +349,29 @@ declare global {
     // Web-specific column shapes (parsed from the web_*_json TEXT columns).
     // Deliberately loose where the underlying capture data is open-ended.
 
+    // A palette swatch. v2 captures fill every field; v1 rows only hex/role/weight.
+    export interface WebSwatch {
+      hex: string;
+      name?: string;
+      role?: string; // background | surface | text | accent | image (v1: background-dark | other)
+      coverage?: number;
+      weight?: number;
+      source?: string;
+      oklch?: [number, number, number];
+    }
+
     export interface WebFont {
       family: string;
-      usage?: string;
+      usage?: string; // legacy single role
+      role?: string; // display | heading | body | mono | ui
+      roles?: string[];
+      weights?: number[];
+      sizes?: number[];
+      share?: number;
+      provider?: string;
+      classification?: string; // serif | sans | mono | display | script
+      sample?: string;
+      italic?: boolean;
     }
 
     export interface WebAward {
@@ -357,22 +379,98 @@ declare global {
       level?: string;
       date?: string;
       profileUrl?: string;
+      evidence?: string;
+      confidence?: number;
+    }
+
+    export interface WebImageAsset {
+      path: string;
+      width: number;
+      height: number;
+    }
+
+    export interface WebSection extends WebImageAsset {
+      kind: string;
+      heading: string;
+      top: number;
+      cssHeight: number;
+    }
+
+    export interface WebTech {
+      name: string;
+      category: string;
+      version?: string;
+      confidence: number;
+    }
+
+    // v2 structured design catalog of a web reference (posts.ai_web_json).
+    export interface WebAiCatalog {
+      schema: number;
+      model?: string;
+      observations: string;
+      siteType: string;
+      siteTypeSecondary?: string | null;
+      industry: string;
+      audience: string;
+      style: string[];
+      theme: string;
+      colorMood: string[];
+      density: string;
+      layoutPatterns: string[];
+      heroType: string;
+      imagery: string[];
+      typography: string[];
+      components: string[];
+      craft: string;
+      notableDetails: string[];
+      referenceFor: string[];
+      summary: string;
+      description: string;
+      tags: string[];
+      searchKeywords: string[];
+      language: string;
+      // facet → values, mirrored into post_facets (includes deterministic facets
+      // such as tech, fonts, colours, awards).
+      facets: Record<string, string[]>;
+    }
+
+    export interface WebVideo {
+      path: string;
+      preview: string | null;
+      poster: string | null;
+      width: number;
+      height: number;
+      duration: number;
     }
 
     // Per-page metadata captured for a site (one entry per crawled page).
     export interface WebPage {
       url: string;
+      requestedUrl?: string;
       pageType?: string;
       title?: string;
+      status?: number | null;
       meta?: WebPageMeta;
       jsonld?: unknown;
       contentText?: string;
-      screenshotPath?: string; // local file, when captured
-      chunks?: WebPageChunk[]; // vertical screenshot bands of a tall page
+      screenshotPath?: string; // local file, when captured (v2: the untouched hero)
+      chunks?: WebPageChunk[]; // vertical screenshot bands of a tall page (v2: @2×)
+      hero?: WebImageAsset | null; // v2: untouched first viewport @2×
+      footer?: WebImageAsset | null;
+      sections?: WebSection[];
+      heightCss?: number;
+      capped?: boolean;
+      jacked?: boolean; // scroll-jacked experience: chunks are a filmstrip
+      qc?: { status: string; reason: string };
+      digest?: { h1: string; headings: string[]; ctas: string[] };
     }
 
     export interface WebPageChunk {
       screenshotPath?: string;
+      width?: number;
+      height?: number;
+      top?: number;
+      cssHeight?: number;
     }
 
     export interface WebPageMeta {
@@ -400,7 +498,7 @@ declare global {
       capturedAt: number; // unix epoch seconds
       title: string | null;
       webPages: WebPage[];
-      webPalette: string[];
+      webPalette: WebSwatch[];
       webFonts: WebFont[];
       webTech: string[];
       webAwards: WebAward[];
@@ -415,6 +513,7 @@ declare global {
       aiKeywords: string[];
       aiLanguage: string | null;
       aiSaveReason: string | null;
+      aiWeb?: WebAiCatalog | null;
     }
 
     // ── stats / overview (getStats, getAiOverview, getTagHealth) ───────────────

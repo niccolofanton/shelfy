@@ -1,6 +1,8 @@
 import { test as base, _electron as electron, expect } from '@playwright/test';
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { MOCK_POSTS, MOCK_STATS, MOCK_DOWNLOAD_JOBS } from './test-data';
 import { DISCLAIMER_VERSION } from '../src/disclaimer';
@@ -41,26 +43,37 @@ export async function installMocks(app: ElectronApplication) {
         }
       });
 
-      ipcMain.handle('db:getPosts', (_event, filters: any) => {
-        let result = posts.slice();
-        if (filters?.platform) result = result.filter((p: any) => p.platform === filters.platform);
-        if (filters?.mediaType)
-          result = result.filter((p: any) => p.mediaType === filters.mediaType);
-        if (filters?.search) {
-          const q = (filters.search as string).toLowerCase();
-          result = result.filter(
-            (p: any) =>
-              ((p.text as string) || '').toLowerCase().includes(q) ||
-              ((p.authorUsername as string) || '').toLowerCase().includes(q),
-          );
-        }
-        const offset = filters?.offset ?? 0;
-        const limit = filters?.limit ?? 50;
-        // Mirror the real db.getPosts contract: usePosts reads result.posts /
-        // result.total, so returning a bare array makes posts undefined and
-        // crashes the Gallery render.
-        return { posts: result.slice(offset, offset + limit), total: result.length };
-      });
+      ipcMain.handle(
+        'db:getPosts',
+        (
+          _event,
+          filters?: {
+            platform?: string;
+            mediaType?: string;
+            search?: string;
+            offset?: number;
+            limit?: number;
+          },
+        ) => {
+          let result = posts.slice();
+          if (filters?.platform) result = result.filter((p) => p.platform === filters.platform);
+          if (filters?.mediaType) result = result.filter((p) => p.mediaType === filters.mediaType);
+          if (filters?.search) {
+            const q = filters.search.toLowerCase();
+            result = result.filter(
+              (p) =>
+                (p.text || '').toLowerCase().includes(q) ||
+                (p.authorUsername || '').toLowerCase().includes(q),
+            );
+          }
+          const offset = filters?.offset ?? 0;
+          const limit = filters?.limit ?? 50;
+          // Mirror the real db.getPosts contract: usePosts reads result.posts /
+          // result.total, so returning a bare array makes posts undefined and
+          // crashes the Gallery render.
+          return { posts: result.slice(offset, offset + limit), total: result.length };
+        },
+      );
 
       ipcMain.handle('db:getStats', () => stats);
       ipcMain.handle('db:importJSON', () => ({ imported: 7 }));
@@ -100,18 +113,30 @@ export async function overrideHandler(
 
 export const test = base.extend<Fixtures>({
   electronApp: async ({}, use) => {
-    const app = await electron.launch({
-      args: [path.join(ROOT, 'dist-electron', 'main.js')],
-      cwd: ROOT,
-      env: {
-        ...process.env,
-        ELECTRON_DEV: 'true',
-        NODE_ENV: 'test',
-        PLAYWRIGHT_E2E: '1', // disables DevTools auto-open so Playwright keeps the right page reference
-      },
-    });
-    await use(app);
-    await app.close();
+    const base = process.env.SHELFY_TEST_USER_DATA || os.tmpdir();
+    fs.mkdirSync(base, { recursive: true });
+    const profile = fs.mkdtempSync(path.join(base, 'shelfy-e2e-'));
+    let app: ElectronApplication | null = null;
+    try {
+      app = await electron.launch({
+        args: [path.join(ROOT, 'dist-electron', 'main.js')],
+        cwd: ROOT,
+        env: {
+          ...process.env,
+          ELECTRON_DEV: 'true',
+          NODE_ENV: 'test',
+          PLAYWRIGHT_E2E: '1', // disables DevTools auto-open so Playwright keeps the right page reference
+          SHELFY_TEST_USER_DATA: profile,
+        },
+      });
+      await use(app);
+    } finally {
+      try {
+        await app?.close();
+      } finally {
+        fs.rmSync(profile, { recursive: true, force: true });
+      }
+    }
   },
 
   page: async ({ electronApp }, use) => {

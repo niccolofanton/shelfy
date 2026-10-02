@@ -28,9 +28,22 @@ import * as db from './db';
 import * as jobstore from './jobstore';
 import * as hardware from './hardware';
 import * as binaries from './binaries';
+import {
+  acquireRemoteRequest,
+  aiRoute,
+  chatEndpoint,
+  onRemoteStatusChange,
+  probeRemote,
+  type AiRoute,
+  type ProviderConfig,
+} from './ai-providers';
 import { firstExisting, freePort, waitForHttp, downloadFile } from './serverUtils';
+import * as webCatalog from './webcap/ai-catalog';
 
 const KIND = 'analyze'; // jobstore namespace for this queue
+// Thrown when the configured remote node stops answering mid-job: the job goes
+// back to the queue instead of failing.
+const REMOTE_UNAVAILABLE = 'REMOTE_UNAVAILABLE';
 
 // ─── Local types ──────────────────────────────────────────────────────────────
 
@@ -104,6 +117,8 @@ interface ModelStatus {
   name: string;
   sizeGB: number;
   minRamGB: number;
+  remote?: boolean;
+  remoteUnreachable?: boolean;
 }
 
 // One entry in the settings catalog (listModels).
@@ -168,6 +183,7 @@ type AnalyzeKind = 'social' | 'web';
 // The structured result of analyzeFrames (camelCase, ready for db.updateAiAnalysis).
 interface AnalyzeResult {
   description: string;
+  modelUsed?: string;
   tags: string[];
   generalTags: string[];
   specificTags: string[];
@@ -308,6 +324,15 @@ const SERVER_IDLE_MS = 5 * 60_000; // shut the server down after this idle perio
 const HEALTH_TIMEOUT_MS = 180_000; // model load can take a while on first run
 
 const INFER_TIMEOUT_MS = 120_000; // abort a single inference if it stalls
+const REMOTE_INFER_TIMEOUT_MS = 300_000; // cold router model swaps can take longer
+
+function remoteThinkingOptions(provider: ProviderConfig | null): object {
+  // Qwen's default hidden reasoning can exhaust short JSON/chat budgets before
+  // emitting any content. llama.cpp accepts this per-request template option.
+  return provider?.model === 'qwen3.8-27b'
+    ? { chat_template_kwargs: { enable_thinking: false } }
+    : {};
+}
 
 // DRY ("Don't Repeat Yourself") sampler params, sent with the vision-extract
 // requests. Fed an out-of-distribution image (an abstract/glitch video with no
@@ -689,6 +714,26 @@ function getModelStatus(): ModelStatus {
     name: m.name,
     sizeGB: m.sizeGB,
     minRamGB: m.minRamGB,
+  };
+}
+
+function getAnalysisModelStatus(): ModelStatus {
+  const route = aiRoute('vision');
+  if (route.mode === 'local') return getModelStatus();
+  // A configured node that is down still counts as the analysis model: jobs wait
+  // for it (or for the user to opt into local models) rather than erroring out.
+  const provider = route.mode === 'remote' ? route.provider : { id: 'remote', name: route.name };
+  return {
+    ready: true,
+    remoteUnreachable: route.mode === 'blocked',
+    downloading: false,
+    downloadingId: null,
+    files: { model: false, mmproj: false },
+    modelId: provider.id,
+    name: provider.name,
+    sizeGB: 0,
+    minRamGB: 0,
+    remote: true,
   };
 }
 
@@ -1433,7 +1478,11 @@ async function assessScreenshot(
   { signal }: { signal?: AbortSignal } = {},
 ): Promise<{ ok: boolean; status: string; reason?: string; ready: boolean }> {
   if (!imagePath || !fs.existsSync(imagePath)) return { ok: true, status: 'unknown', ready: false };
-  if (!getModelStatus().ready) return { ok: true, status: 'unknown', ready: false };
+  const route = aiRoute('vision');
+  // Node configured but down: skip the QC (fail open) instead of using local.
+  if (route.mode === 'blocked') return { ok: true, status: 'unknown', ready: false };
+  const provider = route.mode === 'remote' ? route.provider : null;
+  if (!provider && !getModelStatus().ready) return { ok: true, status: 'unknown', ready: false };
 
   let dataUrl: string;
   try {
@@ -1454,10 +1503,25 @@ async function assessScreenshot(
     if (signal.aborted) ac.abort();
     else signal.addEventListener('abort', onAbort, { once: true });
   }
-  const timer = setTimeout(() => ac.abort(), ASSESS_TIMEOUT_MS);
+  let releaseRemote: (() => void) | null = null;
+  try {
+    releaseRemote = provider ? await acquireRemoteRequest(ac.signal) : null;
+  } catch {
+    if (signal) signal.removeEventListener('abort', onAbort);
+    inflightCount--;
+    touchServer();
+    return { ok: true, status: 'unknown', ready: true };
+  }
+  const timer = setTimeout(() => ac.abort(), provider ? 120_000 : ASSESS_TIMEOUT_MS);
 
   try {
-    const { port } = await ensureServer();
+    const endpoint = provider
+      ? chatEndpoint(provider)
+      : {
+          url: `http://127.0.0.1:${(await ensureServer()).port}/v1/chat/completions`,
+          headers: { 'Content-Type': 'application/json' },
+          model: undefined,
+        };
     const body = {
       messages: [
         { role: 'system', content: ASSESS_SYSTEM_PROMPT },
@@ -1482,13 +1546,15 @@ async function assessScreenshot(
       response_format: ASSESS_RESPONSE_FORMAT,
       temperature: 0,
       max_tokens: 120,
-      cache_prompt: false,
+      ...(provider ? { model: endpoint.model } : { cache_prompt: false }),
+      ...remoteThinkingOptions(provider),
     };
-    const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+    const res = await fetch(endpoint.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: endpoint.headers,
       body: JSON.stringify(body),
       signal: ac.signal,
+      redirect: 'error',
     });
     if (!res.ok) throw new Error(`llama-server HTTP ${res.status}`);
     const json = (await res.json()) as ChatCompletionResponse;
@@ -1507,6 +1573,7 @@ async function assessScreenshot(
     return { ok: true, status: 'unknown', ready: true }; // fail open
   } finally {
     clearTimeout(timer);
+    releaseRemote?.();
     if (signal) signal.removeEventListener('abort', onAbort);
     inflightCount--;
     touchServer();
@@ -1542,7 +1609,7 @@ async function collectVisualInputs(
   // path (slides ordered hero-first, capped to N_WEB_SLIDES, no thumbnail fallback).
   // Hero-first ordering means that if the model's context truncates, the most
   // informative slide (above-the-fold) is the one that survives.
-  if ((post as Shelfy.Post).platform === 'web' && Array.isArray(post.media)) {
+  if (isWebPost(post) && Array.isArray(post.media)) {
     const ROLE_ORDER: Record<string, number> = { hero: 0, interna: 1, footer: 2, mobile: 3 };
     const ffmpeg = resolveFfmpeg();
     const slides = post.media
@@ -1761,6 +1828,7 @@ const WEB_PURPOSE_ENUM = [
   'webapp',
   'directory',
   'personal',
+  'other',
 ];
 const WEB_INDUSTRY_ENUM = [
   'technology',
@@ -1907,13 +1975,22 @@ function cleanStringArray(
 // `onToken(fullText)` is supplied the request streams (SSE) and reports the
 // accumulating raw output so the UI can show the generation live; the final
 // JSON.parse is identical either way.
-async function runInference(
-  frameUrls: string[],
-  caption: unknown,
-  frequentTags: unknown,
+// One JSON-schema-constrained chat completion (local llama-server or the remote
+// provider), optionally streamed. Shared by the social/web catalog paths.
+interface ChatJsonRequest {
+  system: string;
+  userContent: unknown[];
+  responseFormat: object;
+  maxTokens?: number;
+  temperature?: number;
+  timeoutMs?: number;
+}
+
+async function runChatJson(
+  request: ChatJsonRequest,
   signal?: AbortSignal,
   onToken?: OnToken,
-  kind: AnalyzeKind = 'social',
+  provider: ProviderConfig | null = null,
 ): Promise<RawCatalog> {
   inflightCount++;
   if (idleTimer) {
@@ -1923,13 +2000,20 @@ async function runInference(
   // ensureServer() can reject (spawn failure, freePort error, MODEL_NOT_READY) —
   // its rejection must not leak the inflightCount bump above, or the idle teardown
   // (gated on inflightCount === 0) is disabled for the rest of the session.
-  let port: number;
-  try {
-    ({ port } = await ensureServer());
-  } catch (err) {
-    inflightCount--;
-    touchServer();
-    throw err;
+  let endpoint: { url: string; headers: Record<string, string>; model?: string };
+  if (provider) endpoint = chatEndpoint(provider);
+  else {
+    try {
+      const { port } = await ensureServer();
+      endpoint = {
+        url: `http://127.0.0.1:${port}/v1/chat/completions`,
+        headers: { 'Content-Type': 'application/json' },
+      };
+    } catch (err) {
+      inflightCount--;
+      touchServer();
+      throw err;
+    }
   }
   const ac = new AbortController();
   const onAbort = (): void => ac.abort();
@@ -1937,40 +2021,38 @@ async function runInference(
     if (signal.aborted) ac.abort();
     else signal.addEventListener('abort', onAbort, { once: true });
   }
-  const timer = setTimeout(() => ac.abort(), INFER_TIMEOUT_MS);
+  let releaseRemote: (() => void) | null = null;
+  try {
+    releaseRemote = provider ? await acquireRemoteRequest(ac.signal) : null;
+  } catch (error) {
+    if (signal) signal.removeEventListener('abort', onAbort);
+    inflightCount--;
+    touchServer();
+    throw error;
+  }
+  const timeoutMs = request.timeoutMs ?? (provider ? REMOTE_INFER_TIMEOUT_MS : INFER_TIMEOUT_MS);
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
 
   const stream = typeof onToken === 'function';
-  // kind selects schema + system prompt; the social path is byte-for-byte unchanged.
-  const isWeb = kind === 'web';
-  const systemPrompt = isWeb ? WEB_SYSTEM_PROMPT : SYSTEM_PROMPT;
-  const responseFormat = isWeb ? WEB_RESPONSE_FORMAT : RESPONSE_FORMAT;
   const body = {
     messages: [
-      { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: buildUserPrompt(caption, frequentTags, frameUrls.length > 0, kind),
-          },
-          ...frameUrls.map((url) => ({ type: 'image_url', image_url: { url } })),
-        ],
-      },
+      { role: 'system', content: request.system },
+      { role: 'user', content: request.userContent },
     ],
-    response_format: responseFormat,
-    temperature: 0.2,
-    max_tokens: 768,
-    ...DRY_SAMPLING,
-    cache_prompt: false,
+    response_format: request.responseFormat,
+    temperature: request.temperature ?? 0.2,
+    max_tokens: request.maxTokens ?? 768,
+    ...(provider ? { model: endpoint.model } : { ...DRY_SAMPLING, cache_prompt: false }),
+    ...remoteThinkingOptions(provider),
     ...(stream ? { stream: true } : {}),
   };
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+    const res = await fetch(endpoint.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: endpoint.headers,
       body: JSON.stringify(body),
       signal: ac.signal,
+      redirect: 'error',
     });
     // Check the HTTP status before touching the body: a non-ok response can carry
     // a non-JSON body, and parsing it first would mask the real status with a
@@ -2034,15 +2116,44 @@ async function runInference(
     // A local-timeout abort is reported to the caller as a real failure (not a
     // user cancellation) only when the caller's own signal didn't fire.
     if (ac.signal.aborted && !(signal && signal.aborted)) {
-      throw new Error(`Inference timed out after ${INFER_TIMEOUT_MS}ms`);
+      throw new Error(`Inference timed out after ${timeoutMs}ms`);
     }
     throw err;
   } finally {
     clearTimeout(timer);
+    releaseRemote?.();
     if (signal) signal.removeEventListener('abort', onAbort);
     inflightCount--;
     touchServer();
   }
+}
+
+async function runInference(
+  frameUrls: string[],
+  caption: unknown,
+  frequentTags: unknown,
+  signal?: AbortSignal,
+  onToken?: OnToken,
+  kind: AnalyzeKind = 'social',
+  provider: ProviderConfig | null = null,
+): Promise<RawCatalog> {
+  // kind selects schema + system prompt; the social path is byte-for-byte unchanged.
+  const isWeb = kind === 'web';
+  return runChatJson(
+    {
+      system: isWeb ? WEB_SYSTEM_PROMPT : SYSTEM_PROMPT,
+      userContent: [
+        { type: 'text', text: buildUserPrompt(caption, frequentTags, frameUrls.length > 0, kind) },
+        ...frameUrls.map((url) => ({ type: 'image_url', image_url: { url } })),
+      ],
+      responseFormat: isWeb ? WEB_RESPONSE_FORMAT : RESPONSE_FORMAT,
+      temperature: 0.2,
+      maxTokens: 768,
+    },
+    signal,
+    onToken,
+    provider,
+  );
 }
 
 async function analyzeFrames(
@@ -2053,32 +2164,62 @@ async function analyzeFrames(
   onStage?: OnStage,
   onToken?: OnToken,
   kind: AnalyzeKind = 'social',
+  provider: ProviderConfig | null = null,
 ): Promise<AnalyzeResult> {
   let parsed: RawCatalog;
+  const modelUsed = provider?.name || getSelectedModel().name;
   try {
-    parsed = await runInference(frameUrls, caption, frequentTags, signal, onToken, kind);
+    parsed = await runInference(frameUrls, caption, frequentTags, signal, onToken, kind, provider);
   } catch (err) {
     const e = err as { name?: string; message?: string } | undefined;
     const isAbort =
       e?.name === 'AbortError' || e?.message === 'AbortError' || (signal && signal.aborted);
     if (isAbort) throw err;
-    // llama.cpp KV-cache corruption bug (#17200): restart the server and retry once.
-    // The retry runs NON-streaming (no onToken) — the proven path — so analysis
-    // still succeeds even if streamed grammar-constrained output misbehaves.
-    // Under concurrency > 1 the llama-server is SHARED across sibling jobs (spawned
-    // with --parallel N), and runInference's finally has already decremented this
-    // job's inflightCount, so inflightCount now counts only the siblings still
-    // mid-fetch. Only tear the server down when no sibling is using it: otherwise a
-    // SIGTERM here would abort their in-flight fetches (a non-abort network error),
-    // cascading them into their own restart-and-retry. With siblings in flight the
-    // failure was just as likely caused by a sibling that already restarted the
-    // server, so we simply retry the request against the current server.
-    console.warn(
-      `[analyzer] inference failed, ${inflightCount === 0 ? 'restarting server and ' : ''}retrying once: ${e?.message || err}`,
-    );
-    onStage?.('Errore del server: riavvio e nuovo tentativo…');
-    if (inflightCount === 0) shutdown();
-    parsed = await runInference(frameUrls, caption, frequentTags, signal, undefined, kind);
+    if (provider) {
+      // A remote SSE stream may finish without usable content even when the
+      // server accepted the request. Retry once without streaming before giving
+      // up on the selected remote model.
+      try {
+        if (onToken && e?.message === 'Model returned invalid JSON') {
+          onStage?.('Risposta incompleta: nuovo tentativo senza streaming…');
+          parsed = await runInference(
+            frameUrls,
+            caption,
+            frequentTags,
+            signal,
+            undefined,
+            kind,
+            provider,
+          );
+        } else {
+          throw err;
+        }
+      } catch (retryErr) {
+        // Re-probe the node: if it is down, the job waits for it (or for the user
+        // to opt into local models) — never a silent switch to the local model.
+        const status = await probeRemote();
+        if (status.reachable === false) throw new Error(REMOTE_UNAVAILABLE);
+        throw retryErr;
+      }
+    } else {
+      // llama.cpp KV-cache corruption bug (#17200): restart the server and retry once.
+      // The retry runs NON-streaming (no onToken) — the proven path — so analysis
+      // still succeeds even if streamed grammar-constrained output misbehaves.
+      // Under concurrency > 1 the llama-server is SHARED across sibling jobs (spawned
+      // with --parallel N), and runInference's finally has already decremented this
+      // job's inflightCount, so inflightCount now counts only the siblings still
+      // mid-fetch. Only tear the server down when no sibling is using it: otherwise a
+      // SIGTERM here would abort their in-flight fetches (a non-abort network error),
+      // cascading them into their own restart-and-retry. With siblings in flight the
+      // failure was just as likely caused by a sibling that already restarted the
+      // server, so we simply retry the request against the current server.
+      console.warn(
+        `[analyzer] inference failed, ${inflightCount === 0 ? 'restarting server and ' : ''}retrying once: ${e?.message || err}`,
+      );
+      onStage?.('Errore del server: riavvio e nuovo tentativo…');
+      if (inflightCount === 0) shutdown();
+      parsed = await runInference(frameUrls, caption, frequentTags, signal, undefined, kind);
+    }
   }
 
   // Due livelli separati (P2): generali (tema/categoria) e specifici (dettaglio).
@@ -2097,6 +2238,7 @@ async function analyzeFrames(
     keywords: cleanStringArray(parsed.search_keywords, { keepCase: true }),
     saveReason: typeof parsed.save_reason === 'string' ? parsed.save_reason.trim() : '',
     language: typeof parsed.language === 'string' ? parsed.language.trim() : '',
+    modelUsed,
   };
 
   // Web schema (web_catalog) also yields the closed-enum purpose/industry. Map them
@@ -2111,6 +2253,52 @@ async function analyzeFrames(
   }
 
   return result;
+}
+
+// ─── Web reference catalog v2 ───────────────────────────────────────────────────
+
+async function analyzeWebCatalog(
+  post: Shelfy.Post,
+  signal: AbortSignal,
+  onStage: (stage: string, frac?: number) => void,
+  onToken: OnToken,
+  provider: ProviderConfig | null,
+): Promise<{ mapped: webCatalog.MappedCatalog; modelUsed: string }> {
+  onStage('Preparazione di immagini e dati del sito…', 0.1);
+  const input = await webCatalog.buildCatalogInput(post, provider ? 'remote' : 'local', signal);
+  const modelUsed = provider?.name || getSelectedModel().name;
+  onStage(`Interrogazione del modello (${modelUsed}) con ${input.images} immagini…`);
+  const request = {
+    system: webCatalog.WEB_CATALOG_SYSTEM,
+    userContent: input.userContent,
+    responseFormat: webCatalog.WEB_CATALOG_FORMAT,
+    maxTokens: input.maxTokens,
+    // Low temperature: the catalog is classification, not prose; it must be stable.
+    temperature: 0.1,
+  };
+  let raw: RawCatalog;
+  try {
+    raw = await runChatJson(request, signal, onToken, provider);
+  } catch (err) {
+    const e = err as { name?: string; message?: string } | undefined;
+    if (e?.name === 'AbortError' || e?.message === 'AbortError' || signal.aborted) throw err;
+    try {
+      // A streamed reply can end without usable JSON: one non-streaming retry.
+      if (e?.message !== 'Model returned invalid JSON') throw err;
+      onStage('Risposta incompleta: nuovo tentativo senza streaming…');
+      raw = await runChatJson(request, signal, undefined, provider);
+    } catch (retryErr) {
+      if (provider) {
+        const status = await probeRemote();
+        if (status.reachable === false) throw new Error(REMOTE_UNAVAILABLE);
+      }
+      throw retryErr;
+    }
+  }
+  return {
+    mapped: webCatalog.mapCatalog(raw as webCatalog.RawWebCatalog, post, modelUsed),
+    modelUsed,
+  };
 }
 
 // ─── Search query expansion (text-only) ─────────────────────────────────────────
@@ -2867,6 +3055,7 @@ async function buildTagAliases({
 // ─── Conversational tag-search chat (streaming) ──────────────────────────────────
 
 const CHAT_TIMEOUT_MS = 30_000; // chat replies are short; fail fast if it stalls
+const REMOTE_CHAT_TIMEOUT_MS = 180_000; // allow one cold router model swap
 const BROAD_VOCAB_LIMIT = 150; // top-frequency tags offered as the "general" pool
 const SPECIFIC_VOCAB_LIMIT = 60; // query-retrieved long-tail tags offered as "specific"
 const MAX_PROPOSED = 30; // hard cap across BOTH tiers; the model picks only the relevant ones (often fewer)
@@ -3285,8 +3474,25 @@ async function chatSearch(
   // message's own content words) is the fallback for model-not-ready / empty block.
   const fallbackKeywords = deterministicKeywords(lastUserMessage);
 
-  // Model not ready: degrade to keyword/deterministic search, no server call.
-  if (!getModelStatus().ready) {
+  const route = aiRoute('search');
+  if (route.mode === 'blocked') {
+    return {
+      reply: 'Nodo AI non raggiungibile: cerco per parola chiave.',
+      tagsToAdd: [...deterministic.broad, ...deterministic.specific],
+      tagsToRemove: [],
+      keywordsToAdd: fallbackKeywords,
+      tagGroups: {
+        broad: deterministic.broad,
+        specific: deterministic.specific,
+        keywords: fallbackKeywords,
+      },
+      modelUsed: false,
+    };
+  }
+  const remoteProvider = route.mode === 'remote' ? route.provider : null;
+  // The remote text model can search the local image index even when the local
+  // vision model has not been downloaded.
+  if (!remoteProvider && !getModelStatus().ready) {
     return {
       reply: 'Il modello non è pronto: cerco per parola chiave.',
       tagsToAdd: [...deterministic.broad, ...deterministic.specific],
@@ -3301,20 +3507,26 @@ async function chatSearch(
     };
   }
 
-  inflightCount++;
-  if (idleTimer) {
-    clearTimeout(idleTimer);
-    idleTimer = null;
-  }
-  // A rejection from ensureServer() must not leak the inflightCount bump (it gates
-  // idle teardown); decrement and re-throw before the main try/finally would run.
-  let port: number;
-  try {
-    ({ port } = await ensureServer());
-  } catch (err) {
-    inflightCount--;
-    touchServer();
-    throw err;
+  let endpoint: { url: string; headers: Record<string, string>; model?: string };
+  if (remoteProvider) {
+    endpoint = chatEndpoint(remoteProvider);
+  } else {
+    inflightCount++;
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = null;
+    }
+    try {
+      const { port } = await ensureServer();
+      endpoint = {
+        url: `http://127.0.0.1:${port}/v1/chat/completions`,
+        headers: { 'Content-Type': 'application/json' },
+      };
+    } catch (err) {
+      inflightCount--;
+      touchServer();
+      throw err;
+    }
   }
   const ac = new AbortController();
   const onAbort = (): void => ac.abort();
@@ -3322,7 +3534,15 @@ async function chatSearch(
     if (signal.aborted) ac.abort();
     else signal.addEventListener('abort', onAbort, { once: true });
   }
-  const timer = setTimeout(() => ac.abort(), CHAT_TIMEOUT_MS);
+  let releaseRemote: (() => void) | null = null;
+  try {
+    releaseRemote = remoteProvider ? await acquireRemoteRequest(ac.signal) : null;
+  } catch (error) {
+    if (signal) signal.removeEventListener('abort', onAbort);
+    throw error;
+  }
+  const chatTimeoutMs = remoteProvider ? REMOTE_CHAT_TIMEOUT_MS : CHAT_TIMEOUT_MS;
+  const timer = setTimeout(() => ac.abort(), chatTimeoutMs);
 
   const body = {
     messages: [
@@ -3332,7 +3552,8 @@ async function chatSearch(
     stream: true,
     temperature: 0.3,
     max_tokens: 256,
-    cache_prompt: true,
+    ...(remoteProvider ? { model: endpoint.model } : { cache_prompt: true }),
+    ...remoteThinkingOptions(remoteProvider),
   };
 
   let full = ''; // entire accumulated model output
@@ -3367,13 +3588,14 @@ async function chatSearch(
   };
 
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
+    const res = await fetch(endpoint.url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      redirect: 'error',
+      headers: endpoint.headers,
       body: JSON.stringify(body),
       signal: ac.signal,
     });
-    if (!res.ok) throw new Error(`llama-server HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`Chat provider HTTP ${res.status}`);
 
     // Parse the SSE stream: lines `data: {json}` carry choices[0].delta.content.
     let sseBuf = '';
@@ -3417,14 +3639,17 @@ async function chatSearch(
     }
   } catch (err) {
     if (ac.signal.aborted && !(signal && signal.aborted)) {
-      throw new Error(`Chat timed out after ${CHAT_TIMEOUT_MS}ms`);
+      throw new Error(`Chat timed out after ${chatTimeoutMs}ms`);
     }
     throw err;
   } finally {
     clearTimeout(timer);
+    releaseRemote?.();
     if (signal) signal.removeEventListener('abort', onAbort);
-    inflightCount--;
-    touchServer();
+    if (!remoteProvider) {
+      inflightCount--;
+      touchServer();
+    }
   }
 
   // Parse the two tiers (lenient, intersected with the vocab allowlist). If the
@@ -3525,7 +3750,14 @@ function jobKey(postId: string): string {
   return `${postId}:analyze`;
 }
 function detectPlatform(post: AnalyzePost): string {
+  if (isWebPost(post)) return 'web';
   return (post as Shelfy.Post).platform || (post.shortcode ? 'instagram' : 'twitter');
+}
+
+// A web reference, whatever path queued it: the bulk paths (analyze:posts /
+// analyze:missing) hand over LIGHT posts that carry media_type but no platform.
+function isWebPost(post: AnalyzePost): boolean {
+  return (post as Shelfy.Post).platform === 'web' || post.mediaType === 'website';
 }
 
 // Transient fields that drive only the live UI and are NOT persisted by jobstore
@@ -3557,10 +3789,15 @@ function patchJob(key: string, patch: Partial<AnalyzeJob>): void {
   setJob({ ...j, ...patch }, { persist });
 }
 
-async function runJob(key: string): Promise<void> {
+// `route` is resolved once by pumpQueue (which never passes 'blocked'), so every
+// job of a pump pass targets the same model.
+async function runJob(key: string, route: AiRoute): Promise<void> {
   const job = jobsMap.get(key);
-  const post = postCache.get(key);
-  if (!job || !post) return;
+  const cached = postCache.get(key);
+  if (!job || !cached || route.mode === 'blocked') return;
+  // Web references are re-read in full: the light posts handed over by the bulk
+  // paths lack the web_* fields (tech stack, pages, metadata) the web prompt needs.
+  const post: AnalyzePost = isWebPost(cached) ? (db.getPost(cached.id) ?? cached) : cached;
 
   const ac = new AbortController();
   abortMap.set(key, ac);
@@ -3573,7 +3810,8 @@ async function runJob(key: string): Promise<void> {
   // durationMs are stamped on every terminal transition below. stage/phaseProgress/
   // indeterminate feed the per-job phase detail in the AI Tags queue.
   const startedAt = Date.now();
-  const modelName = getSelectedModel().name;
+  const visionProvider = route.mode === 'remote' ? route.provider : null;
+  const modelName = visionProvider?.name || getSelectedModel().name;
   patchJob(key, {
     status: 'extracting',
     progress: 0,
@@ -3589,7 +3827,67 @@ async function runJob(key: string): Promise<void> {
   });
 
   try {
-    if (!getModelStatus().ready) throw new Error('MODEL_NOT_READY');
+    if (!getModelStatus().ready && !visionProvider) throw new Error('MODEL_NOT_READY');
+    // Web references: structured design catalog v2 (see webcap/ai-catalog.ts).
+    if (isWebPost(post) && Array.isArray((post as Shelfy.Post).webPages)) {
+      let lastEmit = 0;
+      const onToken = (full: string): void => {
+        const t = Date.now();
+        if (t - lastEmit < 80) return;
+        lastEmit = t;
+        patchJob(key, { streamText: full });
+      };
+      db.updateAiAnalysis(post.id, { status: 'analyzing' });
+      const { mapped, modelUsed } = await analyzeWebCatalog(
+        post as Shelfy.Post,
+        ac.signal,
+        (stage, frac) =>
+          patchJob(key, {
+            status: frac === undefined ? 'analyzing' : 'extracting',
+            stage,
+            ...(frac === undefined
+              ? { progress: 0.5, phaseProgress: null, indeterminate: true, streamText: '' }
+              : { phaseProgress: frac, progress: frac * 0.45 }),
+          }),
+        onToken,
+        visionProvider,
+      );
+      mapped.catalog.model = modelUsed;
+      db.updateAiAnalysis(post.id, {
+        description: mapped.description,
+        tags: mapped.tags,
+        generalTags: mapped.generalTags,
+        specificTags: mapped.specificTags,
+        entities: mapped.entities,
+        keywords: mapped.keywords,
+        language: mapped.language,
+        saveReason: mapped.saveReason,
+        category: mapped.category,
+        contentType: mapped.contentType,
+        webAi: mapped.catalog,
+        status: 'done',
+        model: modelUsed,
+      });
+      const finishedAt = Date.now();
+      patchJob(key, {
+        status: 'done',
+        model: modelUsed,
+        progress: 1,
+        description: mapped.description,
+        tags: mapped.tags,
+        entities: mapped.entities,
+        keywords: mapped.keywords,
+        saveReason: mapped.saveReason,
+        language: mapped.language,
+        finishedAt,
+        durationMs: finishedAt - startedAt,
+        stage: null,
+        phaseProgress: 1,
+        indeterminate: false,
+        streamText: null,
+      });
+      return;
+    }
     const frames = await collectVisualInputs(
       post,
       ac.signal,
@@ -3620,7 +3918,7 @@ async function runJob(key: string): Promise<void> {
     // Web posts (platform==='web') use the web_catalog schema + web prompt; everything
     // else stays on the social path. For the web, frequentTags carries the deterministic
     // tech stack (post.webTech) so it lands in entities (see buildWebUserPrompt/analyzeFrames).
-    const kind: AnalyzeKind = (post as Shelfy.Post).platform === 'web' ? 'web' : 'social';
+    const kind: AnalyzeKind = isWebPost(post) ? 'web' : 'social';
     const freq =
       kind === 'web'
         ? Array.isArray((post as Shelfy.Post).webTech)
@@ -3635,6 +3933,7 @@ async function runJob(key: string): Promise<void> {
       (stage) => patchJob(key, { stage }),
       onToken,
       kind,
+      visionProvider,
     );
     const {
       description,
@@ -3662,11 +3961,12 @@ async function runJob(key: string): Promise<void> {
       category,
       contentType,
       status: 'done',
-      model: modelName,
+      model: result.modelUsed || modelName,
     });
     const finishedAt = Date.now();
     patchJob(key, {
       status: 'done',
+      model: result.modelUsed || modelName,
       progress: 1,
       description,
       tags,
@@ -3688,10 +3988,10 @@ async function runJob(key: string): Promise<void> {
     if (!jobsMap.has(key)) return;
     const e = err as { name?: string; message?: string } | undefined;
     const isAbort = e?.name === 'AbortError' || e?.message === 'AbortError';
-    if (isAbort && pausedKeys.has(key)) {
-      // Paused, not cancelled: return to the FRONT of the queue (the work is
-      // discarded — analysis restarts from scratch on resume) so a paused job
-      // is the first to pick back up. Reset all timing/phase fields.
+    if ((isAbort && pausedKeys.has(key)) || e?.message === REMOTE_UNAVAILABLE) {
+      // Paused (or the remote node dropped), not cancelled: return to the FRONT
+      // of the queue (the work is discarded — analysis restarts from scratch on
+      // resume) so this job is the first to pick back up. Reset timing/phase fields.
       pausedKeys.delete(key);
       patchJob(key, {
         status: 'pending',
@@ -3744,13 +4044,19 @@ async function runJob(key: string): Promise<void> {
 }
 
 function pumpQueue(): void {
-  if (isPaused) return;
+  if (isPaused || pendingQueue.length === 0) return;
+  // Hold the queue while the configured node is unreachable; a status change
+  // (node back, or the user opting into local models) pumps it again.
+  const route = aiRoute('vision');
+  if (route.mode === 'blocked') return;
   while (runningCount < getConcurrency() && pendingQueue.length > 0) {
     const key = pendingQueue.shift()!;
     const job = jobsMap.get(key);
-    if (job?.status === 'pending') runJob(key);
+    if (job?.status === 'pending') runJob(key, route);
   }
 }
+
+onRemoteStatusChange(() => pumpQueue());
 
 // ─── Public API ─────────────────────────────────────────────────────────────────
 
@@ -3998,6 +4304,7 @@ export {
   recover,
   setProgressEmitter,
   getModelStatus,
+  getAnalysisModelStatus,
   listModels,
   setModel,
   getConcurrency,
@@ -4022,6 +4329,8 @@ export {
   refineTagGroups,
   buildTagAliases,
   // Pure helpers exported for unit testing (no behavior change).
+  runInference,
+  analyzeFrames,
   buildUserPrompt,
   buildChatSystemPrompt,
   retrieveSpecificTags,

@@ -110,7 +110,6 @@ function attachNetwork(wc: WebContents): void {
     if (method === 'Network.responseReceived' && isFeedUrl(params.response.url)) {
       pending.set(params.requestId, params.response.url);
     } else if (method === 'Network.loadingFinished' && pending.has(params.requestId)) {
-      const url = pending.get(params.requestId);
       pending.delete(params.requestId);
       dbg
         .sendCommand('Network.getResponseBody', { requestId: params.requestId })
@@ -118,7 +117,7 @@ function attachNetwork(wc: WebContents): void {
           const text = base64Encoded ? Buffer.from(body, 'base64').toString('utf8') : body;
           try {
             harvest(JSON.parse(text));
-          } catch (_) {
+          } catch {
             /* non-JSON or partial; ignore */
           }
         })
@@ -143,7 +142,7 @@ async function collectDom(wc: WebContents): Promise<void> {
   try {
     const codes: string[] = await wc.executeJavaScript(COLLECT_DOM, true);
     codes.forEach((c) => domCodes.add(c));
-  } catch (_) {}
+  } catch {}
 }
 
 async function scrollOnce(wc: WebContents): Promise<void> {

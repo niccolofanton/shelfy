@@ -1,4 +1,4 @@
-import { app, session } from 'electron';
+import { app } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -7,45 +7,48 @@ import type { ChildProcess } from 'child_process';
 import * as db from './db';
 import * as jobstore from './jobstore';
 import { microThumbDataUri } from './thumbs';
-import { PARTITION, SOCIAL_UA } from './interceptor';
+import { SOCIAL_UA } from './interceptor';
 import { assertSafeMediaUrl } from './net-safety';
 
 const KIND = 'download'; // jobstore namespace for this queue
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-// Reuse the exact UA the webview logged in with (single source of truth in
-// interceptor.js) so the cookies we export and the requests we replay carry a
-// consistent browser identity — a UA mismatch is a bot signal / ban risk.
+// Generic browser User-Agent. This is not an account credential.
 const UA = SOCIAL_UA;
 const REFERERS: Record<string, string> = {
   instagram: 'https://www.instagram.com/',
   twitter: 'https://x.com/',
   pinterest: 'https://www.pinterest.com/',
 };
+const VIDEO_POST_HOSTS: Record<string, readonly string[]> = {
+  instagram: ['instagram.com', 'www.instagram.com', 'm.instagram.com'],
+  twitter: [
+    'x.com',
+    'www.x.com',
+    'mobile.x.com',
+    'twitter.com',
+    'www.twitter.com',
+    'mobile.twitter.com',
+  ],
+  pinterest: ['pinterest.com', 'www.pinterest.com'],
+};
+const VIDEO_EXTRACTORS: Record<string, string> = {
+  instagram: 'Instagram',
+  twitter: 'twitter',
+  pinterest: 'Pinterest',
+};
 const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp'];
 
-// Global slot cap. Downloads are anonymous now (no account to protect), so we no
-// longer serialize Instagram to 1 — but the cap stays moderate (not "full gas")
-// so a bulk run can't earn the user's IP a 429 / temporary CDN block. The login
-// fallback is throttled separately, on its own serialized lane (see withLoginLane).
+// Moderate global slot cap to avoid burst requests to the source/CDN.
 const CONCURRENCY = 4;
 
-// Per-platform running-job cap; platforms not listed use CONCURRENCY. Empty now:
-// nothing is serialized at the queue level anymore. The only path that must stay
-// single-file — the authenticated cookie fallback — self-serializes via withLoginLane.
+// Per-platform running-job cap; platforms not listed use CONCURRENCY.
 const PLATFORM_CONCURRENCY: Record<string, number> = {};
 
-// Anti-ban pacing handed to yt-dlp (seconds). --sleep-requests spaces the
-// metadata/extraction calls; --sleep-interval/--max-sleep-interval add a
-// randomized pause before each media download (a fixed cadence is itself a
-// fingerprint). Applied ONLY on the authenticated cookie fallback (runYtDlp's
-// `paced` option) — the default anonymous path runs unthrottled.
-const YTDLP_SLEEP_REQUESTS = '1.5';
-const YTDLP_SLEEP_MIN = '2';
-const YTDLP_SLEEP_MAX = '6';
 const YTDLP_PROGRESS_RE = /\[download\]\s+([\d.]+)%/;
 const DOWNLOAD_TIMEOUT_MS = 60_000; // abort a stalled media fetch
+const MAX_MEDIA_REDIRECTS = 5;
 const KILL_GRACE_MS = 5_000; // SIGTERM → SIGKILL fallback window
 
 // Browser-shaped headers for direct image/thumbnail fetches. A bare UA+Referer
@@ -62,9 +65,8 @@ const IMAGE_FETCH_HEADERS: Record<string, string> = {
 };
 
 // Small jitter before direct image/thumbnail fetches on the higher-volume CDNs.
-// Image fetches are anonymous (cookie-less), so there's no account at stake — this
-// is only a light brake on the user's IP so a bulk carousel pull doesn't burst into
-// a 429. Kept deliberately small (conservative profile chosen in the design Q&A);
+// Image fetches carry no account cookies, but the source still sees the user's
+// network address. This gap reduces bursts that can trigger a 429;
 // randomized [min,max] ms so the cadence isn't a fixed fingerprint. Platforms not
 // listed fire at full concurrency with no delay.
 const IMAGE_PACING_MS: Record<string, [number, number]> = {
@@ -183,6 +185,8 @@ const jobsMap = new Map<string, DownloadJobRecord>(); // key → serializable jo
 const postCache = new Map<string, Shelfy.Post>(); // key → post object (needed for retry)
 const abortMap = new Map<string, AbortController>(); // key → AbortController (active jobs only)
 const activePromises = new Map<string, Promise<void>>(); // key → in-flight runJob() promise (active jobs only)
+const deletingPostIds = new Map<string, number>();
+let clearingAssets = false;
 const pendingQueue: string[] = []; // ordered keys awaiting execution
 const pendingSet = new Set<string>(); // mirror of pendingQueue for O(1) membership (dedupe)
 const pausedKeys = new Set<string>(); // keys aborted by pause → re-queue instead of cancel
@@ -318,93 +322,59 @@ function ensureDirs(): void {
 // Deletes every downloaded asset file from disk and leaves empty asset dirs
 // behind. Cancels in-flight downloads first so nothing rewrites a file mid-wipe.
 async function clearAllAssets(): Promise<void> {
-  await cancelAll();
-  // cancelAll() only *requests* abort (ac.abort()); it doesn't wait for the
-  // jobs to actually stop. A yt-dlp/ffmpeg child has a SIGKILL grace window and
-  // settles only on 'close', and image jobs may still be mid renameSync. Await
-  // the live runJob promises so no writer can touch the dir during/after the
-  // wipe (a stale child re-creating videos/ files, or renameSync hitting ENOENT
-  // against the just-deleted dir).
-  await Promise.allSettled(Array.from(activePromises.values()));
-  await fs.promises.rm(path.join(app.getPath('userData'), 'assets'), {
-    recursive: true,
-    force: true,
-  });
-  ensureDirs();
+  clearingAssets = true;
+  try {
+    await cancelAll();
+    // cancelAll() only *requests* abort (ac.abort()); it doesn't wait for the
+    // jobs to actually stop. A yt-dlp/ffmpeg child has a SIGKILL grace window and
+    // settles only on 'close', and image jobs may still be mid renameSync. Await
+    // the live runJob promises so no writer can touch the dir during/after the
+    // wipe (a stale child re-creating videos/ files, or renameSync hitting ENOENT
+    // against the just-deleted dir).
+    await Promise.allSettled(Array.from(activePromises.values()));
+    const root = path.join(app.getPath('userData'), 'assets');
+    const keep = new Set(db.getProtectedAssetPaths().map((p) => path.resolve(p)));
+    const clearDir = async (dir: string): Promise<boolean> => {
+      let entries: fs.Dirent[];
+      try {
+        entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return true;
+        throw e;
+      }
+      let empty = true;
+      for (const entry of entries) {
+        const item = path.join(dir, entry.name);
+        if (dir === root && !['thumbnails', 'images', 'videos', 'previews'].includes(entry.name)) {
+          empty = false;
+          continue;
+        }
+        if (entry.isDirectory()) {
+          if (await clearDir(item)) await fs.promises.rmdir(item);
+          else empty = false;
+        } else if (keep.has(path.resolve(item)) || /^manual[0-9a-f]{18}-\d+\./i.test(entry.name)) {
+          empty = false;
+        } else {
+          await fs.promises.unlink(item);
+        }
+      }
+      return empty;
+    };
+    await clearDir(root);
+    ensureDirs();
+  } finally {
+    clearingAssets = false;
+  }
 }
 
-// ─── Cookie fallback for login-walled media ─────────────────────────────────────
-//
-// The default video path is fully ANONYMOUS (see runYtDlp / execVideo) — driving
-// downloads with the logged-in `persist:social` session is the one thing that
-// risks getting the user's account flagged or banned. We fall back to the session
-// cookies ONLY when the anonymous attempt fails with an explicit login / age /
-// private error (see NEEDS_LOGIN_RE), and only for that single retry — paced and
-// serialized (withLoginLane) so the account is touched as little as possible.
-// Public media never reaches here.
-
-// Serializes one Netscape cookie line, as yt-dlp's --cookies file expects.
-function toNetscapeLine(c: Electron.Cookie): string {
-  const domain = c.domain || '';
-  const includeSub = domain.startsWith('.') ? 'TRUE' : 'FALSE';
-  const expiration = c.session || !c.expirationDate ? 0 : Math.floor(c.expirationDate);
-  return [
-    domain,
-    includeSub,
-    c.path || '/',
-    c.secure ? 'TRUE' : 'FALSE',
-    expiration,
-    c.name,
-    c.value,
-  ].join('\t');
-}
-
-// Registrable domains whose cookies yt-dlp legitimately needs, per platform.
-// Scopes the exported cookies.txt to the target platform instead of dumping the
-// whole session jar — a smaller blast radius if the file ever leaks.
-const PLATFORM_COOKIE_DOMAINS: Record<string, string[]> = {
-  instagram: ['instagram.com', 'cdninstagram.com', 'facebook.com', 'fbcdn.net'],
-  twitter: ['x.com', 'twitter.com', 'twimg.com'],
-  pinterest: ['pinterest.com', 'pinimg.com'],
-};
-
-// True when a cookie's domain belongs to (or is a subdomain of) one of the
-// platform's registrable domains. Cookie domains may carry a leading dot.
-function cookieMatchesPlatform(cookie: Electron.Cookie, platform: string): boolean {
-  const domains = PLATFORM_COOKIE_DOMAINS[platform];
-  if (!domains) return false;
-  const host = (cookie.domain || '').replace(/^\./, '').toLowerCase();
-  return domains.some((d) => host === d || host.endsWith(`.${d}`));
-}
-
-// Dedicated dir for throwaway cookie jars. Lives inside userData (not the
-// world-readable system temp dir) so the files inherit the app data dir's
-// protections and are easy to sweep on boot.
+// Sweep cookie files left by older versions, which used an authenticated
+// fallback. No download path creates these files anymore.
 function cookieTmpDir(): string {
   return path.join(app.getPath('userData'), 'tmp-cookies');
 }
 
-// Writes a throwaway cookies.txt filtered to the platform's domains and returns
-// its path, or null when the session holds no cookies for the platform (i.e. the
-// user isn't logged in — the fallback then can't proceed). Caller deletes it.
-async function writeSessionCookieFile(platform: string): Promise<string | null> {
-  const all = await session.fromPartition(PARTITION).cookies.get({});
-  const cookies = platform ? all.filter((c) => cookieMatchesPlatform(c, platform)) : all;
-  if (!cookies.length) return null;
-  const body = ['# Netscape HTTP Cookie File', '', ...cookies.map(toNetscapeLine), ''].join('\n');
-  const dir = cookieTmpDir();
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(
-    dir,
-    `shelfy-cookies-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
-  );
-  fs.writeFileSync(file, body, { mode: 0o600 });
-  return file;
-}
-
 // Removes orphan `shelfy-cookies-*` files left behind by a previous crash
-// (normally each is unlinked in execVideo's finally, but a hard crash can leak
-// them — they hold session cookies, so we don't want them lingering). Sweeps
+// (they hold session cookies, so we don't want them lingering). Sweeps
 // the current tmp-cookies dir plus the legacy system temp location older
 // versions wrote to.
 function cleanupOrphanCookieFiles(): void {
@@ -509,8 +479,8 @@ async function downloadUrl(
   referer: string | undefined,
   signal: AbortSignal | undefined,
 ): Promise<void> {
-  // Reject internal/loopback hosts and non-http(s) schemes before the request.
-  assertSafeMediaUrl(url);
+  // Reject internal/loopback hosts and non-http(s) schemes before any request.
+  let currentUrl = assertSafeMediaUrl(url).toString();
 
   // Compose the caller's abort signal with a timeout so a stalled connection
   // can't hang a download slot forever.
@@ -522,15 +492,26 @@ async function downloadUrl(
 
   const tmp = `${destPath}.part`;
   try {
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': UA,
-        ...IMAGE_FETCH_HEADERS,
-        ...(referer ? { Referer: referer } : {}),
-      },
-      redirect: 'follow',
-      signal: composite,
-    });
+    let res: Response | undefined;
+    for (let hop = 0; hop <= MAX_MEDIA_REDIRECTS; hop++) {
+      res = await fetch(currentUrl, {
+        credentials: 'omit',
+        headers: {
+          'User-Agent': UA,
+          ...IMAGE_FETCH_HEADERS,
+          ...(referer ? { Referer: referer } : {}),
+        },
+        redirect: 'manual',
+        signal: composite,
+      });
+      if (res.status < 300 || res.status >= 400) break;
+      const location = res.headers?.get('location');
+      await res.body?.cancel?.();
+      if (!location) throw new Error('Media redirect without location');
+      if (hop === MAX_MEDIA_REDIRECTS) throw new Error('Too many media redirects');
+      currentUrl = assertSafeMediaUrl(new URL(location, currentUrl).toString()).toString();
+    }
+    if (!res) throw new Error('Media request failed');
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
     // Stream to a .part with backpressure, then rename atomically on success so
@@ -574,6 +555,129 @@ async function downloadUrl(
   }
 }
 
+const freshInstagramUrls = new Map<string, { at: number; value: Promise<Map<number, string>> }>();
+
+function instagramCdnUrl(raw: string): boolean {
+  try {
+    const url = assertSafeMediaUrl(raw);
+    const host = url.hostname.toLowerCase();
+    return (
+      url.protocol === 'https:' &&
+      (host.endsWith('.cdninstagram.com') || host.endsWith('.fbcdn.net'))
+    );
+  } catch {
+    return false;
+  }
+}
+
+function instagramPostUrl(raw: string | null | undefined): boolean {
+  try {
+    const url = new URL(raw || '');
+    return (
+      url.protocol === 'https:' &&
+      ['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase()) &&
+      /^\/(?:p|reel|tv)\/[A-Za-z0-9_-]+\/?$/.test(url.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+// yt-dlp can extract current cover URLs for image slides of a public Instagram
+// carousel even when the old CDN links saved in the database have expired.
+// The same credential-free flags as video downloads apply here.
+function extractFreshInstagramUrls(postUrl: string): Promise<Map<number, string>> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      ytDlpBin(),
+      [
+        '--ignore-config',
+        '--no-cookies',
+        '--no-cookies-from-browser',
+        '--no-cache-dir',
+        '--no-plugin-dirs',
+        '--ignore-no-formats-error',
+        '--flat-playlist',
+        '--skip-download',
+        '--socket-timeout',
+        '10',
+        '--print',
+        '%(playlist_index)s\t%(thumbnail)s',
+        '--',
+        postUrl,
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let output = '';
+    let oversized = false;
+    const timer = setTimeout(() => child.kill('SIGTERM'), 25_000);
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      output += chunk;
+      if (output.length > 256_000) {
+        oversized = true;
+        child.kill('SIGTERM');
+      }
+    });
+    child.stderr?.on('data', () => {}); // drain without logging post metadata
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0 || oversized) return reject(new Error('Could not refresh image URLs'));
+      const urls = new Map<number, string>();
+      for (const line of output.split(/\r?\n/)) {
+        const tab = line.indexOf('\t');
+        if (tab < 0) continue;
+        const index = Number(line.slice(0, tab));
+        const position = Number.isInteger(index) && index > 0 ? index - 1 : 0;
+        const url = line.slice(tab + 1).trim();
+        if (instagramCdnUrl(url)) urls.set(position, url);
+      }
+      resolve(urls);
+    });
+  });
+}
+
+function refreshedInstagramUrls(post: Shelfy.Post): Promise<Map<number, string>> {
+  const key = post.postUrl!;
+  const cached = freshInstagramUrls.get(key);
+  if (cached && Date.now() - cached.at < 5 * 60_000) return cached.value;
+  const value = extractFreshInstagramUrls(key);
+  freshInstagramUrls.set(key, { at: Date.now(), value });
+  if (freshInstagramUrls.size > 100)
+    freshInstagramUrls.delete(freshInstagramUrls.keys().next().value!);
+  void value.catch(() => {
+    if (freshInstagramUrls.get(key)?.value === value) freshInstagramUrls.delete(key);
+  });
+  return value;
+}
+
+async function downloadInstagramImageWithRepair(
+  post: Shelfy.Post,
+  url: string,
+  dest: string,
+  position: number,
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    await downloadUrl(url, dest, REFERERS.instagram, signal);
+  } catch (error) {
+    if (
+      !/^HTTP (?:403|404)$/.test((error as Error).message) ||
+      !instagramCdnUrl(url) ||
+      !instagramPostUrl(post.postUrl) ||
+      signal.aborted
+    )
+      throw error;
+    const fresh = (await refreshedInstagramUrls(post)).get(position);
+    if (!fresh || fresh === url) throw error;
+    await downloadUrl(fresh, dest, REFERERS.instagram, signal);
+  }
+}
+
 // ─── yt-dlp with AbortSignal ──────────────────────────────────────────────────
 
 function runYtDlp(
@@ -581,7 +685,8 @@ function runYtDlp(
   outputPath: string,
   onProgress: ((pct: number) => void) | undefined,
   signal: AbortSignal | undefined,
-  opts: { cookieFile?: string | null; paced?: boolean } = {},
+  extractor: string,
+  playlistItem: number | null = null,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     // A signal can already be aborted before we get here (e.g. the job was
@@ -594,26 +699,21 @@ function runYtDlp(
     // (otherwise yt-dlp rewrites a single line with \r and the parser can't
     // split it). Progress is emitted on stdout; errors land on stderr.
     const args = [
-      '--no-playlist',
+      // Never load the user's yt-dlp config (which could supply cookies,
+      // browser-cookie extraction, netrc or other account credentials).
+      '--ignore-config',
+      '--no-cookies',
+      '--no-cookies-from-browser',
+      '--no-cache-dir',
+      '--no-plugin-dirs',
+      '--use-extractors',
+      extractor,
       '--newline',
-      // A realistic desktop-Chrome identity; a default yt-dlp UA is a bot signal.
       '--user-agent',
       UA,
     ];
-    // Anti-ban pacing ONLY on the authenticated fallback: when we're forced to use
-    // the user's session cookies we slow down to mimic human browsing. The default
-    // anonymous path stays unthrottled — there's no account to protect.
-    if (opts.paced) {
-      args.push(
-        '--sleep-requests',
-        YTDLP_SLEEP_REQUESTS,
-        '--sleep-interval',
-        YTDLP_SLEEP_MIN,
-        '--max-sleep-interval',
-        YTDLP_SLEEP_MAX,
-      );
-    }
-    if (opts.cookieFile) args.push('--cookies', opts.cookieFile);
+    if (playlistItem == null) args.push('--no-playlist');
+    else args.push('--yes-playlist', '--playlist-items', String(playlistItem));
     // The `--` end-of-options marker guarantees yt-dlp can never interpret the
     // (post-supplied, untrusted) URL as an option — e.g. a postUrl beginning
     // with `-` such as `--exec=...` would otherwise be a command-injection vector.
@@ -704,7 +804,9 @@ async function execThumbnail(post: Shelfy.Post, signal: AbortSignal): Promise<Do
   if (!post.thumbnailUrl) throw new Error('No thumbnailUrl');
   const ext = extractExt(post.thumbnailUrl);
   const dest = path.join(dir, `${prefix}.${ext}`);
-  await downloadUrl(post.thumbnailUrl, dest, REFERERS[platform], signal);
+  if (platform === 'instagram')
+    await downloadInstagramImageWithRepair(post, post.thumbnailUrl, dest, 0, signal);
+  else await downloadUrl(post.thumbnailUrl, dest, REFERERS[platform], signal);
   return { thumbnailPath: dest };
 }
 
@@ -743,7 +845,9 @@ async function execImage(
     return { imagePath: dest, mediaPosition: position };
   }
   const url = platform === 'twitter' ? twitterOrigUrl(srcUrl) : srcUrl;
-  await downloadUrl(url, dest, REFERERS[platform], signal);
+  if (platform === 'instagram')
+    await downloadInstagramImageWithRepair(post, url, dest, position, signal);
+  else await downloadUrl(url, dest, REFERERS[platform], signal);
   return { imagePath: dest, mediaPosition: position };
 }
 
@@ -772,34 +876,11 @@ function cleanupVideoIntermediates(dest: string): void {
   }
 }
 
-// yt-dlp error fragments that mean "this needs an authenticated session" — an age
-// gate, a private account, or an explicit login wall. ONLY these trigger the cookie
-// fallback; transient failures (network, 429, CDN) must never reach for the account.
-const NEEDS_LOGIN_RE =
-  /age[-\s]?restrict|must be 18|login required|log ?in to|sign in to|rerun .*--cookies|requires? .*log\s?in|is private|private (?:account|video|profile|user)|only available .*registered users|restricted video/i;
-
-function needsLogin(message: string | undefined): boolean {
-  return NEEDS_LOGIN_RE.test(message || '');
-}
-
-// The cookie fallback runs ONE download at a time (decided in the design Q&A):
-// even when the anonymous path is at full concurrency, authenticated pulls go
-// strictly one-by-one so the account never shows a burst. A promise chain is a
-// sufficient mutex — the fallback is rare.
-let loginLaneTail: Promise<void> = Promise.resolve();
-function withLoginLane<T>(fn: () => Promise<T>): Promise<T> {
-  const result = loginLaneTail.then(fn, fn);
-  loginLaneTail = result.then(
-    () => undefined,
-    () => undefined,
-  );
-  return result;
-}
-
 async function execVideo(
   post: Shelfy.Post,
   key: string,
   signal: AbortSignal,
+  position: number | null,
 ): Promise<DownloadPaths> {
   if (!(await isYtDlpAvailable())) throw new Error('yt-dlp not installed');
   if (!post.postUrl) throw new Error('No postUrl');
@@ -807,13 +888,20 @@ async function execVideo(
   // post.postUrl is untrusted (imported JSON / scrapers). Apply the same SSRF +
   // scheme guard the image path uses, and reject anything yt-dlp could read as
   // an option (leading '-') or any non-http(s) scheme, before handing it off.
-  assertSafeMediaUrl(post.postUrl);
-
   const platform = detectPlatform(post);
+  const postUrl = assertSafeMediaUrl(post.postUrl);
+  if (
+    postUrl.protocol !== 'https:' ||
+    !VIDEO_POST_HOSTS[platform]?.includes(postUrl.hostname.toLowerCase())
+  )
+    throw new Error('Unsupported video post host');
   const id = getPostIdent(post);
-  const dest = path.join(getAssetDir('videos'), `${safePlatform(platform)}-${id}.mp4`);
+  const dest = path.join(
+    getAssetDir('videos'),
+    `${safePlatform(platform)}-${id}${position == null ? '' : `-${position}`}.mp4`,
+  );
 
-  if (fs.existsSync(dest)) return { videoPath: dest };
+  if (fs.existsSync(dest)) return { videoPath: dest, mediaPosition: position ?? undefined };
 
   const videoUrl = platform === 'twitter' ? normalizeVideoUrl(post.postUrl) : post.postUrl;
   // Collapse yt-dlp's per-line progress (--newline, dozens-hundreds of lines)
@@ -826,47 +914,22 @@ async function execVideo(
     patchJob(key, { progress: pct / 100 });
   };
 
-  // Stage A — anonymous, unthrottled. Covers all public media (the vast majority)
-  // without ever touching the user's account.
+  // Public media only: a login wall is reported as an error. Never retry with
+  // the user's social session or credentials.
   try {
-    await runYtDlp(videoUrl, dest, onProgress, signal);
-    return { videoPath: dest };
-  } catch (err) {
-    const e = err as { name?: string; message?: string } | undefined;
-    if (e?.name === 'AbortError') throw err;
-    // Only an explicit login / age-gate / private wall justifies spending the
-    // account. Anything else (network, 429, CDN) fails right here — no cookies.
-    if (!needsLogin(e?.message)) {
-      cleanupVideoIntermediates(dest);
-      throw err;
-    }
-  }
-
-  // Stage B — login fallback. The anonymous attempt hit a wall only an
-  // authenticated session can pass. Export the platform's session cookies and
-  // retry ONCE, paced and serialized through the login lane so the account shows
-  // as little activity as possible. No session signed in → nothing we can do.
-  cleanupVideoIntermediates(dest);
-  const cookieFile = await writeSessionCookieFile(platform);
-  if (!cookieFile) {
-    throw new Error(
-      `Login required for this ${platform} video, but no ${platform} session is signed in`,
+    await runYtDlp(
+      videoUrl,
+      dest,
+      onProgress,
+      signal,
+      VIDEO_EXTRACTORS[platform],
+      position != null && platform === 'instagram' ? position + 1 : null,
     );
-  }
-  lastPct = -1;
-  try {
-    await withLoginLane(() =>
-      runYtDlp(videoUrl, dest, onProgress, signal, { cookieFile, paced: true }),
-    );
+    return { videoPath: dest, mediaPosition: position ?? undefined };
   } catch (err) {
     if ((err as { name?: string })?.name !== 'AbortError') cleanupVideoIntermediates(dest);
     throw err;
-  } finally {
-    try {
-      fs.unlinkSync(cookieFile);
-    } catch {}
   }
-  return { videoPath: dest };
 }
 
 // ─── Worker ───────────────────────────────────────────────────────────────────
@@ -887,6 +950,10 @@ function persistPaths(
     if (position === 0) {
       db.updatePaths(job.postId, { imagePath: paths.imagePath, thumbBlur: thumbBlur ?? undefined });
     }
+    return;
+  }
+  if (job.assetType === 'video' && job.mediaPosition != null && paths.videoPath) {
+    db.updateMediaPath(job.postId, job.mediaPosition, paths.videoPath, 'video');
     return;
   }
   db.updatePaths(job.postId, { ...paths, thumbBlur: thumbBlur ?? undefined });
@@ -935,7 +1002,7 @@ async function runJob(key: string): Promise<void> {
       await paceImageFetch(platform, ac.signal);
       paths = await execImage(post, job.mediaPosition ?? 0, job.mediaUrl, ac.signal);
     } else if (job.assetType === 'video') {
-      paths = await execVideo(post, key, ac.signal);
+      paths = await execVideo(post, key, ac.signal, job.mediaPosition);
     }
 
     if (paths) {
@@ -1084,6 +1151,8 @@ function enqueuePost(
   assetTypes: unknown,
   { missingOnly = false }: EnqueuePostOptions = {},
 ): number {
+  // Manual files have no remote source to re-download from.
+  if (post.platform === 'manual' || deletingPostIds.has(post.id) || clearingAssets) return 0;
   ensureDirs();
 
   // assetTypes crosses the renderer trust boundary (IPC payload). Whitelist it
@@ -1102,21 +1171,36 @@ function enqueuePost(
       // archived, not just their cover.
       if (!IMAGE_MEDIA_TYPES.has(post.mediaType ?? '')) continue;
       for (const img of imageMediaOf(post)) {
-        if (missingOnly && img.localPath) continue;
+        if (missingOnly && img.localPath && fs.existsSync(img.localPath)) continue;
         enqueueJob(post, 'image', { position: img.position, mediaUrl: img.url });
         queued++;
       }
       continue;
     }
 
+    if (assetType === 'video' && post.mediaType !== 'video') {
+      const media = Array.isArray(post.media) ? post.media : [];
+      for (let position = 0; position < media.length; position++) {
+        const item = media[position];
+        if (
+          item.type !== 'video' ||
+          (missingOnly && item.localPath && fs.existsSync(item.localPath))
+        )
+          continue;
+        enqueueJob(post, 'video', { position });
+        queued++;
+      }
+      continue;
+    }
+
     // Skip asset types that can't apply to this post's media type
-    if (assetType === 'video' && post.mediaType !== 'video') continue;
     // Nothing to fetch for the thumbnail when the source URL is absent
     // (e.g. text-only tweets carry no thumbnail).
     if (assetType === 'thumbnail' && !post.thumbnailUrl) continue;
     // "Missing" is per asset type: re-download only the assets this post still
     // lacks, so partially-downloaded posts (e.g. thumbnail only) are completed.
-    if (missingOnly && post[ASSET_PATH_FIELD[assetType]]) continue;
+    const savedPath = post[ASSET_PATH_FIELD[assetType]];
+    if (missingOnly && typeof savedPath === 'string' && fs.existsSync(savedPath)) continue;
 
     enqueueJob(post, assetType);
     queued++;
@@ -1174,6 +1258,42 @@ function cancelJob(key: string): void {
   const job = jobsMap.get(key);
   if (job && job.status !== 'done') {
     patchJob(key, { status: 'cancelled', progress: 0 });
+  }
+}
+
+// Stop every writer for these posts before their files/rows are removed. Keep
+// enqueue blocked until the caller completes deletion, including while it yields
+// between filesystem batches.
+async function suspendPosts(ids: string[]): Promise<() => void> {
+  const blocked = new Set(ids);
+  for (const id of blocked) deletingPostIds.set(id, (deletingPostIds.get(id) ?? 0) + 1);
+  let released = false;
+  const release = (): void => {
+    if (released) return;
+    released = true;
+    for (const id of blocked) {
+      const count = deletingPostIds.get(id) ?? 0;
+      if (count <= 1) deletingPostIds.delete(id);
+      else deletingPostIds.set(id, count - 1);
+    }
+  };
+  try {
+    const keys = [...jobsMap.values()]
+      .filter((job) => blocked.has(job.postId))
+      .map((job) => job.key);
+    for (const key of keys) cancelJob(key);
+    await Promise.allSettled(
+      keys.map((key) => activePromises.get(key)).filter((p): p is Promise<void> => !!p),
+    );
+    for (const key of keys) {
+      jobsMap.delete(key);
+      postCache.delete(key);
+    }
+    if (keys.length) jobstore.forgetMany(KIND, keys);
+    return release;
+  } catch (error) {
+    release();
+    throw error;
   }
 }
 
@@ -1326,6 +1446,7 @@ export {
   pauseAll,
   resumeAll,
   cancelJob,
+  suspendPosts,
   cancelAll,
   retryJob,
   clearCompleted,

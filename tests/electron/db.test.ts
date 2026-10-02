@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { existsSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'fs';
 import type { Database as DatabaseType } from 'better-sqlite3';
 
 // Loose camelCase post-input shape the upsert/import helpers accept. db.js's own
@@ -50,6 +50,18 @@ interface DbModule {
   getPosts: (filters?: Record<string, unknown>) => { posts: Shelfy.Post[]; total: number };
   getPostIds: (filters?: Record<string, unknown>) => string[];
   getPostsByIds: (ids: string[]) => Shelfy.Post[];
+  getPreviewCandidates: (
+    ids?: string[] | null,
+    platform?: string,
+  ) => Array<{
+    id: string;
+    platform: string;
+    thumbnailUrl: string;
+  }>;
+  setPreviewPath: (id: string, url: string, filePath: string) => boolean;
+  clearMissingLocalPaths: (id: string) => boolean;
+  clearAllAssetPaths: () => void;
+  getProtectedAssetPaths: () => string[];
   getPostsForAnalysis: (args?: { ids?: string[]; missingOnly?: boolean }) => Shelfy.AnalysisPost[];
   getStats: () => Shelfy.Stats;
   getAiOverview: () => Shelfy.AiOverview;
@@ -162,6 +174,79 @@ const twPost: PostInput = {
   mediaType: 'image',
   timestamp: '2024-01-10T08:00:00.000Z',
 };
+
+d('automatic preview cache', () => {
+  it('keeps a cached cover separate from downloaded media and rejects a stale URL', () => {
+    DB().upsertPost(twPost);
+    expect(DB().getPreviewCandidates(['tw-1'])).toEqual([
+      { id: 'tw-1', platform: 'twitter', thumbnailUrl: twPost.thumbnailUrl },
+    ]);
+    expect(DB().setPreviewPath('tw-1', 'https://pbs.twimg.com/media/old.jpg', '/tmp/old.jpg')).toBe(
+      false,
+    );
+    expect(DB().setPreviewPath('tw-1', twPost.thumbnailUrl!, '/tmp/preview.jpg')).toBe(true);
+    expect(DB().getPost('tw-1')?.previewPath).toBe('/tmp/preview.jpg');
+    expect(DB().getStats().downloaded).toBe(0);
+    expect(DB().getPreviewCandidates(['tw-1'])).toEqual([]);
+  });
+
+  it('forgets a missing local cover so it can be cached again', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shelfy-stale-preview-'));
+    const file = join(dir, 'preview.jpg');
+    try {
+      writeFileSync(file, 'preview');
+      DB().upsertPost(twPost);
+      expect(DB().setPreviewPath('tw-1', twPost.thumbnailUrl!, file)).toBe(true);
+      expect(DB().clearMissingLocalPaths('tw-1')).toBe(false);
+      unlinkSync(file);
+      expect(DB().clearMissingLocalPaths('tw-1')).toBe(true);
+      expect(DB().getPost('tw-1')?.previewPath).toBeNull();
+      expect(DB().getPreviewCandidates(['tw-1'])).toHaveLength(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+d('asset cleanup', () => {
+  it('retains manual originals and paths while clearing downloaded social assets', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'shelfy-manual-assets-'));
+    const original = join(dir, 'original.jpg');
+    const social = join(dir, 'social.jpg');
+    const website = join(dir, 'website.jpg');
+    try {
+      writeFileSync(original, 'manual');
+      writeFileSync(social, 'social');
+      writeFileSync(website, 'web');
+      DB().upsertPost({ id: 'manual-1', platform: 'manual', mediaType: 'image' });
+      DB().upsertPost(twPost);
+      SQL()
+        .prepare(
+          "INSERT INTO posts (id, platform, media_type, thumbnail_path) VALUES (?, 'web', 'website', ?)",
+        )
+        .run('web-1', website);
+      SQL()
+        .prepare('UPDATE posts SET thumbnail_path = ?, image_path = ? WHERE id = ?')
+        .run(original, original, 'manual-1');
+      SQL().prepare('UPDATE posts SET thumbnail_path = ? WHERE id = ?').run(social, 'tw-1');
+      SQL()
+        .prepare(
+          'INSERT INTO post_media (post_id, position, media_type, source_url, local_path) VALUES (?, 0, ?, ?, ?)',
+        )
+        .run('manual-1', 'image', original, original);
+      expect(new Set(DB().getProtectedAssetPaths())).toEqual(new Set([original, website]));
+
+      DB().clearAllAssetPaths();
+
+      expect(DB().getPost('manual-1')?.thumbnailPath).toBe(original);
+      expect(DB().getPost('manual-1')?.media?.[0]?.localPath).toBe(original);
+      expect(DB().getPost('tw-1')?.thumbnailPath).toBeNull();
+      expect(DB().getPost('web-1')?.thumbnailPath).toBe(website);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 beforeAll(() => {
   if (loadErr) {

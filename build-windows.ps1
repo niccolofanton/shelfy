@@ -16,7 +16,7 @@ param(
   [string]$LlamaVariant = "cuda-12.4-x64",  # cuda-12.4-x64 (NVIDIA) | vulkan-x64 (AMD/Intel) | cpu-x64
   # yt-dlp is PINNED to a tag (not releases/latest) for reproducible, tamper-evident
   # builds. Must match electron/binaries.js YTDLP_VERSION and provision-binaries.ps1.
-  [string]$YtDlpVersion = "2026.03.17",
+  [string]$YtDlpVersion = "2026.08.19",
   # ffmpeg comes from gyan.dev's ROLLING "ffmpeg-release-essentials.zip" (no version in
   # the URL, content changes per build), so there is no stable tag to pin against yet —
   # mirrors the unresolved TODO(supply-chain) in electron/binaries.js. Until the source
@@ -32,7 +32,7 @@ param(
 # Expected SHA256 of yt-dlp.exe for $YtDlpVersion, from the release's SHA2-256SUMS:
 # https://github.com/yt-dlp/yt-dlp/releases/download/<TAG>/SHA2-256SUMS
 # Refresh this whenever $YtDlpVersion changes.
-$YtDlpExeSha256 = "3db811b366b2da47337d2fcfdfe5bbd9a258dad3f350c54974f005df115a1545"
+$YtDlpExeSha256 = "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a"
 
 $FEED_BASE = "https://github.com/niccolofanton/shelfy/releases/latest/download"
 

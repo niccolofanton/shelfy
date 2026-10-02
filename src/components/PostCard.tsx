@@ -19,13 +19,15 @@ import { assetThumbUrl, assetUrl } from '../lib/asset';
 // instead so a scroll-burst of tiles doesn't stall on huge decodes. The modal
 // still loads the original. Keep in sync with main.js PREWARM_TILE_WIDTH.
 const TILE_WIDTH = 640;
-import SourceIcon from './SourceIcon';
+import SourceIcon, { PLATFORM_COLORS } from './SourceIcon';
 import { useT, useLang, localeTag } from '../i18n';
 
 // `title` is a valid global SVG attribute (native hover tooltip) that lucide
 // spreads onto its <svg>, but React's SVGAttributes typings omit it. Declare it
 // so the icon tooltips below (and elsewhere) stay typed without `any`.
 declare module 'react' {
+  // React's declaration uses this generic name; keep it for interface merging.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface SVGAttributes<T> {
     title?: string;
   }
@@ -177,23 +179,56 @@ function OfflineIcon({
   return <Link size={10} className="text-white/40" title={t('linkOnly')} />;
 }
 
-// Typographic body for text posts (or posts whose media is gone but whose text
-// survives): a deliberate quote-card instead of a mute missing-image gray. The
-// platform glyph sits in the corner as a low-opacity watermark.
-function TextCard({ post }: { post: Shelfy.Post }): React.JSX.Element {
+// A text post has its own editorial layout. Keep the author visible at rest and
+// reserve the top for the selection checkbox, so neither chrome nor the footer
+// can cover the excerpt in a small square tile.
+function TextCard({
+  post,
+  selectable,
+  t,
+}: {
+  post: Shelfy.Post;
+  selectable: boolean;
+  t: Translate;
+}): React.JSX.Element {
+  const accent = PLATFORM_COLORS[post.platform];
   return (
     <div
       data-testid="text-card"
-      className="relative w-full h-full p-3 overflow-hidden"
-      style={{ backgroundColor: '#161618' }}
+      className="relative w-full h-full overflow-hidden"
+      style={{
+        background: `radial-gradient(circle at 0% 0%, ${accent}25, transparent 68%), #17191f`,
+      }}
     >
-      <p className="text-[13px] text-gray-200 leading-snug line-clamp-6 break-words">{post.text}</p>
-      <SourceIcon
-        platform={post.platform}
-        size={32}
-        className="absolute bottom-2 right-2 text-white/[0.07] pointer-events-none"
-        aria-hidden="true"
+      <div
+        className="absolute inset-y-0 left-0 w-[2px] opacity-70"
+        style={{ backgroundColor: accent }}
       />
+      {!selectable && (
+        <span
+          aria-hidden="true"
+          className="absolute top-1 left-3 font-serif text-[30px] leading-none text-white/30"
+        >
+          “
+        </span>
+      )}
+      <span className="absolute top-3 right-3 text-[9px] font-semibold tracking-[0.16em] text-white/40">
+        {t('textLabel')}
+      </span>
+      <div className="absolute inset-x-3 top-8 bottom-9 flex items-center overflow-hidden">
+        <p className="max-h-full text-[12px] font-medium leading-[1.4] text-[#f0f1f5] break-words line-clamp-6">
+          {post.text}
+        </p>
+      </div>
+      <div className="absolute inset-x-3 bottom-3 flex items-center gap-1.5 border-t border-white/10 pt-2 text-[10px] leading-none text-white/55">
+        <SourceIcon
+          platform={post.platform}
+          size={11}
+          className="shrink-0"
+          style={{ color: accent }}
+        />
+        <span className="min-w-0 truncate">@{post.authorUsername || t('unknownAuthor')}</span>
+      </div>
     </div>
   );
 }
@@ -250,7 +285,13 @@ function ManualFallback({ post, t }: { post: Shelfy.Post; t: Translate }): React
 // line says so — instead of dumping the caption as if it were a text post.
 function SocialFallback({ post, t }: { post: Shelfy.Post; t: Translate }): React.JSX.Element {
   const hadMedia =
-    !!(post.thumbnailUrl || post.thumbnailPath || post.imagePath || post.videoPath) ||
+    !!(
+      post.thumbnailUrl ||
+      post.thumbnailPath ||
+      post.previewPath ||
+      post.imagePath ||
+      post.videoPath
+    ) ||
     (Array.isArray(post.media) && post.media.length > 0);
   return (
     <div
@@ -311,7 +352,7 @@ function PostCard({
   const { lang } = useLang();
   const isWeb = post.platform === 'web';
   const isManual = post.platform === 'manual';
-  const localImage = post.thumbnailPath || post.imagePath;
+  const localImage = post.thumbnailPath || post.imagePath || post.previewPath;
   const imageSrc = localImage ? assetThumbUrl(localImage, TILE_WIDTH) : post.thumbnailUrl || null;
   const isDownloaded = !!(post.thumbnailPath || post.imagePath || post.videoPath);
 
@@ -494,7 +535,13 @@ function PostCard({
   // still counts — the post is a media post whose image is merely gone, not a
   // text post. Used to keep such posts OUT of the typographic text treatment.
   const hasMediaSource =
-    !!(post.thumbnailPath || post.imagePath || post.videoPath || post.thumbnailUrl) ||
+    !!(
+      post.thumbnailPath ||
+      post.previewPath ||
+      post.imagePath ||
+      post.videoPath ||
+      post.thumbnailUrl
+    ) ||
     (Array.isArray(post.media) && post.media.length > 0);
 
   // Only GENUINE text posts get the typographic quote-card: an explicit text
@@ -561,7 +608,7 @@ function PostCard({
       {/* Media slot: typographic card, image / slideshow frame, or an informative
         per-platform fallback (never a mute gray box). */}
       {isTextCard ? (
-        <TextCard post={post} />
+        <TextCard post={post} selectable={selectable} t={t} />
       ) : imageShowable ? (
         <>
           {/* Blur-up placeholder: paints in the same frame the card mounts (data
@@ -606,7 +653,12 @@ function PostCard({
             onTransitionEnd={() => setImageSettled(true)}
             // A 404 / blocked remote thumbnail or a moved/deleted local asset falls
             // back to the informative block instead of the browser broken-image glyph.
-            onError={() => setImageFailed(true)}
+            onError={() => {
+              setImageFailed(true);
+              if (!isWeb && !isManual && post.thumbnailUrl) {
+                void window.electronAPI?.repairPreview?.(post.id)?.catch(() => {});
+              }
+            }}
           />
         </>
       ) : isWeb ? (
@@ -688,7 +740,7 @@ function PostCard({
         Montato solo dopo il primo hover/focus (everHovered): a riposo è ~metà dei
         nodi DOM della card e quasi tutti gli SVG lucide — tenerlo fuori dal mount
         path è ciò che alleggerisce le righe rivelate durante lo scroll. */}
-      {everHovered && (
+      {everHovered && !isTextCard && (
         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity u-transition z-10 flex flex-col justify-end">
           {/* Darkening gradient, deliberately LARGER than the card (-inset-2) so it
             still covers the hover-zoomed image (scale 1.05) right up to the edges:
@@ -763,24 +815,26 @@ function PostCard({
         at once — it pinned native scrolling at ~25ms/frame (~40fps). A slightly
         more opaque solid (`bg-black/65`) keeps the chips legible at ~95-110fps.
         See VirtualPostGrid + e2e/perf-gallery.spec.ts. */}
-      <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between gap-2 z-20 u-fade-in">
-        <div
-          data-testid="platform-chip"
-          className="flex items-center rounded bg-black/65 px-1.5 py-0.5 min-w-0"
-        >
-          {isWeb ? (
-            <WebDomainBadge domain={post.webDomain} />
-          ) : (
-            <PlatformIcon platform={post.platform} />
-          )}
+      {!isTextCard && (
+        <div className="absolute bottom-1.5 left-1.5 right-1.5 flex items-center justify-between gap-2 z-20 u-fade-in">
+          <div
+            data-testid="platform-chip"
+            className="flex items-center rounded bg-black/65 px-1.5 py-0.5 min-w-0"
+          >
+            {isWeb ? (
+              <WebDomainBadge domain={post.webDomain} />
+            ) : (
+              <PlatformIcon platform={post.platform} />
+            )}
+          </div>
+          <div
+            data-testid="mediatype-chip"
+            className="flex items-center rounded bg-black/65 px-1.5 py-0.5 shrink-0"
+          >
+            <MediaTypeIcon mediaType={post.mediaType} mediaCount={post.mediaCount} />
+          </div>
         </div>
-        <div
-          data-testid="mediatype-chip"
-          className="flex items-center rounded bg-black/65 px-1.5 py-0.5 shrink-0"
-        >
-          <MediaTypeIcon mediaType={post.mediaType} mediaCount={post.mediaCount} />
-        </div>
-      </div>
+      )}
     </div>
   );
 }

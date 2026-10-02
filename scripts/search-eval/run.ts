@@ -111,15 +111,11 @@ const lc = (s: unknown): string =>
   String(s ?? '')
     .trim()
     .toLowerCase();
-const uniq = <T>(a: T[]): T[] => [...new Set(a)];
 function pct(x: number | null): string {
   return x == null ? '  — ' : `${(x * 100).toFixed(0).padStart(3)}%`;
 }
 function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
-}
-function jaccardHits(list: string[], set: Set<string>): number {
-  return list.filter((t) => set.has(lc(t))).length;
 }
 // Rinomina le chiavi di un pacchetto di metriche con un prefisso (per non far
 // collidere le metriche d'ordine della ricerca hybrid/solo-tag con quelle del
@@ -259,7 +255,7 @@ function runPipeline(db: Db, analyzer: Analyzer, query: string) {
   let textSearch: { posts: Shelfy.Post[]; total: number } = { posts: [], total: 0 };
   try {
     textSearch = db.searchPostsHybrid([], query, { limit: RESULT_LIMIT }) || textSearch;
-  } catch (e) {
+  } catch {
     /* noop */
   }
 

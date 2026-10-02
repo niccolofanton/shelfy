@@ -270,8 +270,8 @@ interface AiPanelProps {
   onEditingChange?: (editing: boolean) => void;
 }
 
-// Local VLM categorization for downloaded videos: shows the generated
-// description + tags, or the controls to (download the model and) analyze.
+// VLM categorization for posts with visual media: shows generated description
+// and tags, or the controls to analyze them.
 export default function AiPanel({
   post,
   onApplyAiFilter,
@@ -873,7 +873,7 @@ export default function AiPanel({
         {status === 'error'
           ? tc('retry')
           : modelReady
-            ? t('analyzeVideo')
+            ? t('analyzePost')
             : t('downloadModelAndAnalyze')}
       </button>
 

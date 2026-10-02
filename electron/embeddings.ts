@@ -134,10 +134,6 @@ const DEFAULT_MODEL_ID = 'e5-small';
 function getSelectedModelId(): string {
   return DEFAULT_MODEL_ID;
 }
-function getSelectedModel(): ModelRecord {
-  return MODELS[getSelectedModelId()];
-}
-
 // ─── Risoluzione binario + modello (dev vs packaged) ────────────────────────────
 // Riusa lo stesso llama-server dell'analyzer (stessi candidati di percorso).
 function resolveLlamaServer(): string {
@@ -425,7 +421,7 @@ async function ensureServer(): Promise<ServerState> {
     const candidate: ServerState = { child, port, ready, modelId: id };
     try {
       await Promise.race([ready, spawnError]);
-    } catch (e) {
+    } catch {
       killChild(child);
       const tail = stderrRing.join('').trim().slice(-2000);
       throw new Error(

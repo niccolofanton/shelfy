@@ -47,13 +47,15 @@ vi.mock('../../electron/webcapture', () => ({
   discoverPages: vi.fn(() => new Promise(() => {})),
   capturePage: vi.fn(),
 }));
-vi.mock('../../electron/capture-engine', () => ({
-  capturePage: vi.fn(),
-  discoverPages: vi.fn(() => new Promise(() => {})),
-  closeBrowser: vi.fn(),
-  activeEngine: (): string => 'osr',
+vi.mock('../../electron/webcap/capture', () => ({
+  // A capture that never settles: the job stays in its active phase.
+  captureSite: vi.fn(() => new Promise(() => {})),
+  BlockedError: class BlockedError extends Error {},
 }));
-vi.mock('../../electron/web-enrich', () => ({}));
+vi.mock('../../electron/webcap/metadata', () => ({}));
+vi.mock('../../electron/webcap/electron-driver', () => ({ ElectronSession: class {} }));
+vi.mock('../../electron/webcap/system-chrome', () => ({ SystemChromeUnblock: class {} }));
+vi.mock('../../electron/webcap/scripts', () => ({ JS_DETECT_BLOCKED: '' }));
 vi.mock('../../electron/analyzer', () => ({
   enqueuePost: vi.fn(() => ({ queued: true })),
 }));

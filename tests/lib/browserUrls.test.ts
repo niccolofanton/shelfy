@@ -20,6 +20,9 @@ describe('SAVED_PATTERNS', () => {
 
   it('matches X bookmarks', () => {
     expect(SAVED_PATTERNS.twitter.test('https://x.com/i/bookmarks')).toBe(true);
+    expect(SAVED_PATTERNS.twitter.test('https://x.com/i/history')).toBe(true);
+    expect(SAVED_PATTERNS.twitter.test('https://twitter.com/i/history?tab=bookmarks')).toBe(true);
+    expect(SAVED_PATTERNS.twitter.test('https://x.com/i/history-other')).toBe(false);
     expect(SAVED_PATTERNS.twitter.test('https://x.com/home')).toBe(false);
   });
 

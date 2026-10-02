@@ -1,5 +1,6 @@
+import * as webMeta from './webcap/metadata';
 import Database from 'better-sqlite3';
-import type { Database as DatabaseType, RunResult, Statement } from 'better-sqlite3';
+import type { Database as DatabaseType } from 'better-sqlite3';
 import path from 'path';
 import crypto from 'crypto';
 import { app } from 'electron';
@@ -142,6 +143,8 @@ interface AiFields {
   analyzedAt?: number | null;
   generalTags?: string[] | null;
   specificTags?: string[] | null;
+  // Web references (v2 catalog): the full structured analysis + its facets.
+  webAi?: Shelfy.WebAiCatalog | null;
 }
 
 // A { norm, form } pair from normalizeTagRows.
@@ -316,6 +319,7 @@ CREATE TABLE IF NOT EXISTS posts (
   media_type TEXT,
   timestamp TEXT,
   thumbnail_path TEXT,
+  preview_path TEXT,
   image_path TEXT,
   video_path TEXT,
   media_count INTEGER DEFAULT 1,
@@ -612,6 +616,7 @@ function migrate(db: DatabaseType): void {
     web_pages_json: 'TEXT', // JSON array of per-page metadata { url, pageType?, title?, meta?, jsonld? }
     web_meta_json: 'TEXT', // JSON object of hero/site-level meta (description, ogImage, lang, …)
     web_captured_at: 'INTEGER', // epoch SECONDS of the capture (source of timestamp)
+    ai_web_json: 'TEXT', // v2 structured design catalog of a web reference (facets, notes, summary)
   };
   for (const [name, type] of Object.entries(webCols)) {
     if (!cols.some((c) => c.name === name)) {
@@ -620,6 +625,18 @@ function migrate(db: DatabaseType): void {
   }
   // Index the domain for fast per-site lookups / dedup (F8/F9). Idempotent.
   db.exec('CREATE INDEX IF NOT EXISTS idx_posts_web_domain ON posts(web_domain)');
+  // Faceted design attributes of web references (site type, industry, style,
+  // layout, typography, colour, tech, fonts…), one row per value: drives the
+  // filters and "similar sites". Rebuilt whenever the catalog is rewritten.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS post_facets (
+      post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      facet   TEXT NOT NULL,
+      value   TEXT NOT NULL,
+      PRIMARY KEY (post_id, facet, value)
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_post_facets_value ON post_facets(facet, value)');
 
   // Blur-up placeholder for the gallery tile: a ~24px JPEG data URI generated
   // from the post's local cover (thumbs.js), shipped inside getPosts so a card
@@ -628,6 +645,11 @@ function migrate(db: DatabaseType): void {
   // every boot; NULL means "not generated yet". Guarded ADD COLUMN — free.
   if (!cols.some((c) => c.name === 'thumb_blur')) {
     db.exec('ALTER TABLE posts ADD COLUMN thumb_blur TEXT');
+  }
+  // Small, automatically cached cover. Kept separate from downloaded assets so
+  // a preview never marks a video or carousel as archived offline.
+  if (!cols.some((c) => c.name === 'preview_path')) {
+    db.exec('ALTER TABLE posts ADD COLUMN preview_path TEXT');
   }
 
   // Web snapshots: each re-capture of a site archives the PREVIOUS state of its
@@ -665,6 +687,10 @@ function migrate(db: DatabaseType): void {
   db.exec(
     'CREATE INDEX IF NOT EXISTS idx_web_snapshots_post ON web_snapshots(post_id, captured_at DESC)',
   );
+  // v2 design catalog of the archived version (guarded ADD COLUMN, idempotent).
+  const snapCols = db.prepare('PRAGMA table_info(web_snapshots)').all() as { name: string }[];
+  if (!snapCols.some((c) => c.name === 'ai_web_json'))
+    db.exec('ALTER TABLE web_snapshots ADD COLUMN ai_web_json TEXT');
 
   // Add folder-tag columns to collections created before Instagram-folder import:
   // platform groups them under their platform in the sidebar, external_id links a
@@ -851,6 +877,7 @@ interface PostRow {
   media_type: Shelfy.MediaType | null;
   timestamp: string | null;
   thumbnail_path: string | null;
+  preview_path: string | null;
   image_path: string | null;
   video_path: string | null;
   media_count: number | null;
@@ -867,6 +894,7 @@ interface PostRow {
   ai_keywords: string | null;
   ai_language: string | null;
   ai_save_reason: string | null;
+  ai_web_json?: string | null;
   user_note: string | null;
   user_tags: string | null;
   web_url: string | null;
@@ -897,6 +925,7 @@ function rowToPost(row: PostRow | undefined): Shelfy.Post | null {
     mediaType: row.media_type,
     timestamp: row.timestamp,
     thumbnailPath: row.thumbnail_path,
+    previewPath: row.preview_path,
     imagePath: row.image_path,
     videoPath: row.video_path,
     // '' is the backfill's "ineligible" sentinel — the renderer wants null.
@@ -914,6 +943,7 @@ function rowToPost(row: PostRow | undefined): Shelfy.Post | null {
     aiKeywords: parseTags(row.ai_keywords),
     aiLanguage: row.ai_language ?? null,
     aiSaveReason: row.ai_save_reason ?? null,
+    aiWeb: parseJson<Shelfy.WebAiCatalog | null>(row.ai_web_json, null) ?? null,
     // User-authored layer (independent of the AI fields, survives regeneration).
     userNote: row.user_note ?? null,
     userTags: parseTags(row.user_tags),
@@ -922,7 +952,10 @@ function rowToPost(row: PostRow | undefined): Shelfy.Post | null {
     webUrl: row.web_url ?? null,
     webDomain: row.web_domain ?? null,
     webFinalUrl: row.web_final_url ?? null,
-    webPalette: parseJson<string[]>(row.web_palette_json, []) ?? [],
+    // v1 rows may hold bare HEX strings: normalize to swatch objects.
+    webPalette: (parseJson<(string | Shelfy.WebSwatch)[]>(row.web_palette_json, []) ?? []).map(
+      (c) => (typeof c === 'string' ? { hex: c } : c),
+    ),
     webFonts: parseJson<Shelfy.WebFont[]>(row.web_fonts_json, []) ?? [],
     webTech: parseJson<string[]>(row.web_tech_json, []) ?? [],
     webAwards: parseJson<Shelfy.WebAward[]>(row.web_awards_json, []) ?? [],
@@ -1886,6 +1919,81 @@ function getPostsByIds(ids: string[] = []): Shelfy.Post[] {
   return posts;
 }
 
+// Covers eligible for the small automatic preview cache. The downloaded paths
+// remain separate: a cached cover does not mean the original media is offline.
+function getPreviewCandidates(
+  ids: string[] | null = null,
+  platform?: string,
+): {
+  id: string;
+  platform: string;
+  thumbnailUrl: string;
+}[] {
+  if (!db) throw new Error('Database not initialized');
+  const out: { id: string; platform: string; thumbnailUrl: string }[] = [];
+  const chunks = ids
+    ? Array.from({ length: Math.ceil(ids.length / 500) }, (_, i) =>
+        ids.slice(i * 500, i * 500 + 500),
+      )
+    : [null];
+  for (const chunk of chunks) {
+    if (chunk && chunk.length === 0) continue;
+    const idClause = chunk ? ` AND id IN (${chunk.map(() => '?').join(',')})` : '';
+    const platformClause = platform ? ' AND platform = ?' : '';
+    const rows = db
+      .prepare(
+        `SELECT id, platform, thumbnail_url AS thumbnailUrl FROM posts
+       WHERE preview_path IS NULL AND thumbnail_path IS NULL AND image_path IS NULL
+         AND thumbnail_url LIKE 'https://%'${idClause}${platformClause}`,
+      )
+      .all(...(chunk || []), ...(platform ? [platform] : [])) as {
+      id: string;
+      platform: string;
+      thumbnailUrl: string;
+    }[];
+    out.push(...rows);
+  }
+  return out;
+}
+
+// The URL guard prevents an in-flight fetch from installing an old cover after a
+// resync refreshed the post. The local-asset guard handles a concurrent download.
+function setPreviewPath(id: string, url: string, filePath: string): boolean {
+  if (!db) throw new Error('Database not initialized');
+  const result = db
+    .prepare(
+      `UPDATE posts SET preview_path = ? WHERE id = ? AND thumbnail_url = ?
+     AND preview_path IS NULL AND thumbnail_path IS NULL AND image_path IS NULL`,
+    )
+    .run(filePath, id, url);
+  if (result.changes > 0) invalidateGlobalCaches();
+  return result.changes > 0;
+}
+
+// Refresh only the expired cover URL we observed. A source sync racing this
+// repair may have installed a newer URL already; never overwrite that one.
+function refreshPreviewUrl(id: string, oldUrl: string, newUrl: string): boolean {
+  if (!db) throw new Error('Database not initialized');
+  const changed = db.transaction(() => {
+    const result = db!
+      .prepare(
+        `UPDATE posts SET thumbnail_url = ? WHERE id = ? AND thumbnail_url = ?
+       AND preview_path IS NULL AND thumbnail_path IS NULL AND image_path IS NULL`,
+      )
+      .run(newUrl, id, oldUrl);
+    if (result.changes) {
+      db!
+        .prepare(
+          `UPDATE post_media SET source_url = ? WHERE post_id = ? AND position = 0 AND source_url = ?`,
+        )
+        .run(newUrl, id, oldUrl);
+    }
+    return result.changes > 0;
+  })();
+  if (changed) invalidateGlobalCaches();
+  return changed;
+}
+
 // Of the given ids, returns the subset that already exist in the posts table.
 // Lightweight (id-only, no media/collections) — used by the scraper's selection
 // overlay to flag posts that are already in the local library.
@@ -2758,6 +2866,7 @@ function applyAiAnalysis(id: string, fields: AiFields = {}): void {
     analyzedAt,
     generalTags,
     specificTags,
+    webAi,
   } = fields;
 
   const sets: string[] = [];
@@ -2777,6 +2886,7 @@ function applyAiAnalysis(id: string, fields: AiFields = {}): void {
   if (keywords !== undefined) add('ai_keywords', serializeArrayField(keywords));
   if (language !== undefined) add('ai_language', language);
   if (saveReason !== undefined) add('ai_save_reason', saveReason);
+  if (webAi !== undefined) add('ai_web_json', webAi ? JSON.stringify(webAi) : null);
 
   // analyzed_at: an explicit value (e.g. carried by an import) wins; otherwise
   // stamp it only when the analysis actually completes.
@@ -2789,6 +2899,19 @@ function applyAiAnalysis(id: string, fields: AiFields = {}): void {
   const syncEntities = entities !== undefined;
 
   if (!sets.length && !syncTags && !syncEntities) return; // nothing provided → no-op
+  if (webAi !== undefined) {
+    db!.prepare('DELETE FROM post_facets WHERE post_id = ?').run(id);
+    const ins = db!.prepare(
+      'INSERT OR IGNORE INTO post_facets (post_id, facet, value) VALUES (?, ?, ?)',
+    );
+    for (const [facet, values] of Object.entries(webAi?.facets || {})) {
+      for (const v of Array.isArray(values) ? values : []) {
+        // Original casing kept for display (font/tech names); matching is case-insensitive.
+        const value = String(v || '').trim();
+        if (value) ins.run(id, facet, value.slice(0, 120));
+      }
+    }
+  }
 
   if (sets.length) {
     db!.prepare(`UPDATE posts SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
@@ -5524,13 +5647,74 @@ function clearAllAiAnalysis(): { ok: boolean } {
   return { ok: true };
 }
 
-// Forgets every local file path without touching post metadata, so posts show
-// as not-downloaded again. Pairs with downloader.clearAllAssets() deleting the
-// actual files on disk.
+// Forgets social download/cache paths without touching manual originals or
+// captured website archives. Pairs with downloader.clearAllAssets().
 function clearAllAssetPaths(): void {
   if (!db) throw new Error('Database not initialized');
-  db.prepare('UPDATE posts SET thumbnail_path = NULL, image_path = NULL, video_path = NULL').run();
-  db.prepare('UPDATE post_media SET local_path = NULL').run();
+  db.prepare(
+    "UPDATE posts SET thumbnail_path = NULL, preview_path = NULL, image_path = NULL, video_path = NULL WHERE platform IN ('instagram','twitter','pinterest')",
+  ).run();
+  db.prepare(
+    "UPDATE post_media SET local_path = NULL WHERE post_id IN (SELECT id FROM posts WHERE platform IN ('instagram','twitter','pinterest'))",
+  ).run();
+  invalidateGlobalCaches();
+}
+
+// Manual bookmarks and archived website captures are user data, not social
+// download cache entries. Preserve current and historical files even when older
+// versions placed them inside the shared assets/ tree.
+function getProtectedAssetPaths(): string[] {
+  if (!db) throw new Error('Database not initialized');
+  const ids = db.prepare("SELECT id FROM posts WHERE platform IN ('manual','web')").all() as {
+    id: string;
+  }[];
+  return [...new Set(ids.flatMap(({ id }) => getLocalFilePaths(id)))];
+}
+
+// A moved or deleted cache file must not prevent on-demand cover repair. Keep
+// the URL and all real files; only forget paths that are actually missing.
+function clearMissingLocalPaths(postId: string): boolean {
+  if (!db) throw new Error('Database not initialized');
+  const post = db
+    .prepare('SELECT thumbnail_path, preview_path, image_path, video_path FROM posts WHERE id = ?')
+    .get(postId) as
+    | {
+        thumbnail_path: string | null;
+        preview_path: string | null;
+        image_path: string | null;
+        video_path: string | null;
+      }
+    | undefined;
+  if (!post) return false;
+  const missing = (value: string | null): string | null =>
+    value && !fs.existsSync(value) ? value : null;
+  const fields = {
+    thumbnail_path: missing(post.thumbnail_path),
+    preview_path: missing(post.preview_path),
+    image_path: missing(post.image_path),
+    video_path: missing(post.video_path),
+  };
+  const slides = db
+    .prepare(
+      'SELECT position, local_path FROM post_media WHERE post_id = ? AND local_path IS NOT NULL',
+    )
+    .all(postId) as { position: number; local_path: string }[];
+  const missingSlides = slides.filter(({ local_path }) => !fs.existsSync(local_path));
+  if (!Object.values(fields).some(Boolean) && !missingSlides.length) return false;
+  db.transaction(() => {
+    for (const [field, value] of Object.entries(fields)) {
+      if (value)
+        db!
+          .prepare(`UPDATE posts SET ${field} = NULL WHERE id = ? AND ${field} = ?`)
+          .run(postId, value);
+    }
+    const clearSlide = db!.prepare(
+      'UPDATE post_media SET local_path = NULL WHERE post_id = ? AND position = ? AND local_path = ?',
+    );
+    for (const slide of missingSlides) clearSlide.run(postId, slide.position, slide.local_path);
+  })();
+  invalidateGlobalCaches();
+  return true;
 }
 
 // Returns all local file paths for a post (main row + per-slide media).
@@ -5541,15 +5725,21 @@ function clearAllAssetPaths(): void {
 function getCurrentCaptureFilePaths(postId: string): string[] {
   if (!db) throw new Error('Database not initialized');
   const row = db
-    .prepare('SELECT thumbnail_path, image_path, video_path FROM posts WHERE id = ?')
+    .prepare('SELECT thumbnail_path, preview_path, image_path, video_path FROM posts WHERE id = ?')
     .get(postId) as
-    | { thumbnail_path: string | null; image_path: string | null; video_path: string | null }
+    | {
+        thumbnail_path: string | null;
+        preview_path: string | null;
+        image_path: string | null;
+        video_path: string | null;
+      }
     | undefined;
   const slides = db
     .prepare('SELECT local_path, source_url FROM post_media WHERE post_id = ?')
     .all(postId) as { local_path: string | null; source_url: string | null }[];
   const paths: (string | null | undefined)[] = [
     row?.thumbnail_path,
+    row?.preview_path,
     row?.image_path,
     row?.video_path,
   ];
@@ -5630,6 +5820,7 @@ interface WebSnapshotRow {
   ai_keywords_json: string | null;
   ai_language: string | null;
   ai_save_reason: string | null;
+  ai_web_json?: string | null;
   created_at: number;
 }
 
@@ -5645,7 +5836,7 @@ function archiveCurrentWebSnapshot(postId: string): number | null {
               web_awards_json, web_pages_json, web_meta_json, web_captured_at,
               ai_description, ai_tags, ai_model, ai_status, ai_analyzed_at,
               ai_category, ai_content_type, ai_entities, ai_keywords,
-              ai_language, ai_save_reason
+              ai_language, ai_save_reason, ai_web_json
        FROM posts WHERE id = ?`,
     )
     .get(postId) as
@@ -5670,6 +5861,7 @@ function archiveCurrentWebSnapshot(postId: string): number | null {
         | 'ai_keywords'
         | 'ai_language'
         | 'ai_save_reason'
+        | 'ai_web_json'
       >
     | undefined;
   if (!row || !row.web_captured_at || !row.web_pages_json) return null;
@@ -5681,12 +5873,12 @@ function archiveCurrentWebSnapshot(postId: string): number | null {
          (post_id, captured_at, title, web_pages_json, web_palette_json, web_fonts_json,
           web_tech_json, web_awards_json, web_meta_json, ai_description, ai_tags_json,
           ai_model, ai_status, ai_analyzed_at, ai_category, ai_content_type,
-          ai_entities_json, ai_keywords_json, ai_language, ai_save_reason, created_at)
+          ai_entities_json, ai_keywords_json, ai_language, ai_save_reason, ai_web_json, created_at)
        VALUES
          (@post_id, @captured_at, @title, @web_pages_json, @web_palette_json, @web_fonts_json,
           @web_tech_json, @web_awards_json, @web_meta_json, @ai_description, @ai_tags_json,
           @ai_model, @ai_status, @ai_analyzed_at, @ai_category, @ai_content_type,
-          @ai_entities_json, @ai_keywords_json, @ai_language, @ai_save_reason, @created_at)`,
+          @ai_entities_json, @ai_keywords_json, @ai_language, @ai_save_reason, @ai_web_json, @created_at)`,
     )
     .run({
       post_id: postId,
@@ -5709,6 +5901,7 @@ function archiveCurrentWebSnapshot(postId: string): number | null {
       ai_keywords_json: row.ai_keywords ?? null,
       ai_language: row.ai_language ?? null,
       ai_save_reason: row.ai_save_reason ?? null,
+      ai_web_json: row.ai_web_json ?? null,
       created_at: Math.floor(Date.now() / 1000),
     });
   return info.lastInsertRowid as number;
@@ -5727,7 +5920,9 @@ function getWebSnapshots(postId: string): Shelfy.WebSnapshot[] {
     capturedAt: r.captured_at,
     title: r.title ?? null,
     webPages: parseJson<Shelfy.WebPage[]>(r.web_pages_json, []) ?? [],
-    webPalette: parseJson<string[]>(r.web_palette_json, []) ?? [],
+    webPalette: (parseJson<(string | Shelfy.WebSwatch)[]>(r.web_palette_json, []) ?? []).map((c) =>
+      typeof c === 'string' ? { hex: c } : c,
+    ),
     webFonts: parseJson<Shelfy.WebFont[]>(r.web_fonts_json, []) ?? [],
     webTech: parseJson<string[]>(r.web_tech_json, []) ?? [],
     webAwards: parseJson<Shelfy.WebAward[]>(r.web_awards_json, []) ?? [],
@@ -5742,6 +5937,7 @@ function getWebSnapshots(postId: string): Shelfy.WebSnapshot[] {
     aiKeywords: parseTags(r.ai_keywords_json),
     aiLanguage: r.ai_language ?? null,
     aiSaveReason: r.ai_save_reason ?? null,
+    aiWeb: parseJson<Shelfy.WebAiCatalog | null>(r.ai_web_json ?? null, null) ?? null,
   }));
 }
 
@@ -5911,17 +6107,268 @@ function deleteLatestReport(postId: string): { removedPaths: string[]; promoted:
 function clearPostLocalFiles(postId: string): void {
   if (!db) throw new Error('Database not initialized');
   db.prepare(
-    'UPDATE posts SET thumbnail_path = NULL, image_path = NULL, video_path = NULL WHERE id = ?',
+    'UPDATE posts SET thumbnail_path = NULL, preview_path = NULL, image_path = NULL, video_path = NULL WHERE id = ?',
   ).run(postId);
   db.prepare('UPDATE post_media SET local_path = NULL WHERE post_id = ?').run(postId);
 }
 
+// ─── Web references: facets, filtered query, similar sites (v2) ───────────────
+
+export interface WebQuery {
+  q?: string;
+  facets?: Record<string, string[]>;
+  color?: string; // #rrggbb — sites whose background/surface/accent is perceptually close
+  sort?: 'recent' | 'name' | 'color';
+  limit?: number;
+  offset?: number;
+}
+
+const WEB_SEARCH_COLS = [
+  'author_name',
+  'web_domain',
+  'text',
+  'ai_description',
+  'ai_tags',
+  'ai_keywords',
+  'ai_save_reason',
+  'ai_web_json',
+  'web_fonts_json',
+  'web_tech_json',
+  'user_note',
+  'user_tags',
+]
+  .map((c) => `COALESCE(${c},'')`)
+  .join(" || ' ' || ");
+
+// Facet value counts. With a query, counts are restricted to the references that
+// match it, the usual faceted-search way: a facet's own selection is ignored when
+// counting that facet (so its OR alternatives stay visible).
+function getWebFacetCounts(
+  query?: WebQuery | null,
+): Record<string, { value: string; count: number }[]> {
+  if (!db) throw new Error('Database not initialized');
+  const countFor = (
+    ids: string[] | null,
+    onlyFacet?: string,
+  ): { facet: string; value: string; n: number }[] => {
+    if (ids && !ids.length) return [];
+    const idClause = ids ? `AND p.id IN (${ids.map(() => '?').join(',')})` : '';
+    const facetClause = onlyFacet ? 'AND f.facet = ?' : '';
+    return db!
+      .prepare(
+        `SELECT f.facet AS facet, MAX(f.value) AS value, COUNT(DISTINCT f.post_id) AS n
+           FROM post_facets f JOIN posts p ON p.id = f.post_id
+          WHERE p.platform = 'web' ${idClause} ${facetClause}
+          GROUP BY f.facet, LOWER(f.value)
+          ORDER BY n DESC`,
+      )
+      .all(...(ids || []), ...(onlyFacet ? [onlyFacet] : [])) as {
+      facet: string;
+      value: string;
+      n: number;
+    }[];
+  };
+  const selected = Object.entries(query?.facets || {}).filter(
+    ([, v]) => Array.isArray(v) && v.length,
+  );
+  const filtered = !!query && (!!query.q || !!query.color || selected.length > 0);
+  let rows: { facet: string; value: string; n: number }[];
+  if (!filtered) rows = countFor(null);
+  else {
+    const all = countFor(filterWebPosts(query || {}).map((p) => p.id));
+    const selectedNames = new Set(selected.map(([f]) => f));
+    rows = all.filter((r) => !selectedNames.has(r.facet));
+    for (const [facet] of selected) {
+      const without = { ...(query || {}), facets: { ...(query?.facets || {}) } };
+      delete without.facets[facet];
+      rows.push(
+        ...countFor(
+          filterWebPosts(without).map((p) => p.id),
+          facet,
+        ),
+      );
+    }
+  }
+  const out: Record<string, { value: string; count: number }[]> = {};
+  for (const r of rows.sort((x, y) => y.n - x.n))
+    (out[r.facet] ||= []).push({ value: r.value, count: r.n });
+  return out;
+}
+
+function swatchDistance(post: Shelfy.Post, target: [number, number, number]): number {
+  let best = Infinity;
+  for (const sw of post.webPalette || []) {
+    if (sw.role === 'text' || sw.role === 'image') continue;
+    const lab = webMeta.hexToLab(sw.hex);
+    if (!lab) continue;
+    // Normalised: ≤ 1 means "the same colour" for a designer — lightness may
+    // drift more than hue/chroma (near-blacks and near-whites).
+    const d = Math.max(
+      Math.abs(lab[0] - target[0]) / 0.15,
+      Math.hypot(lab[1] - target[1], lab[2] - target[2]) / 0.06,
+    );
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// Every web reference matching a query (no paging), in the requested order.
+function filterWebPosts(query: WebQuery = {}): Shelfy.Post[] {
+  if (!db) throw new Error('Database not initialized');
+  const where: string[] = ["platform = 'web'"];
+  const params: (string | number)[] = [];
+  for (const [facet, values] of Object.entries(query.facets || {})) {
+    const vals = (Array.isArray(values) ? values : [])
+      .map((v) => String(v).toLowerCase())
+      .filter(Boolean)
+      .slice(0, 30);
+    if (!vals.length) continue;
+    where.push(
+      `id IN (SELECT post_id FROM post_facets WHERE facet = ? AND LOWER(value) IN (${vals.map(() => '?').join(',')}))`,
+    );
+    params.push(facet, ...vals);
+  }
+  for (const tok of String(query.q || '')
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 8)) {
+    where.push(`LOWER(${WEB_SEARCH_COLS}) LIKE ?`);
+    params.push(`%${tok.replace(/[%_]/g, '')}%`);
+  }
+  const order =
+    query.sort === 'name'
+      ? 'LOWER(COALESCE(author_name, web_domain)) ASC'
+      : 'COALESCE(web_captured_at, 0) DESC';
+  const rows = db
+    .prepare(`SELECT * FROM posts WHERE ${where.join(' AND ')} ORDER BY ${order}`)
+    .all(...params) as PostRow[];
+  let posts = rows.map((r) => rowToPost(r)).filter((p): p is Shelfy.Post => !!p);
+  const target = query.color ? webMeta.hexToLab(query.color) : null;
+  if (target) {
+    const scored = posts.map((p) => ({ p, d: swatchDistance(p, target) })).filter((x) => x.d <= 1);
+    if (query.sort === 'color' || !query.sort) scored.sort((a, b) => a.d - b.d);
+    posts = scored.map((x) => x.p);
+  }
+  return posts;
+}
+
+function queryWebReferences(query: WebQuery = {}): { posts: Shelfy.Post[]; total: number } {
+  const posts = filterWebPosts(query);
+  const total = posts.length;
+  const offset = Math.max(0, query.offset || 0);
+  const page = posts.slice(offset, offset + Math.max(1, Math.min(500, query.limit || 200)));
+  attachMedia(page);
+  return { posts: page, total };
+}
+
+const SIMILAR_WEIGHTS: Record<string, number> = {
+  style: 3,
+  layout: 2,
+  typography: 2,
+  font: 2,
+  siteType: 2,
+  colorMood: 1.5,
+  industry: 1.5,
+  hero: 1,
+  theme: 1,
+  imagery: 1,
+  tech: 1,
+  motion: 1,
+  fontClass: 1,
+};
+
+function similarWebReferences(
+  id: string,
+  limit = 12,
+): {
+  post: Shelfy.Post;
+  score: number;
+  shared: string[];
+  sharedFacets: { facet: string; value: string }[];
+}[] {
+  if (!db) throw new Error('Database not initialized');
+  const rows = db
+    .prepare(
+      `SELECT f.post_id AS id, f.facet AS facet, f.value AS value FROM post_facets f JOIN posts p ON p.id = f.post_id WHERE p.platform = 'web'`,
+    )
+    .all() as { id: string; facet: string; value: string }[];
+  const byPost = new Map<string, Map<string, Set<string>>>();
+  for (const r of rows) {
+    let m = byPost.get(r.id);
+    if (!m) byPost.set(r.id, (m = new Map()));
+    let set = m.get(r.facet);
+    if (!set) m.set(r.facet, (set = new Set()));
+    set.add(r.value.toLowerCase());
+  }
+  const mine = byPost.get(id);
+  if (!mine) return [];
+  const me = getPost(id);
+  const scored: { id: string; score: number; shared: { facet: string; value: string }[] }[] = [];
+  for (const [other, facets] of byPost) {
+    if (other === id) continue;
+    let score = 0;
+    const shared: { facet: string; value: string }[] = [];
+    for (const [facet, w] of Object.entries(SIMILAR_WEIGHTS)) {
+      const a = mine.get(facet);
+      const b = facets.get(facet);
+      if (!a || !b || !a.size || !b.size) continue;
+      let inter = 0;
+      for (const v of a)
+        if (b.has(v)) {
+          inter++;
+          if (shared.length < 8) shared.push({ facet, value: v });
+        }
+      score += (w * inter) / (a.size + b.size - inter);
+    }
+    if (score > 0) scored.push({ id: other, score, shared });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  const top = scored.slice(0, Math.max(limit * 2, limit));
+  const out: {
+    post: Shelfy.Post;
+    score: number;
+    shared: string[];
+    sharedFacets: { facet: string; value: string }[];
+  }[] = [];
+  for (const s of top) {
+    const p = getPost(s.id);
+    if (!p) continue;
+    // Palette proximity as a tie-breaker: the closest background/accent colours.
+    let bonus = 0;
+    if (me) {
+      const mineSw = (me.webPalette || [])
+        .filter((c) => c.role === 'background' || c.role === 'accent')
+        .slice(0, 3);
+      const ds = mineSw
+        .map((c) => webMeta.hexToLab(c.hex))
+        .filter((l): l is [number, number, number] => !!l)
+        .map((l) => swatchDistance(p, l));
+      if (ds.length) bonus = Math.max(0, 1 - ds.reduce((x, y) => x + y, 0) / ds.length / 2);
+    }
+    out.push({
+      post: p,
+      score: Math.round((s.score + bonus) * 100) / 100,
+      shared: s.shared.map((x) => x.value),
+      sharedFacets: s.shared,
+    });
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
 export {
+  getWebFacetCounts,
+  queryWebReferences,
+  similarWebReferences,
   initialize,
   close,
   getPosts,
   getPostIds,
   getPostsByIds,
+  getPreviewCandidates,
+  clearMissingLocalPaths,
+  setPreviewPath,
+  refreshPreviewUrl,
   getPost,
   existingIds,
   savedByKeys,
@@ -5947,6 +6394,7 @@ export {
   clearAllData,
   clearAllAiAnalysis,
   clearAllAssetPaths,
+  getProtectedAssetPaths,
   getLocalFilePaths,
   getCurrentCaptureFilePaths,
   clearPostLocalFiles,

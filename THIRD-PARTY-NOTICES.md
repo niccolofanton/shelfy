@@ -23,10 +23,25 @@ informational purposes and does not modify the licenses of the components listed
 | playwright-core | Apache-2.0 | © Microsoft — see upstream `NOTICE` |
 | ffmpeg-static | GPL-3.0-or-later | wrapper that fetches a GPL `ffmpeg` build |
 | electron | MIT | © GitHub / OpenJS Foundation |
+| @duckduckgo/autoconsent | MPL-2.0 | © DuckDuckGo — consent-banner rules used by the web capture (opt-out) |
+| @ghostery/adblocker | MPL-2.0 | © Ghostery GmbH — content-blocking engine used by the web capture |
+| tldts-experimental | MIT | © Rémi Berson |
+| ws | MIT | © Einar Otto Stangvik and contributors |
 
 A complete, machine-generated manifest of every transitive npm dependency and its license
 can be produced with `npx license-checker --production --summary` and should be regenerated
 before each release.
+
+## Filter lists (bundled data)
+
+The web capture ships `resources/adblock/engine.bin`, a compiled, separate data file built
+at release time by `build/prepare-adblock.ts` from these lists (unmodified rules, plus
+Shelfy's own rules for chat/pop-up vendors):
+
+| List | License | Upstream |
+|------|---------|----------|
+| EasyList, EasyPrivacy, EasyList Cookie | GPL-3.0 or CC BY-SA 3.0 (dual) | https://easylist.to |
+| Peter Lowe's ad and tracking server list | free for use, attribution requested | https://pgl.yoyo.org/adservers/ |
 
 ## Tools and binaries downloaded at runtime
 

@@ -129,7 +129,11 @@ export function webPageLabel(
 // homepage as the first slide (item: "homepage sempre come prima slide").
 export function buildSlides(post: Shelfy.Post): PostSlide[] {
   if (Array.isArray(post.media) && post.media.length > 0) {
-    if (post.platform !== 'web') return post.media;
+    if (post.platform !== 'web') {
+      if (!post.previewPath || post.media[0]?.type !== 'image' || post.media[0]?.localPath)
+        return post.media;
+      return [{ ...post.media[0], localPath: post.previewPath }, ...post.media.slice(1)];
+    }
     const finalUrl = post.webFinalUrl || post.postUrl || post.webUrl;
     const homeIdx = post.media.findIndex((m) => isHomepageUrl(m?.url, finalUrl));
     if (homeIdx > 0) {
@@ -141,7 +145,7 @@ export function buildSlides(post: Shelfy.Post): PostSlide[] {
     return post.media;
   }
   if (post.videoPath) return [{ type: 'video', url: null, localPath: post.videoPath }];
-  const localImage = post.imagePath || post.thumbnailPath;
+  const localImage = post.imagePath || post.thumbnailPath || post.previewPath;
   if (localImage) return [{ type: 'image', url: post.thumbnailUrl, localPath: localImage }];
   if (post.thumbnailUrl) return [{ type: 'image', url: post.thumbnailUrl, localPath: null }];
   return [];

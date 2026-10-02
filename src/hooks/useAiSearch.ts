@@ -60,6 +60,7 @@ export interface AiSearchStoreState {
   resultsLoading: boolean;
   error: string | null;
   modelStatus: ModelStatusFlags;
+  searchProviders: Array<{ id: string; name: string; selected: boolean; vision?: boolean }>;
 }
 
 const RESULT_LIMIT = 60;
@@ -79,6 +80,7 @@ function initialState(): AiSearchStoreState {
     resultsLoading: false,
     error: null,
     modelStatus: { ready: false, downloading: false },
+    searchProviders: [],
   };
 }
 
@@ -405,7 +407,8 @@ function reset(): void {
   activeChatRunId = null;
   resultsReqId += 1;
   const ms = state.modelStatus;
-  state = { ...initialState(), modelStatus: ms };
+  const providers = state.searchProviders;
+  state = { ...initialState(), modelStatus: ms, searchProviders: providers };
   listeners.forEach((l) => l());
   try {
     window.electronAPI?.cancelChatSearch?.();
@@ -440,6 +443,22 @@ async function refreshModelStatus(): Promise<void> {
   }
 }
 
+async function refreshSearchProviders(): Promise<void> {
+  if (!window.electronAPI?.getSearchProviders) return;
+  try {
+    setState({ searchProviders: await window.electronAPI.getSearchProviders() });
+  } catch (err) {
+    console.error('[useAiSearch] getSearchProviders error:', err);
+  }
+}
+
+async function selectSearchProvider(id: string): Promise<void> {
+  if (state.chatLoading) return;
+  setState({ searchProviders: await window.electronAPI.selectSearchProvider(id) });
+  await refreshModelStatus();
+  window.dispatchEvent(new Event('ai-model-changed'));
+}
+
 async function downloadModel(): Promise<void> {
   if (!window.electronAPI?.downloadModel) return;
   setState({ modelStatus: { ...state.modelStatus, downloading: true } });
@@ -460,7 +479,9 @@ async function downloadModel(): Promise<void> {
 // One-time module init: load model status and subscribe to optional progress.
 let initialized = false;
 let modelProgressUnsub: (() => void) | null = null;
+let newPostsUnsub: (() => void) | null = null;
 let modelPollTimer: ReturnType<typeof setInterval> | null = null;
+let previewRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 // While a download is in flight, poll the authoritative status. analyzer's
 // downloadModel emits NO terminal progress=1 on failure/pause/cancel (and a
 // download may be started from the Settings picker, not via our own action), so
@@ -495,6 +516,18 @@ function ensureInit(): void {
   if (initialized) return;
   initialized = true;
   refreshModelStatus();
+  refreshSearchProviders();
+  newPostsUnsub =
+    window.electronAPI?.onNewPosts?.((raw) => {
+      const source = (raw as { source?: unknown } | null)?.source;
+      if ((source !== 'preview-cache' && source !== 'preview-repair') || !state.results.length)
+        return;
+      if (previewRefreshTimer) clearTimeout(previewRefreshTimer);
+      previewRefreshTimer = setTimeout(() => {
+        previewRefreshTimer = null;
+        void runGallerySearch(state.activeTags, state.activeKeywords, state.tagMode);
+      }, 300);
+    }) ?? null;
   if (window.electronAPI?.onModelProgress) {
     modelProgressUnsub = window.electronAPI.onModelProgress((raw) => {
       const p = asModelProgressPayload(raw);
@@ -509,6 +542,15 @@ function ensureInit(): void {
       }
     });
   }
+  window.addEventListener(
+    'beforeunload',
+    () => {
+      modelProgressUnsub?.();
+      newPostsUnsub?.();
+      if (previewRefreshTimer) clearTimeout(previewRefreshTimer);
+    },
+    { once: true },
+  );
 }
 
 // The stable actions object exposed by the store.
@@ -526,6 +568,7 @@ export interface AiSearchActions {
   reset: () => void;
   downloadModel: () => Promise<void>;
   refreshModelStatus: () => Promise<void>;
+  selectSearchProvider: (id: string) => Promise<void>;
   refresh: typeof runGallerySearch;
 }
 
@@ -545,6 +588,7 @@ const actions: AiSearchActions = {
   reset,
   downloadModel,
   refreshModelStatus,
+  selectSearchProvider,
   refresh: runGallerySearch,
 };
 

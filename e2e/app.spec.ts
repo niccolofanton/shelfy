@@ -1,17 +1,18 @@
-import { test, expect, overrideHandler } from './electron-fixture';
+import { test, expect } from './electron-fixture';
 
 test.describe('App – navigation and top-level features', () => {
   test('sidebar renders with app title and post count', async ({ page }) => {
-    await expect(page.getByText('SHELFY')).toBeVisible();
+    await expect(page.getByTestId('sidebar').getByText('SHELFY', { exact: true })).toBeVisible();
     await expect(page.locator('[data-testid="sidebar"]').getByText('15 posts')).toBeVisible();
   });
 
   test('Gallery is the default view', async ({ page }) => {
     await expect(page.locator('[data-testid="gallery-view"]')).toBeVisible();
-    // The default source is "All posts" (source-all); when active it carries the
-    // selected-row background. (The old nav-gallery item was removed in the sidebar
-    // refactor that grouped sources under Library.)
-    await expect(page.locator('[data-testid="source-all"]')).toHaveClass(/bg-\[#1e1e1e\]/);
+    // The default source is "All posts" (source-all), marked as the current page.
+    await expect(page.locator('[data-testid="source-all"]')).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
   });
 
   test('navigates to Browser via a platform sub-tab', async ({ page }) => {

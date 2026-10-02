@@ -114,7 +114,7 @@ export interface UseSourceSyncResult {
   stop: (platform: SyncPlatform) => void;
 }
 
-const TW_BOOKMARKS_URL = 'https://x.com/i/bookmarks';
+const TW_BOOKMARKS_URL = 'https://x.com/i/history';
 
 // Error taxonomy for a failed step. 'login' aborts the whole run (every later
 // step needs the same session); the others skip just that step.

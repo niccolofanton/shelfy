@@ -5,7 +5,7 @@ import { useT } from '../i18n';
 // Normalise a free-typed URL the way the backend (F1 normalizeInputUrl) does:
 // trim and prepend https:// when no scheme is present. Returns null if it still
 // doesn't look like a host (no dot).
-function normalizeInputUrl(raw: string): string | null {
+export function normalizeInputUrl(raw: string): string | null {
   const t = (raw || '').trim();
   if (!t) return null;
   const withScheme = /^https?:\/\//i.test(t) ? t : `https://${t}`;

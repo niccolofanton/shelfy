@@ -1912,6 +1912,290 @@ function AiSuggestionsCard() {
   );
 }
 
+type RemoteSettings = Awaited<ReturnType<Window['electronAPI']['getAiProviderSettings']>>;
+type RemoteProviderRow = RemoteSettings['providers'][number];
+
+function RemoteProvidersCard() {
+  const t = useT('settings');
+  const [settings, setSettings] = useState<RemoteSettings | null>(null);
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    void window.electronAPI.getAiProviderSettings().then(
+      (value) => {
+        if (active) setSettings(value);
+      },
+      () => {
+        if (active) setError(t('remoteLoadError'));
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [t]);
+
+  const updateRow = (index: number, patch: Partial<RemoteProviderRow>) => {
+    setSettings((current) =>
+      current
+        ? {
+            ...current,
+            providers: current.providers.map((row, i) =>
+              i === index ? { ...row, ...patch } : row,
+            ),
+          }
+        : current,
+    );
+    setMessage('');
+  };
+
+  const removeRow = (index: number) => {
+    setSettings((current) => {
+      if (!current) return current;
+      const removed = current.providers[index];
+      const id = `custom:${removed.id}`;
+      return {
+        ...current,
+        providers: current.providers.filter((_, i) => i !== index),
+        searchProvider: current.searchProvider === id ? 'local' : current.searchProvider,
+        visionProvider: current.visionProvider === id ? '' : current.visionProvider,
+      };
+    });
+    setMessage('');
+  };
+
+  const addRow = () => {
+    setSettings((current) => {
+      if (!current) return current;
+      let n = current.providers.length + 1;
+      while (current.providers.some(({ id }) => id === `provider-${n}`)) n++;
+      return {
+        ...current,
+        providers: [
+          ...current.providers,
+          {
+            id: `provider-${n}`,
+            name: '',
+            baseUrl: '',
+            model: '',
+            apiKeyEnv: 'SHELFY_AI_KEY',
+            vision: false,
+            secretConfigured: false,
+            available: false,
+          },
+        ],
+      };
+    });
+    setMessage('');
+  };
+
+  const save = async () => {
+    if (!settings || saving) return;
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      const next = await window.electronAPI.saveAiProviderSettings({
+        searchProvider: settings.searchProvider,
+        visionProvider: settings.visionProvider,
+        providers: settings.providers.map(
+          ({ id, name, baseUrl, model, apiKeyEnv, apiKeyPiProvider, vision }) => ({
+            id,
+            name,
+            baseUrl,
+            model,
+            apiKeyEnv,
+            apiKeyPiProvider,
+            vision,
+          }),
+        ),
+        secrets: Object.fromEntries(
+          Object.entries(secrets).filter(
+            ([name, value]) => value && settings.providers.some((row) => row.apiKeyEnv === name),
+          ),
+        ),
+      });
+      setSettings(next);
+      setSecrets({});
+      setMessage(t('remoteSaved'));
+      window.dispatchEvent(new Event('ai-providers-changed'));
+      // The vision provider may have changed: re-read the analysis model status so
+      // the "model not ready" gating (e.g. AI Websites) reflects the new selection.
+      window.dispatchEvent(new Event('ai-model-changed'));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t('remoteSaveError'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const fieldClass =
+    'w-full rounded-lg border border-[#333] bg-[#111] px-3 py-2 text-sm text-white outline-none focus:border-[var(--accent)]';
+  return (
+    <div
+      data-testid="remote-providers-card"
+      className="rounded-xl border border-[#242424] bg-[#161616] p-5"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-white text-sm font-medium">{t('remoteTitle')}</p>
+          <p className="text-gray-500 text-xs mt-1 leading-relaxed">{t('remoteDesc')}</p>
+        </div>
+        <button
+          type="button"
+          onClick={addRow}
+          disabled={!settings || saving}
+          className="shrink-0 rounded-lg border border-[#333] px-3 py-1.5 text-xs text-gray-200 hover:bg-[#252525] disabled:opacity-50"
+        >
+          {t('remoteAdd')}
+        </button>
+      </div>
+
+      {settings?.providers.map((row, index) => (
+        <div key={index} className="mt-4 rounded-lg border border-[#2d2d2d] p-4">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs text-gray-400">
+              {row.available ? t('remoteAvailable') : t('remoteUnavailable')}
+            </span>
+            <button
+              type="button"
+              onClick={() => removeRow(index)}
+              disabled={saving}
+              className="text-xs text-red-400 hover:text-red-300 disabled:opacity-50"
+            >
+              {t('remoteRemove')}
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {(
+              [
+                ['name', 'remoteName'],
+                ['id', 'remoteId'],
+                ['baseUrl', 'remoteBaseUrl'],
+                ['model', 'remoteModelId'],
+                ['apiKeyEnv', 'remoteSecretName'],
+                ['apiKeyPiProvider', 'remotePiKey'],
+              ] as const
+            ).map(([field, label]) => (
+              <label key={field} className="text-xs text-gray-400">
+                {t(label)}
+                <input
+                  value={row[field] || ''}
+                  onChange={(event) => updateRow(index, { [field]: event.target.value })}
+                  disabled={saving}
+                  className={`${fieldClass} mt-1`}
+                  spellCheck={false}
+                />
+              </label>
+            ))}
+          </div>
+          <label className="mt-3 flex items-center gap-2 text-xs text-gray-300">
+            <input
+              type="checkbox"
+              checked={row.vision}
+              onChange={(event) => {
+                updateRow(index, { vision: event.target.checked });
+                if (!event.target.checked && settings.visionProvider === `custom:${row.id}`) {
+                  setSettings((current) =>
+                    current ? { ...current, visionProvider: '' } : current,
+                  );
+                }
+              }}
+              disabled={saving}
+              className="accent-[var(--accent)]"
+            />
+            {t('remoteVision')}
+          </label>
+          {row.apiKeyEnv && !row.apiKeyPiProvider && (
+            <label className="mt-3 block text-xs text-gray-400">
+              {t('remoteKey')} · {row.secretConfigured ? t('remoteKeySet') : t('remoteKeyMissing')}
+              <input
+                type="password"
+                value={secrets[row.apiKeyEnv] || ''}
+                onChange={(event) =>
+                  setSecrets((current) => ({ ...current, [row.apiKeyEnv!]: event.target.value }))
+                }
+                disabled={saving}
+                placeholder={t('remoteKeyPlaceholder')}
+                autoComplete="off"
+                className={`${fieldClass} mt-1`}
+              />
+            </label>
+          )}
+        </div>
+      ))}
+
+      {settings && (
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="text-xs text-gray-400">
+            {t('remoteDefault')}
+            <select
+              data-testid="remote-default-select"
+              value={settings.searchProvider}
+              onChange={(event) =>
+                setSettings((current) =>
+                  current ? { ...current, searchProvider: event.target.value } : current,
+                )
+              }
+              disabled={saving}
+              className={`${fieldClass} mt-1`}
+            >
+              <option value="local">{t('remoteLocal')}</option>
+              {settings.providers.map(({ id, name }) => (
+                <option key={id} value={`custom:${id}`}>
+                  {name || id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="text-xs text-gray-400">
+            {t('remoteVisionDefault')}
+            <select
+              data-testid="remote-vision-select"
+              value={settings.visionProvider}
+              onChange={(event) =>
+                setSettings((current) =>
+                  current ? { ...current, visionProvider: event.target.value } : current,
+                )
+              }
+              disabled={saving}
+              className={`${fieldClass} mt-1`}
+            >
+              <option value="">{t('remoteNone')}</option>
+              {settings.providers
+                .filter(({ vision }) => vision)
+                .map(({ id, name }) => (
+                  <option key={id} value={`custom:${id}`}>
+                    {name || id}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </div>
+      )}
+      <div className="mt-4 flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={!settings || saving}
+          className="rounded-lg bg-[var(--accent)] px-4 py-2 text-xs font-medium text-white disabled:opacity-50"
+        >
+          {saving ? t('remoteSaving') : t('remoteSave')}
+        </button>
+        {message && <span className="text-xs text-emerald-400">{message}</span>}
+        {error && (
+          <span role="alert" className="text-xs text-red-400">
+            {error}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface SettingsProps {
   onDataCleared?: () => void;
 }
@@ -1946,6 +2230,7 @@ export default function Settings({ onDataCleared }: SettingsProps) {
           <SectionBlock title={t('sectionAi')} delay="40ms">
             <div className="flex flex-col gap-4">
               <AiSuggestionsCard />
+              <RemoteProvidersCard />
               <ModelPicker
                 icon={Cpu}
                 title={t('vlmTitle')}

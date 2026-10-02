@@ -2,10 +2,8 @@ import { session } from 'electron';
 
 const PARTITION = 'persist:social';
 
-// Single source of truth for the browser identity we present to IG/X. The
-// webview logs in with this UA, so the downloader (fetch + yt-dlp) must reuse
-// the exact same string: a cookie jar minted under one UA but replayed under a
-// different one is a classic bot signal and a ban risk. Bump it here only.
+// Generic browser User-Agent shared by the social webview and public media
+// requests. Download requests never reuse the webview's cookie jar.
 const SOCIAL_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
@@ -21,8 +19,7 @@ function isAllowed(permission: string): boolean {
 function setupInterceptor(): void {
   const ses = session.fromPartition(PARTITION);
 
-  // Set a realistic browser User-Agent to avoid bot detection (shared with the
-  // downloader so cookies and requests carry a consistent identity).
+  // Use a consistent browser User-Agent for the social webview.
   ses.setUserAgent(SOCIAL_UA);
 
   // Allow-list: grant only the permissions above, deny the rest. Denying does

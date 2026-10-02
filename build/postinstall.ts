@@ -28,3 +28,16 @@ try {
   );
   // Exit 0 regardless — never break the install.
 }
+
+// Content-blocking engine for the web capture (ads, trackers, cookie banners,
+// pop-ups). Best-effort too: without it captures still work, just unfiltered.
+try {
+  execFileSync(process.execPath, ['--import', 'tsx', path.join(__dirname, 'prepare-adblock.ts')], {
+    stdio: 'inherit',
+  });
+} catch (err) {
+  console.warn(
+    '[postinstall] could not prepare the content-blocking engine:',
+    err instanceof Error && err.message ? err.message : err,
+  );
+}

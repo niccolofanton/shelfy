@@ -12,7 +12,7 @@ export interface BrowserTabDef {
 
 export const TABS: BrowserTabDef[] = [
   { id: 'instagram', url: 'https://www.instagram.com/' },
-  { id: 'twitter', url: 'https://x.com/i/bookmarks' },
+  { id: 'twitter', url: 'https://x.com/i/history' },
   { id: 'pinterest', url: 'https://www.pinterest.com/' },
 ];
 
@@ -40,7 +40,9 @@ export const LOGIN_PATTERNS: Record<BrowserTab, RegExp> = {
 
 export const SAVED_PATTERNS: Record<BrowserTab, RegExp> = {
   instagram: /instagram\.com\/(?:[^/?#]+\/)?saved(?:\/|$)/,
-  twitter: /x\.com\/i\/bookmarks/,
+  // X now opens Bookmarks under /i/history (with Likes as a separate tab).
+  // Keep the previous /i/bookmarks URL for older sessions and redirects.
+  twitter: /(?:x|twitter)\.com\/i\/(?:bookmarks|history)(?:[/?#]|$)/,
   // A Pinterest board page: /<user>/<board-slug>/ (and board sections), but NOT a
   // pin detail (/pin/<id>/), a reserved root (search/business/…) nor a profile
   // tab (/<user>/_boards|_saved|_created/).

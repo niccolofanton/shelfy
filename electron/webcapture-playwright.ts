@@ -29,14 +29,7 @@ import os from 'os';
 import { execFile } from 'child_process';
 import type { ChildProcess } from 'child_process';
 import { app, session } from 'electron';
-import type {
-  Browser,
-  BrowserContext,
-  BrowserType,
-  Page,
-  Route,
-  Request as PwRequest,
-} from 'playwright-core';
+import type { Browser, BrowserType, Page, Route, Request as PwRequest } from 'playwright-core';
 import { assertSafeUrl, isBlockedHostname } from './net-safety';
 import * as webcapture from './webcapture';
 import { attachAdblock } from './adblock';
@@ -352,10 +345,6 @@ const LAUNCH_ARGS = [
   '--enable-unsafe-swiftshader', // software fallback when the GPU path is unavailable
   ...glArgs(),
   '--disable-dev-shm-usage',
-  // Chromium's sandbox stays ON by default: this browser renders arbitrary remote
-  // content. Opt out ONLY via explicit env (CI / Linux-as-root, where the sandbox
-  // can't initialize).
-  ...(process.env.SHELFY_DISABLE_SANDBOX === '1' ? ['--no-sandbox'] : []),
   '--hide-scrollbars',
   '--mute-audio',
 ];
@@ -372,7 +361,16 @@ async function getBrowser(): Promise<Browser> {
   if (_browserPromise) return _browserPromise;
   _browserPromise = (async () => {
     const chromium = getChromium();
-    const launch = (): Promise<Browser> => chromium.launch({ headless: true, args: LAUNCH_ARGS });
+    // Chromium's sandbox stays ON: this browser renders arbitrary remote content.
+    // Playwright adds --no-sandbox unless chromiumSandbox is explicitly true, so
+    // the flag is mandatory. Opt out ONLY via explicit env (CI / Linux-as-root,
+    // where the sandbox can't initialize).
+    const launch = (): Promise<Browser> =>
+      chromium.launch({
+        headless: true,
+        args: LAUNCH_ARGS,
+        chromiumSandbox: process.env.SHELFY_DISABLE_SANDBOX !== '1',
+      });
     let b: Browser;
     try {
       b = await launch();
@@ -1129,4 +1127,4 @@ async function capturePage(
   }
 }
 
-export { capturePage, closeBrowser, getBrowser };
+export { capturePage, closeBrowser, getBrowser, getChromium };

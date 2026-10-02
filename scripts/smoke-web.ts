@@ -37,7 +37,7 @@ async function main(): Promise<void> {
   log('URL:', URL);
   try {
     log('model status:', JSON.stringify(analyzer.getModelStatus()));
-  } catch (e) {
+  } catch {
     log('model status n/d');
   }
 

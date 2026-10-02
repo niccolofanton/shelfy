@@ -2,6 +2,7 @@
 
 import type { IpcRendererEvent } from 'electron';
 import type {
+  AiRemoteStatus,
   ElectronAPI,
   ManualBookmarkPayload,
   ManualBookmarkFile,
@@ -38,6 +39,7 @@ try {
     existingIds: (ids) => ipcRenderer.invoke('db:existingIds', { ids }),
     savedByKeys: (keys) => ipcRenderer.invoke('db:savedByKeys', { keys }),
     getStats: () => ipcRenderer.invoke('db:getStats'),
+    repairPreview: (id) => ipcRenderer.invoke('preview:repair', { id }),
     importJSON: (filePath) => ipcRenderer.invoke('db:importJSON', { filePath }),
     exportJSON: (platforms) => ipcRenderer.invoke('db:exportJSON', { platforms }),
     clearAllData: () => ipcRenderer.invoke('db:clearAll'),
@@ -176,6 +178,14 @@ try {
 
     // AI ▸ Search (conversational chat + tag/text search). `source` scopes to
     // 'all' | 'web' | 'social' (Siti / Social / Tutto filter).
+    getSearchProviders: () => ipcRenderer.invoke('search:providers'),
+    getAiProviderSettings: () => ipcRenderer.invoke('search:providerSettings'),
+    saveAiProviderSettings: (settings) =>
+      ipcRenderer.invoke('search:saveProviderSettings', settings),
+    selectSearchProvider: (id) => ipcRenderer.invoke('search:selectProvider', id),
+    getAiRemoteStatus: () => ipcRenderer.invoke('ai:remoteStatus'),
+    retryAiRemote: () => ipcRenderer.invoke('ai:retryRemote'),
+    useLocalAiModels: () => ipcRenderer.invoke('ai:useLocalModels'),
     chatSearch: (messages, activeTags) =>
       ipcRenderer.invoke('search:chat', { messages, activeTags }),
     cancelChatSearch: () => ipcRenderer.invoke('search:chatCancel'),
@@ -198,6 +208,11 @@ try {
     resumeWeb: () => ipcRenderer.invoke('web:resumeAll'),
     retryWebJob: (key) => ipcRenderer.invoke('web:retryJob', { key }),
     clearCompletedWeb: () => ipcRenderer.invoke('web:clearCompleted'),
+    unblockWebJob: (key) => ipcRenderer.invoke('web:unblock', { key }),
+    getWebFacets: (query) => ipcRenderer.invoke('web:facets', query),
+    queryWebReferences: (query) => ipcRenderer.invoke('web:query', query),
+    getSimilarWebReferences: (id, limit) => ipcRenderer.invoke('web:similar', { id, limit }),
+    recatalogWebReferences: (opts) => ipcRenderer.invoke('web:recatalog', opts || {}),
     discoverWebPages: (url, maxPages) => ipcRenderer.invoke('web:discover', { url, maxPages }),
     // Manual bookmark: local files + note + tags. `payload` = { note, tags, files:
     // [{ name, mime, kind, original: Uint8Array, preview: Uint8Array|null }] }.
@@ -299,6 +314,11 @@ try {
       const handler = (_: IpcRendererEvent, data: unknown) => cb(data);
       ipcRenderer.on('search:chatToken', handler);
       return () => ipcRenderer.removeListener('search:chatToken', handler);
+    },
+    onAiRemoteStatus: (cb) => {
+      const handler = (_: IpcRendererEvent, data: AiRemoteStatus) => cb(data);
+      ipcRenderer.on('ai:remoteStatus', handler);
+      return () => ipcRenderer.removeListener('ai:remoteStatus', handler);
     },
     onModelProgress: (cb) => {
       const handler = (_: IpcRendererEvent, data: unknown) => cb(data);

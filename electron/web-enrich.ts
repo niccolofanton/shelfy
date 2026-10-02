@@ -1036,13 +1036,11 @@ function paletteFromSamples(samples: PaletteSample[]): PaletteColor[] {
     string,
     { area: number; kinds: Record<string, number>; r: number; g: number; b: number }
   >();
-  let totalArea = 0;
   for (const s of samples) {
     const c = parseCssColor(s.color);
     if (!c) continue;
     const hex = rgbToHex(c.r, c.g, c.b);
     const area = Math.max(0, Number(s.area) || 0) + 1; // +1 so zero-area still counts a little
-    totalArea += area;
     let e = byHex.get(hex);
     if (!e) {
       e = { area: 0, kinds: {}, r: c.r, g: c.g, b: c.b };

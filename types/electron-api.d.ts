@@ -19,6 +19,18 @@
 // These describe IPC payloads/results that have no Shelfy.* domain type because
 // they are pure boundary shapes (option bags, command acks, progress events).
 
+// ai:remoteStatus: whether the configured remote AI node answers, plus the local
+// model state the "node unreachable" banner needs to offer local models.
+export interface AiRemoteStatus {
+  configured: boolean;
+  reachable: boolean | null;
+  localOverride: boolean;
+  providerName: string | null;
+  checking: boolean;
+  localReady: boolean;
+  localDownloading: boolean;
+}
+
 // Optional fields accepted by createCollection beyond name/color (collections:create).
 export interface CreateCollectionOpts {
   platform?: Shelfy.Platform | null;
@@ -233,6 +245,7 @@ export interface ElectronAPI {
   existingIds: (ids: string[]) => Promise<string[]>;
   savedByKeys: (keys: string[]) => Promise<SavedByKey[]>;
   getStats: () => Promise<Shelfy.Stats>;
+  repairPreview: (id: string) => Promise<boolean>;
   importJSON: (filePath: string) => Promise<Shelfy.ImportResult>;
   exportJSON: (platforms?: Shelfy.Platform[]) => Promise<ExportResult>;
   clearAllData: () => Promise<OkResult>;
@@ -368,6 +381,41 @@ export interface ElectronAPI {
   suggestSearch: (query: string) => Promise<SearchSuggestResult>;
 
   // ── AI ▸ Search (conversational chat + tag/text search) ─────────────────────────
+  getSearchProviders: () => Promise<
+    Array<{ id: string; name: string; selected: boolean; vision?: boolean }>
+  >;
+  getAiProviderSettings: () => Promise<{
+    searchProvider: string;
+    visionProvider: string;
+    providers: Array<{
+      id: string;
+      name: string;
+      baseUrl: string;
+      model: string;
+      apiKeyEnv?: string;
+      apiKeyPiProvider?: string;
+      vision: boolean;
+      secretConfigured: boolean;
+      available: boolean;
+    }>;
+  }>;
+  saveAiProviderSettings: (settings: {
+    searchProvider: string;
+    visionProvider: string;
+    providers: Array<{
+      id: string;
+      name: string;
+      baseUrl: string;
+      model: string;
+      apiKeyEnv?: string;
+      apiKeyPiProvider?: string;
+      vision: boolean;
+    }>;
+    secrets?: Record<string, string>;
+  }) => ReturnType<ElectronAPI['getAiProviderSettings']>;
+  selectSearchProvider: (
+    id: string,
+  ) => Promise<Array<{ id: string; name: string; selected: boolean; vision?: boolean }>>;
   chatSearch: (messages: unknown[], activeTags?: string[]) => Promise<ChatSearchResult>;
   cancelChatSearch: () => Promise<OkResult>;
   searchByTags: (
@@ -408,6 +456,35 @@ export interface ElectronAPI {
   resumeWeb: () => Promise<unknown>;
   retryWebJob: (key: string) => Promise<unknown>;
   clearCompletedWeb: () => Promise<unknown>;
+  unblockWebJob: (key: string) => Promise<{ ok: boolean; reason?: string }>;
+  getWebFacets: (query?: {
+    q?: string;
+    facets?: Record<string, string[]>;
+    color?: string;
+  }) => Promise<Record<string, { value: string; count: number }[]>>;
+  queryWebReferences: (query?: {
+    q?: string;
+    facets?: Record<string, string[]>;
+    color?: string;
+    sort?: 'recent' | 'name' | 'color';
+    limit?: number;
+    offset?: number;
+  }) => Promise<{ posts: Shelfy.Post[]; total: number }>;
+  getSimilarWebReferences: (
+    id: string,
+    limit?: number,
+  ) => Promise<
+    {
+      post: Shelfy.Post;
+      score: number;
+      shared: string[];
+      sharedFacets?: { facet: string; value: string }[];
+    }[]
+  >;
+  recatalogWebReferences: (opts?: {
+    ids?: string[];
+    outdatedOnly?: boolean;
+  }) => Promise<{ queued: number }>;
   discoverWebPages: (url: string, maxPages?: number) => Promise<unknown>;
   addManualBookmark: (payload: ManualBookmarkPayload) => Promise<ManualBookmarkResult>;
 
@@ -461,7 +538,13 @@ export interface ElectronAPI {
   // ── Feedback ──────────────────────────────────────────────────────────────────
   sendFeedback: (message: string, attachments?: FeedbackAttachment[]) => Promise<FeedbackResult>;
 
+  // Remote AI node gate (see electron/ai-providers.ts aiRoute).
+  getAiRemoteStatus: () => Promise<AiRemoteStatus>;
+  retryAiRemote: () => Promise<AiRemoteStatus>;
+  useLocalAiModels: () => Promise<AiRemoteStatus>;
+
   // ── Push events: main → renderer (return cleanup fn) ──────────────────────────
+  onAiRemoteStatus: (cb: (data: AiRemoteStatus) => void) => () => void;
   onNewPosts: (cb: (data: unknown) => void) => () => void;
   onDownloadProgress: (cb: (data: unknown) => void) => () => void;
   onAnalyzeProgress: (cb: (data: unknown) => void) => () => void;

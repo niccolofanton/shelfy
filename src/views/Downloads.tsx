@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Download,
@@ -13,13 +13,14 @@ import {
   Pause,
   Play,
   RotateCw,
+  ChevronDown,
   X,
 } from 'lucide-react';
 import { useDownloadPrefs } from '../hooks/useDownloadPrefs';
 import { useToast } from '../hooks/useToast';
 import { assetThumbUrl } from '../lib/asset';
 import SourceIcon, { PLATFORM_COLORS, PLATFORM_LABELS } from '../components/SourceIcon';
-import { useT } from '../i18n';
+import { useT, useLang, localeTag } from '../i18n';
 
 // Translator returned by useT — namespaced key + optional interpolation vars.
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
@@ -213,8 +214,7 @@ const JobRow = React.memo(function JobRow({
   onRetry,
 }: JobRowProps): React.JSX.Element {
   const t: Translate = useT('downloads');
-  const { key, postId, platform, assetType, status, progress, error, authorUsername } = job;
-  const label = authorUsername ? `@${authorUsername}` : String(postId);
+  const { key, assetType, mediaPosition, status, progress, error } = job;
   const isActive = status === 'downloading';
   const isError = status === 'error';
 
@@ -230,7 +230,7 @@ const JobRow = React.memo(function JobRow({
         ? 'var(--error)'
         : status === 'downloading'
           ? 'var(--accent)'
-          : /* pending */ 'var(--text-muted)';
+          : /* pending */ 'var(--text-secondary)';
 
   // Queued/active rows dim while the queue is paused (done/error keep full opacity).
   const dimmed = isPaused && (status === 'pending' || status === 'downloading');
@@ -239,7 +239,7 @@ const JobRow = React.memo(function JobRow({
     <div
       data-testid="download-job"
       data-status={status}
-      className={`flex flex-col gap-1.5 px-4 py-3 border-b u-transition${isError ? ' u-shake' : ''}`}
+      className={`flex flex-col gap-1.5 py-2 pl-14 pr-4 border-t u-transition${isError ? ' u-shake' : ''}`}
       style={{
         borderColor: 'var(--border)',
         background: isError ? 'var(--error)14' : isActive ? 'var(--accent)0d' : 'transparent',
@@ -247,25 +247,12 @@ const JobRow = React.memo(function JobRow({
       }}
     >
       <div className="flex items-center gap-3 min-w-0">
-        <JobThumb job={job} />
-
-        <div className="flex flex-col min-w-0 flex-1 gap-0.5">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <PlatformIcon platform={platform} />
-            <span
-              className="text-sm truncate"
-              style={{ color: 'var(--text-primary)' }}
-              title={postId}
-            >
-              {label}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <AssetIcon type={assetType} />
-            <span className="text-xs capitalize" style={{ color: 'var(--text-muted)' }}>
-              {ASSET_KEYS[assetType] ? t(ASSET_KEYS[assetType]) : assetType}
-            </span>
-          </div>
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <AssetIcon type={assetType} />
+          <span className="text-xs capitalize truncate" style={{ color: 'var(--text-secondary)' }}>
+            {ASSET_KEYS[assetType] ? t(ASSET_KEYS[assetType]) : assetType}
+            {mediaPosition != null ? ` ${mediaPosition + 1}` : ''}
+          </span>
         </div>
 
         <span
@@ -345,6 +332,167 @@ const STATUS_RANK: Record<string, number> = {
   done: 4,
 };
 
+interface DownloadPostGroup {
+  postId: string;
+  jobs: DownloadJob[];
+  rank: number;
+}
+
+function groupDownloadJobs(jobs: DownloadJob[]): DownloadPostGroup[] {
+  const byPost = new Map<string, DownloadPostGroup>();
+  for (const job of jobs) {
+    let group = byPost.get(job.postId);
+    if (!group) {
+      group = { postId: job.postId, jobs: [], rank: STATUS_RANK[job.status] ?? 5 };
+      byPost.set(job.postId, group);
+    }
+    group.jobs.push(job);
+    group.rank = Math.min(group.rank, STATUS_RANK[job.status] ?? 5);
+  }
+  return Array.from(byPost.values()).sort((a, b) => a.rank - b.rank);
+}
+
+function DownloadStage({
+  label,
+  jobs,
+}: {
+  label: string;
+  jobs: DownloadJob[];
+}): React.JSX.Element | null {
+  if (jobs.length === 0) return null;
+  const done = jobs.filter((j) => j.status === 'done').length;
+  const failed = jobs.some((j) => j.status === 'error' || j.status === 'cancelled');
+  const active = jobs.some((j) => j.status === 'downloading');
+  const color =
+    done === jobs.length
+      ? 'var(--success)'
+      : failed
+        ? 'var(--error)'
+        : active
+          ? 'var(--accent)'
+          : 'var(--text-secondary)';
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[11px] tabular-nums" style={{ color }}>
+      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+      {label} {done}/{jobs.length}
+    </span>
+  );
+}
+
+interface PostGroupRowProps {
+  group: DownloadPostGroup;
+  expanded: boolean;
+  onToggle: (postId: string) => void;
+  isPaused: boolean;
+  onCancel: (key: string) => void;
+  onRetry: (key: string) => void;
+}
+
+const PostGroupRow = React.memo(function PostGroupRow({
+  group,
+  expanded,
+  onToggle,
+  isPaused,
+  onCancel,
+  onRetry,
+}: PostGroupRowProps): React.JSX.Element {
+  const t: Translate = useT('downloads');
+  const { jobs, postId } = group;
+  const thumbnailJobs = jobs.filter((j) => j.assetType === 'thumbnail');
+  const contentJobs = jobs.filter((j) => j.assetType !== 'thumbnail');
+  const done = jobs.filter((j) => j.status === 'done').length;
+  const active = jobs.some((j) => j.status === 'downloading');
+  const failed = jobs.some((j) => j.status === 'error' || j.status === 'cancelled');
+  const progress =
+    jobs.reduce(
+      (sum, j) => sum + (j.status === 'done' ? 1 : j.status === 'downloading' ? j.progress : 0),
+      0,
+    ) / jobs.length;
+  const representative = thumbnailJobs[0] || jobs[0];
+  const label = representative.authorUsername
+    ? `@${representative.authorUsername}`
+    : String(postId);
+
+  return (
+    <div
+      data-testid="download-post-group"
+      data-post-id={postId}
+      className="border-b"
+      style={{
+        borderColor: 'var(--border)',
+        background: failed ? 'var(--error)08' : active ? 'var(--accent)08' : 'transparent',
+      }}
+    >
+      <button
+        type="button"
+        className="w-full text-left px-4 pt-3 pb-2 u-transition hover:bg-white/[0.03]"
+        onClick={() => onToggle(postId)}
+        aria-expanded={expanded}
+        aria-controls={`download-post-${postId}`}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <JobThumb job={representative} />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <PlatformIcon platform={representative.platform} />
+              <span
+                className="text-sm truncate"
+                style={{ color: 'var(--text-primary)' }}
+                title={postId}
+              >
+                {label}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+              <DownloadStage label={t('stagePreview')} jobs={thumbnailJobs} />
+              <DownloadStage label={t('stageContent')} jobs={contentJobs} />
+            </div>
+          </div>
+          <span
+            className="text-xs tabular-nums shrink-0"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            {done}/{jobs.length}
+          </span>
+          <ChevronDown
+            size={15}
+            className={`shrink-0 u-transition ${expanded ? 'rotate-180' : ''}`}
+            style={{ color: 'var(--text-muted)' }}
+          />
+        </div>
+      </button>
+      <div
+        className="h-0.5 mx-4 mb-2 rounded-full overflow-hidden"
+        style={{ background: 'var(--bg-hover)' }}
+      >
+        <div
+          className="h-full u-progress"
+          style={{
+            width: `${Math.round(progress * 100)}%`,
+            background: failed
+              ? 'var(--error)'
+              : done === jobs.length
+                ? 'var(--success)'
+                : 'var(--accent)',
+          }}
+        />
+      </div>
+      <div id={`download-post-${postId}`}>
+        {expanded &&
+          jobs.map((job) => (
+            <JobRow
+              key={job.key}
+              job={job}
+              isPaused={isPaused}
+              onCancel={onCancel}
+              onRetry={onRetry}
+            />
+          ))}
+      </div>
+    </div>
+  );
+});
+
 interface DownloadsProps {
   downloads: DownloadsApi;
 }
@@ -354,6 +502,7 @@ interface DownloadsProps {
 function Downloads({ downloads }: DownloadsProps): React.JSX.Element {
   const t: Translate = useT('downloads');
   const tc: Translate = useT('common');
+  const { lang } = useLang();
   const {
     jobs,
     stats,
@@ -371,6 +520,15 @@ function Downloads({ downloads }: DownloadsProps): React.JSX.Element {
   // Gallery). The download:all IPC can reject (DB locked, disk error during
   // ensureDirs) and without this the button would silently appear to do nothing.
   const { toast: feedback, showToast: showFeedback } = useToast();
+  const [expandedPostIds, setExpandedPostIds] = useState<Set<string>>(() => new Set());
+  const togglePost = useCallback((postId: string) => {
+    setExpandedPostIds((current) => {
+      const next = new Set(current);
+      if (next.has(postId)) next.delete(postId);
+      else next.add(postId);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -423,28 +581,16 @@ function Downloads({ downloads }: DownloadsProps): React.JSX.Element {
     return { doneCount: done, hasQueue: queued, finishedCount: finished };
   }, [jobs]);
 
-  const sortedJobs = useMemo(
-    () => [...jobs].sort((a, b) => (STATUS_RANK[a.status] ?? 5) - (STATUS_RANK[b.status] ?? 5)),
-    [jobs],
-  );
+  const sortedGroups = useMemo(() => groupDownloadJobs(jobs), [jobs]);
 
-  // Virtualize the job list: the queue can hold thousands of rows, and mounting
-  // them all stutters scrolling. Row heights vary (progress bar / error line),
-  // so we let the virtualizer measure each rendered row instead of assuming a
-  // fixed size.
+  // Virtualize post groups; expanded groups contain their individual asset jobs.
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const rowVirtualizer = useVirtualizer({
-    count: sortedJobs.length,
+    count: sortedGroups.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 65,
+    estimateSize: () => 92,
     overscan: 8,
-    // Key the measured-size cache by job identity (matching the React key on the
-    // wrapper div below), not by index. Rows have variable height and the list
-    // re-sorts as jobs change status, so an index-keyed cache would hold the
-    // previous occupant's height and cause a brief jitter on reorder.
-    getItemKey: (index) =>
-      sortedJobs[index]?.key ??
-      `${sortedJobs[index].postId}:${sortedJobs[index].assetType}:${sortedJobs[index].mediaPosition ?? 0}`,
+    getItemKey: (index) => sortedGroups[index]?.postId ?? index,
   });
   const virtualRows = rowVirtualizer.getVirtualItems();
 
@@ -587,8 +733,13 @@ function Downloads({ downloads }: DownloadsProps): React.JSX.Element {
 
         {/* Progress summary */}
         {totalJobs > 0 && (
-          <p className="u-fade-in text-xs tabular-nums" style={{ color: 'var(--text-muted)' }}>
-            {t('progressSummary', { done: doneCount, total: totalJobs, count: totalJobs })}
+          <p className="u-fade-in text-xs tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+            {t('progressSummary', {
+              done: doneCount.toLocaleString(localeTag(lang)),
+              total: totalJobs.toLocaleString(localeTag(lang)),
+              posts: sortedGroups.length.toLocaleString(localeTag(lang)),
+              count: totalJobs,
+            })}
           </p>
         )}
 
@@ -635,7 +786,7 @@ function Downloads({ downloads }: DownloadsProps): React.JSX.Element {
         />
       </div>
 
-      {/* ── Job list (virtualized) ──────────────────────────────────────── */}
+      {/* ── Post groups (virtualized) ──────────────────────────────────── */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         {jobs.length === 0 ? (
           <div
@@ -650,10 +801,10 @@ function Downloads({ downloads }: DownloadsProps): React.JSX.Element {
         ) : (
           <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
             {virtualRows.map((vrow) => {
-              const job = sortedJobs[vrow.index];
+              const group = sortedGroups[vrow.index];
               return (
                 <div
-                  key={job.key ?? `${job.postId}:${job.assetType}:${job.mediaPosition ?? 0}`}
+                  key={group.postId}
                   data-index={vrow.index}
                   ref={rowVirtualizer.measureElement}
                   style={{
@@ -664,7 +815,14 @@ function Downloads({ downloads }: DownloadsProps): React.JSX.Element {
                     transform: `translateY(${vrow.start}px)`,
                   }}
                 >
-                  <JobRow job={job} isPaused={isPaused} onCancel={cancelJob} onRetry={retryJob} />
+                  <PostGroupRow
+                    group={group}
+                    expanded={expandedPostIds.has(group.postId)}
+                    onToggle={togglePost}
+                    isPaused={isPaused}
+                    onCancel={cancelJob}
+                    onRetry={retryJob}
+                  />
                 </div>
               );
             })}

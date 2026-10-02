@@ -193,10 +193,6 @@ function getSelectedModelId(): string {
   return (_selectedId = DEFAULT_MODEL_ID);
 }
 
-function getSelectedModel(): ModelRecord {
-  return MODELS[getSelectedModelId()];
-}
-
 // Switches the active model: persists the choice and tears down any running
 // server so the next transcription respawns with the new weights.
 function setModel(id: string): SttStatus {

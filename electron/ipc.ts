@@ -2,7 +2,21 @@ import { app, ipcMain, dialog, shell } from 'electron';
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
 import * as db from './db';
 import * as downloader from './downloader';
+import { enqueuePreviews } from './preview-cache';
+import { requestPreviewRepair } from './preview-repair';
 import * as analyzer from './analyzer';
+import {
+  getProviderSettings,
+  getRemoteStatus,
+  listSearchProviders,
+  onRemoteStatusChange,
+  probeRemote,
+  saveProviderSettings,
+  selectSearchProvider,
+  startRemoteMonitor,
+  useLocalModelsForSession,
+} from './ai-providers';
+import type { ProviderSettingsInput } from './ai-providers';
 import * as weborchestrator from './weborchestrator';
 import * as stt from './stt';
 import * as embeddings from './embeddings';
@@ -156,6 +170,11 @@ function registerIpcHandlers(mainWindow: BrowserWindow): void {
     db.savedByKeys(keys || []),
   );
   ipcMain.handle('db:getStats', () => db.getStats());
+  ipcMain.handle('preview:repair', (_: IpcMainInvokeEvent, { id }: { id?: string } = {}) =>
+    requestPreviewRepair(typeof id === 'string' ? id : '', () =>
+      sendToWindow('interceptor:newPosts', { source: 'preview-repair' }),
+    ),
+  );
   ipcMain.handle(
     'db:importJSON',
     async (_: IpcMainInvokeEvent, { filePath }: { filePath: string }) => {
@@ -280,23 +299,28 @@ function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle(
     'db:deleteLocalFiles',
     async (_: IpcMainInvokeEvent, { postId }: { postId: string }) => {
-      // Only the CURRENT capture's files: this action frees disk while KEEPING the
-      // post record, so it must not touch archived snapshot screenshots (which
-      // getLocalFilePaths now includes) — deleting those would orphan their
-      // web_snapshots rows. removePostsAndFiles below still uses getLocalFilePaths
-      // because it deletes the whole post.
-      const paths = db.getCurrentCaptureFilePaths(postId);
-      const errors: string[] = [];
-      for (const p of paths) {
-        try {
-          fs.unlinkSync(p);
-        } catch (e) {
-          const err = e as NodeJS.ErrnoException;
-          if (err.code !== 'ENOENT') errors.push(err.message);
+      const resume = await downloader.suspendPosts([postId]);
+      try {
+        // Only the CURRENT capture's files: this action frees disk while KEEPING the
+        // post record, so it must not touch archived snapshot screenshots (which
+        // getLocalFilePaths now includes) — deleting those would orphan their
+        // web_snapshots rows. removePostsAndFiles below still uses getLocalFilePaths
+        // because it deletes the whole post.
+        const paths = db.getCurrentCaptureFilePaths(postId);
+        const errors: string[] = [];
+        for (const p of paths) {
+          try {
+            fs.unlinkSync(p);
+          } catch (e) {
+            const err = e as NodeJS.ErrnoException;
+            if (err.code !== 'ENOENT') errors.push(err.message);
+          }
         }
+        db.clearPostLocalFiles(postId);
+        return { ok: true, deleted: paths.length, errors };
+      } finally {
+        resume();
       }
-      db.clearPostLocalFiles(postId);
-      return { ok: true, deleted: paths.length, errors };
     },
   );
 
@@ -307,23 +331,28 @@ function registerIpcHandlers(mainWindow: BrowserWindow): void {
     ids: string[] = [],
   ): Promise<{ deleted: number; errors: string[] }> => {
     const list = Array.isArray(ids) ? ids.filter(Boolean) : [];
-    const errors: string[] = [];
-    const BATCH = 200;
-    for (let i = 0; i < list.length; i += BATCH) {
-      for (const id of list.slice(i, i + BATCH)) {
-        for (const p of db.getLocalFilePaths(id)) {
-          try {
-            await fs.promises.unlink(p);
-          } catch (e) {
-            const err = e as NodeJS.ErrnoException;
-            if (err.code !== 'ENOENT') errors.push(err.message);
+    const resume = await downloader.suspendPosts(list);
+    try {
+      const errors: string[] = [];
+      const BATCH = 200;
+      for (let i = 0; i < list.length; i += BATCH) {
+        for (const id of list.slice(i, i + BATCH)) {
+          for (const p of db.getLocalFilePaths(id)) {
+            try {
+              await fs.promises.unlink(p);
+            } catch (e) {
+              const err = e as NodeJS.ErrnoException;
+              if (err.code !== 'ENOENT') errors.push(err.message);
+            }
           }
         }
+        await new Promise<void>((resolve) => setImmediate(resolve));
       }
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      const { deleted } = db.deletePosts(list);
+      return { deleted, errors };
+    } finally {
+      resume();
     }
-    const { deleted } = db.deletePosts(list);
-    return { deleted, errors };
   };
 
   ipcMain.handle('db:deletePosts', async (_: IpcMainInvokeEvent, { ids }: { ids: string[] }) => {
@@ -349,6 +378,14 @@ function registerIpcHandlers(mainWindow: BrowserWindow): void {
       }
       const clean = posts.filter((p) => p && typeof p === 'object');
       const { inserted, skipped } = db.bulkUpsert(clean);
+      const ids = clean
+        .map((p) => (p as { id?: unknown }).id)
+        .filter((id): id is string => typeof id === 'string');
+      if (ids.length) {
+        enqueuePreviews(db.getPreviewCandidates(ids), () =>
+          sendToWindow('interceptor:newPosts', { source: 'preview-cache' }),
+        );
+      }
       if (inserted > 0) {
         sendToWindow('interceptor:newPosts', { count: inserted, platform });
       }
@@ -597,7 +634,7 @@ function registerIpcHandlers(mainWindow: BrowserWindow): void {
     analyzer.retryJob(key),
   );
 
-  ipcMain.handle('analyze:modelStatus', () => analyzer.getModelStatus());
+  ipcMain.handle('analyze:modelStatus', () => analyzer.getAnalysisModelStatus());
   ipcMain.handle('analyze:listModels', () => analyzer.listModels());
   ipcMain.handle('analyze:setModel', (_: IpcMainInvokeEvent, { id }: { id: string }) =>
     analyzer.setModel(id),
@@ -658,6 +695,44 @@ function registerIpcHandlers(mainWindow: BrowserWindow): void {
     weborchestrator.retryJob(key),
   );
   ipcMain.handle('web:clearCompleted', () => weborchestrator.clearCompleted());
+  // v2 browsing: facet counts, filtered query, similar sites, AI-only re-catalog.
+  ipcMain.handle(
+    'web:facets',
+    (_: IpcMainInvokeEvent, query?: Parameters<typeof db.getWebFacetCounts>[0]) =>
+      db.getWebFacetCounts(query && typeof query === 'object' ? query : null),
+  );
+  ipcMain.handle(
+    'web:query',
+    (_: IpcMainInvokeEvent, query: Parameters<typeof db.queryWebReferences>[0] = {}) =>
+      db.queryWebReferences(query && typeof query === 'object' ? query : {}),
+  );
+  ipcMain.handle(
+    'web:similar',
+    (_: IpcMainInvokeEvent, { id, limit }: { id?: string; limit?: number } = {}) =>
+      typeof id === 'string'
+        ? db.similarWebReferences(id, Math.max(1, Math.min(40, Number(limit) || 12)))
+        : [],
+  );
+  ipcMain.handle(
+    'web:recatalog',
+    (
+      _: IpcMainInvokeEvent,
+      { ids, outdatedOnly }: { ids?: string[]; outdatedOnly?: boolean } = {},
+    ) => {
+      const all = db.queryWebReferences({ limit: 500 }).posts;
+      const wanted = Array.isArray(ids) && ids.length ? new Set(ids) : null;
+      let queued = 0;
+      for (const post of all) {
+        if (wanted && !wanted.has(post.id)) continue;
+        if (outdatedOnly && post.aiWeb && post.aiWeb.schema >= 2) continue;
+        if (analyzer.enqueuePost(post).queued) queued++;
+      }
+      return { queued };
+    },
+  );
+  ipcMain.handle('web:unblock', (_: IpcMainInvokeEvent, { key }: { key?: string } = {}) =>
+    weborchestrator.unblockJob(key),
+  );
 
   // Manual bookmark: user-added local files (images/videos/pdf/any) + note + tags.
   // Persisted as a platform='manual' post; the gallery picks it up via the same
@@ -1045,6 +1120,39 @@ function registerIpcHandlers(mainWindow: BrowserWindow): void {
   });
 
   // ── AI ▸ Search (conversational chat + tag/text search) ─────────────────────────
+
+  ipcMain.handle('search:providers', () => listSearchProviders());
+  ipcMain.handle('search:providerSettings', () => getProviderSettings());
+  ipcMain.handle(
+    'search:saveProviderSettings',
+    (_: IpcMainInvokeEvent, input: ProviderSettingsInput) => {
+      if (_chatAbort) _chatAbort.abort();
+      return saveProviderSettings(input);
+    },
+  );
+  // Remote AI node gate: status for the "node unreachable" banner, a manual
+  // re-probe, and the session-only switch to local models.
+  const aiRemoteStatus = (): Record<string, unknown> => {
+    const local = analyzer.getModelStatus();
+    return { ...getRemoteStatus(), localReady: local.ready, localDownloading: local.downloading };
+  };
+  ipcMain.handle('ai:remoteStatus', () => aiRemoteStatus());
+  ipcMain.handle('ai:retryRemote', async () => {
+    await probeRemote();
+    return aiRemoteStatus();
+  });
+  ipcMain.handle('ai:useLocalModels', () => {
+    useLocalModelsForSession();
+    return aiRemoteStatus();
+  });
+  onRemoteStatusChange(() => sendToWindow('ai:remoteStatus', aiRemoteStatus()));
+  startRemoteMonitor();
+
+  ipcMain.handle('search:selectProvider', (_: IpcMainInvokeEvent, id: string) => {
+    if (typeof id !== 'string') throw new Error('Provider AI non valido');
+    if (_chatAbort) _chatAbort.abort();
+    return selectSearchProvider(id);
+  });
 
   // Multi-turn chat that streams the conversational reply over 'search:chatToken'
   // and returns the proposed tags. Only one chat runs at a time: starting a new

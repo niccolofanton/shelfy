@@ -743,6 +743,7 @@ export default function AiSearch({
     streamingText,
     resultsLoading,
     modelStatus,
+    searchProviders,
     actions,
   } = useAiSearch();
 
@@ -758,6 +759,7 @@ export default function AiSearch({
     clearFilters,
     stopStreaming,
     downloadModel,
+    selectSearchProvider,
     refresh,
     reset,
   } = actions;
@@ -811,7 +813,10 @@ export default function AiSearch({
   }, [messages, streamingText, chatLoading]);
   useEffect(() => () => cancelAnimationFrame(logScrollRaf.current), []);
 
-  const modelReady = !!modelStatus?.ready;
+  const activeRemoteProvider = searchProviders.find((p) => p.id !== 'local' && p.selected);
+  const remoteProvider = activeRemoteProvider || searchProviders.find((p) => p.id !== 'local');
+  const remoteSelected = !!activeRemoteProvider;
+  const modelReady = !!modelStatus?.ready || remoteSelected;
   const modelDownloading = !!modelStatus?.downloading;
 
   // ── Chat input handlers ────────────────────────────────────────────────────
@@ -937,6 +942,48 @@ export default function AiSearch({
           <Sparkles size={16} style={{ color: ACCENT }} />
           <h1 className="text-white text-sm font-semibold tracking-tight">{t('chatTitle')}</h1>
           <div className="flex-1" />
+          {remoteProvider && (
+            <label
+              className="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer"
+              title={t(remoteProvider.vision ? 'remoteVisionHint' : 'remoteSearchHint')}
+            >
+              <input
+                type="checkbox"
+                data-testid="remote-search-toggle"
+                checked={remoteSelected}
+                disabled={chatLoading}
+                onChange={(event) => {
+                  void selectSearchProvider(
+                    event.target.checked ? remoteProvider.id : 'local',
+                  ).catch(() => showToast(t('remoteSearchError')));
+                }}
+                className="accent-[#7B5CFF]"
+              />
+              {searchProviders.length > 2 && remoteSelected ? (
+                <select
+                  aria-label={t('remoteProvider')}
+                  value={activeRemoteProvider?.id}
+                  disabled={chatLoading}
+                  onChange={(event) => {
+                    void selectSearchProvider(event.target.value).catch(() =>
+                      showToast(t('remoteSearchError')),
+                    );
+                  }}
+                  className="max-w-[115px] bg-transparent text-gray-400 outline-none"
+                >
+                  {searchProviders
+                    .filter((p) => p.id !== 'local')
+                    .map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.name}
+                      </option>
+                    ))}
+                </select>
+              ) : (
+                remoteProvider.name
+              )}
+            </label>
+          )}
           {hasMessages && (
             <button
               data-testid="chat-reset-btn"

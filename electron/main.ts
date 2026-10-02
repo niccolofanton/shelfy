@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import * as logger from './logger';
 import * as netSafety from './net-safety';
 import { attachCaptureSpike } from './capture-mvp';
+import { enqueuePreviews } from './preview-cache';
 import {
   THUMB_EXTS,
   thumbnailFor,
@@ -16,6 +17,14 @@ import {
 } from './thumbs';
 
 const isDev = process.env.ELECTRON_DEV === 'true';
+
+// Local validation against a copy of an installed profile. Must be applied
+// before app.whenReady() so Chromium sessions and SQLite use the same clone.
+if (!app.isPackaged && process.env.SHELFY_TEST_USER_DATA) {
+  const testData = path.resolve(process.env.SHELFY_TEST_USER_DATA);
+  fs.mkdirSync(testData, { recursive: true });
+  app.setPath('userData', testData);
+}
 
 // Custom marker properties the hardening logic stamps on auth-popup / capture
 // windows. Kept as an augmentation so the tagged-window checks below stay typed
@@ -627,6 +636,22 @@ app
     );
 
     const mainWindow = createWindow();
+
+    // X image URLs usually remain usable: recover old remote-only cards once on
+    // startup. Instagram's signed URLs expire, so those need a fresh source sync.
+    setTimeout(() => {
+      try {
+        const candidates = (require('./db') as typeof import('./db')).getPreviewCandidates(
+          null,
+          'twitter',
+        );
+        enqueuePreviews(candidates, () =>
+          sendToCurrentWindow('interceptor:newPosts', { source: 'preview-cache' }),
+        );
+      } catch (err) {
+        console.warn('[preview-cache] startup backfill failed:', err);
+      }
+    }, 5_000);
 
     // Warm the grid-thumbnail cache once startup has settled, then backfill the
     // per-post blur-up placeholders (cheap once the tiles exist — see thumbs.js).

@@ -1,122 +1,244 @@
-// UI strings for the Websites view (the web-reference capture pipeline panel):
-// the status/phase vocabulary, the phase steppers (capture + AI), per-job queue
-// chrome, the live timeline, the detected-data sections (screenshots, palette,
-// fonts, tech stack, awards), the AI analysis band, the version/snapshot bar,
-// the header counters + toolbar, the search/archive strip, the multi-select
-// delete flow and the empty/no-results states. The Italian column reproduces
-// the app's existing copy verbatim. Extracted website content + URLs are DATA
-// and are NOT translated; brand/product names ("Website Analyzer") stay as-is;
-// shared buttons (Annulla, Riprova, Elimina, …) come from the `common`
-// namespace.
-// ── Types for this i18n namespace ──────────────────────────────────────────────
-// A translatable value is either a plain string or a { one, other } plural shape
-// (chosen by vars.count in translate()). Each supported language maps namespaced
-// keys to such values. `satisfies` keeps the literal key set while type-checking.
+// UI strings for the Websites view — the design-reference library on top of the
+// web-capture pipeline: header + inline add, toolbar (search, colour search,
+// sort, re-catalog, multi-select), facet filters, the live queue (incl. the
+// anti-bot "pass the check" flow), the site cards and the detail panel tabs
+// (Overview, Pages, Sections, Design, Similar, Capture), the delete dialog and
+// the empty states. Closed-vocabulary labels (facet values, page/section kinds,
+// roles, providers, traits, colour names) live in the `webVocab` namespace.
+// Extracted website content + URLs are DATA and are NOT translated; brand names
+// ("Website Analyzer") stay as-is; shared buttons (Annulla, Riprova, Elimina,
+// …) come from the `common` namespace.
 type MessageValue = string | { one: string; other: string };
 type LangMessages = { it: Record<string, MessageValue>; en: Record<string, MessageValue> };
 
 export default {
   it: {
-    // ── Status labels (queue row stage fallback) ──
-    statusPending: 'In coda',
-    statusQueued: 'In coda',
-    statusDiscovering: 'Discovery',
-    statusCapturing: 'Cattura',
-    statusExtracting: 'Estrazione',
-    statusAnalyzing: 'Analisi AI',
-    statusDone: 'Completato',
-    statusError: 'Errore',
-    statusCancelled: 'Annullato',
+    // ── Capture job status ──
+    'status.pending': 'In coda',
+    'status.queued': 'In coda',
+    'status.discovering': 'Ricerca pagine',
+    'status.capturing': 'Cattura',
+    'status.extracting': 'Estrazione',
+    'status.analyzing': 'Analisi',
+    'status.blocked': 'Verifica anti-bot',
+    'status.done': 'Completato',
+    'status.error': 'Errore',
+    'status.cancelled': 'Annullato',
 
     // ── Capture phase stepper ──
-    phaseQueue: 'Coda',
-    phaseDiscovery: 'Discovery',
-    phaseCapture: 'Cattura',
-    phaseExtraction: 'Estrazione',
-    phaseAnalysis: 'Analisi',
-    phaseDone: 'Fatto',
+    'phase.pending': 'Coda',
+    'phase.discovering': 'Pagine',
+    'phase.capturing': 'Cattura',
+    'phase.extracting': 'Estrazione',
+    'phase.analyzing': 'Analisi',
+    'phase.done': 'Fatto',
 
-    // ── AI phase stepper ──
-    aiPhaseQueue: 'Coda',
-    aiPhaseExtraction: 'Estrazione',
-    aiPhaseAnalysis: 'Analisi',
-    aiPhaseDescription: 'Descrizione',
-    aiPhaseTags: 'Tag',
-    aiPhaseDone: 'Fatto',
-
-    // ── AI analysis band ──
-    aiTitle: 'Analisi AI',
+    // ── AI catalog (analyzer job) ──
+    'aiStatus.pending': 'In coda per il catalogo AI',
+    'aiStatus.extracting': 'Preparazione delle immagini',
+    'aiStatus.analyzing': 'Catalogo AI in scrittura',
+    'aiStatus.done': 'Catalogo AI pronto',
+    'aiStatus.error': 'Catalogo AI non riuscito',
+    'aiStatus.cancelled': 'Catalogo AI annullato',
+    'aiStep.queue': 'Coda',
+    'aiStep.extract': 'Immagini',
+    'aiStep.observe': 'Osservazione',
+    'aiStep.catalog': 'Classificazione',
+    'aiStep.write': 'Sintesi',
+    'aiStep.done': 'Fatto',
+    'streamKey.summary': 'Sintesi',
+    'streamKey.observations': 'Osservazioni',
+    'streamKey.raw': 'Output',
+    aiTitle: 'Catalogo AI',
+    aiWorking: 'L’AI sta catalogando il sito',
+    aiMissing: 'Questo sito non ha ancora un catalogo AI.',
     aiModelNotReady: 'Modello AI non pronto — scaricalo dalle Impostazioni.',
-    aiQueuedForAnalysis: 'In coda per l’analisi…',
-    aiStartsAfterCapture: 'Parte al termine della cattura.',
-    aiDescription: 'Descrizione',
-    aiTags: 'Tag',
-    aiEntities: 'Entità',
-    aiSearchAlso: 'Cerca anche: ',
+    aiOutdated: 'Catalogo in formato precedente: usa «Ri-analizza» per aggiornarlo.',
+    analyseNow: 'Analizza ora',
 
-    // ── Analysis meta (archived) ──
-    analysisTitle: 'Analisi',
-    metaPurpose: 'Scopo',
-    metaSector: 'Settore',
-    metaLanguage: 'Lingua',
-    whySave: 'Perché salvarlo: ',
-
-    // ── Timeline ──
-    timelineEmpty: 'Nessun evento ancora. Il dettaglio comparirà appena parte la scansione.',
-    behindTheScenes: 'Dietro le quinte',
-
-    // ── Detected-data sections ──
-    sectionScreenshots: 'Screenshot',
-    screenshotsEmpty: 'Nessuno screenshot ancora.',
-    screenshotZoomTitle: '{url} — clic per ingrandire',
-    sectionPalette: 'Palette',
-    sectionFonts: 'Tipografia',
-    sectionTech: 'Tech stack',
-    sectionAwards: 'Riconoscimenti',
-
-    // ── Version bar ──
-    versions: 'Versioni',
-    versionCurrentTitle: 'Versione corrente',
-    versionArchivedTitle: 'Versione archiviata',
-    versionCurrent: 'Corrente',
-    versionDeleteTitle: 'Elimina questa versione',
-
-    // ── Detail header ──
-    openReference: 'Apri reference',
-    captureDonePartial: 'Cattura completata (alcune pagine saltate)',
-    captureDone: 'Cattura completata',
-    captureDoneAiContinues: ' — l’analisi AI prosegue qui sotto.',
-
-    // ── Queue row ──
-    snapshotVersions: '{n} versioni',
-
-    // ── Header ──
+    // ── Header / add ──
     headerTitle: 'Website Analyzer',
-    headerQueued: '{n} in coda',
-    headerArchiveTitle: 'Siti analizzati in archivio',
-    addSite: 'Aggiungi sito',
-    selectMultipleTitle: 'Seleziona più siti per eliminarli',
-    selectAction: 'Seleziona',
-    clear: 'Pulisci',
-    clearTitle: 'Rimuovi dalla lista i job terminati',
+    countAll: { one: '{n} sito', other: '{n} siti' },
+    countFiltered: '{n} risultati',
+    addPlaceholder: 'Incolla l’URL di un sito…',
+    addSite: 'Aggiungi',
+    addOptionsTitle: 'Aggiungi con opzioni (pagina singola, numero di pagine)',
+    addQueued: '{host} aggiunto alla coda di cattura',
 
-    // ── Search strip ──
-    searchPlaceholder: 'Cerca tra i siti analizzati…',
+    // ── Toolbar ──
+    filters: 'Filtri',
+    filtersTitle: 'Filtri del catalogo',
+    filtersEmpty: 'I filtri compaiono quando i siti hanno un catalogo AI.',
+    searchPlaceholder: 'Cerca per nome, stile, font, tecnologia…',
     clearSearchTitle: 'Cancella ricerca',
-    siteOne: 'sito',
-    siteOther: 'siti',
+    sortLabel: 'Ordina',
+    'sort.recent': 'Recenti',
+    'sort.name': 'Nome',
+    'sort.color': 'Colore',
+    colorButton: 'Colore',
+    colorTitle: 'Cerca i siti per colore',
+    colorPopoverTitle: 'Cerca per colore',
+    colorPickerTitle: 'Scegli un colore',
+    colorApply: 'Applica',
+    colorClear: 'Rimuovi colore',
+    recatalog: 'Ri-cataloga obsoleti',
+    recatalogTitle: 'Rigenera il catalogo AI dei siti analizzati con il formato precedente',
+    recatalogQueued: {
+      one: '{n} sito in coda per il nuovo catalogo',
+      other: '{n} siti in coda per il nuovo catalogo',
+    },
+    recatalogNone: 'Tutti i cataloghi sono già aggiornati',
+    selectAction: 'Seleziona',
+    selectMultipleTitle: 'Seleziona più siti per eliminarli',
+    removeFilter: 'Rimuovi filtro',
+    clearFilters: 'Cancella filtri',
+    facetShowAll: 'Mostra tutti ({n})',
+    facetShowLess: 'Mostra meno',
 
     // ── Selection toolbar ──
     siteSelectedOne: '{n} sito selezionato',
     siteSelectedOther: '{n} siti selezionati',
     shiftRangeHint: 'Shift+clic per selezionare un intervallo',
 
-    // ── Empty / no-results states ──
-    emptyTitle: 'Nessun sito analizzato',
+    // ── Queue ──
+    queueTitle: 'Attività',
+    queueRunning: '{n} in corso',
+    queueBlocked: '{n} da sbloccare',
+    queueErrors: '{n} con errori',
+    queueCollapse: 'Comprimi',
+    queueExpand: 'Espandi',
+    clear: 'Pulisci',
+    clearTitle: 'Rimuovi dalla lista i job terminati',
+    blockedBadge: 'Verifica richiesta',
+    blockedExplain:
+      'Il sito ha mostrato un controllo anti-bot ({vendor}). Si aprirà una finestra del browser: completa tu la verifica e la cattura riprenderà da sola.',
+    blockedVendorUnknown: 'firewall',
+    unblockAction: 'Supera la verifica',
+    unblockWaiting: 'In attesa della verifica…',
+    unblockOpened: 'Completa la verifica nella finestra del browser appena aperta',
+    unblockNotPassed: 'Verifica non completata: la finestra è stata chiusa o il tempo è scaduto',
+
+    // ── Empty states ──
+    emptyTitle: 'Nessun sito ancora',
     emptyHint:
-      'Aggiungi un sito come reference: ne cattureremo gli screenshot, la palette, i font, lo stack tecnologico e i riconoscimenti — vedrai qui ogni passaggio in tempo reale, e l’analisi resterà in archivio.',
-    noResults: 'Nessun sito per «{query}».',
-    selectSitePrompt: 'Seleziona un sito dall’archivio per vedere il dettaglio.',
+      'Incolla l’URL di un sito qui sopra: ne cattureremo pagine, sezioni, palette, font e tecnologie, e l’AI lo catalogherà come reference di design.',
+    noResults: 'Nessun sito corrisponde a questi filtri.',
+
+    // ── Detail header ──
+    backToLibrary: 'Torna alla libreria',
+    openSite: 'Apri sito',
+    openReferenceTitle: 'Apri nella scheda della galleria',
+    viewingSnapshot: 'Stai guardando la versione archiviata del {date}',
+    backToCurrent: 'Torna alla versione corrente',
+    'tab.overview': 'Panoramica',
+    'tab.pages': 'Pagine',
+    'tab.sections': 'Sezioni',
+    'tab.design': 'Design',
+    'tab.similar': 'Simili',
+    'tab.capture': 'Cattura',
+
+    // ── Overview ──
+    heroModeLabel: 'Anteprima',
+    heroModeShot: 'Screenshot',
+    heroModeVideo: 'Registrazione scroll',
+    openFullPage: 'Apri la pagina intera',
+    reuseTitle: 'Da riutilizzare',
+    notableTitle: 'Dettagli notevoli',
+    observationsTitle: 'Osservazioni del modello',
+    legacyTags: 'Tag',
+    factAudience: 'Pubblico',
+    factPages: 'Pagine catturate',
+    metaPurpose: 'Scopo',
+    metaSector: 'Settore',
+    metaLanguage: 'Lingua',
+    applyFilterTitle: 'Filtra la libreria per questo valore',
+    socialTitle: 'Profili social',
+    creditsTitle: 'Crediti',
+    overviewNoCatalog: 'Nessun dato di catalogo disponibile.',
+
+    // ── Pages ──
+    pagesEmpty: 'Nessuna pagina catturata.',
+    pageFallback: 'Pagina {n}',
+    pageHeight: '{px}px di altezza',
+    pageJacked: 'Scroll controllato',
+    pageCapped: 'Troncata',
+    pageHero: 'Prima schermata',
+    pageFull: 'Pagina intera',
+    pageFilmstrip: 'Sequenza di scroll',
+    pageFooter: 'Footer',
+    pageNoShots: 'Nessuno screenshot per questa pagina.',
+    openFullscreen: 'Apri a schermo intero',
+
+    // ── Sections ──
+    sectionsEmpty:
+      'Nessuna sezione rilevata. Le catture nel formato precedente non hanno il ritaglio delle sezioni: ricattura il sito per ottenerle.',
+    sectionsAll: 'Tutte',
+    sectionsJacked:
+      'Le esperienze a scroll controllato non hanno sezioni ritagliabili: guarda la sequenza di scroll nella scheda Pagine o la registrazione nella Panoramica.',
+
+    // ── Design ──
+    sectionPalette: 'Palette',
+    paletteEmpty: 'Nessun colore rilevato.',
+    paletteHint: 'Clic su un colore per copiarne l’HEX, clic sul nome per filtrare la libreria.',
+    copy: 'Copia',
+    copied: 'Copiato',
+    copyHex: 'Copia {hex}',
+    contrastLabel: 'Contrasto testo/sfondo',
+    'contrast.AAA': 'AAA',
+    'contrast.AA': 'AA',
+    'contrast.AA18': 'AA testo grande',
+    'contrast.fail': 'Insufficiente',
+    sectionFonts: 'Tipografia',
+    fontsEmpty: 'Nessun font rilevato.',
+    fontProvider: 'Fonte',
+    fontWeights: 'Pesi',
+    fontSizes: 'Dimensioni',
+    fontShareTitle: 'Quota del testo della pagina in questo font',
+    typeScale: 'Scala tipografica',
+    typeBase: 'base {px}px',
+    typeRatio: 'rapporto {r}',
+    traitsTitle: 'Layout ed effetti',
+    sectionTech: 'Tecnologie',
+    sectionAwards: 'Riconoscimenti',
+    openAwardProfile: 'Apri la pagina del premio',
+
+    // ── Similar ──
+    similarLoading: 'Cerco siti simili…',
+    similarEmpty: 'Nessun sito simile in libreria (servono altri siti catalogati).',
+    similarShared: 'In comune:',
+
+    // ── Capture ──
+    recapture: 'Ricattura',
+    recaptureHint: 'La versione attuale resta consultabile tra le versioni.',
+    recaptureQueued: 'Nuova cattura in coda',
+    reanalyse: 'Ri-analizza',
+    reanalyseTitle: 'Rigenera solo il catalogo AI, senza ricatturare',
+    reanalyseQueued: 'Catalogo AI in coda',
+    reanalyseNotQueued: 'Il catalogo AI è già in coda',
+    behindTheScenes: 'Dietro le quinte',
+    versions: 'Versioni',
+    versionCurrent: 'Corrente',
+    versionCurrentTitle: 'Versione corrente',
+    versionArchivedTitle: 'Versione archiviata',
+    versionDeleteTitle: 'Elimina questa versione',
+    captureFacts: 'Dettagli della cattura',
+    captureFactsEmpty: 'Nessun dettaglio di cattura disponibile.',
+    capturedAt: 'Catturato il',
+    captureEngine: 'Motore',
+    captureDiscovery: 'Scoperta pagine',
+    captureViewport: 'Viewport',
+    captureConsent: 'Banner cookie',
+    captureFormat: 'Formato',
+    formatV2: 'v2 (sezioni, video, catalogo)',
+    formatV1: 'v1 (solo screenshot)',
+    'discovery.nav': 'Menu di navigazione',
+    'discovery.nav+sitemap': 'Navigazione e sitemap',
+    'discovery.single-page': 'Solo la pagina indicata',
+    'discovery.sitemap': 'Sitemap',
+    'discovery.crawl': 'Esplorazione della home',
+    'discovery.seed-only': 'Solo la pagina iniziale',
+    capturedPages: 'Pagine catturate',
+    skippedPages: 'Pagine saltate',
 
     // ── Delete dialog ──
     deleteTitleOne: 'Eliminare {n} sito?',
@@ -128,106 +250,232 @@ export default {
     deleteCompleteHint: 'Rimuove il sito, tutte le versioni e i file dal disco.',
   },
   en: {
-    // ── Status labels ──
-    statusPending: 'Queued',
-    statusQueued: 'Queued',
-    statusDiscovering: 'Discovery',
-    statusCapturing: 'Capture',
-    statusExtracting: 'Extraction',
-    statusAnalyzing: 'AI analysis',
-    statusDone: 'Completed',
-    statusError: 'Error',
-    statusCancelled: 'Cancelled',
+    // ── Capture job status ──
+    'status.pending': 'Queued',
+    'status.queued': 'Queued',
+    'status.discovering': 'Finding pages',
+    'status.capturing': 'Capturing',
+    'status.extracting': 'Extracting',
+    'status.analyzing': 'Analysing',
+    'status.blocked': 'Anti-bot check',
+    'status.done': 'Completed',
+    'status.error': 'Error',
+    'status.cancelled': 'Cancelled',
 
     // ── Capture phase stepper ──
-    phaseQueue: 'Queue',
-    phaseDiscovery: 'Discovery',
-    phaseCapture: 'Capture',
-    phaseExtraction: 'Extraction',
-    phaseAnalysis: 'Analysis',
-    phaseDone: 'Done',
+    'phase.pending': 'Queue',
+    'phase.discovering': 'Pages',
+    'phase.capturing': 'Capture',
+    'phase.extracting': 'Extraction',
+    'phase.analyzing': 'Analysis',
+    'phase.done': 'Done',
 
-    // ── AI phase stepper ──
-    aiPhaseQueue: 'Queue',
-    aiPhaseExtraction: 'Extraction',
-    aiPhaseAnalysis: 'Analysis',
-    aiPhaseDescription: 'Description',
-    aiPhaseTags: 'Tags',
-    aiPhaseDone: 'Done',
-
-    // ── AI analysis band ──
-    aiTitle: 'AI analysis',
+    // ── AI catalog (analyzer job) ──
+    'aiStatus.pending': 'Queued for the AI catalog',
+    'aiStatus.extracting': 'Preparing the images',
+    'aiStatus.analyzing': 'Writing the AI catalog',
+    'aiStatus.done': 'AI catalog ready',
+    'aiStatus.error': 'AI catalog failed',
+    'aiStatus.cancelled': 'AI catalog cancelled',
+    'aiStep.queue': 'Queue',
+    'aiStep.extract': 'Images',
+    'aiStep.observe': 'Observing',
+    'aiStep.catalog': 'Classifying',
+    'aiStep.write': 'Summary',
+    'aiStep.done': 'Done',
+    'streamKey.summary': 'Summary',
+    'streamKey.observations': 'Observations',
+    'streamKey.raw': 'Output',
+    aiTitle: 'AI catalog',
+    aiWorking: 'The AI is cataloguing the site',
+    aiMissing: 'This site has no AI catalog yet.',
     aiModelNotReady: 'AI model not ready — download it from Settings.',
-    aiQueuedForAnalysis: 'Queued for analysis…',
-    aiStartsAfterCapture: 'Starts when the capture finishes.',
-    aiDescription: 'Description',
-    aiTags: 'Tags',
-    aiEntities: 'Entities',
-    aiSearchAlso: 'Search also: ',
+    aiOutdated: 'Catalog in the previous format: use “Re-analyse” to update it.',
+    analyseNow: 'Analyse now',
 
-    // ── Analysis meta (archived) ──
-    analysisTitle: 'Analysis',
-    metaPurpose: 'Purpose',
-    metaSector: 'Sector',
-    metaLanguage: 'Language',
-    whySave: 'Why save it: ',
-
-    // ── Timeline ──
-    timelineEmpty: 'No events yet. The detail will appear as soon as the scan starts.',
-    behindTheScenes: 'Behind the scenes',
-
-    // ── Detected-data sections ──
-    sectionScreenshots: 'Screenshots',
-    screenshotsEmpty: 'No screenshots yet.',
-    screenshotZoomTitle: '{url} — click to enlarge',
-    sectionPalette: 'Palette',
-    sectionFonts: 'Typography',
-    sectionTech: 'Tech stack',
-    sectionAwards: 'Awards',
-
-    // ── Version bar ──
-    versions: 'Versions',
-    versionCurrentTitle: 'Current version',
-    versionArchivedTitle: 'Archived version',
-    versionCurrent: 'Current',
-    versionDeleteTitle: 'Delete this version',
-
-    // ── Detail header ──
-    openReference: 'Open reference',
-    captureDonePartial: 'Capture complete (some pages skipped)',
-    captureDone: 'Capture complete',
-    captureDoneAiContinues: ' — the AI analysis continues below.',
-
-    // ── Queue row ──
-    snapshotVersions: '{n} versions',
-
-    // ── Header ──
+    // ── Header / add ──
     headerTitle: 'Website Analyzer',
-    headerQueued: '{n} queued',
-    headerArchiveTitle: 'Analysed sites in the archive',
-    addSite: 'Add website',
-    selectMultipleTitle: 'Select multiple sites to delete them',
-    selectAction: 'Select',
-    clear: 'Clear',
-    clearTitle: 'Remove finished jobs from the list',
+    countAll: { one: '{n} site', other: '{n} sites' },
+    countFiltered: '{n} results',
+    addPlaceholder: 'Paste a website URL…',
+    addSite: 'Add',
+    addOptionsTitle: 'Add with options (single page, number of pages)',
+    addQueued: '{host} added to the capture queue',
 
-    // ── Search strip ──
-    searchPlaceholder: 'Search analysed sites…',
+    // ── Toolbar ──
+    filters: 'Filters',
+    filtersTitle: 'Catalog filters',
+    filtersEmpty: 'Filters appear once sites have an AI catalog.',
+    searchPlaceholder: 'Search by name, style, font, technology…',
     clearSearchTitle: 'Clear search',
-    siteOne: 'site',
-    siteOther: 'sites',
+    sortLabel: 'Sort',
+    'sort.recent': 'Recent',
+    'sort.name': 'Name',
+    'sort.color': 'Colour',
+    colorButton: 'Colour',
+    colorTitle: 'Find sites by colour',
+    colorPopoverTitle: 'Search by colour',
+    colorPickerTitle: 'Pick a colour',
+    colorApply: 'Apply',
+    colorClear: 'Remove colour',
+    recatalog: 'Re-catalog outdated',
+    recatalogTitle: 'Regenerate the AI catalog of sites analysed with the previous format',
+    recatalogQueued: {
+      one: '{n} site queued for the new catalog',
+      other: '{n} sites queued for the new catalog',
+    },
+    recatalogNone: 'Every catalog is already up to date',
+    selectAction: 'Select',
+    selectMultipleTitle: 'Select multiple sites to delete them',
+    removeFilter: 'Remove filter',
+    clearFilters: 'Clear filters',
+    facetShowAll: 'Show all ({n})',
+    facetShowLess: 'Show less',
 
     // ── Selection toolbar ──
     siteSelectedOne: '{n} site selected',
     siteSelectedOther: '{n} sites selected',
     shiftRangeHint: 'Shift+click to select a range',
 
-    // ── Empty / no-results states ──
-    emptyTitle: 'No sites analysed',
+    // ── Queue ──
+    queueTitle: 'Activity',
+    queueRunning: '{n} running',
+    queueBlocked: '{n} to unblock',
+    queueErrors: '{n} failed',
+    queueCollapse: 'Collapse',
+    queueExpand: 'Expand',
+    clear: 'Clear',
+    clearTitle: 'Remove finished jobs from the list',
+    blockedBadge: 'Check required',
+    blockedExplain:
+      'The site showed an anti-bot check ({vendor}). A browser window will open: complete the check yourself and the capture will resume automatically.',
+    blockedVendorUnknown: 'firewall',
+    unblockAction: 'Pass the check',
+    unblockWaiting: 'Waiting for the check…',
+    unblockOpened: 'Complete the check in the browser window that just opened',
+    unblockNotPassed: 'Check not completed: the window was closed or the time ran out',
+
+    // ── Empty states ──
+    emptyTitle: 'No sites yet',
     emptyHint:
-      'Add a website as a reference: we’ll capture its screenshots, palette, fonts, tech stack and awards — you’ll see every step here in real time, and the analysis will stay in the archive.',
-    noResults: 'No sites for «{query}».',
-    selectSitePrompt: 'Select a site from the archive to see the detail.',
+      'Paste a website URL above: we’ll capture its pages, sections, palette, fonts and technologies, and the AI will catalog it as a design reference.',
+    noResults: 'No site matches these filters.',
+
+    // ── Detail header ──
+    backToLibrary: 'Back to the library',
+    openSite: 'Open site',
+    openReferenceTitle: 'Open in the gallery card',
+    viewingSnapshot: 'You are viewing the archived version from {date}',
+    backToCurrent: 'Back to the current version',
+    'tab.overview': 'Overview',
+    'tab.pages': 'Pages',
+    'tab.sections': 'Sections',
+    'tab.design': 'Design',
+    'tab.similar': 'Similar',
+    'tab.capture': 'Capture',
+
+    // ── Overview ──
+    heroModeLabel: 'Preview',
+    heroModeShot: 'Screenshot',
+    heroModeVideo: 'Scroll recording',
+    openFullPage: 'Open the full page',
+    reuseTitle: 'Worth borrowing',
+    notableTitle: 'Notable details',
+    observationsTitle: 'Model observations',
+    legacyTags: 'Tags',
+    factAudience: 'Audience',
+    factPages: 'Captured pages',
+    metaPurpose: 'Purpose',
+    metaSector: 'Sector',
+    metaLanguage: 'Language',
+    applyFilterTitle: 'Filter the library by this value',
+    socialTitle: 'Social profiles',
+    creditsTitle: 'Credits',
+    overviewNoCatalog: 'No catalog data available.',
+
+    // ── Pages ──
+    pagesEmpty: 'No pages captured.',
+    pageFallback: 'Page {n}',
+    pageHeight: '{px}px tall',
+    pageJacked: 'Scroll-jacked',
+    pageCapped: 'Truncated',
+    pageHero: 'First screen',
+    pageFull: 'Full page',
+    pageFilmstrip: 'Scroll sequence',
+    pageFooter: 'Footer',
+    pageNoShots: 'No screenshots for this page.',
+    openFullscreen: 'Open full screen',
+
+    // ── Sections ──
+    sectionsEmpty:
+      'No sections detected. Captures in the previous format have no section crops: re-capture the site to get them.',
+    sectionsAll: 'All',
+    sectionsJacked:
+      'Scroll-jacked experiences have no croppable sections: see the scroll sequence in the Pages tab or the recording in the Overview.',
+
+    // ── Design ──
+    sectionPalette: 'Palette',
+    paletteEmpty: 'No colours detected.',
+    paletteHint: 'Click a colour to copy its HEX, click its name to filter the library.',
+    copy: 'Copy',
+    copied: 'Copied',
+    copyHex: 'Copy {hex}',
+    contrastLabel: 'Text/background contrast',
+    'contrast.AAA': 'AAA',
+    'contrast.AA': 'AA',
+    'contrast.AA18': 'AA large text',
+    'contrast.fail': 'Insufficient',
+    sectionFonts: 'Typography',
+    fontsEmpty: 'No fonts detected.',
+    fontProvider: 'Source',
+    fontWeights: 'Weights',
+    fontSizes: 'Sizes',
+    fontShareTitle: 'Share of the page text set in this font',
+    typeScale: 'Type scale',
+    typeBase: 'base {px}px',
+    typeRatio: 'ratio {r}',
+    traitsTitle: 'Layout & effects',
+    sectionTech: 'Technologies',
+    sectionAwards: 'Awards',
+    openAwardProfile: 'Open the award page',
+
+    // ── Similar ──
+    similarLoading: 'Looking for similar sites…',
+    similarEmpty: 'No similar site in the library (more catalogued sites are needed).',
+    similarShared: 'In common:',
+
+    // ── Capture ──
+    recapture: 'Re-capture',
+    recaptureHint: 'The current version stays available under versions.',
+    recaptureQueued: 'New capture queued',
+    reanalyse: 'Re-analyse',
+    reanalyseTitle: 'Regenerate only the AI catalog, without re-capturing',
+    reanalyseQueued: 'AI catalog queued',
+    reanalyseNotQueued: 'The AI catalog is already queued',
+    behindTheScenes: 'Behind the scenes',
+    versions: 'Versions',
+    versionCurrent: 'Current',
+    versionCurrentTitle: 'Current version',
+    versionArchivedTitle: 'Archived version',
+    versionDeleteTitle: 'Delete this version',
+    captureFacts: 'Capture details',
+    captureFactsEmpty: 'No capture details available.',
+    capturedAt: 'Captured on',
+    captureEngine: 'Engine',
+    captureDiscovery: 'Page discovery',
+    captureViewport: 'Viewport',
+    captureConsent: 'Cookie banner',
+    captureFormat: 'Format',
+    formatV2: 'v2 (sections, video, catalog)',
+    formatV1: 'v1 (screenshots only)',
+    'discovery.nav': 'Navigation menu',
+    'discovery.nav+sitemap': 'Navigation and sitemap',
+    'discovery.single-page': 'Only the given page',
+    'discovery.sitemap': 'Sitemap',
+    'discovery.crawl': 'Home page crawl',
+    'discovery.seed-only': 'Only the start page',
+    capturedPages: 'Captured pages',
+    skippedPages: 'Skipped pages',
 
     // ── Delete dialog ──
     deleteTitleOne: 'Delete {n} site?',

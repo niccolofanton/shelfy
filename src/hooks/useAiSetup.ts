@@ -39,6 +39,9 @@ export interface AiSetupStatus {
   vlm: ModelEntry[];
   stt: ModelEntry[];
   emb: ModelEntry[];
+  // A configured remote AI node that answers: analysis and search run there, so
+  // the local-model setup is not required.
+  remoteReady: boolean;
   complete: boolean;
 }
 
@@ -60,12 +63,17 @@ export async function fetchAiSetup(): Promise<AiSetupStatus | null> {
   if (!api?.listModels) return null;
   const safe = <T>(p: Promise<T> | undefined): Promise<T | null> =>
     Promise.resolve(p as Promise<T>).catch(() => null);
-  const [binaries, vlm, stt, emb] = await Promise.all([
+  const [binaries, vlm, stt, emb, remote0] = await Promise.all([
     safe(api.getBinariesStatus?.()),
     safe(api.listModels?.()),
     safe(api.sttListModels?.()),
     safe(api.embListModels?.()),
+    safe(api.getAiRemoteStatus?.()),
   ]);
+  // Not probed yet (app just started): ask for a definite answer before deciding.
+  const remote =
+    remote0?.configured && remote0.reachable === null ? await safe(api.retryAiRemote?.()) : remote0;
+  const remoteReady = !!(remote?.configured && remote.reachable === true);
   const bin = asBinaries(binaries);
   const vlmList = asModelList(vlm);
   const sttList = asModelList(stt);
@@ -76,7 +84,9 @@ export async function fetchAiSetup(): Promise<AiSetupStatus | null> {
     vlm: vlmList,
     stt: sttList,
     emb: embList,
-    complete: !!bin?.ready && anyReady(vlmList) && anyReady(sttList) && anyReady(embList),
+    remoteReady,
+    complete:
+      remoteReady || (!!bin?.ready && anyReady(vlmList) && anyReady(sttList) && anyReady(embList)),
   };
   return status;
 }

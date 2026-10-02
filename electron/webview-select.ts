@@ -150,7 +150,13 @@ declare global {
   // only while the URL is the listing itself, and strip the overlay otherwise.
   function onListingPage(): boolean {
     const p = location.pathname || '';
-    if (state.platform === 'twitter') return /\/bookmarks(\/|$)/.test(p);
+    if (state.platform === 'twitter') {
+      if (/\/bookmarks(\/|$)/.test(p)) return true;
+      if (!/\/i\/history(\/|$)/.test(p)) return false;
+      // History also contains Likes. Only decorate the selected Bookmarks tab.
+      const tabs = document.querySelectorAll('[role="tab"]');
+      return tabs.length > 0 && tabs[0].getAttribute('aria-selected') === 'true';
+    }
     if (state.platform === 'pinterest') {
       // Board page /<user>/<board>/ (and sections); never a pin detail
       // (/pin/<id>/), a reserved root (search/business/…) nor a profile tab
@@ -179,10 +185,10 @@ declare global {
         window.__socialSavedBridge.sendSelect(payload);
         return;
       }
-    } catch (_) {}
+    } catch {}
     try {
       window.postMessage({ type: 'SOCIAL_SAVED_SELECT', payload }, location.origin);
-    } catch (_) {}
+    } catch {}
   }
 
   function emitCount(): void {
@@ -347,7 +353,7 @@ declare global {
     if (disp === undefined) {
       try {
         disp = getComputedStyle(el).display;
-      } catch (_) {
+      } catch {
         disp = '';
       }
       el.__ssDisp = disp;
@@ -402,12 +408,12 @@ declare global {
     let base = 0;
     try {
       base = gridRootEl().getBoundingClientRect().top;
-    } catch (_) {}
+    } catch {}
     for (const { card, key } of posts) {
       if (!key || !card) continue;
       try {
         state.pos.set(key, card.getBoundingClientRect().top - base);
-      } catch (_) {}
+      } catch {}
     }
   }
 

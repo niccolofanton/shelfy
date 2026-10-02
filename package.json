@@ -13,8 +13,8 @@
   },
   "scripts": {
     "dev": "tsx build/esbuild-electron.ts && concurrently -k \"tsx build/esbuild-electron.ts --watch\" \"vite\" \"cross-env ELECTRON_DEV=true electronmon .\"",
-    "build": "tsx build/prepare-playwright.ts && tsx build/esbuild-electron.ts && vite build && cross-env NODE_OPTIONS=--import=tsx electron-builder",
-    "release": "tsx build/prepare-playwright.ts && tsx build/esbuild-electron.ts && vite build && cross-env NODE_OPTIONS=--import=tsx electron-builder",
+    "build": "tsx build/prepare-playwright.ts && tsx build/prepare-adblock.ts && tsx build/esbuild-electron.ts && vite build && cross-env NODE_OPTIONS=--import=tsx electron-builder",
+    "release": "tsx build/prepare-playwright.ts && tsx build/prepare-adblock.ts && tsx build/esbuild-electron.ts && vite build && cross-env NODE_OPTIONS=--import=tsx electron-builder",
     "build:electron": "tsx build/esbuild-electron.ts",
     "preview": "tsx build/esbuild-electron.ts && electron .",
     "lint": "eslint .",
@@ -44,6 +44,9 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "@duckduckgo/autoconsent": "16.43.2",
+    "@ghostery/adblocker": "2.18.2",
+    "@ghostery/adblocker-playwright": "2.18.2",
     "@tanstack/react-virtual": "^3.13.26",
     "better-sqlite3": "^12.10.0",
     "electron-updater": "^6.8.3",
@@ -52,7 +55,9 @@
     "pdfjs-dist": "^4.10.38",
     "playwright-core": "^1.60.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "tldts-experimental": "^7.4.16",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.0.2",
@@ -68,6 +73,7 @@
     "@types/node": "^20.19.41",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
+    "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^4.0.0",
     "@vitest/coverage-v8": "^1.6.1",
     "autoprefixer": "^10.0.0",
@@ -118,6 +124,7 @@
       "node_modules/**/*"
     ],
     "asarUnpack": [
+      "node_modules/better-sqlite3/**",
       "node_modules/ffmpeg-static/**",
       "node_modules/playwright-core/**"
     ],
@@ -125,6 +132,13 @@
       {
         "from": "build/ms-playwright",
         "to": "ms-playwright"
+      },
+      {
+        "from": "build/adblock",
+        "to": "adblock",
+        "filter": [
+          "engine.bin"
+        ]
       }
     ],
     "afterPack": "build/afterPack.ts",

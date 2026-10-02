@@ -66,14 +66,20 @@ vi.mock('../../electron/db', () => dbMock);
 interface DownloaderMock {
   setProgressEmitter: Mock;
   enqueueMany: Mock;
+  suspendPosts: Mock;
 }
 const downloaderMock = vi.hoisted<DownloaderMock>(() => ({
   setProgressEmitter: vi.fn(),
   enqueueMany: vi.fn(),
+  suspendPosts: vi.fn(async () => vi.fn()),
 }));
 vi.mock('../../electron/downloader', () => downloaderMock);
 
-vi.mock('../../electron/analyzer', () => ({ setProgressEmitter: vi.fn() }));
+// getModelStatus backs the remote-AI status that registerIpcHandlers pushes at startup.
+vi.mock('../../electron/analyzer', () => ({
+  setProgressEmitter: vi.fn(),
+  getModelStatus: vi.fn(() => ({ ready: false, downloading: false })),
+}));
 vi.mock('../../electron/weborchestrator', () => ({
   setProgressEmitter: vi.fn(),
   setListRefreshEmitter: vi.fn(),
@@ -140,6 +146,7 @@ describe('db:deletePosts', () => {
     expect(fs.existsSync(f1)).toBe(false);
     expect(fs.existsSync(f2)).toBe(false);
     expect(dbMock.deletePosts).toHaveBeenCalledWith(['p1', 'p2']);
+    expect(downloaderMock.suspendPosts).toHaveBeenCalledWith(['p1', 'p2']);
   });
 
   it('treats already-missing files (ENOENT) as success, collects other errors', async () => {

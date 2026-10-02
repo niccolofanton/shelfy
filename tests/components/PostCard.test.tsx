@@ -24,6 +24,7 @@ const basePost = {
   thumbnailUrl: null,
   thumbnailPath: null,
 } as unknown as Shelfy.Post;
+const mediaPost = { ...basePost, thumbnailUrl: 'https://cdn.example.com/thumb.jpg' };
 
 beforeEach(() => {
   global.open = vi.fn();
@@ -52,6 +53,43 @@ describe('PostCard', () => {
         'src',
         `asset://media/${encodeURIComponent('/Users/USERNAME/images/thumb.jpg')}?w=640`,
       );
+    });
+
+    it('uses a local cached preview before an expired remote URL', () => {
+      const post = {
+        ...basePost,
+        previewPath: '/cached/preview.jpg',
+        thumbnailUrl: 'https://cdn.example.com/expired.jpg',
+      };
+      render(<PostCard post={post} onOpen={vi.fn()} />);
+      expect(screen.getByRole('img')).toHaveAttribute(
+        'src',
+        `asset://media/${encodeURIComponent('/cached/preview.jpg')}?w=640`,
+      );
+    });
+
+    it('requests repair when a remote cover fails to load', () => {
+      const post = {
+        ...basePost,
+        id: 'expired-post',
+        thumbnailUrl: 'https://cdn.example.com/expired.jpg',
+      };
+      render(<PostCard post={post} onOpen={vi.fn()} />);
+      fireEvent.error(screen.getByRole('img'));
+      expect(window.electronAPI.repairPreview).toHaveBeenCalledWith('expired-post');
+      expect(screen.queryByRole('img')).toBeNull();
+    });
+
+    it('requests repair when a saved local cover is missing', () => {
+      const post = {
+        ...basePost,
+        id: 'missing-local-cover',
+        thumbnailPath: '/old/profile/assets/cover.jpg',
+        thumbnailUrl: 'https://cdn.example.com/expired.jpg',
+      };
+      render(<PostCard post={post} onOpen={vi.fn()} />);
+      fireEvent.error(screen.getByRole('img'));
+      expect(window.electronAPI.repairPreview).toHaveBeenCalledWith('missing-local-cover');
     });
 
     it('renders no <img> when neither thumbnailPath nor thumbnailUrl', () => {
@@ -112,6 +150,8 @@ describe('PostCard', () => {
       render(<PostCard post={post} onOpen={vi.fn()} />);
       const card = screen.getByTestId('text-card');
       expect(within(card).getByText('Solo parole, niente media')).toBeInTheDocument();
+      expect(within(card).getByText('@testuser')).toBeInTheDocument();
+      expect(screen.queryByTestId('platform-chip')).toBeNull();
     });
 
     it('falls back to the typographic card when there is no image but text exists', () => {
@@ -119,6 +159,11 @@ describe('PostCard', () => {
       render(<PostCard post={basePost} onOpen={vi.fn()} />);
       const card = screen.getByTestId('text-card');
       expect(within(card).getByText('A test post')).toBeInTheDocument();
+    });
+
+    it('keeps the excerpt unobstructed on hover', () => {
+      renderHovered(<PostCard post={basePost} onOpen={vi.fn()} />);
+      expect(screen.getAllByText('@testuser')).toHaveLength(1);
     });
 
     it('prefers the typographic card over the image for text mediaType', () => {
@@ -198,7 +243,12 @@ describe('PostCard', () => {
 
   describe('rest state', () => {
     it('renders platform and media-type chips', () => {
-      render(<PostCard post={basePost} onOpen={vi.fn()} />);
+      render(
+        <PostCard
+          post={{ ...basePost, thumbnailUrl: 'https://cdn.example.com/thumb.jpg' }}
+          onOpen={vi.fn()}
+        />,
+      );
       expect(screen.getByTestId('platform-chip')).toBeInTheDocument();
       const chip = screen.getByTestId('mediatype-chip');
       // Solid (more opaque) background, NOT backdrop-blur: the frosted chip used
@@ -239,7 +289,7 @@ describe('PostCard', () => {
     });
 
     it('shows formatted timestamp when present', () => {
-      const post = { ...basePost, timestamp: '2024-03-15T12:00:00Z' };
+      const post = { ...mediaPost, timestamp: '2024-03-15T12:00:00Z' };
       renderHovered(<PostCard post={post} onOpen={vi.fn()} />);
       // The formatted date should appear somewhere in the document
       const dateEl = screen.getByText(/mar/i);
@@ -247,14 +297,19 @@ describe('PostCard', () => {
     });
 
     it('does not show timestamp when absent', () => {
-      renderHovered(<PostCard post={{ ...basePost, timestamp: null }} onOpen={vi.fn()} />);
+      renderHovered(
+        <PostCard
+          post={{ ...basePost, thumbnailUrl: 'https://cdn.example.com/thumb.jpg', timestamp: null }}
+          onOpen={vi.fn()}
+        />,
+      );
       // Only the username text should be in the overlay
       const overlay = screen.getByText('@testuser').closest('div');
       expect(overlay).not.toHaveTextContent(/jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec/i);
     });
 
     it('shows up to 3 AI tags as micro-chips', () => {
-      const post = { ...basePost, aiTags: ['design', 'ui', 'web', 'extra'] };
+      const post = { ...mediaPost, aiTags: ['design', 'ui', 'web', 'extra'] };
       renderHovered(<PostCard post={post} onOpen={vi.fn()} />);
       const chips = screen.getByTestId('hover-tags');
       expect(within(chips).getByText('design')).toBeInTheDocument();
@@ -264,7 +319,7 @@ describe('PostCard', () => {
     });
 
     it('falls back to user tags when there are no AI tags', () => {
-      const post = { ...basePost, aiTags: [], userTags: ['mio-tag'] };
+      const post = { ...mediaPost, aiTags: [], userTags: ['mio-tag'] };
       renderHovered(<PostCard post={post} onOpen={vi.fn()} />);
       expect(within(screen.getByTestId('hover-tags')).getByText('mio-tag')).toBeInTheDocument();
     });
@@ -328,7 +383,14 @@ describe('PostCard', () => {
 
   describe('OfflineIcon', () => {
     it('shows the link-only icon when no local asset is present', () => {
-      renderHovered(<PostCard post={basePost} onOpen={vi.fn()} />);
+      renderHovered(<PostCard post={mediaPost} onOpen={vi.fn()} />);
+      expect(screen.getByTitle(/solo link/i)).toBeInTheDocument();
+    });
+
+    it('does not mark a cached preview as an offline download', () => {
+      renderHovered(
+        <PostCard post={{ ...basePost, previewPath: '/cached/preview.jpg' }} onOpen={vi.fn()} />,
+      );
       expect(screen.getByTitle(/solo link/i)).toBeInTheDocument();
     });
 
@@ -349,13 +411,13 @@ describe('PostCard', () => {
 
   describe('AI badge', () => {
     it('shows the AI badge when the post has both an AI description and tags', () => {
-      const post = { ...basePost, aiDescription: 'Una descrizione', aiTags: ['design', 'ui'] };
+      const post = { ...mediaPost, aiDescription: 'Una descrizione', aiTags: ['design', 'ui'] };
       renderHovered(<PostCard post={post} onOpen={vi.fn()} />);
       expect(screen.getByTitle(/generati dall'AI/i)).toBeInTheDocument();
     });
 
     it('lives in the hover overlay, not in the rest-state chips', () => {
-      const post = { ...basePost, aiDescription: 'Una descrizione', aiTags: ['design'] };
+      const post = { ...mediaPost, aiDescription: 'Una descrizione', aiTags: ['design'] };
       renderHovered(<PostCard post={post} onOpen={vi.fn()} />);
       const badge = screen.getByTitle(/generati dall'AI/i);
       expect(screen.getByTestId('mediatype-chip')).not.toContainElement(badge);
@@ -383,34 +445,32 @@ describe('PostCard', () => {
   describe('MediaTypeIcon', () => {
     it('renders the image icon for image mediaType', () => {
       const { container } = render(
-        <PostCard post={{ ...basePost, mediaType: 'image' as const }} onOpen={vi.fn()} />,
+        <PostCard post={{ ...mediaPost, mediaType: 'image' as const }} onOpen={vi.fn()} />,
       );
       expect(container.querySelector('.lucide-image')).not.toBeNull();
     });
 
     it('renders the video icon for video mediaType', () => {
       const { container } = render(
-        <PostCard post={{ ...basePost, mediaType: 'video' as const }} onOpen={vi.fn()} />,
+        <PostCard post={{ ...mediaPost, mediaType: 'video' as const }} onOpen={vi.fn()} />,
       );
       expect(container.querySelector('.lucide-video')).not.toBeNull();
     });
 
     it('renders the layers icon for carousel mediaType', () => {
       const { container } = render(
-        <PostCard post={{ ...basePost, mediaType: 'carousel' as const }} onOpen={vi.fn()} />,
+        <PostCard post={{ ...mediaPost, mediaType: 'carousel' as const }} onOpen={vi.fn()} />,
       );
       expect(container.querySelector('.lucide-layers')).not.toBeNull();
     });
 
-    it('renders the align-left icon for text mediaType', () => {
-      const { container } = render(
-        <PostCard post={{ ...basePost, mediaType: 'text' as const }} onOpen={vi.fn()} />,
-      );
-      expect(container.querySelector('.lucide-align-left')).not.toBeNull();
+    it('labels a text post within its editorial preview', () => {
+      render(<PostCard post={{ ...basePost, mediaType: 'text' as const }} onOpen={vi.fn()} />);
+      expect(within(screen.getByTestId('text-card')).getByText('TESTO')).toBeInTheDocument();
     });
 
     it('falls back to the image icon for unknown mediaType', () => {
-      const post = { ...basePost, mediaType: 'unknown' } as unknown as Shelfy.Post;
+      const post = { ...mediaPost, mediaType: 'unknown' } as unknown as Shelfy.Post;
       const { container } = render(<PostCard post={post} onOpen={vi.fn()} />);
       expect(container.querySelector('.lucide-image')).not.toBeNull();
     });
@@ -418,7 +478,7 @@ describe('PostCard', () => {
     it('shows the media count for a multi-image post (carousel)', () => {
       render(
         <PostCard
-          post={{ ...basePost, mediaType: 'carousel' as const, mediaCount: 4 }}
+          post={{ ...mediaPost, mediaType: 'carousel' as const, mediaCount: 4 }}
           onOpen={vi.fn()}
         />,
       );
@@ -428,7 +488,7 @@ describe('PostCard', () => {
     it('shows the media count for a multi-image tweet (images)', () => {
       render(
         <PostCard
-          post={{ ...basePost, mediaType: 'images' as const, mediaCount: 3 }}
+          post={{ ...mediaPost, mediaType: 'images' as const, mediaCount: 3 }}
           onOpen={vi.fn()}
         />,
       );
@@ -438,7 +498,7 @@ describe('PostCard', () => {
     it('does not show a count when mediaCount is 1', () => {
       render(
         <PostCard
-          post={{ ...basePost, mediaType: 'carousel' as const, mediaCount: 1 }}
+          post={{ ...mediaPost, mediaType: 'carousel' as const, mediaCount: 1 }}
           onOpen={vi.fn()}
         />,
       );

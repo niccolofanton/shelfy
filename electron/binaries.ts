@@ -83,16 +83,17 @@ const WHISPER_TAG = 'v1.8.5';
 // reproducible, tamper-evident download. Bump YTDLP_VERSION and refresh the hashes
 // from https://github.com/yt-dlp/yt-dlp/releases/download/<TAG>/SHA2-256SUMS when
 // updating; keep build-windows.ps1 / provision-binaries.ps1 in sync.
-const YTDLP_VERSION = '2026.03.17';
+const YTDLP_VERSION = '2026.08.19';
 // Lowercase hex SHA256 of each upstream artifact for YTDLP_VERSION (from the
 // release's SHA2-256SUMS). 'yt-dlp.exe' is fetched on Windows, 'yt-dlp_macos' on
 // macOS — both downloaded directly from the pinned upstream release and verified
 // against these hashes before use.
 const YTDLP_SHA256: Record<string, string> = {
-  'yt-dlp.exe': '3db811b366b2da47337d2fcfdfe5bbd9a258dad3f350c54974f005df115a1545',
-  'yt-dlp_macos': 'e80c47b3ce712acee51d5e3d4eace2d181b44d38f1942c3a32e3c7ff53cd9ed5',
-  'yt-dlp_linux': 'c2b0189f581fe4a2ddd41954f1bcb7d327db04b07ed0dea97e4f1b3e09b5dd8e',
+  'yt-dlp.exe': '66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a',
+  'yt-dlp_macos': '0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202',
+  'yt-dlp_linux': '58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a',
 };
+const YTDLP_VERSION_FILE = 'yt-dlp-version.txt';
 // Map the app's GPU variant to the llama.cpp Windows asset suffix.
 const LLAMA_WIN_ASSET: Record<string, string> = {
   cpu: 'cpu-x64',
@@ -198,6 +199,18 @@ const EMBEDDING_MODEL = {
 
 function runtimeBinDir(): string {
   return path.join(app.getPath('userData'), 'runtime-bin');
+}
+
+function installedYtDlpVersion(): string | null {
+  try {
+    return fs.readFileSync(path.join(runtimeBinDir(), YTDLP_VERSION_FILE), 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+function markYtDlpVersion(): void {
+  fs.writeFileSync(path.join(runtimeBinDir(), YTDLP_VERSION_FILE), YTDLP_VERSION + '\n');
 }
 
 function exeName(base: string): string {
@@ -402,6 +415,7 @@ function status(): BinaryStatus {
     // A present-but-stale llama-server (its build marker doesn't match the build
     // this app expects) must count as missing so the provisioner re-fetches it.
     if (ok && name === 'llama-server' && installedLlamaBuild() !== LLAMA_BUILD) ok = false;
+    if (ok && name === 'yt-dlp' && installedYtDlpVersion() !== YTDLP_VERSION) ok = false;
     // A present llama-server whose shared-lib symlinks dangle is unusable — re-fetch.
     if (ok && name === 'llama-server' && !llamaLibsResolvable()) ok = false;
     present[name] = ok;
@@ -609,7 +623,7 @@ async function ensureBinariesWindows(
   // yt-dlp.exe — single self-contained binary. Pinned to YTDLP_VERSION (not
   // releases/latest) and verified against the published SHA256 before it's used.
   const ytDlpDest = path.join(binDir, 'yt-dlp.exe');
-  if (!has(ytDlpDest)) {
+  if (!has(ytDlpDest) || installedYtDlpVersion() !== YTDLP_VERSION) {
     onProgress('yt-dlp', 0);
     await downloadWithRetry(
       `https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp.exe`,
@@ -631,6 +645,7 @@ async function ensureBinariesWindows(
         `yt-dlp.exe SHA256 mismatch (yt-dlp ${YTDLP_VERSION}): expected ${expected}, got ${actual}`,
       );
     }
+    markYtDlpVersion();
   }
 
   // ffmpeg.exe — extract from the gyan.dev essentials zip. Copy via a .part rename
@@ -826,7 +841,7 @@ async function ensureBinariesMac(
   // yt-dlp — single self-contained macOS binary, pinned to YTDLP_VERSION and
   // verified against the published SHA256 before it's used.
   const ytDlpDest = path.join(binDir, 'yt-dlp');
-  if (!has(ytDlpDest)) {
+  if (!has(ytDlpDest) || installedYtDlpVersion() !== YTDLP_VERSION) {
     onProgress('yt-dlp', 0);
     await downloadWithRetry(
       `https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_macos`,
@@ -850,6 +865,7 @@ async function ensureBinariesMac(
     } catch {
       /* best effort */
     }
+    markYtDlpVersion();
   }
 
   // llama-server (+ dylibs) — upstream macOS arm64 tar.gz, pinned SHA256. tar
@@ -951,7 +967,7 @@ async function ensureBinariesLinux(
 
   // yt-dlp — single self-contained Linux binary, pinned + SHA-verified.
   const ytDlpDest = path.join(binDir, 'yt-dlp');
-  if (!has(ytDlpDest)) {
+  if (!has(ytDlpDest) || installedYtDlpVersion() !== YTDLP_VERSION) {
     onProgress('yt-dlp', 0);
     await downloadWithRetry(
       `https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/yt-dlp_linux`,
@@ -975,6 +991,7 @@ async function ensureBinariesLinux(
     } catch {
       /* best effort */
     }
+    markYtDlpVersion();
   }
 
   // llama-server (+ .so libs) — upstream Linux tar.gz, pinned SHA256, per GPU

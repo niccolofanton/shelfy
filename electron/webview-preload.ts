@@ -48,7 +48,7 @@ try {
       send: relay,
       sendSelect: relaySelect,
     });
-  } catch (_) {
+  } catch {
     // Should not happen under contextIsolation=true; relay still works via the
     // same-origin postMessage listener below.
   }
