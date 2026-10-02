@@ -14,8 +14,10 @@ base64.workspace = true
 clap = { workspace = true, features = ["env"] }
 futures-util.workspace = true
 getrandom.workspace = true
+lettre.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
+moka.workspace = true
 # `backup`: the SQLite online backup API behind `admin snapshot`.
 rusqlite = { workspace = true, features = ["backup"] }
 serde.workspace = true

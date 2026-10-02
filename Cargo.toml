@@ -29,6 +29,15 @@ futures-util = { version = "0.3.34", default-features = false, features = ["allo
 getrandom = "0.4.3"
 http-body-util = "0.1.5"
 jsonschema = { version = "0.58.4", default-features = false }
+# Email (§2.21): SMTP over rustls (ring, webpki roots; no OpenSSL) and the file transport
+# behind the dev mailbox. No connection pool: sign-in emails are rare.
+lettre = { version = "0.11.23", default-features = false, features = [
+  "builder",
+  "file-transport",
+  "hostname",
+  "smtp-transport",
+  "tokio1-rustls-tls",
+] }
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 moka = { version = "0.12.16", features = ["sync"] }
