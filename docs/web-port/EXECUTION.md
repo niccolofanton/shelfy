@@ -80,8 +80,10 @@ Changes to the plan that the lead made during execution, with the reason.
 | Task | What | Status | Branch |
 |---|---|---|---|
 | P1-01 | Realtime: SSE bus, notifications, client errors, version | done | `web/p1-01-realtime` (e7afc2c…86f34ca) |
-| P1-07 | Job system and jobs API | running | `web/p1-07-jobs` |
+| P1-07 | Job system and jobs API | done | `web/p1-07-jobs` (e9fce3a…9499f3c) |
 | P1-12 | Backup, restore and schema-upgrade tooling | running | `web/p1-12-backup` |
+| P1-09 | Deployable server: SPA hosting, headers, image, release workflow, `compose.test` | running | `web/p1-09-deploy` |
+| P1-13 | Owner passkeys, re-auth, login-link bootstrap, optional SMTP | running | `web/p1-13-passkeys` |
 
 ### Follow-ups
 
