@@ -782,10 +782,13 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Starts installing an uploaded bundle (plan §4.1 step 5).
-     * @description Answers 202 with the install, polled at `Location`. 422 when the upload
-     *     is not a complete bundle database of this user; 409 when the web library
-     *     is not empty (merging arrives with P1-19) or another install runs.
+     * Starts installing an uploaded bundle (plan §4.1 step 5): enqueues the
+     *     `migrate` job.
+     * @description Answers 202 with the install, polled at `Location`; its progress also
+     *     arrives as `job.updated`. 422 when the upload is not a complete bundle
+     *     database of this user; 409 when the web library is not empty and `merge`
+     *     is false, or another install of the library is queued or running. Send an
+     *     `Idempotency-Key`: a repeat gets the first answer back.
      */
     post: operations['startMigration'];
     delete?: never;
@@ -815,7 +818,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/api/v1/migrations/{id}': {
+  '/api/v1/migrations/preflight': {
     parameters: {
       query?: never;
       header?: never;
@@ -823,10 +826,26 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * The state of an install, and its report once it succeeded. The install
-     *     runs in this server process: after a restart its id is unknown (404),
-     *     while the report stays in the installed library.
+     * What the library looks like before a migration: whether it is empty (a
+     *     bundle replaces it) or needs `--merge`, and the quota.
      */
+    get: operations['getMigrationPreflight'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/migrations/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The state of an install, and its report once it succeeded. */
     get: operations['getMigration'];
     put?: never;
     post?: never;
@@ -1146,7 +1165,13 @@ export interface paths {
     get?: never;
     put?: never;
     post?: never;
-    delete?: never;
+    /**
+     * Terminates an upload (tus termination): its row and its bytes are
+     *     removed, whether it was complete or not.
+     * @description 204; 412 without `Tus-Resumable: 1.0.0`; 404 for an unknown or another
+     *     user's upload; 409 while a `PATCH` writes it.
+     */
+    delete: operations['deleteUpload'];
     options?: never;
     /**
      * Where an upload stands, so a client can resume it (tus core).
@@ -1262,9 +1287,12 @@ export interface components {
       /** @description Videos. */
       video: boolean;
     };
-    /** @description Archive work left for the workers (P1-19, P2), by class (OI-6, OI-7). */
+    /** @description Archive work left for the workers (P2), by class (OI-6, OI-7). */
     ArchiveCounts: {
-      /** @description Posts by `archive_state`. */
+      /**
+       * @description Posts by `archive_state`.
+       * @default {}
+       */
       byState: {
         [key: string]: number;
       };
@@ -1272,31 +1300,42 @@ export interface components {
        * Format: int64
        * @description Instagram covers whose URL has expired: extension `refresh_media`
        *     tasks.
+       * @default 0
        */
       igCoverExpired: number;
       /**
        * Format: int64
        * @description Instagram covers whose URL has no expiry.
+       * @default 0
        */
       igCoverNoExpiry: number;
       /**
        * Format: int64
        * @description Instagram covers to archive whose signed URL is still valid: archive
        *     them first, before they expire.
+       * @default 0
        */
       igCoverValid: number;
       /**
        * Format: int64
        * @description Image slides without a stored image.
+       * @default 0
        */
       imageSlidesPending: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       otherCover: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       pinterestCover: number;
       /**
        * Format: int64
        * @description X covers to archive (they do not expire).
+       * @default 0
        */
       xCover: number;
     };
@@ -1809,31 +1848,69 @@ export interface components {
       /** @description Version of the server build; a change means a new deploy. */
       version: string;
     };
+    /**
+     * @description How the bundle joined the web library.
+     * @enum {string}
+     */
+    InstallMode: 'replace' | 'merge';
     /** @description Rows of the installed library. */
     InstalledCounts: {
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       collections: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       mediaObjects: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       memberships: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       postEntities: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       postTags: number;
-      /** @description Posts by platform. */
+      /**
+       * @description Posts by platform.
+       * @default {}
+       */
       posts: {
         [key: string]: number;
       };
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       slides: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       tagAliases: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       tagClusters: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       webCaptureAssets: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       webCaptures: number;
     };
     /** @description The objects the install stored. */
@@ -1841,16 +1918,24 @@ export interface components {
       /**
        * Format: int64
        * @description Already in the store (an earlier install, or another post's file).
+       * @default 0
        */
       alreadyStored: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       bytes: number;
       /**
        * Format: int64
        * @description Moved into the store from uploads.
+       * @default 0
        */
       fromUploads: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       total: number;
     };
     /** @description A background job. */
@@ -2080,25 +2165,154 @@ export interface components {
      * @enum {string}
      */
     MediaType: 'image' | 'images' | 'carousel' | 'video' | 'text' | 'website' | 'file';
-    /** @description An install of a migration bundle. */
-    Migration: {
+    /**
+     * @description What a merge did with the bundle's rows (plan §4.2: the duplicate policy
+     *     of P1-10 for posts the library already had).
+     */
+    MergeCounts: {
       /**
        * Format: int64
-       * @description When it started, unix ms.
+       * @description Merged posts that took the bundle's analysis or date.
+       * @default 0
+       */
+      aiFilled: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      aliasesAdded: number;
+      /**
+       * Format: int64
+       * @description The bundle's site versions: new, or already there (same post and
+       *     capture time).
+       * @default 0
+       */
+      capturesAdded: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      capturesPresent: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      clusterMembershipsAdded: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      clustersAdded: number;
+      /**
+       * Format: int64
+       * @description The bundle's collections: new, or the library's of the same folder
+       *     (`platform` and `external_id`, else the same name).
+       * @default 0
+       */
+      collectionsInserted: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      collectionsMatched: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      datesFilled: number;
+      /**
+       * Format: int64
+       * @description The bundle's memberships: new, or already there.
+       * @default 0
+       */
+      membershipsAdded: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      membershipsPresent: number;
+      /**
+       * Format: int64
+       * @description Merged posts whose notes were joined, and manual tags added.
+       * @default 0
+       */
+      notesJoined: number;
+      /**
+       * @description The bundle's posts by platform: inserted as new posts, or merged into
+       *     the post with the same key.
+       * @default {}
+       */
+      posts: {
+        [key: string]: components['schemas']['MergedPosts'];
+      };
+      /**
+       * Format: int64
+       * @description Merged posts whose bundle row won (more archived files, an analysis,
+       *     a user layer): its media and AI layers replaced the stored ones.
+       * @default 0
+       */
+      replaced: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      tagsAdded: number;
+      /**
+       * Format: int64
+       * @description Merged posts that did not change.
+       * @default 0
+       */
+      unchanged: number;
+    };
+    /** @description The bundle's posts of one platform. */
+    MergedPosts: {
+      /**
+       * Format: int64
+       * @default 0
+       */
+      inserted: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      merged: number;
+    };
+    /** @description An install of a migration bundle: a `migrate` job. */
+    Migration: {
+      /**
+       * Format: int32
+       * @description Tries that ended without success; a transient failure is tried again.
+       */
+      attempts: number;
+      /**
+       * Format: int64
+       * @description When it was accepted, unix ms.
        */
       createdAt: number;
-      /** @description Why it failed. */
+      /** @description Why it failed, or why its last try failed before a retry. */
       error?: components['schemas']['MigrationFailure'];
       /**
        * Format: int64
        * @description When it ended, unix ms.
        */
       finishedAt?: number;
-      /** @description Install id (ULID). */
+      /** @description Install id: the job id, as text. */
       id: string;
       /**
+       * Format: int64
+       * @description The `migrate` job (`GET /jobs`, `job.updated`).
+       */
+      jobId: number;
+      /**
+       * Format: int32
+       * @description Tries allowed.
+       */
+      maxAttempts: number;
+      /** @description Whether the CLI asked to merge into a library that is not empty. */
+      merge: boolean;
+      /**
        * Format: double
-       * @description Progress of the stage, 0 to 1.
+       * @description Progress of the whole install, 0 to 1.
        */
       progress: number;
       /** @description The reconciliation report, once installed. */
@@ -2108,27 +2322,141 @@ export interface components {
     };
     /** @description Why an install failed. */
     MigrationFailure: {
-      /** @description A stable error code (`validation_failed`, `conflict`, `internal`…). */
-      code: components['schemas']['ErrorCode'];
-      /** @description Developer-facing detail; never content. */
+      /**
+       * @description A stable code: an API error code (`validation_failed`, `conflict`,
+       *     `quota_exceeded`, `user_locked`, `internal`…) or a job code
+       *     (`lease_expired`, `cancelled`).
+       */
+      code: string;
+      /**
+       * @description Developer-facing detail of a refused bundle (`validation_failed`,
+       *     `conflict`, `quota_exceeded`); never content.
+       */
       detail?: string;
+    };
+    /** @description What `GET /migrations/preflight` tells the CLI before it uploads. */
+    MigrationPreflight: {
+      /**
+       * Format: int64
+       * @description The `migrate` job already queued or running, if any.
+       */
+      activeJobId?: number;
+      /**
+       * @description The web library has no posts and no collections: a bundle replaces
+       *     it. Otherwise a bundle needs `--merge`.
+       */
+      libraryEmpty: boolean;
+      /**
+       * Format: int64
+       * @description The largest bundle database.
+       */
+      maxDatabaseBytes: number;
+      /**
+       * Format: int64
+       * @description The largest object an upload may hold (a kept video).
+       */
+      maxObjectBytes: number;
+      /**
+       * Format: int64
+       * @description Posts in the web library, trash included.
+       */
+      posts: number;
+      /**
+       * Format: int64
+       * @description The quota in bytes, media plus database; 0 means unlimited.
+       */
+      quotaBytes: number;
+      /**
+       * Format: int64
+       * @description What the library uses now, media plus database, in bytes.
+       */
+      usedBytes: number;
     };
     /** @description The reconciliation report of an install (plan §4.3): counts only. */
     MigrationReport: {
+      /**
+       * @default {
+       *       "byState": {},
+       *       "igCoverExpired": 0,
+       *       "igCoverNoExpiry": 0,
+       *       "igCoverValid": 0,
+       *       "imageSlidesPending": 0,
+       *       "otherCover": 0,
+       *       "pinterestCover": 0,
+       *       "xCover": 0
+       *     }
+       */
       archive: components['schemas']['ArchiveCounts'];
       /**
        * @description What `shelfy-migrate` counted in the desktop library and wrote to the
        *     bundle, as it sent it.
        */
-      bundle: Record<string, never>;
+      bundle?: Record<string, never>;
       /**
        * Format: int64
        * @description How long the install took, ms.
+       * @default 0
        */
       durationMs: number;
+      /**
+       * @description Rows of the web library after the install.
+       * @default {
+       *       "collections": 0,
+       *       "mediaObjects": 0,
+       *       "memberships": 0,
+       *       "postEntities": 0,
+       *       "postTags": 0,
+       *       "posts": {},
+       *       "slides": 0,
+       *       "tagAliases": 0,
+       *       "tagClusters": 0,
+       *       "webCaptureAssets": 0,
+       *       "webCaptures": 0
+       *     }
+       */
       installed: components['schemas']['InstalledCounts'];
+      /**
+       * @description What the merge did, for a merge.
+       * @default null
+       */
+      merge: components['schemas']['MergeCounts'];
+      /**
+       * @description Whether the bundle replaced an empty library or was merged into one.
+       * @default replace
+       */
+      mode: components['schemas']['InstallMode'];
+      /**
+       * @default {
+       *       "alreadyStored": 0,
+       *       "bytes": 0,
+       *       "fromUploads": 0,
+       *       "total": 0
+       *     }
+       */
       objects: components['schemas']['InstalledObjects'];
+      /**
+       * @description The file the previous library is kept in for 7 days, next to the
+       *     live one.
+       * @default null
+       */
+      previous: string;
+      /**
+       * @default {
+       *       "existing": 0,
+       *       "failed": 0,
+       *       "notRenderable": 0,
+       *       "rendered": 0,
+       *       "thumbhashes": 0,
+       *       "wanted": 0
+       *     }
+       */
       renditions: components['schemas']['RenditionCounts'];
+      /**
+       * @description The desktop settings the library took (`language`,
+       *     `archiveAssetTypes`); settings the web library had already win.
+       * @default []
+       */
+      settings: string[];
     };
     /**
      * @description What the install is doing.
@@ -2138,6 +2466,7 @@ export interface components {
       | 'queued'
       | 'validating'
       | 'objects'
+      | 'merging'
       | 'index'
       | 'report'
       | 'installing'
@@ -2820,30 +3149,44 @@ export interface components {
     /** @description The `g480` renditions and ThumbHashes of the install. */
     RenditionCounts: {
       /**
+       * @description Sizes of the covers' `g480` renditions rendered by this install (plan
+       *     §6.2 budget: p50 ≤35 KB, p95 ≤60 KB).
+       * @default null
+       */
+      coverBytes: components['schemas']['SizeStats'];
+      /**
        * Format: int64
        * @description Already rendered in the store.
+       * @default 0
        */
       existing: number;
       /**
        * Format: int64
        * @description Images the pipeline could not decode.
+       * @default 0
        */
       failed: number;
       /**
        * Format: int64
        * @description Types the pipeline does not decode (AVIF, videos, PDF).
+       * @default 0
        */
       notRenderable: number;
-      /** Format: int64 */
+      /**
+       * Format: int64
+       * @default 0
+       */
       rendered: number;
       /**
        * Format: int64
        * @description Posts whose ThumbHash was set.
+       * @default 0
        */
       thumbhashes: number;
       /**
        * Format: int64
        * @description Objects the grid shows: covers, slides 1–3, site heroes.
+       * @default 0
        */
       wanted: number;
     };
@@ -2969,6 +3312,29 @@ export interface components {
       /** @description The interface language. */
       language?: components['schemas']['Language'];
     };
+    /** @description A distribution of sizes, in bytes. */
+    SizeStats: {
+      /**
+       * Format: int64
+       * @default 0
+       */
+      count: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      max: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      p50: number;
+      /**
+       * Format: int64
+       * @default 0
+       */
+      p95: number;
+    };
     /**
      * @description Kind of slide (`post_media.kind`).
      * @enum {string}
@@ -2979,8 +3345,8 @@ export interface components {
       /** @description The complete upload (purpose `migration-db`) of the bundle's database. */
       dbUploadId: string;
       /**
-       * @description Merge into a library that is not empty. Not supported yet: such a
-       *     library answers 409 either way.
+       * @description Merge into a library that is not empty. An empty library is replaced
+       *     either way.
        */
       merge?: boolean;
     };
@@ -4139,7 +4505,17 @@ export interface operations {
   startMigration: {
     parameters: {
       query?: never;
-      header?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+      };
       path?: never;
       cookie?: never;
     };
@@ -4149,7 +4525,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description The install started. */
+      /** @description The install is queued. */
       202: {
         headers: {
           /** @description `/api/v1/migrations/{id}`. */
@@ -4188,12 +4564,33 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  getMigrationPreflight: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The library and its quota. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['MigrationPreflight'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   getMigration: {
     parameters: {
       query?: never;
       header?: never;
       path: {
-        /** @description Install id. */
+        /** @description Install id (the `migrate` job's id). */
         id: string;
       };
       cookie?: never;
@@ -4842,6 +5239,33 @@ export interface operations {
         content: {
           'application/json': components['schemas']['UploadCreated'];
         };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  deleteUpload: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description `1.0.0`. */
+        'Tus-Resumable': string;
+      };
+      path: {
+        /** @description Upload id. */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The upload is gone. */
+      204: {
+        headers: {
+          /** @description `1.0.0`. */
+          'Tus-Resumable'?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       default: components['responses']['Problem'];
     };
