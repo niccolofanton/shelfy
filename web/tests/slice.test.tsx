@@ -18,6 +18,9 @@ type MockClient = ShelfyClient & {
   getStats: Mock;
   listCollections: Mock;
   openExternal: Mock;
+  updatePost: Mock;
+  addPostsToCollections: Mock;
+  removePostFromCollection: Mock;
 };
 
 const POSTS = [
@@ -73,6 +76,12 @@ function webClient(): MockClient {
     getPostsByIds: vi.fn().mockResolvedValue([]),
     getStats: vi.fn().mockResolvedValue(STATS),
     listCollections: vi.fn().mockResolvedValue(FOLDERS),
+    updatePost: vi.fn(),
+    createCollection: vi.fn(),
+    updateCollection: vi.fn(),
+    deleteCollection: vi.fn(),
+    addPostsToCollections: vi.fn(),
+    removePostFromCollection: vi.fn(),
     openExternal: vi.fn(),
     on: vi.fn(() => () => {}),
     reportError: vi.fn(),
@@ -108,8 +117,6 @@ describe('App on the web client', () => {
       'browser-tab-instagram',
       'browser-tab-add-site',
       'browser-tab-add-bookmark',
-      'add-source-btn',
-      'edit-collection-1',
       'nav-downloads',
       'nav-ai',
       'nav-feedback',
@@ -119,6 +126,9 @@ describe('App on the web client', () => {
     ]) {
       expect(screen.queryByTestId(id), id).toBeNull();
     }
+    // libraryEdit (P1-06): folders can be created and edited.
+    expect(within(sidebar).getByTestId('add-source-btn')).toBeInTheDocument();
+    expect(within(sidebar).getByTestId('edit-collection-1')).toBeInTheDocument();
     expect(client.getStats).toHaveBeenCalled();
     expect(client.listCollections).toHaveBeenCalled();
   });
@@ -206,7 +216,7 @@ describe('Post modal on the web client', () => {
     return client;
   }
 
-  it('is read-only: the AI layer, the note and the tags without editing', () => {
+  it('is editable (P1-06 libraryEdit): the note, the manual tags and the AI layer; not yet regenerate/bulk-clear', () => {
     renderModal(POSTS[0]);
     const modal = screen.getByTestId('post-modal');
     expect(within(modal).getByText('A blown-glass lamp')).toBeInTheDocument();
@@ -215,23 +225,62 @@ describe('Post modal on the web client', () => {
     expect(within(modal).getByTestId('post-modal-note')).toHaveTextContent('For the hall');
     for (const id of [
       'post-modal-edit',
-      'post-modal-ai-more',
-      'post-modal-regenerate',
-      'post-modal-analyze',
       'post-modal-manual-tag-input',
-      'post-modal-note-add',
       'post-modal-assign-toggle',
     ]) {
+      expect(within(modal).queryByTestId(id), id).not.toBeNull();
+    }
+    // Regenerating an analysis (`ai`) and the bulk AI-clear actions (`bulkActions`,
+    // the same seam as the gallery's bulk bar) each wait on their own capability.
+    for (const id of ['post-modal-ai-more', 'post-modal-regenerate', 'post-modal-analyze']) {
       expect(within(modal).queryByTestId(id), id).toBeNull();
     }
     expect(screen.getByTestId('post-modal-image')).toHaveAttribute('src', '/media/aa.jpg');
   });
 
-  it('offers only "open original", through the client', () => {
+  it('saves an edited note through the seam (PATCH /posts/{key})', async () => {
+    const client = renderModal(POSTS[0]);
+    fireEvent.click(screen.getByTestId('post-modal-note'));
+    fireEvent.change(screen.getByTestId('post-modal-note-input'), {
+      target: { value: 'Updated note' },
+    });
+    fireEvent.click(screen.getByTestId('post-modal-note-save'));
+    await waitFor(() =>
+      expect(client.updatePost).toHaveBeenCalledWith('ig_1', { userNote: 'Updated note' }),
+    );
+  });
+
+  it('adds a manual tag through the seam', async () => {
+    const client = renderModal(POSTS[0]);
+    const input = screen.getByTestId('post-modal-manual-tag-input');
+    fireEvent.change(input, { target: { value: 'new-tag' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() =>
+      expect(client.updatePost).toHaveBeenCalledWith('ig_1', { userTags: ['mine', 'new-tag'] }),
+    );
+  });
+
+  it('adds this post to a folder, and the same picker removes it again (§1.2 #12)', async () => {
+    const client = renderModal(POSTS[0]);
+    fireEvent.click(screen.getByTestId('post-modal-assign-toggle'));
+    const toLighting = await screen.findByTestId('post-modal-assign-to-1');
+    fireEvent.click(toLighting);
+    await waitFor(() => expect(client.addPostsToCollections).toHaveBeenCalledWith(['ig_1'], [1]));
+    fireEvent.click(toLighting); // already a member now: the same row removes it
+    await waitFor(() => expect(client.removePostFromCollection).toHaveBeenCalledWith('ig_1', 1));
+  });
+
+  it('offers "open original" and "download original" (no local disk on the web)', () => {
     const client = renderModal(POSTS[0]);
     fireEvent.click(screen.getByTestId('post-modal-more'));
     const menu = screen.getByTestId('post-modal-menu');
-    expect(within(menu).getAllByRole('button')).toHaveLength(1);
+    expect(
+      within(menu).getAllByRole('button').length + within(menu).getAllByRole('link').length,
+    ).toBe(2);
+    expect(within(menu).getByTestId('post-modal-download-original')).toHaveAttribute(
+      'href',
+      '/media/aa.jpg',
+    );
     fireEvent.click(within(menu).getByTestId('post-modal-external'));
     expect(client.openExternal).toHaveBeenCalledWith('https://www.instagram.com/p/C0ffee/');
   });
@@ -244,8 +293,15 @@ describe('Post modal on the web client', () => {
     expect(client.openExternal).toHaveBeenCalledWith('https://x.com/i/web/status/2');
   });
 
-  it('has no menu for a post with nothing to open', () => {
-    renderModal({ ...POSTS[0], postUrl: null });
+  it('has no menu for a post with nothing to open and nothing stored', () => {
+    renderModal({
+      ...POSTS[0],
+      postUrl: null,
+      thumbnailPath: null,
+      videoPath: null,
+      imagePath: null,
+      media: [],
+    });
     expect(screen.queryByTestId('post-modal-more')).toBeNull();
   });
 });

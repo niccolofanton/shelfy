@@ -4,8 +4,11 @@
 import type { ElectronAPI } from '../../types/electron-api';
 import { assetThumbUrl, assetUrl, isAssetUrl } from '../lib/asset';
 import type {
+  CollectionDeleteOptions,
+  CollectionDeleteResult,
   MediaUrls,
   PageRequest,
+  PostEdit,
   PostPage,
   PostQuery,
   ShelfyCapabilities,
@@ -89,6 +92,49 @@ export function createElectronClient(
     getStats: () => bridge().getStats(),
 
     listCollections: () => bridge().getCollections(),
+
+    // The desktop has no single round-trip that both applies a manual edit and
+    // returns the post: `updatePostUserContent`/`updatePostAiAnalysis` answer
+    // void, so re-read the post after, the same way ActionsMenu's own
+    // refreshPost() already does.
+    async updatePost(id: string, edit: PostEdit): Promise<Shelfy.Post> {
+      const api = bridge();
+      if (edit.userNote !== undefined || edit.userTags !== undefined) {
+        await api.updatePostUserContent(id, { note: edit.userNote, manualTags: edit.userTags });
+      }
+      if (
+        edit.aiDescription !== undefined ||
+        edit.aiTags !== undefined ||
+        edit.aiSaveReason !== undefined
+      ) {
+        await api.updatePostAiAnalysis(id, {
+          description: edit.aiDescription,
+          tags: edit.aiTags,
+          saveReason: edit.aiSaveReason,
+        });
+      }
+      const [fresh] = await api.getPostsByIds([id]);
+      if (!fresh) throw new Error(`updatePost: post ${id} is gone`);
+      return fresh;
+    },
+
+    createCollection: (name, color) => bridge().createCollection(name, color ?? '#3d5afe'),
+
+    updateCollection: (id, fields) => bridge().updateCollection(id, fields),
+
+    async deleteCollection(
+      id: number,
+      options?: CollectionDeleteOptions,
+    ): Promise<CollectionDeleteResult> {
+      return bridge().deleteCollection(id, options);
+    },
+
+    async addPostsToCollections(postIds: string[], collectionIds: number[]): Promise<void> {
+      await bridge().addPostsToCollections(postIds, collectionIds);
+    },
+
+    removePostFromCollection: (postId, collectionId) =>
+      bridge().removePostFromCollection(postId, collectionId),
 
     openExternal(url: string): void {
       void bridge().openExternal?.(url);

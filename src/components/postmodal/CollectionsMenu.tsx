@@ -64,6 +64,7 @@ export default function CollectionsMenu({
                 key={c.id}
                 data-testid={`post-modal-assign-to-${c.id}`}
                 onClick={() => onAssign(c.id)}
+                title={isIn ? t('removeFromSource') : undefined}
                 className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-gray-300 hover:bg-[#222] u-press"
               >
                 <span

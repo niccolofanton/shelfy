@@ -52,6 +52,71 @@ describe('electronClient — posts over the bridge', () => {
   });
 });
 
+describe('electronClient — writes (P1-06 seam)', () => {
+  it('updatePost: the user layer goes through updatePostUserContent, then re-reads the post', async () => {
+    vi.mocked(window.electronAPI.getPostsByIds).mockResolvedValue([
+      { id: 'p1', userNote: 'hi' } as unknown as Shelfy.Post,
+    ]);
+    const client = createElectronClient();
+    const post = await client.updatePost('p1', { userNote: 'hi', userTags: ['a'] });
+    expect(window.electronAPI.updatePostUserContent).toHaveBeenCalledWith('p1', {
+      note: 'hi',
+      manualTags: ['a'],
+    });
+    expect(window.electronAPI.updatePostAiAnalysis).not.toHaveBeenCalled();
+    expect(post.userNote).toBe('hi');
+  });
+
+  it('updatePost: a manual AI edit goes through updatePostAiAnalysis instead', async () => {
+    vi.mocked(window.electronAPI.getPostsByIds).mockResolvedValue([
+      { id: 'p1' } as unknown as Shelfy.Post,
+    ]);
+    const client = createElectronClient();
+    await client.updatePost('p1', { aiDescription: 'desc', aiTags: ['t'], aiSaveReason: 'why' });
+    expect(window.electronAPI.updatePostUserContent).not.toHaveBeenCalled();
+    expect(window.electronAPI.updatePostAiAnalysis).toHaveBeenCalledWith('p1', {
+      description: 'desc',
+      tags: ['t'],
+      saveReason: 'why',
+    });
+  });
+
+  it('updatePost: throws if the post is gone by the time it re-reads', async () => {
+    vi.mocked(window.electronAPI.getPostsByIds).mockResolvedValue([]);
+    const client = createElectronClient();
+    await expect(client.updatePost('p1', { userNote: 'x' })).rejects.toThrow('p1');
+  });
+
+  it('folders: create, rename, delete and add/remove posts pass straight through', async () => {
+    vi.mocked(window.electronAPI.createCollection).mockResolvedValue({
+      id: 2,
+    } as unknown as Shelfy.Collection);
+    vi.mocked(window.electronAPI.deleteCollection).mockResolvedValue({
+      ok: true,
+      deletedPosts: 0,
+      errors: [],
+    });
+    const client = createElectronClient();
+
+    const created = await client.createCollection('Ricette', '#3d5afe');
+    expect(created.id).toBe(2);
+    expect(window.electronAPI.createCollection).toHaveBeenCalledWith('Ricette', '#3d5afe');
+
+    await client.updateCollection(2, { name: 'Idee' });
+    expect(window.electronAPI.updateCollection).toHaveBeenCalledWith(2, { name: 'Idee' });
+
+    const deleted = await client.deleteCollection(2, { deletePosts: true });
+    expect(deleted).toEqual({ ok: true, deletedPosts: 0, errors: [] });
+    expect(window.electronAPI.deleteCollection).toHaveBeenCalledWith(2, { deletePosts: true });
+
+    await client.addPostsToCollections(['p1'], [2]);
+    expect(window.electronAPI.addPostsToCollections).toHaveBeenCalledWith(['p1'], [2]);
+
+    await client.removePostFromCollection('p1', 2);
+    expect(window.electronAPI.removePostFromCollection).toHaveBeenCalledWith('p1', 2);
+  });
+});
+
 describe('electronClient — events', () => {
   it('turns finished download and analyze jobs into post events, not progress ticks', () => {
     const client = createElectronClient();

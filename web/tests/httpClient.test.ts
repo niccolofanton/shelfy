@@ -5,22 +5,31 @@ import { ApiError } from '../src/api/http';
 import { WEB_CAPABILITIES, createHttpClient, openExternalUrl } from '../src/api/httpClient';
 import { apiPost } from './fixtures';
 
-// An Http whose GETs answer from `routes` (path → answers, in order).
+// An Http whose GETs and sends answer from `routes` (path → answers, in
+// order); a `send` resolves to a Response-ish whose `.json()` gives the answer.
 function fakeHttp(routes: Record<string, unknown[]>) {
-  const calls: { path: string; query: Record<string, string[]> }[] = [];
-  const get = vi.fn(async (path: string, query?: URLSearchParams) => {
-    const q: Record<string, string[]> = {};
-    query?.forEach((value, key) => (q[key] = [...(q[key] ?? []), value]));
-    calls.push({ path, query: q });
+  const calls: { path: string; query: Record<string, string[]>; body?: unknown }[] = [];
+  const nextAnswer = (path: string): unknown => {
     const answers = routes[path];
     if (!answers?.length) throw new ApiError(404, 'not_found');
     const answer = answers.shift();
     if (answer instanceof Error) throw answer;
     return answer;
+  };
+  const get = vi.fn(async (path: string, query?: URLSearchParams) => {
+    const q: Record<string, string[]> = {};
+    query?.forEach((value, key) => (q[key] = [...(q[key] ?? []), value]));
+    calls.push({ path, query: q });
+    return nextAnswer(path);
+  });
+  const send = vi.fn(async (_method: string, path: string, body?: unknown) => {
+    calls.push({ path, query: {}, body });
+    const answer = nextAnswer(path);
+    return { json: async () => answer } as Response;
   });
   const http: Http = {
     get: get as Http['get'],
-    send: vi.fn(),
+    send: send as Http['send'],
     onUnauthorized: () => () => {},
     sessionEnded: () => {},
     onReauthRequired: () => () => {},
@@ -96,17 +105,51 @@ describe('httpClient.listPosts', () => {
 });
 
 describe('httpClient — other reads', () => {
-  it('reads posts by id and skips the ones that are gone', async () => {
+  it('reads posts by id in one batch-get call, in the ids order, and skips the ones gone', async () => {
     const { http, calls } = fakeHttp({
-      '/api/v1/posts/x_1': [apiPost({ key: 'x_1', platform: 'twitter' })],
+      '/api/v1/posts/batch-get': [
+        { items: [apiPost({ key: 'x_2', platform: 'twitter' }), apiPost({ key: 'x_1' })] },
+      ],
     });
-    const found = await createHttpClient(http).getPostsByIds(['x_1', 'x_2']);
+    const found = await createHttpClient(http).getPostsByIds(['x_1', 'x_9', 'x_2']);
+    expect(found.map((p) => p.id)).toEqual(['x_1', 'x_2']);
+    expect(calls).toEqual([
+      { path: '/api/v1/posts/batch-get', query: {}, body: { keys: ['x_1', 'x_9', 'x_2'] } },
+    ]);
+  });
+
+  it('chunks more than 200 ids into several batch-get calls (P1-15: the per-user burst)', async () => {
+    const ids = Array.from({ length: 250 }, (_, i) => `ig_${i}`);
+    const { http, calls } = fakeHttp({
+      '/api/v1/posts/batch-get': [
+        { items: ids.slice(0, 200).map((key) => apiPost({ key })) },
+        { items: ids.slice(200).map((key) => apiPost({ key })) },
+      ],
+    });
+    const found = await createHttpClient(http).getPostsByIds(ids);
+    expect(found.map((p) => p.id)).toEqual(ids);
+    expect(calls).toHaveLength(2);
+    expect((calls[0].body as { keys: string[] }).keys).toHaveLength(200);
+    expect((calls[1].body as { keys: string[] }).keys).toHaveLength(50);
+  });
+
+  it("honours a batch-get 429's Retry-After: waits, then retries the same chunk once", async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/posts/batch-get': [
+        new ApiError(429, 'rate_limited', undefined, 2),
+        { items: [apiPost({ key: 'x_1', platform: 'twitter' })] },
+      ],
+    });
+    const wait = vi.fn().mockResolvedValue(undefined);
+    const found = await createHttpClient(http, { wait }).getPostsByIds(['x_1']);
     expect(found.map((p) => p.id)).toEqual(['x_1']);
-    expect(calls.map((c) => c.path)).toEqual(['/api/v1/posts/x_1', '/api/v1/posts/x_2']);
+    expect(wait).toHaveBeenCalledWith(2000);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].body).toEqual(calls[1].body);
   });
 
   it('lets other errors through', async () => {
-    const { http } = fakeHttp({ '/api/v1/posts/x_1': [new ApiError(500, 'internal')] });
+    const { http } = fakeHttp({ '/api/v1/posts/batch-get': [new ApiError(500, 'internal')] });
     await expect(createHttpClient(http).getPostsByIds(['x_1'])).rejects.toBeInstanceOf(ApiError);
   });
 
@@ -157,12 +200,109 @@ describe('httpClient — other reads', () => {
   });
 });
 
+describe('httpClient — writes (P1-06)', () => {
+  it('saves a manual edit through PATCH /posts/{key} and maps the post back', async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/posts/ig_1': [apiPost({ key: 'ig_1', userNote: 'Updated' })],
+    });
+    const post = await createHttpClient(http).updatePost('ig_1', { userNote: 'Updated' });
+    expect(post.id).toBe('ig_1');
+    expect(post.userNote).toBe('Updated');
+    expect(calls).toEqual([
+      { path: '/api/v1/posts/ig_1', query: {}, body: { userNote: 'Updated' } },
+    ]);
+  });
+
+  it('creates a folder and maps it back', async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/collections': [
+        {
+          id: 3,
+          name: 'Ricette',
+          color: '#3d5afe',
+          count: 0,
+          createdAt: 1_000,
+          externalId: null,
+          platform: null,
+          position: null,
+          sourceName: null,
+        },
+      ],
+    });
+    const created = await createHttpClient(http).createCollection('Ricette', '#3d5afe');
+    expect(created).toMatchObject({ id: 3, name: 'Ricette' });
+    expect(calls).toEqual([
+      { path: '/api/v1/collections', query: {}, body: { name: 'Ricette', color: '#3d5afe' } },
+    ]);
+  });
+
+  it('renames a folder through PATCH', async () => {
+    const { http, calls } = fakeHttp({ '/api/v1/collections/3': [{}] });
+    await createHttpClient(http).updateCollection(3, { name: 'Idee' });
+    expect(calls).toEqual([{ path: '/api/v1/collections/3', query: {}, body: { name: 'Idee' } }]);
+  });
+
+  it('deletes a folder (label only by default) and maps the trashed count', async () => {
+    const { http, calls } = fakeHttp({ '/api/v1/collections/3': [{ trashed: 0 }] });
+    const res = await createHttpClient(http).deleteCollection(3);
+    expect(res).toEqual({ ok: true, deletedPosts: 0, errors: [] });
+    expect(calls).toEqual([{ path: '/api/v1/collections/3', query: {}, body: undefined }]);
+  });
+
+  it('deletes a folder with its posts when asked (P1-11 mode)', async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/collections/3?mode=withPosts': [{ trashed: 5 }],
+    });
+    const res = await createHttpClient(http).deleteCollection(3, { deletePosts: true });
+    expect(res).toEqual({ ok: true, deletedPosts: 5, errors: [] });
+    expect(calls[0].path).toBe('/api/v1/collections/3?mode=withPosts');
+  });
+
+  it('adds posts to a folder by selector', async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/collections/3/posts': [{ added: 2, collection: {} }],
+    });
+    await createHttpClient(http).addPostsToCollections(['ig_1', 'ig_2'], [3]);
+    expect(calls).toEqual([
+      {
+        path: '/api/v1/collections/3/posts',
+        query: {},
+        body: { selector: { keys: ['ig_1', 'ig_2'] } },
+      },
+    ]);
+  });
+
+  it('adds posts to every collection given, one request each', async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/collections/1/posts': [{ added: 1, collection: {} }],
+      '/api/v1/collections/2/posts': [{ added: 1, collection: {} }],
+    });
+    await createHttpClient(http).addPostsToCollections(['ig_1'], [1, 2]);
+    expect(calls.map((c) => c.path)).toEqual([
+      '/api/v1/collections/1/posts',
+      '/api/v1/collections/2/posts',
+    ]);
+  });
+
+  it('removes one post from one folder (§1.2 #12)', async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/collections/3/posts/ig_1': [{ removed: true, collection: {} }],
+    });
+    await createHttpClient(http).removePostFromCollection('ig_1', 3);
+    expect(calls).toEqual([
+      { path: '/api/v1/collections/3/posts/ig_1', query: {}, body: undefined },
+    ]);
+  });
+});
+
 describe('httpClient — capabilities, links and events', () => {
-  it('can browse and read, nothing else yet', () => {
+  it('can browse, read and edit the library; nothing else yet', () => {
     const { http } = fakeHttp({});
     const client = createHttpClient(http);
     expect(client.capabilities).toBe(WEB_CAPABILITIES);
-    expect(Object.values(client.capabilities).every((on) => on === false)).toBe(true);
+    const { libraryEdit, ...rest } = client.capabilities;
+    expect(libraryEdit).toBe(true);
+    expect(Object.values(rest).every((on) => on === false)).toBe(true);
     const off = client.on('posts.changed', () => {});
     expect(typeof off).toBe('function');
   });

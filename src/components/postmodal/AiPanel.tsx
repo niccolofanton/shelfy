@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { useT } from '../../i18n';
 import { useAnalysis } from '../../hooks/useAnalysis';
-import { useCapabilities } from '../../api/ShelfyProvider';
+import { useCapabilities, useShelfy } from '../../api/ShelfyProvider';
 import Popover from '../Popover';
 import type { ApplyAiFilter, PostUpdated } from './MetaColumn';
 
@@ -326,8 +326,18 @@ export default function AiPanel({
   const t = useT('postModal');
   const tc = useT('common');
   // `ai`: analyze / regenerate. `libraryEdit`: manual AI edits, tags and note.
-  // Without them the panel only shows what the post already carries.
-  const { ai, libraryEdit } = useCapabilities();
+  // `bulkActions`: the destructive single-post AI-clear actions below, which
+  // ride on the same seam as the gallery's bulk "clear AI description/tags"
+  // (P1-14) — not available on the web until then. Without `libraryEdit` the
+  // panel only shows what the post already carries.
+  const { ai, libraryEdit, bulkActions } = useCapabilities();
+  // The manual AI edit (description/tags/save-reason) goes straight through
+  // the seam: `updatePostAiAnalysis` stays IPC-only (useAnalysis.tsx is not
+  // P1-06's to change there), so `updatePost` is this panel's own route to
+  // the web's `PATCH /posts/{key}`. The user layer (note/manual tags) keeps
+  // going through useAnalysis()'s updatePostUserContent, which now wraps the
+  // same seam call.
+  const client = useShelfy();
   const {
     jobFor,
     modelStatus,
@@ -336,7 +346,6 @@ export default function AiPanel({
     retryJob,
     cancelJob,
     downloadModel,
-    updatePostAiAnalysis,
     updatePostUserContent,
     clearPostDescriptions,
   } = useAnalysis();
@@ -380,24 +389,34 @@ export default function AiPanel({
   const userNote = userOverride ? userOverride.note : (post.userNote ?? '');
   const manualTags = userOverride ? userOverride.tags : post.userTags || [];
 
-  // Functional override updates so a concurrent note/tags save preserves the
-  // sibling field's *latest* value instead of clobbering it with a stale
-  // render-time closure. The backend (updateUserContent) already merges per-field.
+  // Optimistic: flip the override (and the parent's copy) before the write
+  // lands, then roll both back if it fails — same pattern as the header's
+  // assignToCollection. Functional override updates so a concurrent note/tags
+  // save preserves the sibling field's *latest* value instead of clobbering
+  // it with a stale render-time closure (the PATCH merges per-field too).
   const handleChangeNote = async (text: string): Promise<void> => {
-    await updatePostUserContent(post.id, { note: text });
-    setUserOverride((prev) => ({
-      ...(prev ?? { note: post.userNote ?? '', tags: post.userTags || [] }),
-      note: text,
-    }));
+    const previous = userOverride ?? { note: post.userNote ?? '', tags: post.userTags || [] };
+    setUserOverride((prev) => ({ ...(prev ?? previous), note: text }));
     onPostUpdated?.(post.id, { userNote: text });
+    try {
+      await updatePostUserContent(post.id, { note: text });
+    } catch (err) {
+      console.error('[PostModal] updatePost (note) error:', err);
+      setUserOverride((prev) => ({ ...(prev ?? previous), note: previous.note }));
+      onPostUpdated?.(post.id, { userNote: previous.note });
+    }
   };
   const handleChangeManualTags = async (arr: string[]): Promise<void> => {
-    await updatePostUserContent(post.id, { manualTags: arr });
-    setUserOverride((prev) => ({
-      ...(prev ?? { note: post.userNote ?? '', tags: post.userTags || [] }),
-      tags: arr,
-    }));
+    const previous = userOverride ?? { note: post.userNote ?? '', tags: post.userTags || [] };
+    setUserOverride((prev) => ({ ...(prev ?? previous), tags: arr }));
     onPostUpdated?.(post.id, { userTags: arr });
+    try {
+      await updatePostUserContent(post.id, { manualTags: arr });
+    } catch (err) {
+      console.error('[PostModal] updatePost (manual tags) error:', err);
+      setUserOverride((prev) => ({ ...(prev ?? previous), tags: previous.tags }));
+      onPostUpdated?.(post.id, { userTags: previous.tags });
+    }
   };
 
   // ── Manual edit mode ──────────────────────────────────────────────────────
@@ -486,6 +505,10 @@ export default function AiPanel({
     });
   };
 
+  // The manual AI edit (plan P1-03's `updateAiAnalysis` semantics: status
+  // done, model `manual`), saved through the same PATCH as the user layer.
+  // Optimistic: reflect it and close the editor right away; a failure reopens
+  // the editor (the draft fields are untouched) and rolls the override back.
   const handleSave = async (): Promise<void> => {
     setSaving(true);
     const fields: AiOverride = {
@@ -493,19 +516,31 @@ export default function AiPanel({
       tags: draftTags,
       saveReason: draftSaveReason.trim(),
     };
+    const previous = override;
+    // Reflect saved values in the local UI without mutating the `post` prop;
+    // the parent updates its store immutably via onPostUpdated.
+    setOverride(fields);
+    onPostUpdated?.(post.id, {
+      aiDescription: fields.description,
+      aiTags: fields.tags,
+      aiSaveReason: fields.saveReason,
+    });
+    setEditing(false);
     try {
-      await updatePostAiAnalysis(post.id, fields);
-      // Optimistically reflect saved values in the local UI without mutating the
-      // `post` prop; let the parent update its store immutably via onPostUpdated.
-      setOverride(fields);
-      onPostUpdated?.(post.id, {
+      await client.updatePost(post.id, {
         aiDescription: fields.description,
         aiTags: fields.tags,
         aiSaveReason: fields.saveReason,
       });
-      setEditing(false);
     } catch (err) {
-      console.error('[PostModal] updatePostAiAnalysis error:', err);
+      console.error('[PostModal] updatePost (manual AI edit) error:', err);
+      setOverride(previous);
+      onPostUpdated?.(post.id, {
+        aiDescription: previous?.description ?? post.aiDescription,
+        aiTags: previous?.tags ?? post.aiTags,
+        aiSaveReason: previous?.saveReason ?? post.aiSaveReason,
+      });
+      setEditing(true);
     } finally {
       setSaving(false);
     }
@@ -758,7 +793,9 @@ export default function AiPanel({
               >
                 <Pencil size={13} />
               </button>
-              {(description || (tags?.length ?? 0) > 0) && (
+              {/* Delete-description / clear-tags: the same seam as the gallery's
+                  bulk "clear AI description/tags" (P1-14), so gated the same way. */}
+              {bulkActions && (description || (tags?.length ?? 0) > 0) && (
                 <div ref={moreRef}>
                   <button
                     data-testid="post-modal-ai-more"

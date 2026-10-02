@@ -59,6 +59,9 @@ const API_DEFAULTS: Record<string, unknown> = {
   deleteCollection: undefined,
   addPostsToCollections: { added: 0 },
   removePostFromCollection: undefined,
+  // Manual edits (P1-06 seam: ShelfyClient.updatePost)
+  updatePostUserContent: undefined,
+  updatePostAiAnalysis: undefined,
   // Bulk / id helpers
   getPostIds: [],
   getPostsByIds: [],

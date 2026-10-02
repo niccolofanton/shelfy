@@ -1,7 +1,10 @@
 // The web ShelfyClient: the HTTP API of shelfy-server (`/api/v1`), typed by
 // the generated OpenAPI types (./schema.d.ts), and its realtime stream.
 import type {
+  CollectionDeleteOptions,
+  CollectionDeleteResult,
   PageRequest,
+  PostEdit,
   PostPage,
   PostQuery,
   ShelfyCapabilities,
@@ -25,10 +28,15 @@ import type { components } from './schema';
 
 type Schemas = components['schemas'];
 
-// What the web app can do without an account: browse and read. Each
-// capability turns on with the task that brings its API (libraryEdit: P1-06,
-// bulkActions: P1-14, ai: P3…); the desktop-only ones (window chrome, local
-// files, in-app browsers, live page fallback, updates, local models) stay off.
+// `POST /posts/batch-get` takes at most 200 keys per call (plan §2.9).
+const MAX_BATCH_GET = 200;
+
+// What the web app can do without an account: browse, read and edit the
+// library. Each capability turns on with the task that brings its API
+// (libraryEdit: P1-06 — note, manual tags, manual AI edits and folders, all
+// through PATCH/collections; bulkActions: P1-14, ai: P3…); the desktop-only
+// ones (window chrome, local files, in-app browsers, live page fallback,
+// updates, local models) stay off.
 export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
   windowControls: false,
   trafficLights: false,
@@ -38,7 +46,7 @@ export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
   ai: false,
   websites: false,
   bookmarks: false,
-  libraryEdit: false,
+  libraryEdit: true,
   bulkActions: false,
   settings: false,
   activity: false,
@@ -84,7 +92,13 @@ export interface HttpClientOptions {
   events?: EventStream;
   // Where error-boundary reports go (./clientErrors.ts). Default: dropped.
   reportError?: (report: ViewErrorReport) => void;
+  // How a 429's `Retry-After` is honoured (P1-15). Default: a real wait; tests
+  // inject an instant one so a rate-limit spec doesn't actually sleep.
+  wait?: (ms: number) => Promise<void>;
 }
+
+const defaultWait = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 export function createHttpClient(http: Http, options: HttpClientOptions = {}): ShelfyClient {
   const events =
@@ -96,6 +110,21 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
     });
   const reportError = options.reportError ?? (() => {});
   const me = options.me ?? null;
+  const wait = options.wait ?? defaultWait;
+
+  // POSTs one batch-get chunk; a 429 is honoured once (wait `Retry-After`,
+  // then retry the same chunk) before giving up like any other failure.
+  async function batchGet(keys: string[]): Promise<Schemas['PostBatch']> {
+    try {
+      const res = await http.send('POST', '/api/v1/posts/batch-get', { keys });
+      return (await res.json()) as Schemas['PostBatch'];
+    } catch (err) {
+      if (!isApiError(err, 'rate_limited') || err.retryAfter == null) throw err;
+      await wait(err.retryAfter * 1000);
+      const res = await http.send('POST', '/api/v1/posts/batch-get', { keys });
+      return (await res.json()) as Schemas['PostBatch'];
+    }
+  }
 
   return {
     capabilities: options.capabilities ?? webCapabilities(me),
@@ -127,22 +156,25 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
       return { posts, total, nextCursor: next };
     },
 
-    // One request per post until the API has a batch read (P1-03); a post that
-    // no longer exists is skipped.
+    // `POST /posts/batch-get`, chunked at MAX_BATCH_GET (P1-15: a GET per post
+    // put more than 60 ids over the per-user burst). The batch read answers
+    // the gallery's list shape, not the single-post detail's, so a post opened
+    // this way carries no AI entities/keywords (only `GET /posts/{key}` has
+    // them) until it is edited, whose PATCH answer is the full detail.
     async getPostsByIds(ids: string[]): Promise<Shelfy.Post[]> {
-      const found = await Promise.all(
-        ids.map(async (id) => {
-          try {
-            return toPost(
-              await http.get<Schemas['PostDetail']>(`/api/v1/posts/${encodeURIComponent(id)}`),
-            );
-          } catch (err) {
-            if (isApiError(err, 'not_found')) return null;
-            throw err;
-          }
-        }),
-      );
-      return found.filter((p): p is Shelfy.Post => p !== null);
+      const byKey = new Map<string, Shelfy.Post>();
+      for (let i = 0; i < ids.length; i += MAX_BATCH_GET) {
+        const chunk = ids.slice(i, i + MAX_BATCH_GET);
+        if (chunk.length === 0) continue;
+        const { items } = await batchGet(chunk);
+        for (const item of items) byKey.set(item.key, toPost(item));
+      }
+      const found: Shelfy.Post[] = [];
+      for (const id of ids) {
+        const post = byKey.get(id);
+        if (post) found.push(post);
+      }
+      return found;
     },
 
     async getStats(): Promise<Shelfy.Stats> {
@@ -152,6 +184,52 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
     async listCollections(): Promise<Shelfy.Collection[]> {
       const { items } = await http.get<Schemas['CollectionList']>('/api/v1/collections');
       return items.map(toCollection);
+    },
+
+    async updatePost(id: string, edit: PostEdit): Promise<Shelfy.Post> {
+      const res = await http.send(
+        'PATCH',
+        `/api/v1/posts/${encodeURIComponent(id)}`,
+        edit satisfies Schemas['PostPatch'],
+      );
+      return toPost(await res.json());
+    },
+
+    async createCollection(name, color): Promise<Shelfy.Collection> {
+      const res = await http.send('POST', '/api/v1/collections', { name, color });
+      return toCollection(await res.json());
+    },
+
+    async updateCollection(id, fields): Promise<void> {
+      await http.send('PATCH', `/api/v1/collections/${id}`, fields);
+    },
+
+    async deleteCollection(
+      id: number,
+      options?: CollectionDeleteOptions,
+    ): Promise<CollectionDeleteResult> {
+      // `mode=withPosts` answers a problem until the trash/bulk API lands
+      // (P1-11); the UI only offers it by capability (`bulkActions`).
+      const mode = options?.deletePosts ? 'withPosts' : undefined;
+      const path = `/api/v1/collections/${id}` + (mode ? `?mode=${mode}` : '');
+      const res = await http.send('DELETE', path);
+      const { trashed } = (await res.json()) as Schemas['CollectionDeleted'];
+      return { ok: true, deletedPosts: trashed, errors: [] };
+    },
+
+    async addPostsToCollections(postIds, collectionIds): Promise<void> {
+      for (const id of collectionIds) {
+        await http.send('POST', `/api/v1/collections/${id}/posts`, {
+          selector: { keys: postIds },
+        });
+      }
+    },
+
+    async removePostFromCollection(postId, collectionId): Promise<void> {
+      await http.send(
+        'DELETE',
+        `/api/v1/collections/${collectionId}/posts/${encodeURIComponent(postId)}`,
+      );
     },
 
     openExternal: (url) => openExternalUrl(url),

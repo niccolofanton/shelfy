@@ -150,6 +150,35 @@ export interface ViewErrorReport {
   componentStack?: string | null;
 }
 
+// A manual edit saved in one call (plan P1-03: `PATCH /posts/{key}` covers all
+// of it): the user-authored layer (note, manual tags) and/or a hand-edited AI
+// field (the desktop's `updateAiAnalysis`; the server records its model as
+// `manual`, where the desktop wrote `manuale`). Absent fields are left alone;
+// `null` clears one. Every field maps 1:1 onto the matching `Shelfy.Post` one.
+export interface PostEdit {
+  userNote?: string | null;
+  userTags?: string[] | null;
+  aiDescription?: string | null;
+  aiTags?: string[] | null;
+  aiSaveReason?: string | null;
+}
+
+// Options for deleting a folder (§1.2 #12). `deletePosts` also moves every
+// post currently in it to the trash; on the web this needs the trash/bulk API
+// (P1-11) and answers a problem until then, so the UI offers it only by
+// capability (`bulkActions`).
+export interface CollectionDeleteOptions {
+  deletePosts?: boolean;
+}
+
+// What deleting a folder changes, in the desktop IPC's terms (kept so the
+// existing CollectionModal reads either client's answer the same way).
+export interface CollectionDeleteResult {
+  ok: boolean;
+  deletedPosts: number;
+  errors: string[];
+}
+
 export interface ShelfyClient {
   readonly capabilities: ShelfyCapabilities;
   readonly media: MediaUrls;
@@ -164,6 +193,22 @@ export interface ShelfyClient {
   getStats(): Promise<Shelfy.Stats>;
   // Every folder ("source") with its post count.
   listCollections(): Promise<Shelfy.Collection[]>;
+
+  // Saves a manual edit and returns the post after the change (plan P1-03),
+  // which an optimistic update reconciles onto, or rolls back from on failure.
+  updatePost(id: string, edit: PostEdit): Promise<Shelfy.Post>;
+
+  // Folders. `createCollection`/`updateCollection` return what the API does;
+  // the desktop client's own write already is (or cheaply becomes) that shape.
+  createCollection(name: string, color?: string): Promise<Shelfy.Collection>;
+  updateCollection(id: number, fields: { name?: string; color?: string }): Promise<void>;
+  deleteCollection(id: number, options?: CollectionDeleteOptions): Promise<CollectionDeleteResult>;
+  // Adds every post to every collection given (a cross product, as the
+  // desktop's `addPostsToCollections` already behaves); callers in this
+  // codebase only ever pass one collection id at a time.
+  addPostsToCollections(postIds: string[], collectionIds: number[]): Promise<void>;
+  // Takes one post out of one folder (§1.2 #12); not in it is not an error.
+  removePostFromCollection(postId: string, collectionId: number): Promise<void>;
 
   // Opens an http(s) URL outside the app (a new browser tab on the web).
   openExternal(url: string): void;

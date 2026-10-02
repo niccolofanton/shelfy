@@ -72,6 +72,12 @@ function webClient(): MockClient {
     getPostsByIds: vi.fn(async (ids: string[]) => POSTS.filter((p) => ids.includes(p.id))),
     getStats: vi.fn().mockResolvedValue(STATS),
     listCollections: vi.fn().mockResolvedValue(FOLDERS),
+    updatePost: vi.fn(),
+    createCollection: vi.fn(),
+    updateCollection: vi.fn(),
+    deleteCollection: vi.fn(),
+    addPostsToCollections: vi.fn(),
+    removePostFromCollection: vi.fn(),
     openExternal: vi.fn(),
     on: vi.fn((type: string, listener: (event: ShelfyEvent) => void) => {
       listeners.set(type, [...(listeners.get(type) ?? []), listener]);

@@ -277,25 +277,39 @@ export default function PostModal({
     post.thumbnailPath ||
     null;
 
-  // Add this post to a source. Optimistic (green check flips instantly); roll the
-  // membership back if the IPC write fails. INSERT OR IGNORE on the backend means
-  // re-adding an already-member post is harmless. The pid snapshot guards against
-  // navigating to another post mid-flight: a late success/failure must not touch
-  // the now-current post's checkmarks (which the [post.id] effect already re-seeded).
+  // Toggle this post's membership in a source: add it if it isn't a member,
+  // remove it if it is (§1.2 #12 "remove from collection", finally exposed
+  // through this same picker). Optimistic (the check flips instantly); roll
+  // the membership back if the write fails. `addPostsToCollections` is
+  // INSERT OR IGNORE server-side, so re-adding an already-member post is
+  // harmless. The pid snapshot guards against navigating to another post
+  // mid-flight: a late success/failure must not touch the now-current post's
+  // checkmarks (which the [post.id] effect already re-seeded).
   async function assignToCollection(cid: number): Promise<void> {
     const pid = post.id;
-    setAssignedIds((prev) => new Set(prev).add(cid));
-    try {
-      await window.electronAPI.addPostsToCollections([pid], [cid]);
-      onAssigned?.(); // refresh sidebar source counts where the parent wires it
-    } catch (err) {
-      console.error('[PostModal] addPostsToCollections error:', err);
+    const wasMember = assignedIds.has(cid);
+    const rollback = (): void => {
       if (postIdRef.current !== pid) return; // navigated away — don't corrupt the new post
       setAssignedIds((prev) => {
         const next = new Set(prev);
-        next.delete(cid);
+        if (wasMember) next.add(cid);
+        else next.delete(cid);
         return next;
       });
+    };
+    setAssignedIds((prev) => {
+      const next = new Set(prev);
+      if (wasMember) next.delete(cid);
+      else next.add(cid);
+      return next;
+    });
+    try {
+      if (wasMember) await client.removePostFromCollection(pid, cid);
+      else await client.addPostsToCollections([pid], [cid]);
+      onAssigned?.(); // refresh sidebar source counts where the parent wires it
+    } catch (err) {
+      console.error('[PostModal] assignToCollection error:', err);
+      rollback();
     }
   }
 
@@ -307,11 +321,11 @@ export default function PostModal({
     color: string;
   }): Promise<void> {
     try {
-      const created = await window.electronAPI.createCollection(name, color);
+      const created = await client.createCollection(name, color);
       // Refetch so the new source lands in the picker with the same ordering the
       // sidebar uses, then assign this post to it.
       try {
-        const list = await window.electronAPI.getCollections();
+        const list = await client.listCollections();
         setCollections(list || []);
       } catch {
         /* best-effort list refresh */

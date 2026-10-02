@@ -9,7 +9,7 @@ import React, {
   type ReactNode,
 } from 'react';
 import type { AnalyzePostResult, QueuedResult } from '../../types/electron-api';
-import { useCapabilities } from '../api/ShelfyProvider';
+import { useCapabilities, useShelfy } from '../api/ShelfyProvider';
 
 // The analyzer's runtime job record (analyze:getJobs → onAnalyzeProgress). It has
 // no Shelfy.* domain type (it's an analyzer-internal shape, not the persisted
@@ -155,6 +155,7 @@ const FLUSH_WINDOW = 100;
 // Used both by the provider (shared, single subscription) and as a standalone
 // fallback for consumers without a provider.
 function useAnalysisStandalone(enabled = true): AnalysisInstance {
+  const client = useShelfy();
   const [jobs, setJobs] = useState<AnalyzeJob[]>([]);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null); // { ready, downloading, files, name }
   const [modelProgress, setModelProgress] = useState<ModelProgress | null>(null); // { progress, label } during download
@@ -412,11 +413,19 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
   );
 
   // Persist the user-authored layer (personal note + manual tags), distinct from
-  // the AI fields so it survives an analysis regeneration.
+  // the AI fields so it survives an analysis regeneration. Routed through the
+  // ShelfyClient seam (P1-06): `PATCH /posts/{key}` on the web, the same IPC
+  // channel on the desktop. The post the write returns suits an optimistic
+  // caller's rollback, but every caller here already manages its own override
+  // state, so the result is discarded.
   const updatePostUserContent = useCallback(
-    (id: string, fields: { note?: string | null; manualTags?: string[] | null }): Promise<void> =>
-      window.electronAPI.updatePostUserContent(id, fields),
-    [],
+    async (
+      id: string,
+      fields: { note?: string | null; manualTags?: string[] | null },
+    ): Promise<void> => {
+      await client.updatePost(id, { userNote: fields.note, userTags: fields.manualTags });
+    },
+    [client],
   );
 
   // Delete the AI-generated description for one or more posts (tags kept).

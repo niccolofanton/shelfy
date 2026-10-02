@@ -1,21 +1,23 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useT } from '../i18n';
 import { useShelfy } from '../api/ShelfyProvider';
-import type { CreateCollectionOpts, DeleteCollectionResult } from '../../types/electron-api';
+import type { CollectionDeleteResult } from '../api/ShelfyClient';
 
 export interface UseCollections {
   collections: Shelfy.Collection[];
   error: string | null;
   reload: () => Promise<void>;
-  create: (name: string, color: string, opts?: CreateCollectionOpts) => Promise<Shelfy.Collection>;
-  remove: (id: number, opts?: { deletePosts?: boolean }) => Promise<DeleteCollectionResult>;
+  create: (name: string, color: string) => Promise<Shelfy.Collection>;
+  remove: (id: number, opts?: { deletePosts?: boolean }) => Promise<CollectionDeleteResult>;
   rename: (id: number, fields: { name?: string; color?: string }) => Promise<void>;
 }
 
 // Loads and manages the user's custom sources ("collections"). Kept in App so
 // the Sidebar (which lists them) and the Gallery (which assigns posts to them)
-// share a single, refreshable source of truth. The list comes through the
-// ShelfyClient; the edits are desktop-only for now (capability `libraryEdit`).
+// share a single, refreshable source of truth. Every operation goes through
+// the ShelfyClient seam (P1-06), so it works on both clients; `create` dropped
+// the platform-linking options no caller ever passed (`CreateCollectionOpts`:
+// that auto-link flow writes through its own IPC call directly).
 export function useCollections(): UseCollections {
   const t = useT('collectionModal');
   const client = useShelfy();
@@ -42,33 +44,29 @@ export function useCollections(): UseCollections {
   }, [reload]);
 
   const create = useCallback(
-    async (
-      name: string,
-      color: string,
-      opts: CreateCollectionOpts = {},
-    ): Promise<Shelfy.Collection> => {
-      const created = await window.electronAPI.createCollection(name, color, opts);
+    async (name: string, color: string): Promise<Shelfy.Collection> => {
+      const created = await client.createCollection(name, color);
       await reload();
       return created;
     },
-    [reload],
+    [client, reload],
   );
 
   const remove = useCallback(
-    async (id: number, opts: { deletePosts?: boolean } = {}): Promise<DeleteCollectionResult> => {
-      const res = await window.electronAPI.deleteCollection(id, opts);
+    async (id: number, opts: { deletePosts?: boolean } = {}): Promise<CollectionDeleteResult> => {
+      const res = await client.deleteCollection(id, opts);
       await reload();
       return res;
     },
-    [reload],
+    [client, reload],
   );
 
   const rename = useCallback(
     async (id: number, fields: { name?: string; color?: string }): Promise<void> => {
-      await window.electronAPI.updateCollection(id, fields);
+      await client.updateCollection(id, fields);
       await reload();
     },
-    [reload],
+    [client, reload],
   );
 
   return { collections, error, reload, create, remove, rename };

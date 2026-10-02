@@ -110,10 +110,12 @@ export default {
     addTo: 'Aggiungi a',
     noSources: 'Nessuna source. Creane una qui sotto.',
     createNewSource: 'Crea nuova source',
+    removeFromSource: 'Rimuovi da questa source',
 
     // ── Actions menu ───────────────────────────────────────────────────────
     openFile: 'Apri file',
     openOriginal: 'Apri originale',
+    downloadOriginal: 'Scarica originale',
     noDownloadableFiles: 'Questo post non ha file scaricabili',
     downloadFilesTitle: 'Scarica i file di questo post in locale',
     nothingToDownload: 'Niente da scaricare',
@@ -250,10 +252,12 @@ export default {
     addTo: 'Add to',
     noSources: 'No sources. Create one below.',
     createNewSource: 'Create new source',
+    removeFromSource: 'Remove from this source',
 
     // ── Actions menu ───────────────────────────────────────────────────────
     openFile: 'Open file',
     openOriginal: 'Open original',
+    downloadOriginal: 'Download original',
     noDownloadableFiles: 'This post has no downloadable files',
     downloadFilesTitle: 'Download this post’s files locally',
     nothingToDownload: 'Nothing to download',
