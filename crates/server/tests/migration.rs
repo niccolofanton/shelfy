@@ -1417,7 +1417,8 @@ async fn an_install_waits_while_an_operator_holds_the_library_locked() {
     );
 
     // An install queued for an uploaded bundle finds the lock: its try ends
-    // `user_locked`, a transient error, and the job waits in the queue.
+    // `user_locked`, a transient error, and the job goes back to the queue
+    // without using a try, held until the operator is likely done (F4).
     shelfy_core::db::unlock_library(&t.data_dir().users_dir(), &owner_id).unwrap();
     let uploaded = upload_bundle(&origin, &token, &desktop).await;
     shelfy_core::db::lock_library(&t.data_dir().users_dir(), &owner_id, "restore").unwrap();
@@ -1432,11 +1433,25 @@ async fn an_install_waits_while_an_operator_holds_the_library_locked() {
     .await
     .unwrap()
     .job;
-    let job: JobRow = t
-        .wait_job(&owner_id, job.id, |job| job.error_code.is_some())
-        .await;
-    assert_eq!(job.state, JobState::Queued, "{job:?}");
-    assert_eq!(job.error_code.as_deref(), Some("user_locked"));
+    // The try ends at once and puts the job back for later.
+    let mut tried: Option<JobRow> = None;
+    for _ in 0..600 {
+        let row = t
+            .state
+            .jobs()
+            .get(&owner_id, job.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!row.state.is_final(), "the locked install ended: {row:?}");
+        if row.state == JobState::Queued && row.run_at > job.run_at + 30_000 {
+            tried = Some(row);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let job = tried.expect("the install was tried and put back");
+    assert_eq!(job.attempts, 0, "no try used: {job:?}");
     let posts: i64 = Connection::open(t.data_dir().library_db(&owner_id))
         .unwrap()
         .query_row("SELECT count(*) FROM posts", [], |r| r.get(0))
