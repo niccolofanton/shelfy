@@ -95,7 +95,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-03 | Library writes, folders, selector, stats, ETags | done; the independent review found no critical or high issue, 1 medium (fixed in P1-05) and 6 low (fixed in F6) | `web/p1-03-writes` (cde994f…232539f) |
 | P1-04 | Client seam: routes, SSE client, error boundary, error codes | done | `web/p1-04-client-seam` (4f16f8e…b4afd04) |
 | P1-10 | Merge rules in the core and golden parity | done | `web/p1-10-merge` (ab6efbd, 2364d64) |
-| P1-05 | Search and filters complete, search-eval gate, `admin synth`/`bench` | running | `web/p1-05-search` |
+| P1-05 | Search and filters complete, search-eval gate, `admin synth`/`bench` | done | `web/p1-05-search` (d5e5df9…6cb1eef) |
 | P1-15 | Metrics, log redaction, rate limits | done | `web/p1-15-observability` (8ef7557…3ce52ee) |
 | P1-17 | Account API, API tokens, device-code flow | done | `web/p1-17-account` (47bbab0…64b9241) |
 | P1-02 | Responsive shell and a minimal web app manifest | running (Sonnet) | `web/p1-02-responsive` |
@@ -153,6 +153,10 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P1-11 | Call `jobs::usage::enqueue` after a purge. | P1-17 |
 | P2 | Mint pairing tokens with `auth::api_tokens::mint` (kind `extension`, a new `Via`). Add the extension routes to `TOKEN_ROUTES`, set `extension: true` in `GET /me`, and use the `TokenUser<scopes::…>` extractors. | P1-17 |
 | P4 | With `overwrite_ai` (desktop JSON import), dedupe keys within a batch before calling `upsert_batch`: the desktop `bulkUpsert` is not idempotent on a key that repeats in one overwriting batch, and the port keeps desktop parity (F6). | F6 |
+| P1-08 | Synthetic libraries: `admin synth --email … --posts 6000\|20000` (deterministic for a seed; run it with the server stopped). Posts carry no remote URLs, and about a third have no stored cover. | P1-05 |
+| P1-11 | The strict selector (review M1) has landed. Bulk trash must drop each post's rows from both search indexes (`index::remove_post` does both), and restore must reindex both. `index::verify` checks both. | P1-05 |
+| P1-14 | The count pill and `includeTotal` share one cache entry. There is no facet-values endpoint for category, contentType or aiStatus; assume it waits for P3. | P1-05 |
+| P1-26 | `just shelfy-admin bench --user <owner id> [--requests 1000] [--strict]` reads only and prints aggregates, with rate limits off; run it at a quiet time. The first request after the deploy pays the library v2 migration (the trigram infix index), about 0.4 s for 6k posts. | P1-05 |
 | P1-21 | The CSP blocks the inline `<style>` in `src/views/Browser.tsx`, a desktop-only view. | P1-09 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
 
