@@ -11,6 +11,7 @@ import tseslint from 'typescript-eslint';
  * The codebase spans several runtimes, so rules are scoped per area:
  *  - electron/**        main process + webview scripts (CommonJS .js / ESM .ts, Node + browser)
  *  - src/**             React renderer (ESM, browser)
+ *  - web/**             web app: the renderer in the browser, HTTP client (ESM, browser)
  *  - scripts/*.cjs|mjs|ts  build/eval tooling (Node)
  *  - tests/**           Vitest (jsdom)
  *  - e2e/**             Playwright (handled by tsc for types)
@@ -32,6 +33,7 @@ export default tseslint.config(
       'dist/**',
       'dist-electron/**',
       'extension/dist/**',
+      'web/dist/**',
       'release/**',
       'out/**',
       'coverage/**',
@@ -116,9 +118,9 @@ export default tseslint.config(
     languageOptions: { sourceType: 'commonjs' },
   },
 
-  // React renderer
+  // React renderer, and the web app that hosts it in the browser
   {
-    files: ['src/**/*.{js,jsx,ts,tsx}'],
+    files: ['src/**/*.{js,jsx,ts,tsx}', 'web/src/**/*.{ts,tsx}'],
     plugins: { react, 'react-hooks': reactHooks },
     languageOptions: {
       ecmaVersion: 2023,
@@ -157,6 +159,7 @@ export default tseslint.config(
       'build/**/*.{mjs,ts}',
       '__mocks__/**/*.ts',
       '*.config.{js,ts}',
+      'web/*.config.ts',
       'eslint.config.{js,ts}',
     ],
     languageOptions: {
@@ -194,7 +197,7 @@ export default tseslint.config(
 
   // Vitest unit tests
   {
-    files: ['tests/**/*.{js,jsx,ts,tsx}'],
+    files: ['tests/**/*.{js,jsx,ts,tsx}', 'web/tests/**/*.{ts,tsx}'],
     plugins: { react, 'react-hooks': reactHooks },
     languageOptions: {
       ecmaVersion: 2023,

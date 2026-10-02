@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "useDefineForClassFields": true,
+    "paths": { "@ui/*": ["./src/*"] }
+  },
+  "include": ["web/src/**/*.ts", "web/src/**/*.tsx", "types/**/*.d.ts"]
+}

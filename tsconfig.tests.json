@@ -5,7 +5,15 @@
     "moduleResolution": "Bundler",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["node", "vitest/globals", "@testing-library/jest-dom", "vite/client"]
+    "types": ["node", "vitest/globals", "@testing-library/jest-dom", "vite/client"],
+    "paths": { "@ui/*": ["./src/*"] }
   },
-  "include": ["tests/**/*.ts", "tests/**/*.tsx", "__mocks__/**/*.ts", "types/**/*.d.ts"]
+  "include": [
+    "tests/**/*.ts",
+    "tests/**/*.tsx",
+    "web/tests/**/*.ts",
+    "web/tests/**/*.tsx",
+    "__mocks__/**/*.ts",
+    "types/**/*.d.ts"
+  ]
 }
