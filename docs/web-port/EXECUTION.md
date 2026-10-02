@@ -52,7 +52,11 @@ These owner decisions override the plan where they conflict.
 | T11 | Read API and generated TS client | T4, T7 | todo | |
 | T12 | SPA slice behind `ShelfyClient` | T10, T11 | todo | |
 
-### P1–P6
+### P1 — Library on the web
+
+27 tasks in 13 waves: [phases/P1.md](phases/P1.md). Starts when the P0 tasks it needs are integrated.
+
+### P2–P6
 
 Each phase is broken down into tasks when the previous one is close to done.
 
