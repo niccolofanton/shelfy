@@ -36,7 +36,7 @@ validated at start: a bad one stops the process with a message.
 | `SHELFY_DATA_DIR` | `/data/shelfy` | Data directory (§2.5). `serve` creates `control/` and `users/` (mode 0750) if missing |
 | `SHELFY_LISTEN_ADDR` | `0.0.0.0:8080` | API listener; the edge nginx is its only client |
 | `SHELFY_METRICS_ADDR` | `0.0.0.0:9464` | Prometheus listener (`GET /metrics`). Never proxied: publish it on the internal network only. Must not share the API port |
-| `SHELFY_PUBLIC_URL` | `http://localhost:8080` | Public origin, without a path. Links the server hands out start with it (`/login/magic#<token>`), and every state-changing request without an `Authorization` header must send it as its `Origin` (CSRF check); later also the passkey RP ID. Use https unless the host is localhost: the session cookie is `Secure` |
+| `SHELFY_PUBLIC_URL` | `http://localhost:8080` | Public origin, without a path. Links the server hands out start with it (`/login/magic#<token>`), and every state-changing request without an `Authorization` header must send it as its `Origin` (CSRF check). It is also the passkey relying party: the RP ID is its host and the only accepted origin is the URL itself, so changing the host orphans every registered passkey. Use https unless the host is localhost: the session cookie is `Secure`, and browsers offer passkeys in secure contexts only (an IP address or plain http elsewhere turns passkeys off) |
 | `SHELFY_TRUSTED_PROXIES` | none | Proxies whose `CF-Connecting-IP` header names the client, as CIDR blocks separated by commas: on the VPS, the Docker network of the edge nginx. Requests from any other peer are keyed on their TCP address (sign-in rate limits; IPv6 clients by /64). Empty: the header is ignored, and behind a proxy every client shares the proxy's budget |
 | `SHELFY_LOG_FORMAT` | `json` | `json` (one object per line, for Docker's `json-file`) or `text` |
 | `RUST_LOG` | `info` | Log filter (`tracing` env-filter syntax); an invalid filter stops the start |
@@ -73,6 +73,19 @@ curl -i -X POST "$SHELFY_PUBLIC_URL/api/v1/auth/magic-links/redeem" \
   -H 'Content-Type: application/json' -H "Origin: $SHELFY_PUBLIC_URL" -H 'X-Shelfy-Client: web' \
   -d "{\"token\":\"$TOKEN\"}"
 ```
+
+Signed in, register a passkey within 5 minutes of the sign-in (the web app's Settings, from
+P1-20; the API is `POST /api/v1/me/passkeys/start` then `POST /api/v1/me/passkeys`): from then
+on the passkey signs in without a link or an email. Adding or removing a passkey, like other
+sensitive actions, needs a sign-in or a re-authentication from the last 5 minutes. The web app
+re-authenticates with a passkey or, when email is on, an emailed link; otherwise mint a
+re-authentication link and open it in the browser that is signed in:
+
+```sh
+shelfy-server admin login-link --email you@example.com --purpose reauth
+```
+
+It prints `<SHELFY_PUBLIC_URL>/login/reauth#<token>`, valid 15 minutes, once.
 
 Every route needs a signed-in session unless it is listed as public (or open to API tokens) in
 `crates/server/src/routes/mod.rs`.
