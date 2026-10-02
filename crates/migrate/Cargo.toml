@@ -9,13 +9,21 @@ publish.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-clap.workspace = true
+base64.workspace = true
+clap = { workspace = true, features = ["env"] }
+# `backup`: a library with a `-wal` file is copied with the online backup API before
+# `run` reads it (OI-8).
+rusqlite = { workspace = true, features = ["backup"] }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 shelfy-core = { path = "../core" }
+# The media type allowlist and digests, so the bundle names its objects as the server does.
+shelfy-media = { path = "../media" }
+thiserror.workspace = true
+ureq.workspace = true
 
 [dev-dependencies]
-rusqlite.workspace = true
 tempfile.workspace = true
 
 [lints]

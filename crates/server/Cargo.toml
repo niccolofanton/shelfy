@@ -46,8 +46,12 @@ utoipa-axum.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
+# Decodable synthetic images for the migration tests.
+image = { workspace = true, features = ["jpeg", "png"] }
 jsonschema.workspace = true
 proptest.workspace = true
+# The migration CLI, run end to end against the server in the migration tests.
+shelfy-migrate = { path = "../migrate" }
 tempfile.workspace = true
 # `test-util`: paused time for the SSE heartbeat test.
 tokio = { workspace = true, features = ["io-util", "test-util"] }
