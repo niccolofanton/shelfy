@@ -16,6 +16,7 @@ import {
   Bookmark,
   FolderPlus,
   Menu,
+  Trash2,
   X,
 } from 'lucide-react';
 import PinterestIcon from './PinterestIcon';
@@ -24,6 +25,7 @@ import ActivityCenter from './ActivityCenter';
 import FeedbackModal from './FeedbackModal';
 import { useT } from '../i18n';
 import { useCapabilities } from '../api/ShelfyProvider';
+import { PLATFORM_SOURCES, collectionsForPlatform, customCollections } from '../lib/sourceList';
 
 // Translator returned by useT — namespaced key + optional interpolation vars.
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
@@ -42,6 +44,7 @@ type NavView =
   | 'aiweb'
   | 'aisearch'
   | 'settings'
+  | 'trash'
   | 'browser';
 
 // The three browser-backed platforms that own a sidebar badge.
@@ -77,14 +80,6 @@ interface ActiveSource {
 interface AiTab {
   id: NavView;
   key: string;
-}
-
-// One platform-stats row descriptor (verbatim label or localized via `key`).
-interface PlatformStat {
-  id: string;
-  label?: string;
-  key?: string;
-  Icon: IconComponent;
 }
 
 // One social browser sub-tab descriptor.
@@ -144,16 +139,6 @@ const AI_TABS: AiTab[] = [
   { id: 'aiweb', key: 'aiweb' },
   { id: 'aisearch', key: 'aisearch' },
   { id: 'aitags', key: 'aitags' },
-];
-
-// Brand icons (lucide) instead of coloured dots. Neutral tint: they inherit the
-// row's text colour (grey idle, white when active) like the other nav icons.
-// Brand names render verbatim; only the 'web' label is localized via `key`.
-const PLATFORM_STATS: PlatformStat[] = [
-  { id: 'instagram', label: 'Instagram', Icon: Instagram },
-  { id: 'twitter', label: 'X / Twitter', Icon: Twitter },
-  { id: 'pinterest', label: 'Pinterest', Icon: PinterestIcon },
-  { id: 'web', key: 'web', Icon: Globe },
 ];
 
 const BROWSER_TABS: BrowserTab[] = [
@@ -671,13 +656,13 @@ function Sidebar({
                           data-testid="source-all-children"
                           className="flex flex-col gap-0.5 pl-3"
                         >
-                          {PLATFORM_STATS.map(({ id, label, key, Icon: PIcon }) => {
+                          {PLATFORM_SOURCES.map(({ id, label, key, Icon: PIcon }) => {
                             // Brand rows carry a verbatim `label`; the localized 'web' row
                             // resolves its label from a `sidebar` i18n key at render.
                             const platformLabel = key ? t(key) : label;
                             // Folder-tags belonging to this platform nest underneath it (e.g.
                             // Instagram saved folders), turning the platform row into a dropdown.
-                            const children = collections.filter((c) => c.platform === id);
+                            const children = collectionsForPlatform(collections, id);
                             const platformOpen = expandedPlatforms[id] !== false; // default expanded
                             return (
                               <React.Fragment key={id}>
@@ -751,15 +736,13 @@ function Sidebar({
 
                           {/* Custom sources: any collection not nested under a shown
                         platform row. Covers both platform-less folders (`!platform`)
-                        and orphans whose `platform` is a value outside PLATFORM_STATS
+                        and orphans whose `platform` is a value outside PLATFORM_SOURCES
                         (legacy/unknown ids), so no collection is ever invisible. */}
-                          {collections.some(
-                            (c) => !PLATFORM_STATS.some((p) => p.id === c.platform),
-                          ) && (
+                          {customCollections(collections).length > 0 && (
                             <div data-testid="custom-sources" className="mt-1.5">
-                              {collections
-                                .filter((c) => !PLATFORM_STATS.some((p) => p.id === c.platform))
-                                .map((c, i) => renderCollectionRow(c, i))}
+                              {customCollections(collections).map((c, i) =>
+                                renderCollectionRow(c, i),
+                              )}
                             </div>
                           )}
 
@@ -817,6 +800,25 @@ function Sidebar({
                           <span aria-hidden className="w-5 ml-1 shrink-0" />
                         </button>
                       )}
+
+                      {/* Trash — a web route (P1-11/P1-14); shown unconditionally, unlike
+                        Downloads/Connections/Websites/AI which wait on a capability. */}
+                      <button
+                        data-testid="nav-trash"
+                        aria-current={currentView === 'trash' ? 'page' : undefined}
+                        onClick={() => onNavigate('trash')}
+                        className={[
+                          'u-press group relative w-full flex items-center pl-9 pr-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
+                          currentView === 'trash'
+                            ? 'bg-[#1e1e1e] text-white'
+                            : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                        ].join(' ')}
+                      >
+                        {currentView === 'trash' && accentBar()}
+                        <Trash2 size={15} className="shrink-0 mr-2.5" />
+                        <span className="flex-1 truncate">{t('trash')}</span>
+                        <span aria-hidden className="w-5 ml-1 shrink-0" />
+                      </button>
                     </div>
                   )}
                 </div>
