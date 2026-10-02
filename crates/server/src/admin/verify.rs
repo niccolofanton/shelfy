@@ -9,11 +9,13 @@
 //! - **schema:** a Shelfy database of the right kind, at a version this build
 //!   runs on (an older one is upgraded when it is next opened);
 //! - **row counts** compared with the live database, table by table: a
-//!   difference larger than `--max-drift` percent of the larger count fails.
-//!   The default, 0, wants equal counts (right after `install-snapshots`);
-//!   the drill passes 10, since the live data moved on after the snapshot.
-//!   Volatile tables (sessions, jobs, the audit log, notifications, caches)
-//!   change by the minute: they are reported, never compared;
+//!   difference larger than `--max-drift` percent of the larger count (and
+//!   larger than [`MIN_DRIFT_ROWS`], so a small table may move a little)
+//!   fails. The default, 0, wants equal counts (right after
+//!   `install-snapshots`); the drill passes 10, since the live data moved on
+//!   after the snapshot. Volatile tables (sessions, jobs, the audit log,
+//!   notifications, caches) change by the minute: they are reported, never
+//!   compared;
 //! - **media:** every object that a library's posts and captures reference
 //!   resolves to a file of the recorded size in the live store
 //!   (`users/<id>/media/`), with its `g480` rendition when it has one.
@@ -63,6 +65,11 @@ pub const VOLATILE_LIBRARY_TABLES: &[&str] = &["ai_cache", "notifications", "syn
 /// How many problems of one kind a report lists before it summarizes.
 const LISTED: usize = 5;
 
+/// The smallest difference in rows that `--max-drift` allows when it allows
+/// any: a table of a few rows may gain or lose this many between the
+/// snapshot and the check without failing the drill.
+pub const MIN_DRIFT_ROWS: i64 = 5;
+
 /// Arguments of `admin verify`.
 #[derive(Debug, Args)]
 pub struct VerifyArgs {
@@ -77,8 +84,8 @@ pub struct VerifyArgs {
     pub users: Vec<String>,
 
     /// Largest accepted difference between a table's row count in a copy and
-    /// in the live database, in percent of the larger count. 0 wants equal
-    /// counts.
+    /// in the live database, in percent of the larger count, and never less
+    /// than 5 rows. 0 wants equal counts.
     #[arg(
         long,
         value_name = "PERCENT",
@@ -535,11 +542,15 @@ fn check_database(
 }
 
 /// Whether `a` and `b` differ by at most `percent` of the larger one (rounded
-/// up, so a small table may move by one row once any drift is allowed).
+/// up), or by at most [`MIN_DRIFT_ROWS`] once any drift is allowed: a small
+/// table may move by a few rows. A `percent` of 0 wants them equal.
 #[must_use]
 pub fn within_drift(a: i64, b: i64, percent: u8) -> bool {
+    if percent == 0 {
+        return a == b;
+    }
     let larger = a.max(b).max(0);
-    let allowed = (larger * i64::from(percent) + 99) / 100;
+    let allowed = ((larger * i64::from(percent) + 99) / 100).max(MIN_DRIFT_ROWS);
     (a - b).abs() <= allowed
 }
 
@@ -764,9 +775,21 @@ mod tests {
         assert!(within_drift(6000, 6600, 10));
         assert!(!within_drift(6000, 6700, 10));
         assert!(within_drift(6700, 6100, 10), "either direction");
-        assert!(within_drift(2, 3, 10), "a small table may move by one row");
-        assert!(!within_drift(1, 3, 10));
         assert!(within_drift(0, 0, 0));
+        assert!(!within_drift(1, 3, 0), "no drift wants equal counts");
+    }
+
+    #[test]
+    fn drift_never_fails_a_small_table_for_a_few_rows() {
+        // Review of P1-12, L5: 10 % of 3 rows is one row, so a drill failed
+        // when the user added a couple of collections after the snapshot.
+        assert!(within_drift(3, 7, 10));
+        assert!(within_drift(0, 5, 10));
+        assert!(within_drift(1, 3, 1));
+        assert!(!within_drift(0, 6, 10));
+        assert!(!within_drift(10, 16, 10));
+        assert!(within_drift(100, 110, 10), "10 % of 110 is 11 rows");
+        assert!(!within_drift(100, 114, 10), "10 % of 114 is 12 rows");
     }
 
     fn account(id: &str, status: &str) -> Account {
