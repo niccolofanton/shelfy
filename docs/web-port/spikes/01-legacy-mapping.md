@@ -300,6 +300,17 @@ Taken while building the reader. They follow the plan, and the points the plan l
 | OI-11 | T9 | **19 orphan files (987 MiB, mostly 7 videos) are referenced by no row.** They are not migrated. `plan` counts them per directory; listing them, so the owner can delete them on the desktop, is left to `run`. |
 | OI-12 | desktop | **Site deletion leaks capture-v2 files.** `getWebSiteFilePaths` and `snapshotPagePaths` (`electron/db.ts`) remove only `screenshotPath`, `chunks` and the `post_media` paths, so bands, sections, footers, og images, favicons and scroll videos stay on disk (12 orphan site files here). `posts.video_path` is not cleared when its file disappears. Both are outside the port; the migration handles both cases. |
 
+**Status after T9 (migration v0).** What `shelfy-migrate run` and the install do today, and what P1-19 still owns:
+
+| # | T9 | Left for P1-19 |
+|---|---|---|
+| OI-6 | A missing kept video means "video not kept": `video_object_id` stays NULL and the run counts it (`repairs.videosMissing`). A still stored as a video slide's file becomes that slide's poster, never a kept video. | — |
+| OI-7 | Nothing is fetched. Each post records what it needs: `archive_state` (`client` for an expired Instagram cover, `pending` or `partial` otherwise) and `cover_url_expires_at` from `oe`. The install report counts valid and expired Instagram covers, X and Pinterest covers, and pending image slides. | The archive drain (valid IG covers first) and the extension `refresh_media` tasks (P2). |
+| OI-8 | A library with a `-wal` or `-journal` file is copied with the online backup API into the work directory, and `run` reads the copy. | Refusing while the desktop app writes (the plan's "close Shelfy"), if wanted. |
+| OI-9 | Unchanged: keys come from the legacy reader. | The private-account sample (O1). |
+| OI-10 | Settings are not read. The install keeps the web library's own settings. | Language and asset preferences from the desktop. |
+| OI-11 | `run --list-orphans` prints the orphan files relative to `assets/`, for the owner only. | — |
+
 ## Deviations and assumptions
 
 - **CLI.** The dry run follows the task:
