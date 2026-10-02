@@ -4,15 +4,16 @@
 //! data directory; SQLite's WAL mode and busy timeout make that safe.
 //!
 //! Output rules: results go to stdout, diagnostics to stderr, nothing to the
-//! logs. Secrets are never printed, with one exception by design: `invite`
-//! and `login-link` print their one-time link, the only copy of the token
-//! (the database keeps its SHA-256).
+//! logs. Secrets are never printed, with exceptions by design: `invite` and
+//! `login-link` print their one-time link, and `migrate-token` its API token,
+//! the only copy of the secret (the database keeps its SHA-256).
 //!
 //! This file is the command dispatch: a new command adds its module and one
 //! line here (P1-05 `synth`/`bench`, P1-12 `verify`/`user`/`install-snapshots`).
 
 pub mod invite;
 pub mod login_link;
+pub mod migrate_token;
 pub mod owner;
 pub mod snapshot;
 
@@ -50,6 +51,8 @@ pub enum AdminCommand {
     /// Copy the control database and the user libraries with SQLite's online
     /// backup, while the server runs.
     Snapshot(snapshot::SnapshotArgs),
+    /// Print a `migrate`-scoped API token (7 days) for `shelfy-migrate run`.
+    MigrateToken(migrate_token::MigrateTokenArgs),
 }
 
 /// Runs an admin command, writing its output to stdout.
@@ -66,6 +69,7 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
         AdminCommand::Invite(args) => invite::run(&data, &args, &mut out),
         AdminCommand::LoginLink(args) => login_link::run(&data, &args, &mut out),
         AdminCommand::Snapshot(args) => snapshot::run(&data, &args, &mut out),
+        AdminCommand::MigrateToken(args) => migrate_token::run(&data, &args, &mut out),
     }?;
     out.flush()?;
     Ok(())

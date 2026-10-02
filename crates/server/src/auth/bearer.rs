@@ -1,12 +1,15 @@
 //! API tokens (plan §2.9 Auth, §2.11 device tokens): bearer requests from the
 //! extension, the iOS Shortcut and the migration CLI.
 //!
-//! **P1-17 mints them.** This module verifies tokens; nothing creates them
-//! yet. P1-17 adds minting (shown once), the pairing and device-code flows,
-//! `last_used_at` and revocation.
+//! **P1-17 mints them.** This module verifies tokens. The one way to mint a
+//! token today is `shelfy-server admin migrate-token` (T9): a `migrate`
+//! token for `shelfy-migrate`, valid 7 days. P1-17 adds minting from the
+//! account (shown once), the pairing and device-code flows, `last_used_at`
+//! and revocation.
 //!
 //! A request sends `Authorization: Bearer shx_<43 characters>`; the SHA-256
-//! of that whole value must match an unrevoked token of an active user. A
+//! of that whole value must match an unrevoked, unexpired token of an active
+//! user (`api_tokens.expires_at`, control schema v2). A
 //! route accepts tokens only when the access policy says so
 //! ([`crate::routes::TOKEN_ROUTES`], with the scope it needs): the gate
 //! ([`super::access::gate`]) then verifies the token, checks the scope and
@@ -30,6 +33,7 @@ use axum::response::{IntoResponse, Response};
 use crate::control::api_tokens;
 use crate::current_user::CurrentUser;
 use crate::error::{ApiError, ErrorCode};
+use crate::ids::now_ms;
 use crate::state::{AppState, blocking};
 use crate::tokens::{hash_token, is_token_shaped};
 
@@ -154,7 +158,7 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 /// The token of the request's `Authorization` header, if it is a well-formed
-/// bearer token of an active user and not revoked.
+/// bearer token of an active user, not revoked and not expired.
 ///
 /// # Errors
 ///
@@ -168,8 +172,10 @@ pub async fn verify(
     };
     let token_hash = hash_token(token);
     let control = Arc::clone(state.control());
+    let now = now_ms();
     let found =
-        blocking(move || control.read(|conn| api_tokens::find_active(conn, &token_hash))).await?;
+        blocking(move || control.read(|conn| api_tokens::find_active(conn, &token_hash, now)))
+            .await?;
     Ok(found.map(|token| TokenPrincipal {
         user_id: token.user_id.into(),
         scopes: token

@@ -16,6 +16,8 @@ pub const SESSION_CREATE: &str = "session.create";
 /// Sessions ended. `meta`: `scope` (`current` for a sign-out, `all` for a
 /// sign-out everywhere) and `count`.
 pub const SESSION_DELETE: &str = "session.delete";
+/// An API token was minted. `meta`: `via` (`cli`) and `kind` (`migrate`).
+pub const API_TOKEN_CREATE: &str = "api_token.create";
 
 /// One audit row.
 #[derive(Clone, Copy, Debug)]
