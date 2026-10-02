@@ -7,7 +7,7 @@ Live status of [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). The plan is the
 - **Integration branch:** `web/foundations`, branched from `dev`. Every task lands on it as a fast-forward and is pushed; CI must be green.
 - **Lanes:** one task per lane. A lane is a Claude Code subagent in its own git worktree, on branch `web/<task>-<slug>`, started from the tip of `web/foundations`.
 - **Lead:** one session plans the waves, reviews each lane (diff, checks, and an independent reviewer for substantive tasks), integrates it and updates this file.
-- **Concurrency:** a new lane starts only while 8 GB of local disk stay free. Since 7ba4ea2 (line tables only in dev builds), a Rust lane takes about 2–3 GB plus 1.3 GB of `node_modules`.
+- **Concurrency:** a new lane starts only while 8 GB of local disk stay free. Even with line tables only in dev builds (7ba4ea2), a Rust lane's target dir reaches 3.5–6 GB, 1.3–2.5 GB of it incremental.
 
 ## Lane rules
 
@@ -58,7 +58,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | T6 | SPIKE-2 and SPIKE-10 on the osn VPS (E1) | — | done | `web/t6-spikes-vps` (861e361, 5e3b64f) |
 | T7 | `crates/server`: axum app, config, health, metrics, errors, OpenAPI, admin CLI | T3 | done | `web/t7-server` (f95b212…bfb0dbc) |
 | T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | done | `web/t8-media` (6dd9433…1ddb6d9) |
-| T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | running | `web/t9-migration` |
+| T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | done | `web/t9-migration` (db57b99…567fbf1) |
 | T10 | Owner auth v0: magic link, sessions, CSRF | T7 | done | `web/t10-auth` (c7d33ae…03a6cf8) |
 | T11 | Read API and generated TS client | T4, T7 | done | `web/t11-read-api` (fc1c3b7…9b0f643) |
 | T12 | SPA slice behind `ShelfyClient` | T10, T11 | done | `web/t12-spa` (0a54f97…a1315a0) |
@@ -100,6 +100,6 @@ Each phase is broken down into tasks when the previous one is close to done.
 | # | Action | Needed by | Status |
 |---|---|---|---|
 | O1 | Load the unpacked extension and run the SPIKE-3 comparison on your own accounts: steps in [spikes/03-extension-capture.md](spikes/03-extension-capture.md) §5 | P2 | ready |
-| O2 | Appendix B prerequisite: R2 bucket `osn-backups` with a scoped token for restic. DNS Edit is no longer needed: OpenTofu manages DNS records with the existing DNS-scoped token (osn `ebd2de8`) | backups (P1-23) | pending |
+| O2 | Appendix B prerequisite: R2 bucket `osn-backups` with a scoped token for restic. DNS Edit is no longer needed: OpenTofu manages DNS records with the existing DNS-scoped token (osn `ebd2de8`) | backups (P1-23) | done on 2026-10-02: the lead created the bucket (WEUR); the owner created the token (Object Read & Write, `osn-backups` only) and stored it with `just r2-backup-secrets`; `just r2-backup-check` passes (osn `1ce0abe`) |
 | O3 | Optional: fix Homebrew permissions so local tools such as mailpit can be installed | T10 | not needed: T10 writes sign-in emails to a dev mailbox (`SHELFY_DEV_MAILBOX`) |
-| O4 | Confirm Bot Fight Mode is off for `niccolofanton.dev` (Security → Bots). Our tokens cannot read zone settings, and with it on, the extension, Shortcut and CLI calls could be challenged | before P2 removes Access | pending |
+| O4 | Confirm Bot Fight Mode is off for `niccolofanton.dev` (Security → Bots). Our tokens cannot read zone settings, and with it on, the extension, Shortcut and CLI calls could be challenged | before P2 removes Access | done: the owner confirmed it is off (2026-10-02) |
