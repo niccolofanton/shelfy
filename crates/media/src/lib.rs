@@ -1,19 +1,18 @@
-//! Shelfy media pipeline.
+//! Shelfy media: each user's content-addressed store (CAS) and the image
+//! pipeline (plan D3, D4, §2.5, §2.13).
 //!
-//! It owns:
-//!
-//! - the content-addressed store (CAS) for each user's media files;
-//! - the image pipeline: decode, resize, WebP encoding and ThumbHash
-//!   placeholders;
-//! - the wrappers around the `ffmpeg` and `yt-dlp` subprocesses.
-//!
-//! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.4 and §2.13.
+//! | Module | Contents |
+//! |---|---|
+//! | [`digest`] | SHA-256 digests, the identity of every object |
+//! | [`kind`] | the media type allowlist and magic-byte sniffing |
+//! | [`name`] | object and rendition file names, the `variants` bitmask |
+//! | [`store`] | the per-user store: streaming ingest, atomic writes, dedupe |
 
-#[cfg(test)]
-mod tests {
-    /// Smoke test: the crate builds and its test harness runs.
-    #[test]
-    fn smoke() {
-        assert_eq!(env!("CARGO_PKG_NAME"), "shelfy-media");
-    }
-}
+pub mod digest;
+pub mod kind;
+pub mod name;
+pub mod store;
+
+pub use digest::Digest;
+pub use kind::MediaKind;
+pub use name::{ObjectName, Rendition, Variants};
