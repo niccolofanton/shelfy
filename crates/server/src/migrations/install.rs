@@ -295,6 +295,8 @@ async fn install_bundle(
                 SwapError::Busy => ApiError::new(ErrorCode::Unavailable)
                     .with_retry_after(5)
                     .with_detail("the web library stayed locked: retry the install"),
+                // An operator is restoring the library: retry after the unlock.
+                SwapError::Locked => ApiError::user_locked(),
                 other => ApiError::internal(other),
             })
         })

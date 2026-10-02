@@ -14,6 +14,10 @@
 //! `library.prev-<install id>.sqlite` next to it. Its settings and
 //! notifications are carried into the new library, since an empty library
 //! (no posts, no collections) may still have them.
+//!
+//! A library locked for maintenance (`admin user lock`, a restore) is never
+//! touched: the lock is checked before the live library is opened and again
+//! once the connection holds SQLite's shared lock, which a restore waits for.
 
 use std::fs;
 use std::path::Path;
@@ -21,7 +25,8 @@ use std::thread;
 use std::time::Duration;
 
 use rusqlite::backup::{Backup, StepResult};
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, ErrorCode, OpenFlags};
+use shelfy_core::db::is_library_file_locked;
 
 /// How long the swap waits for other connections to release a lock.
 const BUSY_RETRIES: u32 = 100;
@@ -36,6 +41,9 @@ pub enum SwapError {
     /// The live library stayed locked.
     #[error("the web library stayed locked")]
     Busy,
+    /// The live library is locked for maintenance (`admin user lock`).
+    #[error("the web library is locked for maintenance")]
+    Locked,
     /// The two databases have different page sizes.
     #[error("the bundle's page size differs from the web library's")]
     PageSize,
@@ -63,17 +71,27 @@ pub fn is_empty(conn: &Connection) -> rusqlite::Result<bool> {
 ///
 /// # Errors
 ///
-/// [`SwapError::NotEmpty`] when `live` has posts or collections;
+/// [`SwapError::Locked`] when `live` is locked for maintenance;
+/// [`SwapError::NotEmpty`] when it has posts or collections;
 /// [`SwapError::Busy`] when it stays locked; otherwise SQLite or I/O errors.
 /// On error `live` is unchanged.
 pub fn replace_library(new: &Path, live: &Path, previous: &Path) -> Result<(), SwapError> {
+    refuse_locked(live)?;
     // Read-write without CREATE: the live library exists (the caller opened it).
     let mut live_conn = Connection::open_with_flags(
         live,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
     live_conn.busy_timeout(Duration::from_secs(5))?;
-    if !is_empty(&live_conn)? {
+    let empty = is_empty(&live_conn).map_err(|err| match err.sqlite_error_code() {
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => SwapError::Busy,
+        _ => err.into(),
+    })?;
+    // The read holds SQLite's shared lock until this connection closes, and
+    // a restore takes the library only with an exclusive one: a lock taken
+    // since the check above is seen now, and a later one waits for the swap.
+    refuse_locked(live)?;
+    if !empty {
         return Err(SwapError::NotEmpty);
     }
 
@@ -117,6 +135,16 @@ pub fn replace_library(new: &Path, live: &Path, previous: &Path) -> Result<(), S
     Ok(())
 }
 
+/// [`SwapError::Locked`] when the library at `live` is locked for
+/// maintenance.
+fn refuse_locked(live: &Path) -> Result<(), SwapError> {
+    if is_library_file_locked(live)? {
+        Err(SwapError::Locked)
+    } else {
+        Ok(())
+    }
+}
+
 /// Copies every page of `source` into `target` in one step, retrying while a
 /// lock is held.
 fn copy_pages(source: &Connection, target: &mut Connection) -> Result<(), SwapError> {
@@ -132,7 +160,7 @@ fn copy_pages(source: &Connection, target: &mut Connection) -> Result<(), SwapEr
 
 #[cfg(test)]
 mod tests {
-    use shelfy_core::db::{DbError, UserDb, UserDbConfig};
+    use shelfy_core::db::{DbError, LOCK_FILE_NAME, UserDb, UserDbConfig};
     use shelfy_core::repo::Platform;
     use shelfy_core::repo::posts::{self, NewPost};
 
@@ -192,5 +220,33 @@ mod tests {
         // A library with posts is never replaced.
         let err = replace_library(&new_path, &live_path, &previous).unwrap_err();
         assert!(matches!(err, SwapError::NotEmpty), "{err}");
+    }
+
+    #[test]
+    fn a_library_locked_for_maintenance_is_never_replaced() {
+        // Review of P1-12, M3: the install of a migration wrote into a
+        // library that an operator had locked to restore it.
+        let dir = tempfile::tempdir().unwrap();
+        let live_path = dir.path().join("library.sqlite");
+        let new_path = dir.path().join("new.sqlite");
+        let previous = dir.path().join("library.prev-X.sqlite");
+        drop(UserDb::open(&live_path, &UserDbConfig::default()).unwrap());
+        let new = UserDb::open(&new_path, &UserDbConfig::default()).unwrap();
+        new.write(|tx| posts::insert(tx, &post("ig_1"), 1)).unwrap();
+        new.checkpoint().unwrap();
+        drop(new);
+
+        std::fs::write(dir.path().join(LOCK_FILE_NAME), "restore").unwrap();
+        let err = replace_library(&new_path, &live_path, &previous).unwrap_err();
+        assert!(matches!(err, SwapError::Locked), "{err}");
+        assert!(!previous.exists(), "nothing was copied");
+        let posts: i64 = Connection::open(&live_path)
+            .unwrap()
+            .query_row("SELECT count(*) FROM posts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(posts, 0, "the live library is untouched");
+
+        std::fs::remove_file(dir.path().join(LOCK_FILE_NAME)).unwrap();
+        replace_library(&new_path, &live_path, &previous).unwrap();
     }
 }
