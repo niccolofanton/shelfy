@@ -22,6 +22,7 @@ use shelfy_server::current_user::CurrentUser;
 use shelfy_server::error::ErrorCode;
 use shelfy_server::ids::{new_ulid, now_ms};
 use shelfy_server::routes::media::IMMUTABLE;
+use shelfy_server::security_headers::CONTENT_SECURITY_POLICY;
 use shelfy_server::tokens::{SecretToken, hash_token};
 use shelfy_server::{app, routes};
 use support::auth::{owner, sign_in, with_session};
@@ -118,9 +119,15 @@ fn assert_media_headers(response: &Response<Body>, etag: &str) {
         "private, max-age=31536000, immutable"
     );
     assert_eq!(h[header::ACCEPT_RANGES], "bytes");
-    assert_eq!(h[header::CONTENT_SECURITY_POLICY], "sandbox");
+    assert_eq!(h[header::CONTENT_SECURITY_POLICY], sandboxed_policy());
     assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
     assert_eq!(h["cross-origin-resource-policy"], "same-origin");
+}
+
+/// The policy of media answers: the app's (P1-09), then the route's
+/// `sandbox`.
+fn sandboxed_policy() -> String {
+    format!("{CONTENT_SECURITY_POLICY}; sandbox")
 }
 
 fn quoted(digest: &Digest) -> String {
@@ -388,7 +395,7 @@ async fn documents_are_attachments() {
     );
     assert_eq!(
         header_str(&response, &header::CONTENT_SECURITY_POLICY),
-        "sandbox"
+        sandboxed_policy()
     );
 }
 

@@ -35,6 +35,7 @@
 //! | [`events`] | the per-user realtime bus behind SSE: publish, replay, throttles |
 //! | [`jobs`] | the job system: scheduler, workers, job-kind registry, `Idempotency-Key` |
 //! | [`static_files`] | the web app's files: precompressed assets, `index.html` for client routes |
+//! | [`security_headers`] | the content security policy, HSTS and `nosniff` on every response |
 //!
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.2–§2.4 and §3.
 
@@ -56,6 +57,7 @@ pub mod mail;
 pub mod migrations;
 pub mod net;
 pub mod routes;
+pub mod security_headers;
 pub mod serve;
 pub mod state;
 pub mod static_files;

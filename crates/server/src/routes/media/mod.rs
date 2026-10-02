@@ -12,9 +12,11 @@
 //!   designates the same bytes;
 //! - a strong `ETag`: the digest for a stored object, the digest of the
 //!   rendition's own bytes for a rendition (it can be re-rendered);
-//! - `Content-Security-Policy: sandbox`, `X-Content-Type-Options: nosniff`
-//!   and `Cross-Origin-Resource-Policy: same-origin`; `Content-Disposition:
-//!   attachment` for anything that is not an image or a video (§7.1);
+//! - `Content-Security-Policy: sandbox` (the security headers layer puts the
+//!   app's policy before it, [`crate::security_headers`]),
+//!   `X-Content-Type-Options: nosniff` and `Cross-Origin-Resource-Policy:
+//!   same-origin`; `Content-Disposition: attachment` for anything that is not
+//!   an image or a video (§7.1);
 //! - `Accept-Ranges: bytes`. A single byte range is answered with 206 (videos
 //!   seek with it); `If-None-Match` gives 304 ([`preconditions`]).
 //!

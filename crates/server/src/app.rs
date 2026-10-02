@@ -4,31 +4,32 @@
 //!
 //! 1. [`observe`](crate::telemetry::http::observe): request id, `request`
 //!    span, response log line, HTTP metrics;
-//! 2. compression (gzip, brotli) of responses over 1 KiB, except images,
+//! 2. the security headers ([`security_headers`]): the content security
+//!    policy, HSTS on an https public URL, `nosniff`, on every response;
+//! 3. compression (gzip, brotli) of responses over 1 KiB, except images,
 //!    audio, video, fonts and event streams;
-//! 3. [`problem_fallback`](crate::error::problem_fallback): error responses
+//! 4. [`problem_fallback`](crate::error::problem_fallback): error responses
 //!    from any layer become problems;
-//! 4. panic catching: a panicking handler answers 500 `internal`;
-//! 5. the CSRF and Origin guard ([`auth::csrf`]): a state-changing request
+//! 5. panic catching: a panicking handler answers 500 `internal`;
+//! 6. the CSRF and Origin guard ([`auth::csrf`]): a state-changing request
 //!    without an `Authorization` header must come from the public origin, or
 //!    it answers 403 `csrf_failed`;
-//! 6. the access gate ([`auth::access`]), a route layer: deny by default.
+//! 7. the access gate ([`auth::access`]), a route layer: deny by default.
 //!    The route's access (a session unless [`routes::PUBLIC_ROUTES`] or
 //!    [`routes::TOKEN_ROUTES`] say otherwise) is checked, and the user put in
 //!    the request extensions and span, or the request answers 401;
-//! 7. on the routes of [`routes::IDEMPOTENT_ROUTES`], a route layer too: the
+//! 8. on the routes of [`routes::IDEMPOTENT_ROUTES`], a route layer too: the
 //!    `Idempotency-Key` middleware ([`jobs::idempotency`]), which replays the
 //!    stored response of a repeated request;
-//! 8. the route group's body limit and time limit ([`crate::limits`]);
-//! 9. the handler, which takes the user as an extractor.
+//! 9. the route group's body limit and time limit ([`crate::limits`]);
+//! 10. the handler, which takes the user as an extractor.
 //!
-//! A request that no route matches goes to the fallback, behind layers 1–5:
+//! A request that no route matches goes to the fallback, behind layers 1–6:
 //! the web app's files when `SHELFY_WEB_DIR` is set
 //! ([`static_files`](crate::static_files)), otherwise a 404 problem.
 //!
 //! The stack is applied after routing, so the route template is known to the
-//! logs and metrics. Rate limits (P1-15) and the security headers (P1-09)
-//! join here.
+//! logs and metrics. Rate limits (P1-15) join here.
 
 use axum::Router;
 use axum::middleware;
@@ -44,6 +45,7 @@ use crate::error::{self, ApiError};
 use crate::jobs;
 use crate::jobs::idempotency::Idempotency;
 use crate::routes;
+use crate::security_headers::{self, SecurityHeaders};
 use crate::state::AppState;
 use crate::telemetry;
 
@@ -97,10 +99,15 @@ pub fn build_with_access(
         Some(web) => router.fallback_service(web.service()),
         None => router.fallback(not_found),
     };
+    let security = SecurityHeaders::new(&state.config().public_url);
     router
         .layer(
             ServiceBuilder::new()
                 .layer(middleware::from_fn(telemetry::http::observe))
+                .layer(middleware::from_fn_with_state(
+                    security,
+                    security_headers::apply,
+                ))
                 .layer(compression)
                 .layer(middleware::from_fn(error::problem_fallback))
                 .layer(CatchPanicLayer::custom(error::panic_response))
