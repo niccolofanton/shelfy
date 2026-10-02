@@ -8,6 +8,15 @@
 // The desktop suite (playwright.config.ts at the repo root) reads only e2e/,
 // so `pnpm test:e2e` never runs these specs. P1-02 adds its viewports here;
 // P1-21 moves the suite onto deploy/compose.test.yml and CI.
+//
+// `serviceWorkers: 'block'` (P2-07): the production build now ships one
+// (web/src/sw.ts). On a brand-new origin — every test's fresh context — it
+// has no older worker to wait behind, so it activates and `clients.claim()`s
+// the page mid-test; fetches it then handles itself (even a pass-through
+// `NetworkOnly`) run in the worker's own execution context, which
+// `page.route()` does not reach, breaking web/e2e/api.ts's mocking. Blocking
+// is the default for every spec here; web/e2e/service-worker.spec.ts turns it
+// back on where the worker itself is what is under test.
 import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
@@ -36,6 +45,7 @@ export default defineConfig({
   use: {
     baseURL: origin,
     trace: 'retain-on-failure',
+    serviceWorkers: 'block',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
