@@ -162,7 +162,8 @@ fn search_eval_gate() {
         .collect();
     assert!(
         mismatched.is_empty(),
-        "the baseline {} was measured on another library (gold sets differ for {mismatched:?}); \
+        "the baseline {} was measured on another library (gold sets differ or are missing for \
+         {mismatched:?}); \
          run `pnpm run eval:search` on this library or point SHELFY_SEARCH_EVAL_DB at the copy \
          the report was measured on (scripts/search-eval/.scratch/shelfy.sqlite)",
         baseline_path.display()

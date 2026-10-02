@@ -8,7 +8,7 @@
 //! of them either. Every desktop row becomes one web post, so the result lists
 //! of both apps rank the same set of documents.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
@@ -72,17 +72,22 @@ pub fn build(legacy: &Path) -> Corpus {
             stats.accepted_aliases +=
                 insert_alias.execute(params![a.alias_norm, a.canonical_norm, a.canonical_form])?;
         }
-        let mut keys = HashSet::with_capacity(rows.len());
         for (n, row) in rows.iter().enumerate() {
             let mut post = new_post(row, tiers.get(&row.id), &mut stats);
-            if !keys.insert(post.key.clone()) {
-                post.key = format!("eval_{n}");
-                post.native_id = format!("eval_{n}");
-                post.platform = Platform::Manual;
-                stats.synthetic_keys += 1;
-                keys.insert(post.key.clone());
+            match posts::insert(tx, &post, 0) {
+                Ok(_) => {}
+                // Another row already has this key or (platform, native id):
+                // keep both rows, as the desktop does, under a synthetic
+                // identity. The failed insert wrote nothing.
+                Err(RepoError::Conflict(_)) => {
+                    post.key = format!("eval_row_{n}");
+                    post.native_id.clone_from(&post.key);
+                    post.platform = Platform::Manual;
+                    stats.synthetic_keys += 1;
+                    posts::insert(tx, &post, 0)?;
+                }
+                Err(e) => return Err(e),
             }
-            posts::insert(tx, &post, 0)?;
             legacy_id.insert(post.key, row.id.clone());
             stats.posts += 1;
         }
@@ -124,7 +129,7 @@ fn new_post(row: &PostRow, tiers: Option<&Tiers>, stats: &mut Stats) -> NewPost 
         Ok(id) => (id.key().to_owned(), id.native_id().to_owned()),
         Err(_) => {
             stats.synthetic_keys += 1;
-            (format!("eval_{}", row.id), row.id.clone())
+            (format!("eval_id_{}", row.id), row.id.clone())
         }
     };
     let mut post = NewPost::new(
