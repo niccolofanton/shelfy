@@ -1,0 +1,49 @@
+# cargo-deny policy for the Cargo workspace (crates/). CI runs `cargo deny check`.
+# Reference for every key: https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+# Vulnerability advisories always fail the check. Unmaintained and unsound crates fail
+# too, wherever they sit in the graph. Silence an advisory only through `ignore`, with
+# a reason.
+unmaintained = "all"
+unsound = "all"
+yanked = "warn"
+ignore = []
+
+[licenses]
+# Permissive licenses compatible with the repo's LICENSE (Apache-2.0), plus MPL-2.0
+# (file-level copyleft, already accepted for npm dependencies; webauthn-rs uses it, D8).
+# GPL, LGPL and AGPL are not allowed. A license that only one crate needs goes into
+# `exceptions`, scoped to that crate.
+allow = [
+  "0BSD",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "BSL-1.0",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "MIT-0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Zlib",
+]
+exceptions = []
+# The allowlist is the policy, not an inventory of the current graph.
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies between the workspace's private (publish = false) crates are fine.
+allow-wildcard-paths = true
+
+[sources]
+# crates.io is the only allowed source: no other registry, no git dependency.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
