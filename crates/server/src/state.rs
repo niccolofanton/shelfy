@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use shelfy_core::db::{ControlDb, UserDb, UserDbCache};
+use shelfy_core::schema::{Kind, Upgrade};
 use tokio_util::sync::CancellationToken;
 
 use crate::auth::{self, AuthState};
@@ -48,11 +49,15 @@ impl AppState {
         let control_path = data.control_db();
         let control = ControlDb::open(&control_path, &config.control_db)
             .with_context(|| format!("cannot open {}", control_path.display()))?;
+        log_upgrade(Kind::Control, None, control.schema_upgrade());
         let user_dbs = UserDbCache::new(
             data.users_dir(),
             &config.user_db_cache,
             config.user_db.clone(),
-        );
+        )
+        .with_upgrade_listener(|user_id, upgrade| {
+            log_upgrade(Kind::Library, Some(user_id), upgrade);
+        });
         let mailer = Mailer::new(&config.mail).context("cannot set up email")?;
         tracing::info!(transport = mailer.kind().as_str(), "email transport");
         if config.trusted_proxies.is_empty() {
@@ -168,6 +173,26 @@ impl AppState {
                 "state still in use at shutdown; its databases close when the last holder ends"
             ),
         }
+    }
+}
+
+/// Logs what opening a database of `kind` did to its schema (plan §3.8): an
+/// upgrade, or a database left ahead by a newer release (a rollback). A new
+/// database (`from` 0) and a current one are not worth a line.
+fn log_upgrade(kind: Kind, user_id: Option<&str>, upgrade: Upgrade) {
+    let database = kind.name();
+    match upgrade {
+        Upgrade::Current | Upgrade::Upgraded { from: 0, .. } => {}
+        Upgrade::Upgraded { from, to } => {
+            tracing::info!(database, user_id, from, to, "schema upgraded");
+        }
+        Upgrade::Ahead { found } => tracing::warn!(
+            database,
+            user_id,
+            schema = found,
+            supported = kind.latest_version(),
+            "schema is newer than this build: running on it (a rollback)"
+        ),
     }
 }
 

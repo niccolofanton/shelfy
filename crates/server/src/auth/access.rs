@@ -25,6 +25,9 @@
 //! it verifies the token and its scope and inserts
 //! [`TokenPrincipal`](super::bearer::TokenPrincipal) and [`CurrentUser`]. It
 //! answers 401 (403 for a token without the scope) before the handler runs.
+//! Once it knows the user, it answers 423 `user_locked` while the user's
+//! library is locked for maintenance (`admin user lock`, plan §3.5), so a
+//! restore never races the user's own requests.
 //!
 //! A [`CurrentUser`] already in the request extensions counts as a session:
 //! extensions are server-side only, and a test layer that stands in for a
@@ -172,16 +175,41 @@ impl Gate {
 }
 
 /// Route layer: lets a request through only with the access its route needs
-/// (see the module docs), after putting the user into the request.
+/// (see the module docs), after putting the user into the request. A user
+/// whose library is locked for maintenance (`admin user lock`) gets 423
+/// `user_locked` on every route that is not public.
 pub async fn gate(State(gate): State<Gate>, mut request: Request, next: Next) -> Response {
     let access = match request.extensions().get::<MatchedPath>() {
         Some(path) => gate.policy.access(request.method(), path.as_str()),
         // A route layer always runs on a matched route; refuse if not.
         None => return ApiError::new(ErrorCode::Unauthorized).into_response(),
     };
-    match admit(&gate.state, access, &mut request).await {
-        Ok(()) => next.run(request).await,
-        Err(refused) => refused.into_response(),
+    if let Err(refused) = admit(&gate.state, access, &mut request).await {
+        return refused.into_response();
+    }
+    if let Some(user) = request.extensions().get::<CurrentUser>()
+        && let Err(refused) = refuse_locked(&gate.state, user.id())
+    {
+        return refused.into_response();
+    }
+    next.run(request).await
+}
+
+/// 423 `user_locked` while `user_id`'s library is locked for maintenance
+/// (plan §3.5): the operator is restoring it. Its open handle is released at
+/// once, so the restore does not wait for the next maintenance pass.
+///
+/// One `stat` of the lock marker per request; the dentry is hot in the page
+/// cache, so it does not need the blocking pool.
+fn refuse_locked(state: &AppState, user_id: &str) -> Result<(), ApiError> {
+    let user_dbs = state.user_dbs();
+    match user_dbs.is_locked(user_id) {
+        Ok(false) => Ok(()),
+        Ok(true) => {
+            user_dbs.evict(user_id);
+            Err(ApiError::user_locked())
+        }
+        Err(err) => Err(ApiError::from(err)),
     }
 }
 

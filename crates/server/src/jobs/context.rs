@@ -191,7 +191,12 @@ impl From<ApiError> for JobError {
     fn from(err: ApiError) -> Self {
         let status = err.status();
         let code = err.code().as_str();
-        let error = if status.is_server_error() || status.as_u16() == 429 {
+        // A locked library (`user_locked`) is back once the operator's
+        // restore is done.
+        let error = if status.is_server_error()
+            || status.as_u16() == 429
+            || err.code() == ErrorCode::UserLocked
+        {
             Self::transient(code)
         } else {
             Self::permanent(code)
@@ -626,6 +631,16 @@ mod tests {
         let quota = JobError::from(ApiError::new(ErrorCode::QuotaExceeded));
         assert!(!quota.is_transient());
         assert_eq!(quota.code(), "quota_exceeded");
+
+        // A library locked for a restore is retried, however it surfaces.
+        let locked = JobError::from(DbError::Locked);
+        assert!(locked.is_transient());
+        assert_eq!(locked.code(), codes::UNAVAILABLE);
+        let opened = JobError::from(DbError::Open(std::sync::Arc::new(DbError::Locked)));
+        assert!(opened.is_transient());
+        let refused = JobError::from(ApiError::user_locked());
+        assert!(refused.is_transient());
+        assert_eq!(refused.code(), "user_locked");
 
         let shown = JobError::transient("unavailable")
             .with_detail("busy")

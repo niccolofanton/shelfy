@@ -7,6 +7,10 @@
 //!   (`SHELFY_METRICS_ADDR`), served side by side.
 //! - **Jobs:** the scheduler ([`crate::jobs`]) runs beside the listeners on
 //!   a child of the shutdown token.
+//! - **Background tasks:** the maintenance timer (idle databases, locked
+//!   libraries, event buses, metrics) and, once per boot, the library
+//!   upgrade sweep ([`upgrade_libraries`], plan §3.8). The control database
+//!   is upgraded before the listeners bind.
 //! - **Shutdown** on SIGTERM or Ctrl-C: stop accepting, cancel the shutdown
 //!   token (job workers and streams stop), let in-flight requests and job
 //!   workers finish, checkpoint the WAL and close the databases, all within
@@ -19,11 +23,12 @@ use std::io;
 use std::net::SocketAddr;
 use std::pin::pin;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use axum::Router;
 use metrics_exporter_prometheus::PrometheusHandle;
+use shelfy_core::db::{LibraryUpgrade, library_ids};
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 use tokio_util::sync::CancellationToken;
@@ -45,6 +50,10 @@ pub const MAX_BLOCKING_THREADS: usize = 16;
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(30);
 /// Part of the shutdown grace kept for closing the databases after draining.
 const CLOSE_RESERVE: Duration = Duration::from_secs(5);
+/// How long after boot the library upgrade sweep starts: first requests first.
+const SWEEP_DELAY: Duration = Duration::from_secs(10);
+/// Pause between two libraries of the sweep, so it stays a background trickle.
+const SWEEP_PAUSE: Duration = Duration::from_millis(100);
 /// How long the runtime waits for blocking tasks once the server returned.
 const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -211,6 +220,12 @@ impl Server {
         let drain_timeout = config.shutdown_grace.saturating_sub(CLOSE_RESERVE);
 
         let maintenance = tokio::spawn(maintenance(state.clone(), metrics.clone(), token.clone()));
+        let sweep = tokio::spawn(upgrade_libraries(
+            state.clone(),
+            token.clone(),
+            SWEEP_DELAY,
+            SWEEP_PAUSE,
+        ));
         let scheduler = state.jobs().start(state.clone(), token.child_token());
         // When the shutdown began; the job workers stop within the same
         // drain budget as the requests.
@@ -253,6 +268,9 @@ impl Server {
         if let Err(err) = maintenance.await {
             tracing::warn!(error = %err, "maintenance task failed");
         }
+        if let Err(err) = sweep.await {
+            tracing::warn!(error = %err, "library upgrade sweep failed");
+        }
         // The job workers stop before the databases close; interrupted jobs
         // are queued again, and any still running at the deadline are
         // queued again at the next start.
@@ -291,6 +309,101 @@ async fn maintenance(state: AppState, metrics: PrometheusHandle, token: Cancella
             _ = upkeep.tick() => metrics.run_upkeep(),
         }
     }
+}
+
+/// What [`upgrade_libraries`] did.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SweepReport {
+    /// Libraries looked at.
+    pub checked: usize,
+    /// Libraries migrated to this build's schema.
+    pub upgraded: usize,
+    /// Libraries a newer release left ahead of this build (a rollback).
+    pub ahead: usize,
+    /// Libraries skipped because they are locked for maintenance.
+    pub locked: usize,
+    /// Libraries whose upgrade failed; their next open retries it.
+    pub failed: usize,
+}
+
+/// The low-priority sweep after boot (plan §3.8): waits `delay`, then
+/// upgrades every library that is behind this build, one at a time on the
+/// blocking pool with `pause` in between, until done or shutdown.
+///
+/// Libraries also upgrade lazily when they are first opened, so the sweep
+/// only spares a user the migration on their first request; a failure here
+/// is logged and retried by that open. Not a job kind: it touches no queue
+/// and runs once per boot.
+pub async fn upgrade_libraries(
+    state: AppState,
+    shutdown: CancellationToken,
+    delay: Duration,
+    pause: Duration,
+) -> SweepReport {
+    let mut report = SweepReport::default();
+    tokio::select! {
+        () = shutdown.cancelled() => return report,
+        () = tokio::time::sleep(delay) => {}
+    }
+    let users_dir = state.config().data_dir.users_dir();
+    let ids = match tokio::task::spawn_blocking(move || library_ids(&users_dir)).await {
+        Ok(Ok(ids)) => ids,
+        Ok(Err(err)) => {
+            tracing::warn!(error = %err, "library upgrade sweep cannot list the users");
+            return report;
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "library upgrade sweep failed");
+            return report;
+        }
+    };
+    for id in ids {
+        if shutdown.is_cancelled() {
+            break;
+        }
+        report.checked += 1;
+        let user_dbs = Arc::clone(state.user_dbs());
+        let user = id.clone();
+        let started = Instant::now();
+        match tokio::task::spawn_blocking(move || user_dbs.upgrade(&user)).await {
+            Ok(Ok(LibraryUpgrade::Upgraded { from, to })) => {
+                report.upgraded += 1;
+                let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                tracing::info!(user_id = %id, from, to, elapsed_ms, "library schema upgraded");
+            }
+            Ok(Ok(LibraryUpgrade::Ahead { found })) => {
+                report.ahead += 1;
+                tracing::warn!(
+                    user_id = %id,
+                    schema = found,
+                    "library schema is newer than this build: running on it (a rollback)"
+                );
+            }
+            Ok(Ok(LibraryUpgrade::Locked)) => report.locked += 1,
+            Ok(Ok(LibraryUpgrade::Current | LibraryUpgrade::Missing)) => {}
+            Ok(Err(err)) => {
+                report.failed += 1;
+                tracing::warn!(user_id = %id, error = %err, "library schema upgrade failed");
+            }
+            Err(err) => {
+                report.failed += 1;
+                tracing::warn!(user_id = %id, error = %err, "library schema upgrade failed");
+            }
+        }
+        tokio::select! {
+            () = shutdown.cancelled() => break,
+            () = tokio::time::sleep(pause) => {}
+        }
+    }
+    tracing::info!(
+        checked = report.checked,
+        upgraded = report.upgraded,
+        ahead = report.ahead,
+        locked = report.locked,
+        failed = report.failed,
+        "library upgrade sweep done"
+    );
+    report
 }
 
 #[cfg(test)]

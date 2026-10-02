@@ -66,6 +66,9 @@ pub enum ErrorCode {
     ProviderKeyInvalid,
     /// 422: the egress policy or the site refused the capture.
     CaptureBlocked,
+    /// 423: the account is locked for maintenance (an operator is restoring
+    /// its library); retry after `Retry-After` seconds.
+    UserLocked,
     /// 426: the browser extension is older than the supported minimum.
     ExtensionOutdated,
     /// 429: too many requests; retry after `Retry-After` seconds.
@@ -97,6 +100,7 @@ impl ErrorCode {
             Self::ValidationFailed | Self::ProviderKeyInvalid | Self::CaptureBlocked => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
+            Self::UserLocked => StatusCode::LOCKED,
             Self::ExtensionOutdated => StatusCode::UPGRADE_REQUIRED,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
@@ -119,6 +123,7 @@ impl ErrorCode {
             StatusCode::PAYLOAD_TOO_LARGE => Self::PayloadTooLarge,
             StatusCode::UNSUPPORTED_MEDIA_TYPE => Self::UnsupportedMediaType,
             StatusCode::UNPROCESSABLE_ENTITY => Self::ValidationFailed,
+            StatusCode::LOCKED => Self::UserLocked,
             StatusCode::UPGRADE_REQUIRED => Self::ExtensionOutdated,
             StatusCode::TOO_MANY_REQUESTS => Self::RateLimited,
             StatusCode::SERVICE_UNAVAILABLE => Self::Unavailable,
@@ -148,6 +153,7 @@ impl ErrorCode {
             Self::ValidationFailed => "validation_failed",
             Self::ProviderKeyInvalid => "provider_key_invalid",
             Self::CaptureBlocked => "capture_blocked",
+            Self::UserLocked => "user_locked",
             Self::ExtensionOutdated => "extension_outdated",
             Self::RateLimited => "rate_limited",
             Self::Internal => "internal",
@@ -374,8 +380,23 @@ impl From<RepoError> for ApiError {
     }
 }
 
+/// How long a client waits before retrying a locked account: a restore takes
+/// minutes.
+pub const USER_LOCKED_RETRY_AFTER_SECS: u32 = 60;
+
+impl ApiError {
+    /// 423 `user_locked`, with `Retry-After`.
+    #[must_use]
+    pub fn user_locked() -> Self {
+        Self::new(ErrorCode::UserLocked).with_retry_after(USER_LOCKED_RETRY_AFTER_SECS)
+    }
+}
+
 impl From<DbError> for ApiError {
     fn from(err: DbError) -> Self {
+        if err.is_locked() {
+            return Self::user_locked();
+        }
         if is_transient(&err) {
             Self::new(ErrorCode::Unavailable)
                 .with_retry_after(1)
@@ -387,10 +408,11 @@ impl From<DbError> for ApiError {
 }
 
 /// Whether a database error clears up on its own: every reader stayed busy,
-/// or a lock outlasted `busy_timeout`.
+/// a lock outlasted `busy_timeout`, or the library is locked for maintenance
+/// (an operator unlocks it after the restore). Job workers retry these.
 pub(crate) fn is_transient(err: &DbError) -> bool {
     match err {
-        DbError::ReaderTimeout => true,
+        DbError::ReaderTimeout | DbError::Locked => true,
         DbError::Sqlite(e) => matches!(
             e.sqlite_error_code(),
             Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
@@ -473,6 +495,7 @@ mod tests {
             ErrorCode::ValidationFailed,
             ErrorCode::ProviderKeyInvalid,
             ErrorCode::CaptureBlocked,
+            ErrorCode::UserLocked,
             ErrorCode::ExtensionOutdated,
             ErrorCode::RateLimited,
             ErrorCode::Internal,
@@ -549,6 +572,19 @@ mod tests {
         assert_eq!(busy.retry_after, Some(1));
         let broken = ApiError::from(DbError::InvalidUserId);
         assert_eq!(broken.code(), ErrorCode::Internal);
+        for locked in [
+            DbError::Locked,
+            DbError::Open(std::sync::Arc::new(DbError::Locked)),
+        ] {
+            let err = ApiError::from(locked);
+            assert_eq!(err.code(), ErrorCode::UserLocked);
+            assert_eq!(err.status(), StatusCode::LOCKED);
+            assert_eq!(err.retry_after, Some(USER_LOCKED_RETRY_AFTER_SECS));
+        }
+        assert_eq!(
+            ErrorCode::for_status(StatusCode::LOCKED),
+            ErrorCode::UserLocked
+        );
     }
 
     #[test]
