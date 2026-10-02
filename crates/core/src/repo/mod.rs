@@ -182,7 +182,7 @@ pub struct ObjectRef {
 
 /// Columns selecting an object for [`object_ref_at`], with `alias` as the
 /// `media_objects` table alias.
-fn object_columns(alias: &str) -> String {
+pub(crate) fn object_columns(alias: &str) -> String {
     format!(
         "{a}.sha256, {a}.ext, {a}.mime, {a}.bytes, {a}.width, {a}.height, {a}.duration_ms, {a}.variants",
         a = alias
@@ -191,7 +191,7 @@ fn object_columns(alias: &str) -> String {
 
 /// Reads the eight columns of [`object_columns`] starting at `start`; `None`
 /// when the join found no object.
-fn object_ref_at(row: &Row<'_>, start: usize) -> rusqlite::Result<Option<ObjectRef>> {
+pub(crate) fn object_ref_at(row: &Row<'_>, start: usize) -> rusqlite::Result<Option<ObjectRef>> {
     let Some(sha) = row.get::<_, Option<Vec<u8>>>(start)? else {
         return Ok(None);
     };
@@ -219,7 +219,7 @@ fn hex(bytes: &[u8]) -> String {
 
 /// The string items of a JSON array column; anything else reads as empty (the
 /// desktop's defensive `parseTags`).
-fn json_strings(raw: Option<&str>) -> Vec<String> {
+pub(crate) fn json_strings(raw: Option<&str>) -> Vec<String> {
     match raw.map(serde_json::from_str::<serde_json::Value>) {
         Some(Ok(serde_json::Value::Array(items))) => items
             .into_iter()
@@ -238,7 +238,7 @@ fn json_array_or_null(items: &[String]) -> Option<String> {
 }
 
 /// Parses an optional JSON column, dropping invalid JSON.
-fn json_value(raw: Option<&str>) -> Option<serde_json::Value> {
+pub(crate) fn json_value(raw: Option<&str>) -> Option<serde_json::Value> {
     raw.and_then(|s| serde_json::from_str(s).ok())
 }
 

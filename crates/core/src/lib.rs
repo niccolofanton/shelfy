@@ -29,6 +29,7 @@ pub mod schema;
 pub mod search;
 pub mod selector;
 pub mod trash;
+pub mod web;
 
 #[cfg(test)]
 mod tests {
