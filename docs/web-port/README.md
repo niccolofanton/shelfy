@@ -5,6 +5,7 @@ Granular inventory of every Shelfy capability, built from the `dev` working tree
 | Document | Role |
 |---|---|
 | [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md) | **Plan of record:** self-hosted on the osn VPS, Rust core, Node capture service, MV3 extension, BYOK AI. Phases, spikes and the first two weeks. |
+| [EXECUTION.md](EXECUTION.md) | Live status of the implementation: lanes, task status, owner actions. |
 | [ONLINE-MIGRATION.md](ONLINE-MIGRATION.md) | Earlier analysis (Cloudflare-native option) and the product decisions. Its feature analysis and defect list still apply; its platform choice is superseded. |
 | [review/](review/) | How the plan of record was chosen: the superseded v1 plan and the side-by-side comparison. |
 
