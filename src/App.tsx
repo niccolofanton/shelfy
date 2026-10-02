@@ -19,8 +19,7 @@ import RemoteAiBanner from './components/RemoteAiBanner';
 import { useAiSetupStatus } from './hooks/useAiSetup';
 import PostModal from './components/PostModal';
 import ErrorBoundary, { ErrorPanel } from './components/ErrorBoundary';
-import DisclaimerGate from './components/DisclaimerGate';
-import { shouldShowDisclaimerGate } from './disclaimer';
+import { ConsentGate } from './components/DisclaimerGate';
 import { useCollections } from './hooks/useCollections';
 import { useDownloads } from './hooks/useDownloads';
 import { useWebJobs } from './hooks/useWebJobs';
@@ -256,10 +255,6 @@ function AppInner(): React.JSX.Element {
   const navigateBack = nav?.back;
   const [stateView, setStateView] = useState<View>('gallery');
   const view: View = route ? viewOfRoute(route) : stateView;
-  // First-run legal gate: blocks the app until the current disclaimer version is
-  // acknowledged (see DISCLAIMER.md). It keeps appearing at launch until the user
-  // accepts with "don't show again" ticked. Persisted in localStorage.
-  const [showDisclaimer, setShowDisclaimer] = useState<boolean>(shouldShowDisclaimerGate);
   // Views that have been opened at least once — kept mounted thereafter so
   // returning to them is instant (no re-fetch / skeleton). Seeded with the
   // initial view; 'browser' is always mounted separately and never listed here.
@@ -1165,7 +1160,9 @@ function AppInner(): React.JSX.Element {
             />
           </ErrorBoundary>
         )}
-        {showDisclaimer && <DisclaimerGate onAccept={() => setShowDisclaimer(false)} />}
+        {/* First-run legal gate: blocks the app until the current notices are
+          accepted (localStorage on the desktop, the account on the web). */}
+        <ConsentGate />
       </div>
     </ActivityProvider>
   );

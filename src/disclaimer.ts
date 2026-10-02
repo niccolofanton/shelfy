@@ -9,6 +9,24 @@
 export const DISCLAIMER_VERSION = '2026-06-07';
 const STORAGE_KEY = 'app:disclaimerAcceptance';
 
+// The privacy notice of the web app (src/i18n/messages/privacy.ts). The web
+// records both versions on the account (`POST /api/v1/me/consent`) instead of
+// localStorage; bumping either one asks for consent again. The desktop shows
+// no privacy notice: its data stays on the machine.
+export const PRIVACY_VERSION = '1';
+
+// The consent the web gate needs: the account accepted the current versions
+// of both notices.
+export function hasCurrentConsent(
+  consent: { disclaimerVersion: string | null; privacyVersion: string | null } | null | undefined,
+): boolean {
+  return (
+    !!consent &&
+    consent.disclaimerVersion === DISCLAIMER_VERSION &&
+    consent.privacyVersion === PRIVACY_VERSION
+  );
+}
+
 // The persisted acceptance record.
 export interface DisclaimerAcceptance {
   version: string;

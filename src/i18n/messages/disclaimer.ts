@@ -61,6 +61,15 @@ export default {
       'Ho letto e accetto le avvertenze legali e mi assumo la piena responsabilità del mio utilizzo di Shelfy.',
     dontShowAgain: 'Non mostrare più questo avviso all’avvio',
     acceptAndContinue: 'Accetto e continuo',
+
+    // The web: the gate also shows the privacy notice, and the account
+    // records the acceptance.
+    showPrivacy: 'Leggi l’informativa sulla privacy (versione {version})',
+    hidePrivacy: 'Nascondi l’informativa sulla privacy',
+    checkboxAcceptWithPrivacy:
+      'Ho letto e accetto le avvertenze legali e l’informativa sulla privacy, e mi assumo la piena responsabilità del mio utilizzo di Shelfy.',
+    recording: 'Registrazione…',
+    recordFailed: 'Non è stato possibile registrare l’accettazione. Riprova.',
   },
   en: {
     title: 'Legal notice — read before using Shelfy',
@@ -112,5 +121,12 @@ export default {
       'I have read and accept the legal notice and take full responsibility for my use of Shelfy.',
     dontShowAgain: 'Don’t show this notice at startup again',
     acceptAndContinue: 'I accept and continue',
+
+    showPrivacy: 'Read the privacy notice (version {version})',
+    hidePrivacy: 'Hide the privacy notice',
+    checkboxAcceptWithPrivacy:
+      'I have read and accept the legal notice and the privacy notice, and take full responsibility for my use of Shelfy.',
+    recording: 'Recording…',
+    recordFailed: 'Your acceptance could not be recorded. Try again.',
   },
 } satisfies LangMessages;

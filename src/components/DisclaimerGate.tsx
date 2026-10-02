@@ -1,8 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { Scale, AlertTriangle, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { Scale, AlertTriangle, Check, ChevronDown, ChevronUp, Loader } from 'lucide-react';
 import disclaimerText from '../../DISCLAIMER.md?raw';
-import { acceptDisclaimer, getDisclaimerAcceptance } from '../disclaimer';
+import {
+  DISCLAIMER_VERSION,
+  PRIVACY_VERSION,
+  acceptDisclaimer,
+  getDisclaimerAcceptance,
+  hasCurrentConsent,
+  shouldShowDisclaimerGate,
+} from '../disclaimer';
+import { useShelfy } from '../api/ShelfyProvider';
 import { useT, useLang, localeTag } from '../i18n';
+import PrivacyNotice from './PrivacyNotice';
 
 // Strip the leading Markdown heading characters so the embedded text reads
 // cleanly in the <pre> block (we don't ship a full Markdown renderer).
@@ -10,10 +19,24 @@ const fullText = disclaimerText.replace(/^#{1,6}\s+/gm, '').replace(/^>\s?/gm, '
 
 type DisclaimerMode = 'gate' | 'review';
 
+// A recorded acceptance: when (unix ms or ISO 8601) and which version.
+export interface DisclaimerAcceptanceInfo {
+  acceptedAt: number | string;
+  version: string;
+}
+
 interface DisclaimerGateProps {
   mode?: DisclaimerMode;
   onAccept?: () => void;
   onClose?: () => void;
+  // The web: the acceptance goes to the account (`POST /me/consent`) with the
+  // privacy notice, which the gate shows too. The gate returns until the
+  // current versions are accepted, so it has no "don't show again". Rejects
+  // when the acceptance could not be recorded.
+  recordConsent?: () => Promise<void>;
+  // Review mode: the acceptance to show. Default: the one this browser stored
+  // (the desktop).
+  acceptance?: DisclaimerAcceptanceInfo | null;
 }
 
 /**
@@ -23,7 +46,9 @@ interface DisclaimerGateProps {
  *   - 'gate'   (default): blocking full-screen overlay shown until the user
  *              ticks the box and accepts. Cannot be dismissed by Esc/backdrop.
  *              On accept, persists acceptance (version + timestamp +
- *              "don't show again") and calls onAccept().
+ *              "don't show again") and calls onAccept(). With `recordConsent`
+ *              (the web) the account records it instead, with the privacy
+ *              notice.
  *   - 'review': dismissible read-only view (from Settings → Note legali),
  *              showing the same text plus the recorded acceptance.
  *
@@ -36,6 +61,8 @@ export default function DisclaimerGate({
   mode = 'gate',
   onAccept,
   onClose,
+  recordConsent,
+  acceptance,
 }: DisclaimerGateProps): React.ReactElement {
   const t = useT('disclaimer');
   const tc = useT('common');
@@ -45,8 +72,16 @@ export default function DisclaimerGate({
   // it to keep seeing the reminder at every launch.
   const [dontShowAgain, setDontShowAgain] = useState(true);
   const [showFull, setShowFull] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [recordFailed, setRecordFailed] = useState(false);
   const isReview = mode === 'review';
-  const accepted = isReview ? getDisclaimerAcceptance() : null;
+  const withPrivacy = !!recordConsent;
+  const accepted: DisclaimerAcceptanceInfo | null = isReview
+    ? acceptance !== undefined
+      ? acceptance
+      : getDisclaimerAcceptance()
+    : null;
 
   // In review mode, Esc/backdrop dismiss. The gate is intentionally non-dismissible.
   useEffect(() => {
@@ -58,10 +93,23 @@ export default function DisclaimerGate({
     return () => window.removeEventListener('keydown', onKey);
   }, [isReview, onClose]);
 
-  const handleAccept = (): void => {
-    if (!checked) return;
-    acceptDisclaimer(dontShowAgain);
-    onAccept?.();
+  const handleAccept = async (): Promise<void> => {
+    if (!checked || recording) return;
+    if (!recordConsent) {
+      acceptDisclaimer(dontShowAgain);
+      onAccept?.();
+      return;
+    }
+    setRecording(true);
+    setRecordFailed(false);
+    try {
+      await recordConsent();
+      onAccept?.();
+    } catch {
+      setRecordFailed(true);
+    } finally {
+      setRecording(false);
+    }
   };
 
   return (
@@ -147,6 +195,24 @@ export default function DisclaimerGate({
             )}
           </div>
 
+          {withPrivacy && (
+            <div className="border-t border-[#2e2e2e] pt-3">
+              <button
+                onClick={() => setShowPrivacy((v) => !v)}
+                data-testid="disclaimer-toggle-privacy"
+                className="flex items-center gap-1.5 text-[#a59bff] text-xs font-medium hover:underline u-press"
+              >
+                {showPrivacy ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                {showPrivacy ? t('hidePrivacy') : t('showPrivacy', { version: PRIVACY_VERSION })}
+              </button>
+              {showPrivacy && (
+                <div className="u-fade-in mt-3 max-h-72 overflow-y-auto rounded-lg bg-[#111] border border-[#262626] p-3">
+                  <PrivacyNotice showTitle={false} />
+                </div>
+              )}
+            </div>
+          )}
+
           {isReview && accepted && (
             <p
               data-testid="disclaimer-accepted-info"
@@ -192,43 +258,85 @@ export default function DisclaimerGate({
                     setChecked(e.target.checked)
                   }
                 />
-                <span className="text-sm text-[#cfcfcf]">{t('checkboxAccept')}</span>
+                <span className="text-sm text-[#cfcfcf]">
+                  {withPrivacy ? t('checkboxAcceptWithPrivacy') : t('checkboxAccept')}
+                </span>
               </label>
 
-              <label className="flex items-center gap-2.5 cursor-pointer select-none pl-[2px]">
-                <span
-                  className={`flex items-center justify-center w-[18px] h-[18px] rounded border shrink-0 transition-colors ${
-                    dontShowAgain
-                      ? 'bg-[#3a3a3a] border-[#555]'
-                      : 'bg-transparent border-[#444] hover:border-[#666]'
-                  }`}
+              {!withPrivacy && (
+                <label className="flex items-center gap-2.5 cursor-pointer select-none pl-[2px]">
+                  <span
+                    className={`flex items-center justify-center w-[18px] h-[18px] rounded border shrink-0 transition-colors ${
+                      dontShowAgain
+                        ? 'bg-[#3a3a3a] border-[#555]'
+                        : 'bg-transparent border-[#444] hover:border-[#666]'
+                    }`}
+                  >
+                    {dontShowAgain && <Check size={12} className="text-[#cfcfcf]" />}
+                  </span>
+                  <input
+                    type="checkbox"
+                    data-testid="disclaimer-dont-show"
+                    className="sr-only"
+                    checked={dontShowAgain}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                      setDontShowAgain(e.target.checked)
+                    }
+                  />
+                  <span className="text-xs text-[#9a9a9a]">{t('dontShowAgain')}</span>
+                </label>
+              )}
+
+              {recordFailed && (
+                <p
+                  role="alert"
+                  data-testid="disclaimer-record-error"
+                  className="u-fade-in flex items-center gap-1.5 text-xs text-red-400"
                 >
-                  {dontShowAgain && <Check size={12} className="text-[#cfcfcf]" />}
-                </span>
-                <input
-                  type="checkbox"
-                  data-testid="disclaimer-dont-show"
-                  className="sr-only"
-                  checked={dontShowAgain}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                    setDontShowAgain(e.target.checked)
-                  }
-                />
-                <span className="text-xs text-[#9a9a9a]">{t('dontShowAgain')}</span>
-              </label>
+                  <AlertTriangle size={13} className="shrink-0" /> {t('recordFailed')}
+                </p>
+              )}
 
               <button
-                onClick={handleAccept}
-                disabled={!checked}
+                onClick={() => void handleAccept()}
+                disabled={!checked || recording}
                 data-testid="disclaimer-accept"
-                className="w-full h-10 rounded-lg bg-[#7B5CFF] hover:bg-[#6a4bf0] text-white text-sm font-semibold transition-colors u-press disabled:opacity-40 disabled:cursor-not-allowed"
+                className="w-full h-10 rounded-lg bg-[#7B5CFF] hover:bg-[#6a4bf0] text-white text-sm font-semibold transition-colors u-press disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
-                {t('acceptAndContinue')}
+                {recording && <Loader size={14} className="animate-spin" />}
+                {recording ? t('recording') : t('acceptAndContinue')}
               </button>
             </>
           )}
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * ConsentGate — the app's first-run legal gate (App renders it once): the
+ * DisclaimerGate, shown until the current notices are accepted.
+ *
+ *   - Desktop: the acceptance lives in localStorage, and the notice returns at
+ *     every launch until the user accepts with "don't show again".
+ *   - Web (a client with an account): the account records the acceptance of
+ *     the disclaimer and the privacy notice (`POST /me/consent`), so it is
+ *     asked once per version, on every device.
+ */
+export function ConsentGate(): React.ReactElement | null {
+  const account = useShelfy().account;
+  const [open, setOpen] = useState<boolean>(() =>
+    account ? !hasCurrentConsent(account.consent()) : shouldShowDisclaimerGate(),
+  );
+  if (!open) return null;
+  if (!account) return <DisclaimerGate onAccept={() => setOpen(false)} />;
+  return (
+    <DisclaimerGate
+      recordConsent={async () => {
+        await account.acceptConsent({ disclaimer: DISCLAIMER_VERSION, privacy: PRIVACY_VERSION });
+      }}
+      onAccept={() => setOpen(false)}
+    />
   );
 }
