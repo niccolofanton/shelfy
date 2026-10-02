@@ -1,6 +1,9 @@
 //! Posts: the gallery list (desktop filter set, keyset pagination, FTS5
-//! search), post detail, and the write primitives that keep the derived tag
-//! rows and the search index consistent.
+//! search), post detail, the lookup of saved posts by platform id, and the
+//! write primitives that keep the derived tag rows and the search index
+//! consistent: the user layer ([`update_user_content`]) and the AI layer, as
+//! a whole ([`set_ai`]) or field by field ([`update_ai`], the desktop's
+//! `updateAiAnalysis`, behind the manual AI edit).
 //!
 //! Filter semantics mirror the desktop's `buildPostFilter` (`electron/db.ts`),
 //! with these deliberate changes:
@@ -33,6 +36,7 @@ use super::{
     ObjectRef, Platform, RepoError, Result, conflict_on_unique, id_list, json_array_or_null,
     json_strings, json_value, media, object_columns, object_ref_at, tags,
 };
+use crate::ids::ig;
 use crate::search::query::{self, RELEVANCE_WINDOW, TextQuery};
 use crate::search::{index, terms::js_trim};
 
@@ -615,6 +619,70 @@ pub struct UserContentPatch {
     pub tags: Option<Vec<String>>,
 }
 
+/// The model a manual AI edit is attributed to (the desktop wrote `manuale`).
+pub const MANUAL_AI_MODEL: &str = "manual";
+
+/// Changes to the AI layer, with the semantics of the desktop's
+/// `updateAiAnalysis`: `None` leaves a field untouched, `Some(None)` writes
+/// `NULL`, and a list is stored as given (`[]` stays an empty JSON array).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AiPatch {
+    /// Lifecycle status; `done` also stamps `ai_analyzed_at` unless
+    /// `analyzed_at` is given.
+    pub status: Option<Option<String>>,
+    /// Model id.
+    pub model: Option<Option<String>>,
+    /// Description.
+    pub description: Option<Option<String>>,
+    /// Tags (display forms); their AI tag rows are rebuilt.
+    pub tags: Option<Option<Vec<String>>>,
+    /// Tags of the general tier: with `tags`, sets the rows' tiers.
+    pub general_tags: Option<Vec<String>>,
+    /// Tags of the specific tier (it wins over general): with `tags`, sets
+    /// the rows' tiers.
+    pub specific_tags: Option<Vec<String>>,
+    /// Category.
+    pub category: Option<Option<String>>,
+    /// Content type.
+    pub content_type: Option<Option<String>>,
+    /// Entities; their rows are rebuilt.
+    pub entities: Option<Option<Vec<String>>>,
+    /// Keywords.
+    pub keywords: Option<Option<Vec<String>>>,
+    /// Language.
+    pub language: Option<Option<String>>,
+    /// Why the post was saved.
+    pub save_reason: Option<Option<String>>,
+    /// When the analysis finished, as given.
+    pub analyzed_at: Option<Option<i64>>,
+}
+
+impl AiPatch {
+    /// `self` as a manual edit (desktop `analyze:updateManual`): status
+    /// `done` and model [`MANUAL_AI_MODEL`], so it also stamps the analysis
+    /// time.
+    #[must_use]
+    pub fn manual(self) -> Self {
+        Self {
+            status: Some(Some("done".to_owned())),
+            model: Some(Some(MANUAL_AI_MODEL.to_owned())),
+            ..self
+        }
+    }
+}
+
+/// A saved post found by [`lookup`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LookupHit {
+    /// The key as asked for.
+    pub key: String,
+    /// The post's key (plan §2.8).
+    pub post_key: String,
+    /// Whether the post is in the trash.
+    pub trashed: bool,
+}
+
 // ── Reading ──────────────────────────────────────────────────────────────────
 
 /// One page of the gallery.
@@ -650,15 +718,11 @@ pub fn list(
 ///
 /// Database errors.
 pub fn count(conn: &Connection, filter: &PostFilter) -> Result<u64> {
-    let text = TextPlan::new(filter);
-    let w = WhereSql::new(filter, &text);
-    let sql = format!(
-        "SELECT count(*) FROM posts p WHERE {}",
-        w.clauses.join(" AND ")
-    );
+    let (condition, params) = filter_condition(filter);
+    let sql = format!("SELECT count(*) FROM posts p WHERE {condition}");
     let n: i64 = conn
         .prepare_cached(&sql)?
-        .query_row(params_from_iter(w.params.iter()), |r| r.get(0))?;
+        .query_row(params_from_iter(params.iter()), |r| r.get(0))?;
     Ok(u64::try_from(n).unwrap_or(0))
 }
 
@@ -669,15 +733,12 @@ pub fn count(conn: &Connection, filter: &PostFilter) -> Result<u64> {
 ///
 /// Database errors.
 pub fn list_ids(conn: &Connection, filter: &PostFilter) -> Result<Vec<i64>> {
-    let text = TextPlan::new(filter);
-    let w = WhereSql::new(filter, &text);
-    let sql = format!(
-        "SELECT p.id FROM posts p WHERE {} ORDER BY p.sort_ts DESC, p.id DESC",
-        w.clauses.join(" AND ")
-    );
+    let (condition, params) = filter_condition(filter);
+    let sql =
+        format!("SELECT p.id FROM posts p WHERE {condition} ORDER BY p.sort_ts DESC, p.id DESC");
     let mut stmt = conn.prepare_cached(&sql)?;
     let ids = stmt
-        .query_map(params_from_iter(w.params.iter()), |r| r.get(0))?
+        .query_map(params_from_iter(params.iter()), |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     Ok(ids)
 }
@@ -789,6 +850,91 @@ pub fn id_for_key(conn: &Connection, key: &str) -> Result<Option<i64>> {
         .prepare_cached("SELECT id FROM posts WHERE key = ?1")?
         .query_row([key], |r| r.get(0))
         .optional()?)
+}
+
+/// Keys of the posts with these internal ids, in the order of `ids`; ids
+/// without a post are skipped.
+///
+/// # Errors
+///
+/// Database errors.
+pub fn keys_of(conn: &Connection, ids: &[i64]) -> Result<Vec<String>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut found: HashMap<i64, String> = conn
+        .prepare_cached("SELECT id, key FROM posts WHERE id IN (SELECT value FROM json_each(?1))")?
+        .query_map([id_list(ids)], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids.iter().filter_map(|id| found.remove(id)).collect())
+}
+
+/// The saved posts among `keys`, ids as `platform`'s own pages show them
+/// (desktop `savedByKeys`, DATA-05): on Instagram a shortcode, a media pk or
+/// a REST id `<pk>_<owner>`; elsewhere the native id (a tweet id, a pin id).
+/// Trashed posts are found too, flagged. Hits come in the order of `keys`,
+/// once per key; keys without a post are left out.
+///
+/// An Instagram key matches the post whose pk it decodes to, or whose stored
+/// shortcode it is (the desktop matched the id or the shortcode).
+///
+/// # Errors
+///
+/// Database errors.
+pub fn lookup(conn: &Connection, platform: Platform, keys: &[String]) -> Result<Vec<LookupHit>> {
+    let mut wanted: Vec<(&str, Option<String>)> = Vec::new();
+    for key in keys {
+        if key.is_empty() || wanted.iter().any(|(k, _)| k == key) {
+            continue;
+        }
+        let native = if platform == Platform::Instagram {
+            ig::parse_legacy_id(key, None)
+                .ok()
+                .map(|id| id.pk.as_str().to_owned())
+        } else {
+            Some(key.clone())
+        };
+        wanted.push((key, native));
+    }
+    if wanted.is_empty() {
+        return Ok(Vec::new());
+    }
+    let strings = |items: Vec<&str>| serde_json::to_string(&items).expect("strings serialize");
+    let natives = strings(wanted.iter().filter_map(|(_, n)| n.as_deref()).collect());
+    let by_native: HashMap<String, (String, bool)> = conn
+        .prepare_cached(
+            "SELECT native_id, key, deleted_at IS NOT NULL FROM posts
+             WHERE platform = ?1 AND native_id IN (SELECT value FROM json_each(?2))",
+        )?
+        .query_map(params![platform, natives], |r| {
+            Ok((r.get(0)?, (r.get(1)?, r.get(2)?)))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    let by_shortcode: HashMap<String, (String, bool)> = if platform == Platform::Instagram {
+        let codes = strings(wanted.iter().map(|(k, _)| *k).collect());
+        conn.prepare_cached(
+            "SELECT shortcode, key, deleted_at IS NOT NULL FROM posts
+             WHERE platform = 'instagram' AND shortcode IS NOT NULL
+               AND shortcode IN (SELECT value FROM json_each(?1))",
+        )?
+        .query_map([codes], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?
+        .collect::<rusqlite::Result<_>>()?
+    } else {
+        HashMap::new()
+    };
+    Ok(wanted
+        .into_iter()
+        .filter_map(|(key, native)| {
+            let (post_key, trashed) = by_shortcode
+                .get(key)
+                .or_else(|| native.as_ref().and_then(|n| by_native.get(n)))?;
+            Some(LookupHit {
+                key: key.to_owned(),
+                post_key: post_key.clone(),
+                trashed: *trashed,
+            })
+        })
+        .collect())
 }
 
 // ── Writing ──────────────────────────────────────────────────────────────────
@@ -931,6 +1077,93 @@ pub fn update_user_content(
         index::reindex_post(conn, post_id)?;
     }
     Ok(())
+}
+
+/// Applies `patch` to the AI layer of a post, with the desktop's
+/// `updateAiAnalysis` semantics (`applyAiAnalysis`), and reindexes it:
+///
+/// - only the fields present are written; `Some(None)` writes `NULL`, a list
+///   is stored as given;
+/// - `ai_analyzed_at` takes `analyzed_at` when given, else `now` when the
+///   status becomes `done`;
+/// - tags present (a list or `NULL`) rebuild the AI tag rows: trimmed,
+///   lowercased, alias-resolved and deduped, with tiers from `general_tags`
+///   and `specific_tags` (specific wins; no tier when neither is given);
+///   entities present rebuild the entity rows (no aliases).
+///
+/// Unlike the desktop, manual tags are a separate layer that this never
+/// touches, even for a tag of the same name (plan §1.2 #3), and times are in
+/// milliseconds. Returns whether anything was written: an empty patch is a
+/// no-op.
+///
+/// # Errors
+///
+/// [`RepoError::NotFound`] for an unknown post; database errors otherwise.
+pub fn update_ai(conn: &Connection, post_id: i64, patch: &AiPatch, now: i64) -> Result<bool> {
+    ensure_exists(conn, post_id)?;
+    let text = |v: &Option<String>| v.clone().map_or(Value::Null, Value::Text);
+    let list = |v: &Option<Vec<String>>| {
+        v.as_ref().map_or(Value::Null, |items| {
+            Value::Text(serde_json::to_string(items).expect("strings serialize"))
+        })
+    };
+    let mut sets: Vec<(&str, Value)> = Vec::new();
+    let texts = [
+        ("ai_description", &patch.description),
+        ("ai_status", &patch.status),
+        ("ai_model", &patch.model),
+        ("ai_category", &patch.category),
+        ("ai_content_type", &patch.content_type),
+        ("ai_language", &patch.language),
+        ("ai_save_reason", &patch.save_reason),
+    ];
+    for (column, value) in texts {
+        if let Some(value) = value {
+            sets.push((column, text(value)));
+        }
+    }
+    let lists = [
+        ("ai_tags_json", &patch.tags),
+        ("ai_entities_json", &patch.entities),
+        ("ai_keywords_json", &patch.keywords),
+    ];
+    for (column, value) in lists {
+        if let Some(value) = value {
+            sets.push((column, list(value)));
+        }
+    }
+    let done = matches!(&patch.status, Some(Some(status)) if status == "done");
+    match patch.analyzed_at {
+        Some(at) => sets.push(("ai_analyzed_at", at.map_or(Value::Null, Value::Integer))),
+        None if done => sets.push(("ai_analyzed_at", Value::Integer(now))),
+        None => {}
+    }
+    // Tags and entities add their column above, so nothing to set means an
+    // empty patch.
+    if sets.is_empty() {
+        return Ok(false);
+    }
+    sets.push(("updated_at", Value::Integer(now)));
+    let assignments: Vec<String> = sets.iter().map(|(c, _)| format!("{c} = ?")).collect();
+    let sql = format!("UPDATE posts SET {} WHERE id = ?", assignments.join(", "));
+    let mut values: Vec<Value> = sets.into_iter().map(|(_, v)| v).collect();
+    values.push(Value::Integer(post_id));
+    conn.prepare_cached(&sql)?
+        .execute(params_from_iter(values.iter()))?;
+    if let Some(tags) = &patch.tags {
+        tags::sync_ai_tags(
+            conn,
+            post_id,
+            tags.as_deref().unwrap_or_default(),
+            patch.general_tags.as_deref(),
+            patch.specific_tags.as_deref(),
+        )?;
+    }
+    if let Some(entities) = &patch.entities {
+        tags::sync_entities(conn, post_id, entities.as_deref().unwrap_or_default())?;
+    }
+    index::reindex_post(conn, post_id)?;
+    Ok(true)
 }
 
 /// Moves posts to the trash and drops their index rows; slides, tags and
@@ -1511,6 +1744,15 @@ fn fts_block(expr: Option<String>) -> (String, Vec<Value>) {
         // Nothing indexable in the text: the block matches no post.
         None => ("0".to_owned(), Vec::new()),
     }
+}
+
+/// The condition on `posts p` that selects the posts of `filter`, and its
+/// parameters in order: what the list, its count and a selection by filter
+/// ([`crate::selector`]) share, so they always agree.
+pub(crate) fn filter_condition(filter: &PostFilter) -> (String, Vec<Value>) {
+    let text = TextPlan::new(filter);
+    let w = WhereSql::new(filter, &text);
+    (w.clauses.join(" AND "), w.params)
 }
 
 /// WHERE clauses (ANDed) and their parameters, in order.

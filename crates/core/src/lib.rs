@@ -5,6 +5,7 @@
 //!
 //! - the schema and its migrations, and the repositories built on it;
 //! - the library generation and the caches keyed by it;
+//! - selections of posts (`{keys}` or `{filter, exceptKeys}`);
 //! - ingest validation and merge rules, canonical ids and URL normalization;
 //! - search, tags, aliases and clusters;
 //! - web captures;
@@ -24,6 +25,7 @@ pub mod legacy;
 pub mod repo;
 pub mod schema;
 pub mod search;
+pub mod selector;
 
 #[cfg(test)]
 mod tests {

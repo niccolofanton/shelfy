@@ -236,6 +236,104 @@ pub fn rebuild(conn: &Connection) -> rusqlite::Result<usize> {
     Ok(ids.len())
 }
 
+/// Names of the temporary tables of [`verify`].
+const EXPECTED: &str = "shelfy_verify_expected";
+const EXPECTED_VOCAB: &str = "shelfy_verify_expected_vocab";
+const LIVE_VOCAB: &str = "shelfy_verify_live_vocab";
+
+/// Checks the index against the database: returns the rowids whose index
+/// entries differ from their post's current [`document`] (a post missing
+/// from the index or indexed with stale text, or a row left behind by a
+/// trashed, purged or textless post), sorted. Empty when the index is
+/// consistent.
+///
+/// It indexes every live post's document again in a temporary FTS5 table
+/// with the live table's columns and tokenizer, and compares the two indexes
+/// token by token (term, column and offset) through `fts5vocab`. For tests
+/// and operator checks: it reads the whole library, and needs a connection
+/// that may create temporary tables.
+///
+/// # Errors
+///
+/// Fails when a query fails, or when the live table's definition cannot be
+/// read.
+pub fn verify(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
+    let definition: String = conn.query_row(
+        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'posts_fts'",
+        [],
+        |r| r.get(0),
+    )?;
+    let arguments = expected_arguments(&definition).ok_or_else(|| {
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some("unexpected posts_fts definition".to_owned()),
+        )
+    })?;
+    drop_verify_tables(conn)?;
+    conn.execute_batch(&format!(
+        "CREATE VIRTUAL TABLE temp.{EXPECTED} USING fts5({arguments});
+         CREATE VIRTUAL TABLE temp.{EXPECTED_VOCAB} USING fts5vocab(temp, {EXPECTED}, instance);
+         CREATE VIRTUAL TABLE temp.{LIVE_VOCAB} USING fts5vocab(main, posts_fts, instance);"
+    ))?;
+    let outcome = compare(conn);
+    drop_verify_tables(conn)?;
+    outcome
+}
+
+fn compare(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
+    let ids: Vec<i64> = conn
+        .prepare("SELECT id FROM posts WHERE deleted_at IS NULL ORDER BY id")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut insert = conn.prepare(&format!(
+        "INSERT INTO temp.{EXPECTED} (rowid, tags, keywords, entities, description, note,
+                                      caption, author, web_text)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+    ))?;
+    for id in ids {
+        let Some(doc) = document(conn, id)? else {
+            continue;
+        };
+        if doc.is_empty() {
+            continue;
+        }
+        let [c1, c2, c3, c4, c5, c6, c7, c8] = doc.columns();
+        insert.execute(params![id, c1, c2, c3, c4, c5, c6, c7, c8])?;
+    }
+    let columns = "term, doc, col, offset";
+    let sql = format!(
+        "SELECT doc FROM (SELECT {columns} FROM temp.{LIVE_VOCAB}
+                          EXCEPT SELECT {columns} FROM temp.{EXPECTED_VOCAB})
+         UNION
+         SELECT doc FROM (SELECT {columns} FROM temp.{EXPECTED_VOCAB}
+                          EXCEPT SELECT {columns} FROM temp.{LIVE_VOCAB})
+         ORDER BY doc"
+    );
+    conn.prepare(&sql)?.query_map([], |r| r.get(0))?.collect()
+}
+
+fn drop_verify_tables(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(&format!(
+        "DROP TABLE IF EXISTS temp.{LIVE_VOCAB};
+         DROP TABLE IF EXISTS temp.{EXPECTED_VOCAB};
+         DROP TABLE IF EXISTS temp.{EXPECTED};"
+    ))
+}
+
+/// The `fts5(…)` arguments of the live table without its content options:
+/// the same columns, tokenizer and prefixes, for a table with content.
+fn expected_arguments(definition: &str) -> Option<String> {
+    let start = definition.find("fts5(")? + "fts5(".len();
+    let end = definition.rfind(')')?;
+    let arguments: Vec<&str> = definition
+        .get(start..end)?
+        .split(',')
+        .map(str::trim)
+        .filter(|a| !a.starts_with("content") && !a.starts_with("contentless_delete"))
+        .collect();
+    Some(arguments.join(", "))
+}
+
 struct PostText {
     ai_tags: Option<String>,
     user_tags: Option<String>,
@@ -362,6 +460,19 @@ mod tests {
         assert_eq!(
             web_text(None, Some(meta), Some(pages)),
             "Studio site\nWork\nOur projects\nCase studies"
+        );
+    }
+
+    #[test]
+    fn the_check_table_keeps_columns_and_tokenizer_but_not_contentless() {
+        let definition = "CREATE VIRTUAL TABLE posts_fts USING fts5(
+  tags, keywords, entities, description, note, caption, author, web_text,
+  content='', contentless_delete=1,
+  tokenize=\"unicode61 remove_diacritics 2\", prefix='2 3')";
+        assert_eq!(
+            expected_arguments(definition).unwrap(),
+            "tags, keywords, entities, description, note, caption, author, web_text, \
+             tokenize=\"unicode61 remove_diacritics 2\", prefix='2 3'"
         );
     }
 

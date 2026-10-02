@@ -4,13 +4,17 @@
 //! collection is unique per `(platform, external_id)`; counts and new
 //! memberships ignore trashed posts; deleting a collection "with its posts"
 //! moves the posts to the trash instead of deleting them; removing one post
-//! from a collection is exposed (DATA-27).
+//! from a collection is exposed (DATA-27); collections have a manual order
+//! ([`move_to`]); posts are added by [`Selector`] in one statement
+//! ([`add_selected`]).
 
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use rusqlite::types::Value;
+use rusqlite::{Connection, OptionalExtension, Row, params, params_from_iter};
 use serde::Serialize;
 
 use super::{Platform, RepoError, Result, conflict_on_unique, id_list, posts};
 use crate::search::terms::js_trim;
+use crate::selector::Selector;
 
 /// Color of a collection created without one (desktop default).
 pub const DEFAULT_COLOR: &str = "#3d5afe";
@@ -82,7 +86,7 @@ pub enum DeleteMode {
 ///
 /// Database errors.
 pub fn list(conn: &Connection) -> Result<Vec<Collection>> {
-    let sql = format!("{SELECT} ORDER BY c.position IS NULL, c.position, c.created_at, c.id");
+    let sql = format!("{SELECT} ORDER BY {ORDER}");
     let rows = conn
         .prepare_cached(&sql)?
         .query_map([], from_row)?
@@ -179,6 +183,34 @@ pub fn update(conn: &Connection, id: i64, patch: &CollectionPatch) -> Result<Col
     get(conn, id)?.ok_or(RepoError::NotFound)
 }
 
+/// Moves a collection to `index` in the manual order (0-based; past the end
+/// means last) and renumbers every collection from 0, so positions stay
+/// dense: one call per drag. Collections already in place are not written,
+/// so a move to where a collection already is changes nothing.
+///
+/// # Errors
+///
+/// [`RepoError::NotFound`] for an unknown id; database errors otherwise.
+pub fn move_to(conn: &Connection, id: i64, index: usize) -> Result<Collection> {
+    let mut order: Vec<i64> = conn
+        .prepare_cached(&format!("SELECT c.id FROM collections c ORDER BY {ORDER}"))?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let from = order
+        .iter()
+        .position(|&c| c == id)
+        .ok_or(RepoError::NotFound)?;
+    order.remove(from);
+    order.insert(index.min(order.len()), id);
+    let mut place = conn.prepare_cached(
+        "UPDATE collections SET position = ?2 WHERE id = ?1 AND position IS NOT ?2",
+    )?;
+    for (position, collection) in (0_i64..).zip(&order) {
+        place.execute(params![collection, position])?;
+    }
+    get(conn, id)?.ok_or(RepoError::NotFound)
+}
+
 /// Deletes a collection. Returns how many posts went to the trash with it.
 ///
 /// # Errors
@@ -236,6 +268,53 @@ pub fn add_posts(
     Ok(added)
 }
 
+/// Adds the posts `selector` selects to collection `id` in one statement
+/// (`INSERT OR IGNORE … SELECT`), whatever the selection's size. Trashed
+/// posts and current members are skipped. Returns the internal ids of the
+/// posts added.
+///
+/// # Errors
+///
+/// [`RepoError::NotFound`] when the collection does not exist;
+/// [`RepoError::Invalid`] for a selector over its caps; database errors.
+pub fn add_selected(conn: &Connection, id: i64, selector: &Selector, now: i64) -> Result<Vec<i64>> {
+    if !exists(conn, id)? {
+        return Err(RepoError::NotFound);
+    }
+    let selection = selector.sql()?;
+    let sql = format!(
+        "INSERT OR IGNORE INTO post_collections (post_id, collection_id, added_at)
+         SELECT p.id, ?, ? FROM posts p WHERE p.deleted_at IS NULL AND ({})
+         RETURNING post_id",
+        selection.condition
+    );
+    let params = [Value::Integer(id), Value::Integer(now)]
+        .into_iter()
+        .chain(selection.params);
+    let added = conn
+        .prepare_cached(&sql)?
+        .query_map(params_from_iter(params), |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(added)
+}
+
+/// Keys of the posts in collection `id`, trash included, at most `limit`.
+///
+/// # Errors
+///
+/// Database errors.
+pub fn member_keys(conn: &Connection, id: i64, limit: usize) -> Result<Vec<String>> {
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let keys = conn
+        .prepare_cached(
+            "SELECT p.key FROM post_collections pc JOIN posts p ON p.id = pc.post_id
+             WHERE pc.collection_id = ?1 ORDER BY pc.post_id LIMIT ?2",
+        )?
+        .query_map(params![id, limit], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(keys)
+}
+
 /// Removes one post from one collection (DATA-27). Returns whether it was a member.
 ///
 /// # Errors
@@ -246,6 +325,15 @@ pub fn remove_post(conn: &Connection, post_id: i64, collection_id: i64) -> Resul
         .prepare_cached("DELETE FROM post_collections WHERE post_id = ?1 AND collection_id = ?2")?
         .execute([post_id, collection_id])?;
     Ok(removed > 0)
+}
+
+/// The manual order: positioned collections first, then by creation.
+const ORDER: &str = "c.position IS NULL, c.position, c.created_at, c.id";
+
+fn exists(conn: &Connection, id: i64) -> Result<bool> {
+    Ok(conn
+        .prepare_cached("SELECT EXISTS (SELECT 1 FROM collections WHERE id = ?1)")?
+        .query_row([id], |r| r.get(0))?)
 }
 
 const SELECT: &str = "SELECT c.id, c.name, c.color, c.platform, c.external_id, c.source_name,
