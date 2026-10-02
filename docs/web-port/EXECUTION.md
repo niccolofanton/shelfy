@@ -83,7 +83,7 @@ Changes to the plan that the lead made during execution, with the reason.
 |---|---|---|---|
 | P1-01 | Realtime: SSE bus, notifications, client errors, version | done | `web/p1-01-realtime` (e7afc2c…86f34ca) |
 | P1-07 | Job system and jobs API | done | `web/p1-07-jobs` (e9fce3a…9499f3c) |
-| P1-12 | Backup, restore and schema-upgrade tooling | done; independent data-safety review running | `web/p1-12-backup` (6989b13…61da797) |
+| P1-12 | Backup, restore and schema-upgrade tooling | done; the independent review found 2 high, 5 medium and 7 low issues, fixed in F4 | `web/p1-12-backup` (6989b13…61da797) |
 | P1-09 | Deployable server: SPA hosting, headers, image, release workflow, `compose.test` | running | `web/p1-09-deploy` |
 | P1-13 | Owner passkeys, re-auth, login-link bootstrap, optional SMTP | running | `web/p1-13-passkeys` |
 | P1-03 | Library writes, folders, selector, stats, ETags | running | `web/p1-03-writes` |
@@ -98,7 +98,8 @@ Work that a review or a later finding added to an integrated task.
 | # | What | From | Status | Branch |
 |---|---|---|---|---|
 | F1 | T10 hardening: links redeem only by POST with the token in the URL fragment, CSRF check on every unsafe request, trusted-proxy client IPs, no re-caching of revoked sessions, deny-by-default authentication, mail and cookie fixes | the T10 security review (no critical or high finding) | done | `web/t10-hardening` (b8503e0…0d66c7b) |
-| F3 | The scheduler spends a try on `user_locked`: a lock longer than about 2–3 minutes fails that user's queued jobs (3 tries, 30 s then 60 s backoff). A locked user's tries should not count, or should wait for the unlock. | P1-12 report | todo, folded into P1-15, which already changes `jobs/scheduler.rs` | |
+| F3 | The scheduler spends a try on `user_locked`: a lock longer than about 2–3 minutes fails that user's queued jobs (3 tries, 30 s then 60 s backoff). A locked user's tries should not count, or should wait for the unlock. | P1-12 report | moved into F4 (review finding M2) | |
+| F4 | Fix the P1-12 review findings. **High:** `restore-db` can be written to or corrupted through handles that reopen a locked library (H1); a backup job killed by a signal records success (H2). **Medium:** concurrent opens run a migration twice (M1); locked users' jobs fail during a restore (M2, = F3); a migration install writes into a locked library (M3); a full restore accepts a snapshot without a user's library (M4); rollback writes are never reconciled (M5, latent: record and document only). **Low:** L1–L7. | independent review of P1-12 | running | `web/f4-backup-fixes` |
 | F2 | Fix the 7 desktop e2e failures that predate the port: 6 in "Downloads – job list" (the spec expects `download-job` rows; the view now groups jobs per post) and 1 in "Browser – URL bar shows Twitter bookmarks URL after switching tab". CI does not run e2e, so nothing caught them. | T12 (reproduced on `7ba4ea2`) | todo | |
 
 ### P2–P6
