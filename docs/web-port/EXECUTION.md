@@ -102,6 +102,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-18 | First osn PR, part 2: apply stage 1 (services) | done on 2026-10-02 at 23:20: [osn PR #29](https://github.com/niccolofanton/osn/pull/29) merged, `server-v0.1.0-rc.1` (fa3b286) deployed. `shelfy-api` is healthy and `refs` answers through the edge, behind Access. The edge subnet is `10.91.0.0/24` and equals `SHELFY_TRUSTED_PROXIES`. `up{job="shelfy"}` is 1. A restart is healthy within 1 s. Owner created, and the owner signed in through Access and a sign-in link. Hermes is unchanged: same start time, 0 restarts, 2 GiB / 2 CPU, node status online. Backups are still off. | osn `main` fa2066e |
 | P1-19 | Migration tool and install job complete | done | `web/p1-19-migration` (517c139…668dfc7) |
 | P1-20 | Sign-in, re-auth, device approval, Settings | running | `web/p1-20-auth-ui` |
+| P1-11 | Trash and bulk by selector | running | `web/p1-11-trash-bulk` |
 | P1-16 | First osn PR, part 1: prepare (code only) | done; draft [osn PR #29](https://github.com/niccolofanton/osn/pull/29) | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` (967c83a…b5b94af) |
 | P1-22 | O2: R2 bucket and scoped token for backups | done | owner action O2 (osn `1ce0abe`) |
 
