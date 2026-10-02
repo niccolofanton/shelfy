@@ -1,0 +1,21 @@
+# Shelfy backups (plan §3.5): retention, prune and a 5 % read-back check of
+# the restic repository. Started weekly by shelfy-restic-maintenance.timer;
+# the osn role `shelfy` installs the scripts in /opt/osn/stack/shelfy/backup/.
+[Unit]
+Description=Shelfy: restic retention, prune and check
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/shelfy/backup.env
+ExecStart=/opt/osn/stack/shelfy/backup/shelfy-restic-maintenance.sh
+TimeoutStartSec=6h
+Nice=19
+IOSchedulingClass=idle
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=full

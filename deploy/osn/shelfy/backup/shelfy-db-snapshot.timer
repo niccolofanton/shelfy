@@ -1,0 +1,12 @@
+# Shelfy backups (plan §3.5): RPO 1 h for libraries and accounts.
+[Unit]
+Description=Shelfy: hourly database backup at :05
+
+[Timer]
+OnCalendar=*-*-* *:05:00 UTC
+AccuracySec=1min
+Persistent=true
+Unit=shelfy-db-snapshot.service
+
+[Install]
+WantedBy=timers.target

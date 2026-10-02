@@ -1,0 +1,13 @@
+# Shelfy backups (plan §3.5): a restore drill every month; the "backups
+# stale" alert fires when none succeeded for 35 days.
+[Unit]
+Description=Shelfy: restore drill on the first of the month at 05:30 UTC
+
+[Timer]
+OnCalendar=*-*-01 05:30:00 UTC
+AccuracySec=1min
+Persistent=true
+Unit=shelfy-restore-drill.service
+
+[Install]
+WantedBy=timers.target

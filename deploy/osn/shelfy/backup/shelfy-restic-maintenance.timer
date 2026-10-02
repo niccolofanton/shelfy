@@ -1,0 +1,12 @@
+# Shelfy backups (plan §3.5): weekly repository maintenance.
+[Unit]
+Description=Shelfy: restic maintenance on Sundays at 04:30 UTC
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00 UTC
+AccuracySec=1min
+Persistent=true
+Unit=shelfy-restic-maintenance.service
+
+[Install]
+WantedBy=timers.target

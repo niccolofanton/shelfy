@@ -1,0 +1,13 @@
+# Shelfy backups (plan §3.5): RPO 24 h for media. After the nightly purge and
+# GC jobs (03:00 UTC, plan §2.12).
+[Unit]
+Description=Shelfy: daily media backup at 03:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+AccuracySec=1min
+Persistent=true
+Unit=shelfy-media-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,22 @@
+# Shelfy backups (plan §3.5): restore the control database and one random
+# library from the latest backup and verify them against the live data.
+# Started monthly by shelfy-restore-drill.timer; the osn role `shelfy`
+# installs the scripts in /opt/osn/stack/shelfy/backup/.
+[Unit]
+Description=Shelfy: monthly restore drill
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/shelfy/backup.env
+ExecStart=/opt/osn/stack/shelfy/backup/shelfy-restore-drill.sh
+TimeoutStartSec=2h
+Nice=19
+IOSchedulingClass=idle
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=full

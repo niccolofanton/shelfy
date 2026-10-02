@@ -1,0 +1,21 @@
+# Shelfy backups (plan §3.5): snapshot the changed databases and back them up
+# with restic, set "db". Started hourly by shelfy-db-snapshot.timer; the osn
+# role `shelfy` installs the scripts in /opt/osn/stack/shelfy/backup/.
+[Unit]
+Description=Shelfy: snapshot the changed databases and back them up (restic, set db)
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/shelfy/backup.env
+ExecStart=/opt/osn/stack/shelfy/backup/shelfy-db-snapshot.sh
+TimeoutStartSec=50min
+Nice=19
+IOSchedulingClass=idle
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=full
