@@ -116,7 +116,7 @@ async fn the_owner_signs_in_with_an_emailed_link() {
     assert_eq!(methods.headers()[header::CACHE_CONTROL], "no-store");
     assert_eq!(
         json(methods).await,
-        json!({ "emailLink": true, "passkeys": false })
+        json!({ "emailLink": true, "passkeys": true })
     );
 
     let response = send(&app, email_request("  Owner@Example.TEST ")).await;
@@ -201,7 +201,7 @@ async fn without_email_the_cli_link_is_the_way_in() {
 
     assert_eq!(
         json(send(&app, get("/api/v1/auth/methods")).await).await,
-        json!({ "emailLink": false, "passkeys": false })
+        json!({ "emailLink": false, "passkeys": true })
     );
     // Still 202, and nothing is minted or written.
     let response = send(&app, email_request(OWNER_EMAIL)).await;

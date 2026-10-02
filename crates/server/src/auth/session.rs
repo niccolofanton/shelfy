@@ -156,9 +156,10 @@ impl<S: Send + Sync> FromRequestParts<S> for SessionUser {
 
 /// A [`SessionUser`] who proved their identity within
 /// [`AuthConfig::reauth_window`] (§2.11: 5 minutes): required for account
-/// deletion, resets, token creation and passkey removal. A sign-in counts;
-/// P1-13 adds re-authentication without signing out. Otherwise the request
-/// answers 403 `reauth_required`, and the SPA opens its re-auth dialog.
+/// deletion, resets, token creation, and adding or removing a passkey. A
+/// sign-in counts, and so does a re-authentication without signing out
+/// ([`super::reauth`]: a passkey or a link). Otherwise the request answers
+/// 403 `reauth_required`, and the SPA opens its re-auth dialog.
 #[derive(Clone, Debug)]
 pub struct RecentAuth(pub SessionUser);
 
@@ -279,11 +280,15 @@ pub async fn resolve(
     }))
 }
 
-/// How a user proved who they are, recorded in the audit log.
+/// How a user proved who they are, to sign in or to re-authenticate;
+/// recorded in the audit log.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SignInMethod {
-    /// A sign-in link (email or `admin login-link`).
+    /// A link: a sign-in or re-authentication link, by email or from
+    /// `admin login-link`.
     MagicLink,
+    /// A passkey ([`super::passkeys`]).
+    Passkey,
 }
 
 impl SignInMethod {
@@ -292,8 +297,18 @@ impl SignInMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::MagicLink => "magic_link",
+            Self::Passkey => "passkey",
         }
     }
+}
+
+/// A new session, after a sign-in.
+#[derive(Debug)]
+pub struct SignedIn {
+    /// Who signed in.
+    pub user_id: String,
+    /// The session's token, for the cookie (its only copy).
+    pub token: SecretToken,
 }
 
 /// Creates a session for `user_id` inside the caller's write transaction
@@ -411,6 +426,12 @@ pub async fn end_all_sessions(state: &AppState, user_id: &str) -> Result<usize, 
 mod tests {
     use super::*;
     use crate::auth::AuthState;
+    use crate::config::{DEFAULT_PUBLIC_URL, PublicUrl};
+
+    fn auth_state() -> AuthState {
+        let public_url = PublicUrl::parse(DEFAULT_PUBLIC_URL).unwrap();
+        AuthState::new(AuthConfig::default(), &public_url)
+    }
 
     fn entry() -> Arc<CachedSession> {
         Arc::new(CachedSession {
@@ -425,7 +446,7 @@ mod tests {
 
     #[test]
     fn a_lookup_that_raced_a_revocation_is_never_cached() {
-        let auth = AuthState::new(AuthConfig::default());
+        let auth = auth_state();
         let hash = [7_u8; 32];
 
         // No revocation since the read: cached.
@@ -453,7 +474,7 @@ mod tests {
     fn concurrent_revocations_never_leave_a_stale_entry() {
         // A lookup inserts what it read while a revocation runs: whichever
         // order they take, no entry from the earlier read survives.
-        let auth = Arc::new(AuthState::new(AuthConfig::default()));
+        let auth = Arc::new(auth_state());
         let hash = [9_u8; 32];
         for _ in 0..200 {
             let seen = auth.revision();

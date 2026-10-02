@@ -10,7 +10,7 @@
 //! | `SHELFY_DATA_DIR` | `/data/shelfy` | data directory (§2.5) |
 //! | `SHELFY_LISTEN_ADDR` | `0.0.0.0:8080` | API listener, reached through the edge proxy |
 //! | `SHELFY_METRICS_ADDR` | `0.0.0.0:9464` | Prometheus listener, internal network only |
-//! | `SHELFY_PUBLIC_URL` | `http://localhost:8080` | public origin of the web app: links the server hands out, the CSRF `Origin` check |
+//! | `SHELFY_PUBLIC_URL` | `http://localhost:8080` | public origin of the web app: links the server hands out, the CSRF `Origin` check, the passkey relying party (RP ID = its host) |
 //! | `SHELFY_TRUSTED_PROXIES` | none | CIDR blocks whose `CF-Connecting-IP` is believed; otherwise the TCP peer is the client |
 //! | `SHELFY_LOG_FORMAT` | `json` | `json` (one object per line) or `text` |
 //! | `RUST_LOG` | `info` | log filter (`tracing` env-filter syntax) |
@@ -77,9 +77,11 @@ pub struct DataDirArg {
 pub struct PublicUrlArg {
     /// Public origin of the web app, without a path (for example
     /// `https://refs.niccolofanton.dev`). Links the server hands out start
-    /// with it, and the CSRF check requires it as the `Origin` of every
-    /// state-changing cookie request; later it is the passkey RP ID too. Use
-    /// https unless the host is localhost: the session cookie is `Secure`.
+    /// with it, the CSRF check requires it as the `Origin` of every
+    /// state-changing cookie request, and passkeys are bound to it: the RP ID
+    /// is its host, and changing the host orphans every registered passkey.
+    /// Use https unless the host is localhost: the session cookie is
+    /// `Secure`, and browsers offer passkeys in secure contexts only.
     #[arg(
         long = "public-url",
         env = "SHELFY_PUBLIC_URL",

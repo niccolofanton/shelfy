@@ -118,6 +118,119 @@
         "security": [{}]
       }
     },
+    "/api/v1/auth/passkeys/login/finish": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Finishes a passkey sign-in.",
+        "description": "A valid answer from a passkey of an active account starts a session\n(replacing the one the browser held). Otherwise 400: `challenge_expired`\n(the ceremony is unknown, used or older than 5 minutes: start again) or\n`passkey_invalid` (the detail names the reason). Limit: as for `start`.",
+        "operationId": "finishPasskeySignIn",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasskeySignIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Signed in: the response sets the session cookie."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [{}]
+      }
+    },
+    "/api/v1/auth/passkeys/login/start": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Starts a username-less sign-in with a passkey.",
+        "description": "Pass `publicKey` to `navigator.credentials.get()`: the browser offers the\npasskeys it holds for this site. Then send its answer with the\n`ceremonyId` to `POST /auth/passkeys/login/finish`, within 5 minutes.\nLimit: 10 sign-in requests per minute per client, shared with the other\nsign-in routes. 404 when passkeys are off (see `GET /auth/methods`).",
+        "operationId": "startPasskeySignIn",
+        "responses": {
+          "200": {
+            "description": "The options of the sign-in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyAssertionStart"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [{}]
+      }
+    },
+    "/api/v1/auth/reauth/finish": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Finishes re-authenticating the session, with a passkey's answer or a\nre-authentication link.",
+        "description": "After the 204, the routes that need a recent sign-in work for 5 minutes.\nA passkey answer is refused with 400 `challenge_expired` (unknown, used,\nexpired or another session's ceremony) or `passkey_invalid`; a link that\nis unknown, used, expired, of another kind or of another account, with\n400 `invalid_link`, and stays unused.",
+        "operationId": "finishReauth",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthFinish"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Re-authenticated."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/reauth/start": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Starts re-authenticating the session.",
+        "description": "`passkey`: answers the options for `navigator.credentials.get()`, which\nname the account's passkeys; send the answer with the `ceremonyId` to\n`POST /auth/reauth/finish` within 5 minutes. 404 when the account has no\npasskey, or passkeys are off.\n\n`email`: emails a re-authentication link to the account's address and\nanswers 202. 404 when email is off (`GET /auth/methods`); the operator\ncan mint the link instead (`admin login-link --purpose reauth`). Limit:\n3 emails per hour per address, shared with sign-in emails.",
+        "operationId": "startReauth",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "`passkey`: the options of the ceremony.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyAssertionStart"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "`email`: a link valid for 15 minutes is on its way."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/client-errors": {
       "post": {
         "tags": ["platform"],
@@ -703,6 +816,110 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/passkeys": {
+      "get": {
+        "tags": ["account"],
+        "summary": "The account's passkeys, oldest first.",
+        "operationId": "listPasskeys",
+        "responses": {
+          "200": {
+            "description": "The passkeys.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyList"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "post": {
+        "tags": ["account"],
+        "summary": "Adds a passkey to the account: finishes the registration that\n`POST /me/passkeys/start` began in this session.",
+        "description": "400 `challenge_expired` (unknown, used, expired or another session's\nceremony: start again) or `passkey_invalid`; 409 `conflict` when the\ncredential is registered already; 422 for a label over 64 characters.",
+        "operationId": "createPasskey",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewPasskey"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new passkey.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Passkey"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/passkeys/start": {
+      "post": {
+        "tags": ["account"],
+        "summary": "Starts adding a passkey to the account.",
+        "description": "Needs a sign-in or a re-authentication from the last 5 minutes (403\n`reauth_required` otherwise). Pass `publicKey` to\n`navigator.credentials.create()`, then send its answer with the\n`ceremonyId` to `POST /me/passkeys`, from this session, within 5 minutes.\n404 when passkeys are off.",
+        "operationId": "startPasskeyRegistration",
+        "responses": {
+          "200": {
+            "description": "The options of the registration.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasskeyRegistrationStart"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/passkeys/{id}": {
+      "delete": {
+        "tags": ["account"],
+        "summary": "Removes a passkey from the account.",
+        "description": "Needs a sign-in or a re-authentication from the last 5 minutes (403\n`reauth_required` otherwise). Another account's passkey is a 404, like a\nmissing one. The passkey stays in the authenticator, which can no longer\nsign in with it.",
+        "operationId": "deletePasskey",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The passkey's id.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed."
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -2351,7 +2568,119 @@
           },
           "passkeys": {
             "type": "boolean",
-            "description": "Passkey sign-in (P1-13). Always false for now."
+            "description": "Passkeys work: the public URL is an https origin or localhost, with a\ndomain name. Says nothing about which accounts have passkeys."
+          }
+        }
+      },
+      "AuthenticationResponseJSON": {
+        "type": "object",
+        "description": "`AuthenticationResponseJSON`: what the credential's `toJSON()` returns\nafter `navigator.credentials.get()`.",
+        "required": ["id", "rawId", "type", "response"],
+        "properties": {
+          "authenticatorAttachment": {
+            "type": "string",
+            "description": "`platform` or `cross-platform`."
+          },
+          "clientExtensionResults": {
+            "type": "object",
+            "description": "Extension outputs."
+          },
+          "id": {
+            "type": "string",
+            "description": "The credential id, base64url."
+          },
+          "rawId": {
+            "type": "string",
+            "description": "The credential id, base64url."
+          },
+          "response": {
+            "$ref": "#/components/schemas/AuthenticatorAssertionResponseJSON",
+            "description": "The authenticator's answer."
+          },
+          "type": {
+            "type": "string",
+            "description": "`public-key`."
+          }
+        }
+      },
+      "AuthenticatorAssertionResponseJSON": {
+        "type": "object",
+        "description": "`AuthenticatorAssertionResponseJSON`.",
+        "required": ["clientDataJSON", "authenticatorData", "signature"],
+        "properties": {
+          "authenticatorData": {
+            "type": "string",
+            "description": "The authenticator data, base64url."
+          },
+          "clientDataJSON": {
+            "type": "string",
+            "description": "The client data, base64url."
+          },
+          "signature": {
+            "type": "string",
+            "description": "The signature, base64url."
+          },
+          "userHandle": {
+            "type": "string",
+            "description": "The user handle, base64url: required to sign in."
+          }
+        }
+      },
+      "AuthenticatorAttestationResponseJSON": {
+        "type": "object",
+        "description": "`AuthenticatorAttestationResponseJSON`.",
+        "required": ["clientDataJSON", "attestationObject"],
+        "properties": {
+          "attestationObject": {
+            "type": "string",
+            "description": "The attestation object (CBOR), base64url."
+          },
+          "authenticatorData": {
+            "type": "string",
+            "description": "The authenticator data, base64url."
+          },
+          "clientDataJSON": {
+            "type": "string",
+            "description": "The client data, base64url."
+          },
+          "publicKey": {
+            "type": "string",
+            "description": "The public key (DER `SubjectPublicKeyInfo`), base64url."
+          },
+          "publicKeyAlgorithm": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its COSE algorithm."
+          },
+          "transports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "How the authenticator is reached."
+          }
+        }
+      },
+      "AuthenticatorSelectionCriteria": {
+        "type": "object",
+        "description": "`AuthenticatorSelectionCriteria`.",
+        "required": ["requireResidentKey", "userVerification"],
+        "properties": {
+          "authenticatorAttachment": {
+            "type": "string",
+            "description": "`platform` or `cross-platform`; absent: either."
+          },
+          "requireResidentKey": {
+            "type": "boolean",
+            "description": "`true`, the WebAuthn Level 1 form of `residentKey: required`."
+          },
+          "residentKey": {
+            "type": "string",
+            "description": "`required`: a discoverable credential, for username-less sign-in."
+          },
+          "userVerification": {
+            "type": "string",
+            "description": "`required`: the authenticator verifies the user."
           }
         }
       },
@@ -2598,6 +2927,8 @@
           "bad_request",
           "invalid_cursor",
           "invalid_link",
+          "challenge_expired",
+          "passkey_invalid",
           "unauthorized",
           "forbidden",
           "csrf_failed",
@@ -3422,6 +3753,25 @@
         },
         "additionalProperties": false
       },
+      "NewPasskey": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/me/passkeys`.",
+        "required": ["ceremonyId", "credential"],
+        "properties": {
+          "ceremonyId": {
+            "type": "string",
+            "description": "The `ceremonyId` of `POST /me/passkeys/start`."
+          },
+          "credential": {
+            "$ref": "#/components/schemas/RegistrationResponseJSON",
+            "description": "The browser's answer: `credential.toJSON()`."
+          },
+          "label": {
+            "type": "string",
+            "description": "The user's name for the passkey, up to 64 characters; trimmed, and\nblank is none."
+          }
+        }
+      },
       "Notification": {
         "type": "object",
         "description": "A notification: an item of `GET /notifications` and the payload of the\n`notification` event. It carries codes, not text: the client writes the\nmessage from `kind`, `code` and `params`.",
@@ -3506,6 +3856,91 @@
           "sha256": {
             "type": "string",
             "description": "SHA-256 of the content, lowercase hex."
+          }
+        }
+      },
+      "Passkey": {
+        "type": "object",
+        "description": "A passkey of the account.",
+        "required": ["id", "label", "createdAt", "lastUsedAt"],
+        "properties": {
+          "createdAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Registration time, unix ms."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its id, for `DELETE /me/passkeys/{id}`."
+          },
+          "label": {
+            "type": ["string", "null"],
+            "description": "The user's name for it."
+          },
+          "lastUsedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Last sign-in or re-authentication with it, unix ms."
+          }
+        }
+      },
+      "PasskeyAssertionStart": {
+        "type": "object",
+        "description": "The first answer of a sign-in or a re-authentication: the options to\nsign with a passkey.",
+        "required": ["ceremonyId", "publicKey"],
+        "properties": {
+          "ceremonyId": {
+            "type": "string",
+            "description": "Names the ceremony in the call that finishes it: valid 5 minutes,\nonce."
+          },
+          "publicKey": {
+            "$ref": "#/components/schemas/PublicKeyCredentialRequestOptionsJSON",
+            "description": "The options for `navigator.credentials.get({publicKey})`."
+          }
+        }
+      },
+      "PasskeyList": {
+        "type": "object",
+        "description": "The account's passkeys.",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Passkey"
+            },
+            "description": "Oldest first."
+          }
+        }
+      },
+      "PasskeyRegistrationStart": {
+        "type": "object",
+        "description": "The first answer of a registration: the options to create a passkey.",
+        "required": ["ceremonyId", "publicKey"],
+        "properties": {
+          "ceremonyId": {
+            "type": "string",
+            "description": "Names the ceremony in `POST /me/passkeys`: valid 5 minutes, once,\nin this session."
+          },
+          "publicKey": {
+            "$ref": "#/components/schemas/PublicKeyCredentialCreationOptionsJSON",
+            "description": "The options for `navigator.credentials.create({publicKey})`."
+          }
+        }
+      },
+      "PasskeySignIn": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/auth/passkeys/login/finish`.",
+        "required": ["ceremonyId", "credential"],
+        "properties": {
+          "ceremonyId": {
+            "type": "string",
+            "description": "The `ceremonyId` of `POST /auth/passkeys/login/start`."
+          },
+          "credential": {
+            "$ref": "#/components/schemas/AuthenticationResponseJSON",
+            "description": "The browser's answer: `credential.toJSON()`."
           }
         }
       },
@@ -4172,6 +4607,186 @@
           }
         }
       },
+      "PublicKeyCredentialCreationOptionsJSON": {
+        "type": "object",
+        "description": "`PublicKeyCredentialCreationOptionsJSON`: what\n`navigator.credentials.create()` needs to create a passkey.",
+        "required": ["rp", "user", "challenge", "pubKeyCredParams"],
+        "properties": {
+          "attestation": {
+            "type": "string",
+            "description": "`none`: no attestation is asked for."
+          },
+          "attestationFormats": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Attestation formats accepted."
+          },
+          "authenticatorSelection": {
+            "$ref": "#/components/schemas/AuthenticatorSelectionCriteria",
+            "description": "What kind of credential to create."
+          },
+          "challenge": {
+            "type": "string",
+            "description": "32 random bytes, base64url."
+          },
+          "excludeCredentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicKeyCredentialDescriptorJSON"
+            },
+            "description": "The account's passkeys: an authenticator holding one of them does not\ncreate another."
+          },
+          "extensions": {
+            "type": "object",
+            "description": "Extension inputs (`credProps`, `credentialProtectionPolicy`, `uvm`);\na browser ignores those it does not know."
+          },
+          "hints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Hints for the browser's UI (`client-device`, `security-key`,\n`hybrid`)."
+          },
+          "pubKeyCredParams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicKeyCredentialParameters"
+            },
+            "description": "The key types accepted, preferred first: ES256 (-7), RS256 (-257)."
+          },
+          "rp": {
+            "$ref": "#/components/schemas/PublicKeyCredentialRpEntity",
+            "description": "The relying party: this server."
+          },
+          "timeout": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How long the ceremony may take, ms.",
+            "minimum": 0
+          },
+          "user": {
+            "$ref": "#/components/schemas/PublicKeyCredentialUserEntityJSON",
+            "description": "The account the passkey is for."
+          }
+        }
+      },
+      "PublicKeyCredentialDescriptorJSON": {
+        "type": "object",
+        "description": "`PublicKeyCredentialDescriptorJSON`: names a passkey.",
+        "required": ["type", "id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The credential id, base64url."
+          },
+          "transports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "How the authenticator is reached (`internal`, `hybrid`, `usb`…)."
+          },
+          "type": {
+            "type": "string",
+            "description": "`public-key`."
+          }
+        }
+      },
+      "PublicKeyCredentialParameters": {
+        "type": "object",
+        "description": "`PublicKeyCredentialParameters`.",
+        "required": ["type", "alg"],
+        "properties": {
+          "alg": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A COSE algorithm: -7 (ES256) or -257 (RS256)."
+          },
+          "type": {
+            "type": "string",
+            "description": "`public-key`."
+          }
+        }
+      },
+      "PublicKeyCredentialRequestOptionsJSON": {
+        "type": "object",
+        "description": "`PublicKeyCredentialRequestOptionsJSON`: what\n`navigator.credentials.get()` needs to sign with a passkey.",
+        "required": ["challenge", "rpId", "allowCredentials", "userVerification"],
+        "properties": {
+          "allowCredentials": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicKeyCredentialDescriptorJSON"
+            },
+            "description": "Empty to sign in: the browser offers the passkeys it holds for the RP\nID. The account's passkeys to re-authenticate."
+          },
+          "challenge": {
+            "type": "string",
+            "description": "32 random bytes, base64url."
+          },
+          "extensions": {
+            "type": "object",
+            "description": "Extension inputs (`uvm`); a browser ignores those it does not know."
+          },
+          "hints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Hints for the browser's UI."
+          },
+          "rpId": {
+            "type": "string",
+            "description": "The relying party ID: the public host name."
+          },
+          "timeout": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How long the ceremony may take, ms.",
+            "minimum": 0
+          },
+          "userVerification": {
+            "type": "string",
+            "description": "`required`: the authenticator verifies the user (biometrics, PIN)."
+          }
+        }
+      },
+      "PublicKeyCredentialRpEntity": {
+        "type": "object",
+        "description": "`PublicKeyCredentialRpEntity`.",
+        "required": ["id", "name"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The RP ID: the public host name."
+          },
+          "name": {
+            "type": "string",
+            "description": "`Shelfy`."
+          }
+        }
+      },
+      "PublicKeyCredentialUserEntityJSON": {
+        "type": "object",
+        "description": "`PublicKeyCredentialUserEntityJSON`.",
+        "required": ["id", "name", "displayName"],
+        "properties": {
+          "displayName": {
+            "type": "string",
+            "description": "The account's email too."
+          },
+          "id": {
+            "type": "string",
+            "description": "The user handle: 16 opaque bytes, base64url, stable per account."
+          },
+          "name": {
+            "type": "string",
+            "description": "The account's email, shown in the authenticator's account picker."
+          }
+        }
+      },
       "QueueResult": {
         "type": "object",
         "description": "The outcome of an action on a queue.",
@@ -4234,6 +4849,61 @@
           }
         }
       },
+      "ReauthFinish": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The answer of the passkey ceremony that `start` began.",
+            "required": ["ceremonyId", "credential", "method"],
+            "properties": {
+              "ceremonyId": {
+                "type": "string",
+                "description": "The `ceremonyId` of `POST /auth/reauth/start`."
+              },
+              "credential": {
+                "$ref": "#/components/schemas/AuthenticationResponseJSON",
+                "description": "The browser's answer: `credential.toJSON()`."
+              },
+              "method": {
+                "type": "string",
+                "enum": ["passkey"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A re-authentication link.",
+            "required": ["token", "method"],
+            "properties": {
+              "method": {
+                "type": "string",
+                "enum": ["link"]
+              },
+              "token": {
+                "type": "string",
+                "description": "What follows `#` in `<public url>/login/reauth#<token>`."
+              }
+            }
+          }
+        ],
+        "description": "Body of `POST /api/v1/auth/reauth/finish`: the proof."
+      },
+      "ReauthMethod": {
+        "type": "string",
+        "description": "How to re-authenticate.",
+        "enum": ["passkey", "email"]
+      },
+      "ReauthStart": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/auth/reauth/start`.",
+        "required": ["method"],
+        "properties": {
+          "method": {
+            "$ref": "#/components/schemas/ReauthMethod",
+            "description": "How."
+          }
+        }
+      },
       "RedeemRequest": {
         "type": "object",
         "description": "Body of `POST /api/v1/auth/magic-links/redeem`.",
@@ -4242,6 +4912,37 @@
           "token": {
             "type": "string",
             "description": "The link's token: what follows `#` in its URL."
+          }
+        }
+      },
+      "RegistrationResponseJSON": {
+        "type": "object",
+        "description": "`RegistrationResponseJSON`: what the new credential's `toJSON()` returns.",
+        "required": ["id", "rawId", "type", "response"],
+        "properties": {
+          "authenticatorAttachment": {
+            "type": "string",
+            "description": "`platform` or `cross-platform`."
+          },
+          "clientExtensionResults": {
+            "type": "object",
+            "description": "Extension outputs (`credProps`)."
+          },
+          "id": {
+            "type": "string",
+            "description": "The credential id, base64url."
+          },
+          "rawId": {
+            "type": "string",
+            "description": "The credential id, base64url."
+          },
+          "response": {
+            "$ref": "#/components/schemas/AuthenticatorAttestationResponseJSON",
+            "description": "The authenticator's answer."
+          },
+          "type": {
+            "type": "string",
+            "description": "`public-key`."
           }
         }
       },
@@ -4703,11 +5404,11 @@
     },
     {
       "name": "auth",
-      "description": "Sign-in links, sessions and sign-out."
+      "description": "Sign-in with passkeys and links, re-authentication, sessions and sign-out."
     },
     {
       "name": "account",
-      "description": "The signed-in user."
+      "description": "The signed-in user and their passkeys."
     },
     {
       "name": "library",

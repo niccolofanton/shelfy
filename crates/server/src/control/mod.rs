@@ -15,6 +15,7 @@ pub mod idempotency;
 pub mod invites;
 pub mod jobs;
 pub mod magic_links;
+pub mod passkeys;
 pub mod sessions;
 pub mod uploads;
 pub mod users;

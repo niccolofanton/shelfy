@@ -78,7 +78,7 @@ impl AppState {
                 "browsers drop the Secure session cookie on this origin: use https or localhost"
             );
         }
-        let auth = AuthState::new(config.auth.clone());
+        let auth = AuthState::new(config.auth.clone(), &config.public_url);
         let control = Arc::new(control);
         let events = EventBus::new();
         let jobs = Jobs::new(&config.jobs, Arc::clone(&control), events.clone());

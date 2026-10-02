@@ -6,7 +6,7 @@
 //!
 //! | Group | Limits | Routes |
 //! |---|---|---|
-//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03) |
+//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03); passkeys and re-authentication (P1-13) |
 //! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
 //! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
 //! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, [`uploads`]) |
@@ -39,6 +39,11 @@
 //! listed in [`IDEMPOTENT_ROUTES`] and declares the header with
 //! `params(IdempotencyHeader)`.
 //!
+//! The passkey routes (P1-13): [`passkeys`] (username-less sign-in, public;
+//! the account's passkeys under `/me/passkeys`) and [`reauth`]
+//! (re-authentication of the session), over [`crate::auth::passkeys`] and
+//! [`crate::auth::reauth`].
+//!
 //! The committed copy of the document, `crates/server/openapi.json`, is what
 //! the TypeScript client is generated from (T11). After changing a route,
 //! regenerate it with
@@ -59,8 +64,10 @@ pub mod media;
 pub mod migrations;
 pub mod model;
 pub mod notifications;
+pub mod passkeys;
 pub mod post_edit;
 pub mod posts;
+pub mod reauth;
 pub mod search;
 pub mod selector;
 pub mod stats;
@@ -133,8 +140,9 @@ const PROBLEM_RESPONSE: &str = "Problem";
     tags(
         (name = "platform", description = "Health, the API description, the realtime stream, \
                                            notifications, client error reports and the version."),
-        (name = "auth", description = "Sign-in links, sessions and sign-out."),
-        (name = "account", description = "The signed-in user."),
+        (name = "auth", description = "Sign-in with passkeys and links, re-authentication, \
+                                       sessions and sign-out."),
+        (name = "account", description = "The signed-in user and their passkeys."),
         (name = "library", description = "The signed-in user's posts, stats and collections, \
                                           and their edits."),
         (name = "search", description = "Ranked search over the signed-in user's library."),
@@ -159,6 +167,8 @@ pub const PUBLIC_ROUTES: &[(Method, &str)] = &[
     (Method::GET, "/api/v1/auth/methods"),
     (Method::POST, "/api/v1/auth/magic-links"),
     (Method::POST, "/api/v1/auth/magic-links/redeem"),
+    (Method::POST, "/api/v1/auth/passkeys/login/start"),
+    (Method::POST, "/api/v1/auth/passkeys/login/finish"),
     (Method::POST, "/api/v1/auth/logout"),
 ];
 
@@ -247,6 +257,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(migrations::start_migration))
         .routes(routes!(migrations::get_migration))
         .merge(auth::router())
+        .merge(passkeys::router())
+        .merge(reauth::router())
         .merge(me::router())
         .merge(jobs::router());
     // Streams end when the shutdown token fires instead of on a timer.

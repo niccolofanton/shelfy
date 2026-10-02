@@ -9,13 +9,25 @@ use shelfy_core::repo::Result;
 pub const OWNER_CREATE: &str = "owner.create";
 /// An invite was created.
 pub const INVITE_CREATE: &str = "invite.create";
-/// A sign-in link was minted. `meta`: `via` (`email` or `cli`) and `purpose`.
+/// A sign-in link was minted. `meta`: `via` (`email` or `cli`) and `purpose`
+/// (`login` or `reauth`).
 pub const MAGIC_LINK_CREATE: &str = "magic_link.create";
-/// A user signed in: a session was created. `meta`: `method` (`magic_link`).
+/// A user signed in: a session was created. `meta`: `method` (`magic_link`
+/// or `passkey`) and `rotated`.
 pub const SESSION_CREATE: &str = "session.create";
 /// Sessions ended. `meta`: `scope` (`current` for a sign-out, `all` for a
 /// sign-out everywhere) and `count`.
 pub const SESSION_DELETE: &str = "session.delete";
+/// A signed-in user proved who they are again (re-authentication). `meta`:
+/// `method` (`passkey` or `magic_link`).
+pub const SESSION_REAUTH: &str = "session.reauth";
+/// A passkey was registered. `meta`: `id` (the passkey's row id).
+pub const PASSKEY_CREATE: &str = "passkey.create";
+/// A passkey was removed. `meta`: `id`.
+pub const PASSKEY_DELETE: &str = "passkey.delete";
+/// A passkey signed with a counter that did not grow: the authenticator may
+/// have been cloned, and the sign-in was refused. `meta`: `id`.
+pub const PASSKEY_CLONE_SUSPECTED: &str = "passkey.clone_suspected";
 /// An API token was minted. `meta`: `via` (`cli`) and `kind` (`migrate`).
 pub const API_TOKEN_CREATE: &str = "api_token.create";
 /// A user's library was locked for maintenance (`admin user lock`).

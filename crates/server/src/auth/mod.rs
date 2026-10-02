@@ -1,14 +1,21 @@
 //! Authentication (plan D8, §2.11, §7.1; owner-only under E4).
 //!
-//! **How a user signs in today.** The owner asks for an email link
-//! (`POST /api/v1/auth/magic-links`, when email is configured) or gets one
-//! from the operator (`shelfy-server admin login-link`, the way in while SMTP
-//! is optional). The link is `<public url>/login/magic#<token>`: the SPA's
-//! sign-in page reads the token from the fragment and, after a click, redeems
-//! it with `POST /api/v1/auth/magic-links/redeem`, which creates an opaque
-//! server-side session held in the `__Host-shelfy_session` cookie. Nothing
-//! redeems on `GET` ([`magic_link`]). There is no sign-up: links exist only
-//! for existing accounts.
+//! **How a user signs in.** With a passkey, username-less
+//! (`POST /api/v1/auth/passkeys/login/{start,finish}`, [`passkeys`]), or with
+//! a link. The owner asks for an email link (`POST /api/v1/auth/magic-links`,
+//! when email is configured) or gets one from the operator
+//! (`shelfy-server admin login-link`, the way in while SMTP is optional, and
+//! the way to register a first passkey). The link is
+//! `<public url>/login/magic#<token>`: the SPA's sign-in page reads the token
+//! from the fragment and, after a click, redeems it with
+//! `POST /api/v1/auth/magic-links/redeem`. Either way the server creates an
+//! opaque session held in the `__Host-shelfy_session` cookie. Nothing signs
+//! in on `GET` ([`magic_link`]). There is no sign-up: links and passkeys
+//! exist only for existing accounts.
+//!
+//! **Re-authentication.** Sensitive routes take [`RecentAuth`]: a sign-in or
+//! a re-authentication ([`reauth`]: a passkey, or a link with purpose
+//! `reauth`) in the last 5 minutes.
 //!
 //! **Deny by default.** Every route needs a signed-in session unless the
 //! router's access policy ([`access`], lists in [`crate::routes`]) makes it
@@ -27,7 +34,9 @@
 //! | [`access`] | the access policy and the gate |
 //! | [`cookie`] | the session cookie |
 //! | [`session`] | sessions: resolution, [`SessionUser`], [`RecentAuth`], creation and sign-out |
-//! | [`magic_link`] | sign-in links: email requests, minting, redemption |
+//! | [`magic_link`] | sign-in and re-authentication links: email requests, minting, redemption |
+//! | [`passkeys`] | passkeys: registration, username-less sign-in, re-authentication |
+//! | [`reauth`] | re-authentication: the session's `reauth_at`, links with purpose `reauth` |
 //! | [`csrf`] | the Origin / `Sec-Fetch-Site` / `X-Shelfy-Client` guard |
 //! | [`rate_limit`] | limits on sign-in requests |
 //! | [`bearer`] | API tokens: verification and [`bearer::TokenUser`]; P1-17 mints them |
@@ -35,16 +44,9 @@
 //!
 //! **Seams.**
 //!
-//! - Passkeys (P1-13): `auth/passkeys.rs` with `webauthn-rs`, RP ID and origin
-//!   from `SHELFY_PUBLIC_URL`; a successful assertion calls
-//!   [`session::create_session`] with method `passkey`, like a redeemed link.
-//!   Their routes go in [`crate::routes::PUBLIC_ROUTES`];
-//!   [`AuthMethods::passkeys`] turns true.
-//! - Re-authentication (P1-13): `POST /auth/reauth/{start,finish}` set the
-//!   session's `reauth_at` ([`crate::control::sessions::set_reauth`]) and call
-//!   [`AuthState::forget_session`]; routes that need it take [`RecentAuth`].
-//!   Links with purpose `reauth` already exist in the schema
-//!   ([`crate::control::magic_links::Purpose`]).
+//! - Sensitive routes (P1-17: token creation, device-code approval; account
+//!   reset and deletion) take [`RecentAuth`]; without a recent proof they
+//!   answer 403 `reauth_required`, and the SPA re-authenticates and retries.
 //! - API tokens (P1-17): [`bearer`] verifies `api_tokens`; P1-17 adds minting,
 //!   revocation and `last_used_at`. A route opens to tokens in
 //!   [`crate::routes::TOKEN_ROUTES`].
@@ -60,7 +62,9 @@ pub mod cookie;
 pub mod csrf;
 pub mod magic_link;
 pub mod openapi;
+pub mod passkeys;
 pub mod rate_limit;
+pub mod reauth;
 pub mod session;
 
 use std::sync::Arc;
@@ -74,9 +78,11 @@ use utoipa::ToSchema;
 
 pub use session::{RecentAuth, SessionUser};
 
+use passkeys::Passkeys;
 use rate_limit::{RateLimit, RateLimiter};
 use session::CachedSession;
 
+use crate::config::PublicUrl;
 use crate::tokens::TokenHash;
 
 const MINUTE: Duration = Duration::from_secs(60);
@@ -107,6 +113,10 @@ pub struct AuthConfig {
     pub session_miss_ttl: Duration,
     /// How long a sign-in link stays valid (15 minutes).
     pub magic_link_ttl: Duration,
+    /// How long a passkey ceremony may take, from its options to the
+    /// browser's answer (§2.11: 5 minutes); also the `timeout` the options
+    /// give the browser.
+    pub passkey_ceremony_ttl: Duration,
     /// How recent a sign-in must be for [`RecentAuth`] (5 minutes).
     pub reauth_window: Duration,
     /// Sign-in requests per client address (§2.9: 10 per minute; an IPv6
@@ -127,6 +137,7 @@ impl Default for AuthConfig {
             session_cache_ttl: MINUTE,
             session_miss_ttl: Duration::from_secs(30),
             magic_link_ttl: 15 * MINUTE,
+            passkey_ceremony_ttl: 5 * MINUTE,
             reauth_window: 5 * MINUTE,
             ip_limit: RateLimit {
                 max: 10,
@@ -158,12 +169,14 @@ pub struct AuthState {
     ip_limiter: RateLimiter,
     address_limiter: RateLimiter,
     mail_slots: Arc<Semaphore>,
+    passkeys: Passkeys,
 }
 
 impl AuthState {
-    /// The state for `config`.
+    /// The state for `config`, with the passkey relying party of
+    /// `public_url`.
     #[must_use]
-    pub fn new(config: AuthConfig) -> Self {
+    pub fn new(config: AuthConfig, public_url: &PublicUrl) -> Self {
         let sessions = Cache::builder()
             .max_capacity(SESSION_CACHE_CAPACITY)
             .time_to_live(config.session_cache_ttl.max(Duration::from_millis(1)))
@@ -176,6 +189,7 @@ impl AuthState {
             ip_limiter: RateLimiter::new(config.ip_limit),
             address_limiter: RateLimiter::new(config.address_limit),
             mail_slots: Arc::new(Semaphore::new(config.mail_concurrency.max(1))),
+            passkeys: Passkeys::new(public_url, config.passkey_ceremony_ttl),
             sessions,
             misses,
             revocations: AtomicU64::new(0),
@@ -187,6 +201,12 @@ impl AuthState {
     #[must_use]
     pub fn config(&self) -> &AuthConfig {
         &self.config
+    }
+
+    /// The passkey relying party and its ceremonies in flight.
+    #[must_use]
+    pub fn passkeys(&self) -> &Passkeys {
+        &self.passkeys
     }
 
     /// Drops the cached lookup of one session, after it changed (sign-out,
@@ -283,6 +303,7 @@ pub struct AuthMethods {
     /// is optional). Without it, the operator mints links with
     /// `shelfy-server admin login-link`.
     pub email_link: bool,
-    /// Passkey sign-in (P1-13). Always false for now.
+    /// Passkeys work: the public URL is an https origin or localhost, with a
+    /// domain name. Says nothing about which accounts have passkeys.
     pub passkeys: bool,
 }

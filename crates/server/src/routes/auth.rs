@@ -1,5 +1,6 @@
 //! `/api/v1/auth/*`: sign-in methods, sign-in links and sign-out (plan §2.9
-//! Auth, §2.11). The machinery lives in [`crate::auth`].
+//! Auth, §2.11). The machinery lives in [`crate::auth`]; passkey sign-in is
+//! in [`super::passkeys`], re-authentication in [`super::reauth`].
 //!
 //! | Route | Access | Answer |
 //! |---|---|---|
@@ -21,8 +22,9 @@ use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use crate::auth::magic_link::{self, Redeemed};
+use crate::auth::magic_link;
 use crate::auth::rate_limit::{self, RateLimiter};
+use crate::auth::session::SignedIn;
 use crate::auth::{AuthMethods, cookie, session};
 use crate::control::users;
 use crate::current_user::CurrentUser;
@@ -57,7 +59,7 @@ pub fn router() -> OpenApiRouter<AppState> {
 pub async fn methods(State(state): State<AppState>) -> Response {
     let methods = AuthMethods {
         email_link: state.mailer().is_enabled(),
-        passkeys: false,
+        passkeys: state.auth().passkeys().is_enabled(),
     };
     no_store(Json(methods).into_response())
 }
@@ -204,14 +206,14 @@ pub async fn logout_all(
 }
 
 /// Counts a hit on `limiter`, or refuses with 429 `rate_limited`.
-fn hit(limiter: &RateLimiter, key: &rate_limit::Key, now: i64) -> Result<(), ApiError> {
+pub(crate) fn hit(limiter: &RateLimiter, key: &rate_limit::Key, now: i64) -> Result<(), ApiError> {
     limiter
         .hit(key, now)
         .map_err(|seconds| ApiError::new(ErrorCode::RateLimited).with_retry_after(seconds))
 }
 
 /// The `User-Agent`, for the session list.
-fn user_agent(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn user_agent(headers: &HeaderMap) -> Option<String> {
     headers
         .get(header::USER_AGENT)
         .and_then(|value| value.to_str().ok())
@@ -226,14 +228,18 @@ pub(crate) fn no_store(mut response: Response) -> Response {
     response
 }
 
-/// Sets the cookie of the session `redeemed` started, and names the user in
+/// Sets the cookie of the session a sign-in started, and names the user in
 /// the request span.
-fn signed_in(state: &AppState, mut response: Response, redeemed: &Redeemed) -> Response {
-    tracing::Span::current().record("user_id", redeemed.user_id.as_str());
+pub(crate) fn signed_in(
+    state: &AppState,
+    mut response: Response,
+    signed_in: &SignedIn,
+) -> Response {
+    tracing::Span::current().record("user_id", signed_in.user_id.as_str());
     let lifetime = state.auth().config().session_lifetime;
     response.headers_mut().append(
         header::SET_COOKIE,
-        cookie::set_session(&redeemed.token, lifetime),
+        cookie::set_session(&signed_in.token, lifetime),
     );
     no_store(response)
 }

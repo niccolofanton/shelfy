@@ -37,6 +37,12 @@ pub enum ErrorCode {
     InvalidCursor,
     /// 400: the sign-in link is unknown, already used or expired.
     InvalidLink,
+    /// 400: the passkey ceremony is unknown, already finished, older than
+    /// 5 minutes, or was started by another session; start it again.
+    ChallengeExpired,
+    /// 400: the passkey's answer failed verification, or names no passkey
+    /// of the account.
+    PasskeyInvalid,
     /// 401: the request needs an authenticated session or token.
     Unauthorized,
     /// 403: the caller may not perform this action.
@@ -87,7 +93,11 @@ impl ErrorCode {
     #[must_use]
     pub const fn status(self) -> StatusCode {
         match self {
-            Self::BadRequest | Self::InvalidCursor | Self::InvalidLink => StatusCode::BAD_REQUEST,
+            Self::BadRequest
+            | Self::InvalidCursor
+            | Self::InvalidLink
+            | Self::ChallengeExpired
+            | Self::PasskeyInvalid => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden | Self::CsrfFailed | Self::ReauthRequired | Self::QuotaExceeded => {
                 StatusCode::FORBIDDEN
@@ -140,6 +150,8 @@ impl ErrorCode {
             Self::BadRequest => "bad_request",
             Self::InvalidCursor => "invalid_cursor",
             Self::InvalidLink => "invalid_link",
+            Self::ChallengeExpired => "challenge_expired",
+            Self::PasskeyInvalid => "passkey_invalid",
             Self::Unauthorized => "unauthorized",
             Self::Forbidden => "forbidden",
             Self::CsrfFailed => "csrf_failed",
@@ -482,6 +494,8 @@ mod tests {
             ErrorCode::BadRequest,
             ErrorCode::InvalidCursor,
             ErrorCode::InvalidLink,
+            ErrorCode::ChallengeExpired,
+            ErrorCode::PasskeyInvalid,
             ErrorCode::Unauthorized,
             ErrorCode::Forbidden,
             ErrorCode::CsrfFailed,

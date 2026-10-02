@@ -115,6 +115,29 @@ pub fn consume(
     .map_err(RepoError::from)
 }
 
+/// [`consume`] for a link of `user_id` only (a re-authentication link proves
+/// who is signed in): another account's link is refused and left unused.
+/// Returns whether the link was used.
+///
+/// # Errors
+///
+/// The update failed.
+pub fn consume_for_user(
+    conn: &Connection,
+    token_hash: &TokenHash,
+    purpose: Purpose,
+    user_id: &str,
+    now: i64,
+) -> Result<bool> {
+    let used = conn.execute(
+        "UPDATE magic_links SET used_at = ?3 \
+         WHERE token_hash = ?1 AND purpose = ?2 AND used_at IS NULL AND expires_at > ?3 \
+         AND user_id = ?4 AND user_id IN (SELECT id FROM users WHERE status = 'active')",
+        params![token_hash.as_slice(), purpose.as_str(), now, user_id],
+    )?;
+    Ok(used > 0)
+}
+
 /// Deletes the links that expired by `now`, used or not; returns how many.
 /// Facts worth keeping live in `audit_log`.
 ///
@@ -215,6 +238,32 @@ mod tests {
                 .unwrap()
                 .as_deref(),
             Some(owner.as_str())
+        );
+    }
+
+    #[test]
+    fn a_reauth_link_proves_its_own_account_only() {
+        let (db, owner, member) = control_with_users();
+        let hash = SecretToken::generate().hash();
+        db.write(|tx| insert(tx, &link(&owner, &hash, Purpose::Reauth)))
+            .unwrap();
+        let consume = |user: &str, purpose, now| {
+            db.write(|tx| consume_for_user(tx, &hash, purpose, user, now))
+                .unwrap()
+        };
+        assert!(!consume(&member, Purpose::Reauth, NOW), "another account");
+        assert!(!consume(&owner, Purpose::Login, NOW), "another purpose");
+        assert!(
+            !consume(&owner, Purpose::Reauth, NOW + 15 * MINUTE),
+            "expired"
+        );
+        assert!(
+            consume(&owner, Purpose::Reauth, NOW),
+            "the refusals left it unused"
+        );
+        assert!(
+            !consume(&owner, Purpose::Reauth, NOW + MINUTE),
+            "single use"
         );
     }
 
