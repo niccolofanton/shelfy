@@ -13,11 +13,11 @@
     "/api/v1/auth/logout": {
       "post": {
         "tags": ["auth"],
-        "summary": "Signs out: ends the session of the request's cookie, if any, and clears\nthe cookie. Answers 204 even without a session.",
+        "summary": "Signs out: ends the session of the request's cookie and clears the\ncookie. Answers 204 even without a session; without a session cookie the\nanswer sets no cookie.",
         "operationId": "logout",
         "responses": {
           "204": {
-            "description": "Signed out; the session cookie is cleared."
+            "description": "Signed out; the session cookie, if sent, is cleared."
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -45,7 +45,7 @@
       "post": {
         "tags": ["auth"],
         "summary": "Emails a sign-in link to the address, if it belongs to an account.",
-        "description": "The answer is 202 whether or not the account exists, and whether or not\nemail is configured (see `GET /auth/methods`). Limits: 10 requests per\nminute per client and 3 per hour per address (429 `rate_limited` with\n`Retry-After`). A malformed address answers 422 `validation_failed`.",
+        "description": "The answer is 202 whether or not the account exists, and whether or not\nemail is configured (see `GET /auth/methods`). The email carries the link\n`<public url>/login/magic#<token>`. Limits: 10 requests per minute per\nclient and 3 per hour per address (429 `rate_limited` with\n`Retry-After`). A malformed address answers 422 `validation_failed`.",
         "operationId": "requestMagicLink",
         "requestBody": {
           "content": {
@@ -71,8 +71,8 @@
     "/api/v1/auth/magic-links/redeem": {
       "post": {
         "tags": ["auth"],
-        "summary": "Redeems a sign-in link's token from a page (the token stays out of URLs\nand server logs).",
-        "description": "A usable link starts a session (replacing the one the browser held);\notherwise 400 `invalid_link`. The link works once.",
+        "summary": "Redeems a sign-in link: the SPA page `/login/magic#<token>` sends the\ntoken from its URL's fragment, which never reaches a server log.",
+        "description": "A usable link starts a session (replacing the one the browser held);\notherwise 400 `invalid_link`. The link works once. Limit: 10 requests per\nminute per client, shared with `POST /auth/magic-links`.",
         "operationId": "redeemMagicLink",
         "requestBody": {
           "content": {
@@ -87,42 +87,6 @@
         "responses": {
           "204": {
             "description": "Signed in: the response sets the session cookie."
-          },
-          "default": {
-            "$ref": "#/components/responses/Problem"
-          }
-        },
-        "security": [{}]
-      }
-    },
-    "/api/v1/auth/magic/{token}": {
-      "get": {
-        "tags": ["auth"],
-        "summary": "Opens a sign-in link: the URL in the email, or printed by\n`shelfy-server admin login-link`.",
-        "description": "A usable link starts a session (replacing the one the browser held) and\nredirects to `/`; any other link redirects to `/login?error=invalid_link`.\nThe link works once. `HEAD` never uses it up.",
-        "operationId": "openMagicLink",
-        "parameters": [
-          {
-            "name": "token",
-            "in": "path",
-            "description": "The link's token.",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "303": {
-            "description": "To `/`, signed in (the response sets the session cookie), or to `/login?error=invalid_link`.",
-            "headers": {
-              "Location": {
-                "schema": {
-                  "type": "string"
-                },
-                "description": "`/` or `/login?error=invalid_link`."
-              }
-            }
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -2110,7 +2074,7 @@
         "properties": {
           "token": {
             "type": "string",
-            "description": "The link's token: the last path segment of its URL."
+            "description": "The link's token: what follows `#` in its URL."
           }
         }
       },

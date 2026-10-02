@@ -211,9 +211,14 @@ impl Server {
         // P1-07: start the job scheduler here with `token.child_token()`.
 
         let served = {
-            let api = axum::serve(api_listener, app)
-                .with_graceful_shutdown(token.clone().cancelled_owned())
-                .into_future();
+            // The peer address reaches the handlers as `ConnectInfo`: the
+            // client, or the proxy that reports it (crate::net).
+            let api = axum::serve(
+                api_listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(token.clone().cancelled_owned())
+            .into_future();
             let metrics = axum::serve(metrics_listener, telemetry::metrics::router(metrics))
                 .with_graceful_shutdown(token.clone().cancelled_owned())
                 .into_future();

@@ -44,6 +44,7 @@ pub mod search;
 pub mod stats;
 pub mod version;
 
+use axum::http::Method;
 use utoipa::OpenApi;
 use utoipa::openapi::path::Operation;
 use utoipa::openapi::{
@@ -52,6 +53,8 @@ use utoipa::openapi::{
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::auth::access::AccessPolicy;
+use crate::auth::bearer::Scope;
 use crate::auth::openapi::SecuritySchemes;
 use crate::error::{ErrorCode, FieldError, PROBLEM_JSON, Problem};
 use crate::events::model as event;
@@ -109,6 +112,43 @@ const PROBLEM_RESPONSE: &str = "Problem";
     )
 )]
 pub struct ApiDoc;
+
+/// Routes anyone may call, by method and route template. Every other route
+/// needs a signed-in session or, for [`TOKEN_ROUTES`], a scoped API token:
+/// access is denied by default ([`crate::auth::access`]). A public route also
+/// declares `security(())` in its `#[utoipa::path]`; the authz test checks
+/// that this list and the document agree.
+pub const PUBLIC_ROUTES: &[(Method, &str)] = &[
+    (Method::GET, "/health"),
+    (Method::GET, "/api/v1/openapi.json"),
+    (Method::GET, "/api/v1/auth/methods"),
+    (Method::POST, "/api/v1/auth/magic-links"),
+    (Method::POST, "/api/v1/auth/magic-links/redeem"),
+    (Method::POST, "/api/v1/auth/logout"),
+];
+
+/// Routes that take a scoped API token: method, route template, the scope,
+/// and whether a signed-in session works too. Such a route also declares
+/// `security(("bearer" = ["<scope>"]))` in its `#[utoipa::path]`, plus
+/// `("session" = [])` when sessions work too. Empty until the migration
+/// routes (T9) and the extension routes (P2) arrive.
+pub const TOKEN_ROUTES: &[(Method, &str, Scope, bool)] = &[];
+
+/// The access policy of [`router`]: [`PUBLIC_ROUTES`] and [`TOKEN_ROUTES`];
+/// every other route needs a session.
+#[must_use]
+pub fn access() -> AccessPolicy {
+    let policy = PUBLIC_ROUTES
+        .iter()
+        .fold(AccessPolicy::new(), |policy, (method, path)| {
+            policy.public(method.clone(), *path)
+        });
+    TOKEN_ROUTES
+        .iter()
+        .fold(policy, |policy, (method, path, scope, session)| {
+            policy.token(method.clone(), *path, *scope, *session)
+        })
+}
 
 /// Every route of the API, grouped by limits, with its OpenAPI paths.
 #[must_use]

@@ -52,6 +52,16 @@ impl AppState {
         );
         let mailer = Mailer::new(&config.mail).context("cannot set up email")?;
         tracing::info!(transport = mailer.kind().as_str(), "email transport");
+        if config.trusted_proxies.is_empty() {
+            tracing::info!(
+                "no trusted proxy: CF-Connecting-IP is ignored, the TCP peer is the client"
+            );
+        } else {
+            tracing::info!(
+                trusted_proxies = %config.trusted_proxies,
+                "CF-Connecting-IP names the client behind these proxies"
+            );
+        }
         if !auth::cookie::secure_cookies_work(config.public_url.as_str()) {
             tracing::warn!(
                 public_url = %config.public_url,

@@ -4,15 +4,18 @@
 //!   sign-up. Either by email (`POST /api/v1/auth/magic-links`, through
 //!   [`send_in_background`]) or by the operator (`admin login-link`).
 //! - **Single use and short-lived:** 15 minutes; [`redeem`] uses the link and
-//!   creates the session in one transaction.
+//!   creates the session in one transaction, after a read-only check, so an
+//!   unknown token never takes the database's writer.
 //! - **No account enumeration:** the email request answers 202 at once and
 //!   does the lookup, the minting and the sending in the background, so the
 //!   response is the same, in content and timing, whether or not the address
-//!   has an account. The rate limits count every address alike.
-//! - **URL:** `<public url>/api/v1/auth/magic/<token>`. Opening it signs in
-//!   and redirects to `/`. P1-20 may point emails at an SPA landing page
-//!   that redeems the token with `POST /api/v1/auth/magic-links/redeem`
-//!   instead, which keeps link scanners from using it up.
+//!   has an account. The rate limits count every address alike, and the email
+//!   goes to the account's stored address, never to the string typed in.
+//! - **URL:** `<public url>/login/magic#<token>`, the SPA's sign-in page. The
+//!   token sits in the fragment, which browsers never send to a server, so it
+//!   reaches no proxy or server log. The page redeems it with
+//!   `POST /api/v1/auth/magic-links/redeem` after a click. Nothing redeems on
+//!   `GET`, so link scanners and prefetchers cannot use a link up.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,13 +38,13 @@ use crate::state::{AppState, blocking};
 use crate::telemetry::redact::Redacted;
 use crate::tokens::{SecretToken, hash_token, is_token_shaped};
 
-/// Path of a link, before the token.
-pub const LINK_PATH: &str = "/api/v1/auth/magic/";
+/// The SPA page a link opens; the token follows in the fragment.
+pub const LINK_PAGE: &str = "/login/magic";
 
-/// The URL of the link carrying `token`.
+/// The URL of the link carrying `token`: `<public url>/login/magic#<token>`.
 #[must_use]
 pub fn link_url(public_url: &PublicUrl, token: &SecretToken) -> Redacted<String> {
-    Redacted(public_url.join(&format!("{LINK_PATH}{}", token.expose())))
+    Redacted(format!("{}#{}", public_url.join(LINK_PAGE), token.expose()))
 }
 
 /// Who asked for a link, for the audit log.
@@ -107,9 +110,9 @@ pub fn mint(
     Ok(Minted { token, expires_at })
 }
 
-/// Emails a sign-in link to `email` (normalized) if it belongs to an active
-/// account, in the background; returns at once. Does nothing when email is
-/// off, and drops the request (with a warning) when
+/// Emails a sign-in link to the active account with `email` (normalized),
+/// if there is one, in the background; returns at once. Does nothing when
+/// email is off, and drops the request (with a warning) when
 /// [`super::AuthConfig::mail_concurrency`] emails are already in flight. The
 /// task stops at shutdown.
 pub fn send_in_background(state: &AppState, email: String) {
@@ -139,22 +142,23 @@ pub fn send_in_background(state: &AppState, email: String) {
 async fn send_link(state: &AppState, email: String) {
     let control = Arc::clone(state.control());
     let ttl = state.auth().config().magic_link_ttl;
-    let address = email.clone();
     let now = now_ms();
     let minted = blocking(move || {
         control.write(|tx| {
-            let Some(user) = users::find_by_email(tx, &address)? else {
+            let Some(user) = users::find_by_email(tx, &email)? else {
                 return Ok(None);
             };
             if user.status != Status::Active {
                 return Ok(None);
             }
-            mint(tx, &user.id, Purpose::Login, ttl, Via::Email, now).map(Some)
+            let minted = mint(tx, &user.id, Purpose::Login, ttl, Via::Email, now)?;
+            // The account's own address: the lookup ignores case.
+            Ok::<_, RepoError>(Some((minted, user.email.into_inner())))
         })
     })
     .await;
-    let token = match minted {
-        Ok(Some(minted)) => minted.token,
+    let (token, email) = match minted {
+        Ok(Some((minted, email))) => (minted.token, email),
         Ok(None) => {
             tracing::info!("sign-in link requested for no active account; nothing sent");
             return;
@@ -202,7 +206,8 @@ pub struct Redeemed {
 /// Redeems the sign-in link `token`: in one transaction, uses the link and
 /// creates a session, replacing `replaced` (the session cookie the browser
 /// sent, if any). `None` when the link is unknown, used, expired or not a
-/// sign-in link, or its account is not active.
+/// sign-in link, or its account is not active; that is found on a reader,
+/// so only a usable link takes the writer.
 ///
 /// # Errors
 ///
@@ -219,8 +224,16 @@ pub async fn redeem(
     let link_hash = hash_token(token);
     let replaced = replaced.filter(|t| is_token_shaped(t)).map(hash_token);
     let config = state.auth().config().clone();
-    let control = Arc::clone(state.control());
     let now = now_ms();
+    let reader = Arc::clone(state.control());
+    let usable = blocking(move || {
+        reader.read(|conn| magic_links::is_redeemable(conn, &link_hash, Purpose::Login, now))
+    })
+    .await?;
+    if !usable {
+        return Ok(None);
+    }
+    let control = Arc::clone(state.control());
     let redeemed = blocking(move || {
         control.write(|tx| {
             let Some(user_id) = magic_links::consume(tx, &link_hash, Purpose::Login, now)? else {
@@ -242,6 +255,9 @@ pub async fn redeem(
     if let Some(old) = &replaced {
         state.auth().forget_session(old);
     }
+    if let Some(redeemed) = &redeemed {
+        state.auth().forget_miss(&redeemed.token.hash());
+    }
     Ok(redeemed)
 }
 
@@ -256,10 +272,7 @@ mod tests {
         let url = link_url(&public, &token);
         assert_eq!(
             url.expose(),
-            &format!(
-                "https://refs.example.test/api/v1/auth/magic/{}",
-                token.expose()
-            )
+            &format!("https://refs.example.test/login/magic#{}", token.expose())
         );
         assert!(!format!("{url:?}").contains(token.expose()));
     }
@@ -268,12 +281,12 @@ mod tests {
     fn the_email_carries_the_link_and_its_lifetime() {
         let email = sign_in_email(
             "owner@example.test".into(),
-            "https://refs.example.test/api/v1/auth/magic/abc",
+            "https://refs.example.test/login/magic#abc",
             Duration::from_secs(900),
         );
         assert_eq!(email.to.expose(), "owner@example.test");
         let text = email.text.expose();
-        assert!(text.contains("\nhttps://refs.example.test/api/v1/auth/magic/abc\n"));
+        assert!(text.contains("\nhttps://refs.example.test/login/magic#abc\n"));
         assert!(text.contains("expires in 15 minutes"));
     }
 }

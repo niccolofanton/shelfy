@@ -17,8 +17,9 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Signs out: ends the session of the request's cookie, if any, and clears
-     *     the cookie. Answers 204 even without a session.
+     * Signs out: ends the session of the request's cookie and clears the
+     *     cookie. Answers 204 even without a session; without a session cookie the
+     *     answer sets no cookie.
      */
     post: operations['logout'];
     delete?: never;
@@ -59,8 +60,9 @@ export interface paths {
     /**
      * Emails a sign-in link to the address, if it belongs to an account.
      * @description The answer is 202 whether or not the account exists, and whether or not
-     *     email is configured (see `GET /auth/methods`). Limits: 10 requests per
-     *     minute per client and 3 per hour per address (429 `rate_limited` with
+     *     email is configured (see `GET /auth/methods`). The email carries the link
+     *     `<public url>/login/magic#<token>`. Limits: 10 requests per minute per
+     *     client and 3 per hour per address (429 `rate_limited` with
      *     `Retry-After`). A malformed address answers 422 `validation_failed`.
      */
     post: operations['requestMagicLink'];
@@ -80,35 +82,13 @@ export interface paths {
     get?: never;
     put?: never;
     /**
-     * Redeems a sign-in link's token from a page (the token stays out of URLs
-     *     and server logs).
+     * Redeems a sign-in link: the SPA page `/login/magic#<token>` sends the
+     *     token from its URL's fragment, which never reaches a server log.
      * @description A usable link starts a session (replacing the one the browser held);
-     *     otherwise 400 `invalid_link`. The link works once.
+     *     otherwise 400 `invalid_link`. The link works once. Limit: 10 requests per
+     *     minute per client, shared with `POST /auth/magic-links`.
      */
     post: operations['redeemMagicLink'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/api/v1/auth/magic/{token}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /**
-     * Opens a sign-in link: the URL in the email, or printed by
-     *     `shelfy-server admin login-link`.
-     * @description A usable link starts a session (replacing the one the browser held) and
-     *     redirects to `/`; any other link redirects to `/login?error=invalid_link`.
-     *     The link works once. `HEAD` never uses it up.
-     */
-    get: operations['openMagicLink'];
-    put?: never;
-    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -1013,7 +993,7 @@ export interface components {
     };
     /** @description Body of `POST /api/v1/auth/magic-links/redeem`. */
     RedeemRequest: {
-      /** @description The link's token: the last path segment of its URL. */
+      /** @description The link's token: what follows `#` in its URL. */
       token: string;
     };
     /**
@@ -1225,7 +1205,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description Signed out; the session cookie is cleared. */
+      /** @description Signed out; the session cookie, if sent, is cleared. */
       204: {
         headers: {
           [name: string]: unknown;
@@ -1293,30 +1273,6 @@ export interface operations {
       /** @description Signed in: the response sets the session cookie. */
       204: {
         headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      default: components['responses']['Problem'];
-    };
-  };
-  openMagicLink: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        /** @description The link's token. */
-        token: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description To `/`, signed in (the response sets the session cookie), or to `/login?error=invalid_link`. */
-      303: {
-        headers: {
-          /** @description `/` or `/login?error=invalid_link`. */
-          Location?: string;
           [name: string]: unknown;
         };
         content?: never;

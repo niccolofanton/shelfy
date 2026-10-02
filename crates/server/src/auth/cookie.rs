@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use axum::http::{HeaderMap, HeaderValue, header};
 
+use crate::net;
 use crate::tokens::SecretToken;
 
 /// Name of the session cookie.
@@ -22,7 +23,7 @@ const ATTRIBUTES: &str = "Path=/; HttpOnly; Secure; SameSite=Lax";
 
 /// The session cookie's value, if the request carries one and no
 /// `Authorization` header: a request with a token never authenticates with
-/// its cookies (§2.9), so the cookie CSRF check can skip it safely.
+/// its cookies (§2.9), which is why the CSRF check can skip it.
 #[must_use]
 pub fn session_token(headers: &HeaderMap) -> Option<&str> {
     if headers.contains_key(header::AUTHORIZATION) {
@@ -31,24 +32,22 @@ pub fn session_token(headers: &HeaderMap) -> Option<&str> {
     raw_session_cookie(headers)
 }
 
-/// Whether the request carries the session cookie at all, valid or not.
-#[must_use]
-pub fn has_session_cookie(headers: &HeaderMap) -> bool {
-    raw_session_cookie(headers).is_some()
-}
-
 /// The first `__Host-shelfy_session` value across all `Cookie` headers
 /// (HTTP/2 may split them). The prefix rules out a second one from this
-/// origin.
+/// origin. Headers are split as bytes, so another cookie with a non-ASCII
+/// value (which a header string cannot hold) does not hide this one.
 fn raw_session_cookie(headers: &HeaderMap) -> Option<&str> {
     headers
         .get_all(header::COOKIE)
         .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(';'))
+        .flat_map(|value| value.as_bytes().split(|byte| *byte == b';'))
         .find_map(|pair| {
-            let (name, value) = pair.trim().split_once('=')?;
-            (name.trim() == SESSION_COOKIE).then(|| value.trim())
+            let at = pair.iter().position(|byte| *byte == b'=')?;
+            let (name, value) = (pair[..at].trim_ascii(), pair[at + 1..].trim_ascii());
+            if name != SESSION_COOKIE.as_bytes() {
+                return None;
+            }
+            std::str::from_utf8(value).ok()
         })
 }
 
@@ -78,15 +77,7 @@ pub fn secure_cookies_work(origin: &str) -> bool {
     let Ok(url) = url::Url::parse(origin) else {
         return false;
     };
-    if url.scheme() == "https" {
-        return true;
-    }
-    match url.host() {
-        Some(url::Host::Domain(host)) => host == "localhost" || host.ends_with(".localhost"),
-        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
-        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
-        None => false,
-    }
+    url.scheme() == "https" || url.host_str().is_some_and(net::is_loopback_host)
 }
 
 #[cfg(test)]
@@ -111,7 +102,6 @@ mod tests {
             (header::COOKIE, "__Host-shelfy_session=second"),
         ]);
         assert_eq!(session_token(&map), Some("abc123"));
-        assert!(has_session_cookie(&map));
 
         let split = headers(&[
             (header::COOKIE, "theme=dark"),
@@ -130,13 +120,36 @@ mod tests {
     }
 
     #[test]
+    fn a_non_ascii_cookie_does_not_hide_the_session() {
+        let mut map = HeaderMap::new();
+        map.append(
+            header::COOKIE,
+            HeaderValue::from_bytes(b"note=caf\xc3\xa9; __Host-shelfy_session=abc; z=\xff")
+                .unwrap(),
+        );
+        assert!(map[header::COOKIE].to_str().is_err(), "not a header string");
+        assert_eq!(session_token(&map), Some("abc"));
+
+        let mut garbled = HeaderMap::new();
+        garbled.append(
+            header::COOKIE,
+            HeaderValue::from_bytes(b"__Host-shelfy_session=\xff\xfe").unwrap(),
+        );
+        garbled.append(
+            header::COOKIE,
+            HeaderValue::from_static("__Host-shelfy_session=ok"),
+        );
+        assert_eq!(session_token(&garbled), Some("ok"), "the next valid value");
+    }
+
+    #[test]
     fn an_authorization_header_disables_the_cookie() {
         let map = headers(&[
             (header::COOKIE, "__Host-shelfy_session=abc"),
             (header::AUTHORIZATION, "Bearer shx_token"),
         ]);
         assert_eq!(session_token(&map), None);
-        assert!(has_session_cookie(&map), "still visible to the CSRF check");
+        assert_eq!(raw_session_cookie(&map), Some("abc"), "present, not used");
     }
 
     #[test]

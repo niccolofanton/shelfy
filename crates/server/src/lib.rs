@@ -25,8 +25,9 @@
 //! | [`current_user`] | the signed-in user of a request: the seam to authentication |
 //! | [`conditional`] | ETags from the library generation, `304 Not Modified` |
 //! | [`state`] | the shared state: databases, config, auth, mailer, event bus, shutdown token |
-//! | [`auth`] | sign-in links, sessions, the CSRF guard, the authentication layer |
+//! | [`auth`] | sign-in links, sessions, the CSRF guard, the deny-by-default access gate |
 //! | [`mail`] | outgoing email: SMTP, the dev mailbox, or off |
+//! | [`net`] | the client address behind trusted proxies, local hosts |
 //! | [`telemetry`] | JSON logs, redaction, request ids, Prometheus metrics |
 //! | [`control`] | queries on the control database |
 //! | [`admin`] | the operator commands |
@@ -50,6 +51,7 @@ pub mod ids;
 pub mod jobs;
 pub mod limits;
 pub mod mail;
+pub mod net;
 pub mod routes;
 pub mod serve;
 pub mod state;

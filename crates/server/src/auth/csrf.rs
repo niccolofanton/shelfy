@@ -1,7 +1,7 @@
 //! The CSRF and Origin guard (plan §2.9 CSRF, §7.1).
 //!
 //! Every state-changing request (any method but `GET`, `HEAD` and `OPTIONS`)
-//! that carries the session cookie must:
+//! without an `Authorization` header must:
 //!
 //! 1. not be marked cross-origin by the browser: `Sec-Fetch-Site`, when
 //!    present, is `same-origin`;
@@ -11,18 +11,20 @@
 //!    without a CORS preflight, which the server never grants, and a form
 //!    cannot add it at all.
 //!
-//! Otherwise it answers 403 `csrf_failed` before any handler runs.
-//! `SameSite=Lax` already keeps the cookie off cross-site subrequests; the
-//! `Origin` check also covers same-site attackers (other subdomains of the
-//! public host's site), which `SameSite` does not.
+//! Otherwise it answers 403 `csrf_failed` before any handler runs, whether or
+//! not the request carries the session cookie: cookieless requests change
+//! state too. Without the check, a cross-site form could sign the browser out
+//! (`/auth/logout` clears the cookie), sign it in to an account of the
+//! attacker's choosing (`/auth/magic-links/redeem`) or trigger emails
+//! (`/auth/magic-links`). `SameSite=Lax` keeps the cookie off cross-site
+//! subrequests; the `Origin` check also covers same-site attackers (other
+//! subdomains of the public host's site), which `SameSite` does not.
 //!
-//! Requests without the session cookie are not checked: they can only reach
-//! public routes, whose bodies are JSON (a form cannot send JSON, and a
-//! cross-origin `fetch` of JSON needs a preflight). Requests with an
-//! `Authorization` header are not checked either: they never authenticate
-//! with cookies ([`super::cookie::session_token`]), so there is no ambient
-//! credential to forge. That is how the extension, the iOS Shortcut and the
-//! migration CLI (bearer tokens, P1-17) call the API.
+//! Requests with an `Authorization` header are not checked: they never
+//! authenticate with cookies ([`super::cookie::session_token`]), a form cannot
+//! set the header, and a cross-origin page cannot send it without a
+//! preflight. That is how the extension, the iOS Shortcut and the migration
+//! CLI (bearer tokens) call the API.
 //!
 //! The SPA therefore sends `X-Shelfy-Client: web` on every unsafe request
 //! (`fetch`, including `keepalive`; `navigator.sendBeacon` cannot set it).
@@ -32,7 +34,6 @@ use axum::http::{HeaderMap, HeaderName, Method, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse as _, Response};
 
-use super::cookie;
 use crate::error::{ApiError, ErrorCode};
 use crate::state::AppState;
 
@@ -89,7 +90,6 @@ impl CsrfFailure {
 pub fn check(method: &Method, headers: &HeaderMap, public_origin: &str) -> Result<(), CsrfFailure> {
     if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS)
         || headers.contains_key(header::AUTHORIZATION)
-        || !cookie::has_session_cookie(headers)
     {
         return Ok(());
     }
@@ -161,10 +161,13 @@ mod tests {
         // Browsers without Sec-Fetch-* still pass on Origin and the header.
         let old_browser = request(&[COOKIE, ORIGIN, CLIENT]);
         assert_eq!(check(&Method::POST, &old_browser, PUBLIC), Ok(()));
+        // So does a request with no session cookie yet (signing in).
+        let signing_in = request(&[ORIGIN, CLIENT, ("sec-fetch-site", "same-origin")]);
+        assert_eq!(check(&Method::POST, &signing_in, PUBLIC), Ok(()));
     }
 
     #[test]
-    fn cookie_requests_that_break_a_rule_fail() {
+    fn requests_that_break_a_rule_fail_with_or_without_a_cookie() {
         let cases: [(&[(&str, &str)], CsrfFailure); 8] = [
             (&[COOKIE, ORIGIN], CsrfFailure::MissingClientHeader),
             (
@@ -203,7 +206,19 @@ mod tests {
                 Err(failure),
                 "{headers:?}"
             );
+            let cookieless: Vec<(&str, &str)> =
+                headers.iter().copied().filter(|h| *h != COOKIE).collect();
+            assert_eq!(
+                check(&Method::POST, &request(&cookieless), PUBLIC),
+                Err(failure),
+                "{cookieless:?}"
+            );
         }
+        // A cross-site form with no cookie at all (logout CSRF).
+        assert_eq!(
+            check(&Method::POST, &request(&[]), PUBLIC),
+            Err(CsrfFailure::MissingOrigin)
+        );
         let none = request(&[COOKIE, ORIGIN, CLIENT, ("sec-fetch-site", "none")]);
         assert_eq!(
             check(&Method::DELETE, &none, PUBLIC),
@@ -212,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn safe_methods_cookieless_and_token_requests_are_not_checked() {
+    fn safe_methods_and_token_requests_are_not_checked() {
         let cross = request(&[
             COOKIE,
             ("origin", "https://evil.test"),
@@ -225,12 +240,6 @@ mod tests {
             check(&Method::TRACE, &cross, PUBLIC),
             Err(CsrfFailure::CrossOrigin)
         );
-
-        let cookieless = request(&[
-            ("origin", "https://evil.test"),
-            ("sec-fetch-site", "cross-site"),
-        ]);
-        assert_eq!(check(&Method::POST, &cookieless, PUBLIC), Ok(()));
 
         let token = request(&[
             COOKIE,

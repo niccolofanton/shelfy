@@ -2,9 +2,13 @@
 //! pulled forward from P1-13).
 //!
 //! The way in while SMTP is optional: the operator runs it next to the server
-//! and opens the printed URL in a browser. The link works once and expires in
-//! 15 minutes. It is printed to stdout only, never logged; the database
-//! keeps its SHA-256, and `audit_log` records that a link was minted.
+//! and opens the printed URL, `<public url>/login/magic#<token>`, in a
+//! browser; the SPA's sign-in page redeems it after a click. Without the SPA,
+//! `POST /api/v1/auth/magic-links/redeem` with `{"token": "<token>"}` does the
+//! same (`deploy/README.md` shows it with curl). The link works once and
+//! expires in 15 minutes. It is printed to stdout only, never logged; the
+//! database keeps its SHA-256, and `audit_log` records that a link was
+//! minted.
 //!
 //! P1-13 adds `--purpose reauth`.
 
@@ -44,7 +48,7 @@ pub struct LoginLinkArgs {
 /// A minted sign-in link.
 #[derive(Clone, Debug)]
 pub struct LoginLink {
-    /// `<public url>/api/v1/auth/magic/<token>`; the only copy of the token.
+    /// `<public url>/login/magic#<token>`; the only copy of the token.
     pub url: Redacted<String>,
     /// Expiry, unix ms.
     pub expires_at: i64,

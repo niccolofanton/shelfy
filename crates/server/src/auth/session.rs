@@ -8,13 +8,13 @@
 //! - **Rotation.** Signing in replaces the session the browser already held,
 //!   so a session id never survives a sign-in.
 //! - **Cache.** Lookups are cached for 60 s (moka). Sign-outs in this process
-//!   drop the cached entries at once.
-//! - **The authentication layer.** [`authenticate`] runs for every request
-//!   (see [`crate::app`]). When the session cookie signs a user in, it
-//!   inserts the user into the request extensions, as [`CurrentUser`] (the
-//!   extractor of every protected route, which answers 401 without one) and
-//!   as [`SessionUser`] (the same user with the role and the session), and
-//!   names the user in the request span. A request with an `Authorization`
+//!   drop the cached entries at once, and a lookup that raced a sign-out
+//!   never caches what it read ([`super::AuthState::cache_session`]). Cookies
+//!   that sign nobody in are remembered for 30 s, so a stale or forged cookie
+//!   costs one database read, not one per request.
+//! - **Who uses it.** The access gate ([`super::access::gate`]) resolves the
+//!   cookie of every request to a route that accepts a session and inserts
+//!   [`CurrentUser`] and [`SessionUser`]. A request with an `Authorization`
 //!   header never gets a user from its cookie, so a token can never reach a
 //!   cookie route (§2.9).
 //! - **Re-authentication.** [`RecentAuth`] for actions that need a sign-in
@@ -23,10 +23,9 @@
 use std::fmt;
 use std::sync::Arc;
 
-use axum::extract::{FromRequestParts, Request, State};
+use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use axum::middleware::Next;
-use axum::response::{IntoResponse as _, Response};
+use axum::http::{Extensions, HeaderMap};
 use rusqlite::Connection;
 use serde_json::json;
 use shelfy_core::repo::RepoError;
@@ -70,7 +69,7 @@ impl CachedSession {
 }
 
 /// The user a session cookie signed in, with the role and the session.
-/// [`authenticate`] inserts it next to the [`CurrentUser`]. Routes that only
+/// The access gate inserts it next to the [`CurrentUser`]. Routes that only
 /// act on the user's data take [`CurrentUser`]; routes that need the role or
 /// the session (owner-only routes, [`RecentAuth`]) take this. Without a
 /// signed-in session, 401 `unauthorized`.
@@ -176,30 +175,29 @@ impl FromRequestParts<AppState> for RecentAuth {
     }
 }
 
-/// Middleware: the authentication layer. When the request's session cookie
-/// (ignored when an `Authorization` header is present) signs a user in, it
-/// inserts [`CurrentUser`] and [`SessionUser`] into the request extensions
-/// and records the user id in the request span. It never refuses a request
-/// itself: routes refuse a missing user through their extractors. A failing
-/// control database answers its error.
-pub async fn authenticate(
-    State(state): State<AppState>,
-    mut request: Request,
-    next: Next,
-) -> Response {
-    if let Some(token) = cookie::session_token(request.headers()) {
-        match resolve(&state, token, now_ms()).await {
-            Ok(Some(user)) => {
-                tracing::Span::current().record("user_id", user.id());
-                let extensions = request.extensions_mut();
-                extensions.insert(CurrentUser::new(user.id()));
-                extensions.insert(user);
-            }
-            Ok(None) => {}
-            Err(err) => return err.into_response(),
-        }
+/// The user the request's session cookie signs in at `now`, if any. A
+/// request with an `Authorization` header has none ([`cookie::session_token`]).
+///
+/// # Errors
+///
+/// The control database failed.
+pub async fn from_cookie(
+    state: &AppState,
+    headers: &HeaderMap,
+    now: i64,
+) -> Result<Option<SessionUser>, ApiError> {
+    match cookie::session_token(headers) {
+        Some(token) => resolve(state, token, now).await,
+        None => Ok(None),
     }
-    next.run(request).await
+}
+
+/// Puts `user` into the request: [`CurrentUser`] and [`SessionUser`] in the
+/// extensions, its id in the request span.
+pub fn attach(extensions: &mut Extensions, user: SessionUser) {
+    tracing::Span::current().record("user_id", user.id());
+    extensions.insert(CurrentUser::new(user.id()));
+    extensions.insert(user);
 }
 
 /// The user that the session token `token` signs in at `now`, if any.
@@ -219,42 +217,51 @@ pub async fn resolve(
     }
     let id_hash = hash_token(token);
     let auth = state.auth();
+    if auth.is_known_miss(&id_hash) {
+        return Ok(None);
+    }
     let config = auth.config();
     let idle = millis(config.session_idle);
-    let cache = auth.session_cache();
 
-    let entry = if let Some(entry) = cache.get(&id_hash) {
+    let entry = if let Some(entry) = auth.cached_session(&id_hash) {
         entry
     } else {
+        let seen = auth.revision();
         let control = Arc::clone(state.control());
         let found = blocking(move || control.read(|conn| sessions::find(conn, &id_hash))).await?;
         match found {
             Some(session) if session.is_usable(now, idle) => {
                 let entry = Arc::new(CachedSession::from_row(session));
-                cache.insert(id_hash, Arc::clone(&entry));
+                auth.cache_session(id_hash, Arc::clone(&entry), seen);
                 entry
             }
-            _ => return Ok(None),
+            _ => {
+                auth.remember_miss(id_hash);
+                return Ok(None);
+            }
         }
     };
     if !entry.is_usable(now, idle) {
-        cache.invalidate(&id_hash);
+        auth.drop_session(&id_hash);
+        auth.remember_miss(id_hash);
         return Ok(None);
     }
 
     let entry = if now.saturating_sub(entry.last_seen_at) >= millis(config.session_touch_every) {
+        let seen = auth.revision();
         let control = Arc::clone(state.control());
         let exists =
             blocking(move || control.write(|tx| sessions::touch(tx, &id_hash, now))).await?;
         if !exists {
-            cache.invalidate(&id_hash);
+            auth.drop_session(&id_hash);
+            auth.remember_miss(id_hash);
             return Ok(None);
         }
         let touched = Arc::new(CachedSession {
             last_seen_at: now,
             ..(*entry).clone()
         });
-        cache.insert(id_hash, Arc::clone(&touched));
+        auth.cache_session(id_hash, Arc::clone(&touched), seen);
         touched
     } else {
         entry
@@ -398,4 +405,65 @@ pub async fn end_all_sessions(state: &AppState, user_id: &str) -> Result<usize, 
     .await?;
     state.auth().forget_all_sessions();
     Ok(ended)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthState;
+
+    fn entry() -> Arc<CachedSession> {
+        Arc::new(CachedSession {
+            user_id: "01OWNER0000000000000000000".into(),
+            role: Role::Owner,
+            created_at: 0,
+            expires_at: i64::MAX,
+            last_seen_at: 0,
+            reauth_at: None,
+        })
+    }
+
+    #[test]
+    fn a_lookup_that_raced_a_revocation_is_never_cached() {
+        let auth = AuthState::new(AuthConfig::default());
+        let hash = [7_u8; 32];
+
+        // No revocation since the read: cached.
+        let seen = auth.revision();
+        auth.cache_session(hash, entry(), seen);
+        assert!(auth.cached_session(&hash).is_some());
+
+        // A sign-out between the read and the insert: dropped, not cached.
+        let seen = auth.revision();
+        auth.forget_session(&hash);
+        auth.cache_session(hash, entry(), seen);
+        assert!(auth.cached_session(&hash).is_none());
+
+        // Sign-out everywhere, likewise; the next lookup caches again.
+        let seen = auth.revision();
+        auth.forget_all_sessions();
+        auth.cache_session(hash, entry(), seen);
+        assert!(auth.cached_session(&hash).is_none());
+        let seen = auth.revision();
+        auth.cache_session(hash, entry(), seen);
+        assert!(auth.cached_session(&hash).is_some());
+    }
+
+    #[test]
+    fn concurrent_revocations_never_leave_a_stale_entry() {
+        // A lookup inserts what it read while a revocation runs: whichever
+        // order they take, no entry from the earlier read survives.
+        let auth = Arc::new(AuthState::new(AuthConfig::default()));
+        let hash = [9_u8; 32];
+        for _ in 0..200 {
+            let seen = auth.revision();
+            let revoker = {
+                let auth = Arc::clone(&auth);
+                std::thread::spawn(move || auth.forget_session(&hash))
+            };
+            auth.cache_session(hash, entry(), seen);
+            revoker.join().unwrap();
+            assert!(auth.cached_session(&hash).is_none());
+        }
+    }
 }

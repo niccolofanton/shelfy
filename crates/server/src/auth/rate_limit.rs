@@ -1,7 +1,9 @@
 //! Sliding-window limits on sign-in requests (plan §2.9, §2.11):
 //!
-//! - per client IP: 10 per minute on the sign-in routes, from
-//!   `CF-Connecting-IP` (trusted: the tunnel is the only ingress);
+//! - per client: 10 per minute on the sign-in routes. The client is the TCP
+//!   peer, or `CF-Connecting-IP` when the peer is a trusted proxy
+//!   ([`crate::net`], `SHELFY_TRUSTED_PROXIES`). An IPv6 client counts by its
+//!   /64, the block one subscriber usually holds;
 //! - per email address: 3 sign-in emails per hour, counted for every address,
 //!   known or not, so a 429 says nothing about whether an account exists.
 //!
@@ -11,16 +13,12 @@
 //! may fold these in.
 
 use std::collections::VecDeque;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use axum::http::{HeaderMap, HeaderName};
 use moka::sync::Cache;
 use sha2::{Digest, Sha256};
-
-/// Header with the client IP, set by Cloudflare.
-pub const CLIENT_IP_HEADER: HeaderName = HeaderName::from_static("cf-connecting-ip");
 
 /// Most keys one limiter tracks.
 pub const MAX_KEYS: u64 = 10_000;
@@ -94,33 +92,24 @@ pub fn key(kind: &str, value: &str) -> Key {
     hasher.finalize().into()
 }
 
-/// The client IP from `CF-Connecting-IP`, if present and valid.
+/// The per-client key of a request from `client` ([`crate::net::ClientIp`]):
+/// the address for IPv4, its /64 for IPv6. Without a client address (an
+/// in-process request) every request shares one key, which keeps the limit
+/// strict instead of open.
 #[must_use]
-pub fn client_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    headers
-        .get(CLIENT_IP_HEADER)?
-        .to_str()
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
-}
-
-/// The per-IP key of a request. Without `CF-Connecting-IP` (a local run, or a
-/// proxy that does not set it) every request shares one key, which keeps the
-/// limit strict instead of open.
-#[must_use]
-pub fn ip_key(headers: &HeaderMap) -> Key {
-    match client_ip(headers) {
-        Some(ip) => key("ip", &ip.to_string()),
+pub fn ip_key(client: Option<IpAddr>) -> Key {
+    match client.map(|ip| ip.to_canonical()) {
+        Some(IpAddr::V4(v4)) => key("ip", &v4.to_string()),
+        Some(IpAddr::V6(v6)) => {
+            let network = u128::from(v6) & !(u128::from(u64::MAX));
+            key("ip6", &format!("{}/64", Ipv6Addr::from(network)))
+        }
         None => key("ip", "unknown"),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use axum::http::HeaderValue;
-
     use super::*;
 
     const MINUTE: i64 = 60_000;
@@ -157,16 +146,21 @@ mod tests {
     }
 
     #[test]
-    fn the_client_ip_comes_from_cloudflare() {
-        let mut headers = HeaderMap::new();
-        assert_eq!(client_ip(&headers), None);
-        assert_eq!(ip_key(&headers), key("ip", "unknown"));
-        headers.insert(CLIENT_IP_HEADER, HeaderValue::from_static(" 203.0.113.7 "));
-        assert_eq!(client_ip(&headers), Some("203.0.113.7".parse().unwrap()));
-        assert_eq!(ip_key(&headers), key("ip", "203.0.113.7"));
-        headers.insert(CLIENT_IP_HEADER, HeaderValue::from_static("2001:DB8::1"));
-        assert_eq!(ip_key(&headers), key("ip", "2001:db8::1"), "canonical form");
-        headers.insert(CLIENT_IP_HEADER, HeaderValue::from_static("not-an-ip"));
-        assert_eq!(ip_key(&headers), key("ip", "unknown"));
+    fn clients_are_keyed_by_address_or_ipv6_block() {
+        let ip = |text: &str| Some(text.parse::<IpAddr>().unwrap());
+        assert_eq!(ip_key(ip("203.0.113.7")), key("ip", "203.0.113.7"));
+        assert_eq!(ip_key(ip("::ffff:203.0.113.7")), key("ip", "203.0.113.7"));
+        assert_ne!(ip_key(ip("203.0.113.7")), ip_key(ip("203.0.113.8")));
+        // One /64: one subscriber, one key.
+        assert_eq!(
+            ip_key(ip("2001:db8:1:2:aaaa::1")),
+            ip_key(ip("2001:db8:1:2:ffff:ffff:ffff:ffff"))
+        );
+        assert_eq!(
+            ip_key(ip("2001:DB8:1:2::9")),
+            key("ip6", "2001:db8:1:2::/64")
+        );
+        assert_ne!(ip_key(ip("2001:db8:1:2::1")), ip_key(ip("2001:db8:1:3::1")));
+        assert_eq!(ip_key(None), key("ip", "unknown"));
     }
 }

@@ -10,15 +10,14 @@
 //!    from any layer become problems;
 //! 4. panic catching: a panicking handler answers 500 `internal`;
 //! 5. the CSRF and Origin guard ([`auth::csrf`]): a state-changing request
-//!    with the session cookie must come from the public origin, or it
-//!    answers 403 `csrf_failed`;
-//! 6. authentication ([`auth::session::authenticate`]): a valid session
-//!    cookie puts the user in the request extensions
-//!    ([`CurrentUser`](crate::current_user::CurrentUser),
-//!    [`auth::SessionUser`]) and in the request span;
+//!    without an `Authorization` header must come from the public origin, or
+//!    it answers 403 `csrf_failed`;
+//! 6. the access gate ([`auth::access`]), a route layer: deny by default.
+//!    The route's access (a session unless [`routes::PUBLIC_ROUTES`] or
+//!    [`routes::TOKEN_ROUTES`] say otherwise) is checked, and the user put in
+//!    the request extensions and span, or the request answers 401;
 //! 7. the route group's body limit and time limit ([`crate::limits`]);
-//! 8. the handler. Protected handlers take the user as an extractor, which
-//!    answers 401 when authentication found none.
+//! 8. the handler, which takes the user as an extractor.
 //!
 //! The stack is applied after routing, so the route template is known to the
 //! logs and metrics. Rate limits (P1-15) and the security headers (P1-09)
@@ -33,6 +32,7 @@ use tower_http::compression::predicate::{NotForContentType, Predicate as _, Size
 use utoipa_axum::router::OpenApiRouter;
 
 use crate::auth;
+use crate::auth::access::{AccessPolicy, Gate};
 use crate::error::{self, ApiError};
 use crate::routes;
 use crate::state::AppState;
@@ -46,10 +46,27 @@ pub fn app(state: AppState) -> Router {
     build(state, routes::router())
 }
 
-/// Puts `routes` behind the stack. [`app`] uses it with the real routes;
-/// tests use it with extra routes.
+/// Puts `routes` behind the stack, with the access policy of the real
+/// routes ([`routes::access`]). [`app`] uses it with the real routes; tests
+/// use it with extra routes, which then need a session.
 pub fn build(state: AppState, routes: OpenApiRouter<AppState>) -> Router {
+    build_with_access(state, routes, routes::access())
+}
+
+/// [`build`] with another access policy: tests add the rules of their own
+/// routes to [`routes::access`].
+pub fn build_with_access(
+    state: AppState,
+    routes: OpenApiRouter<AppState>,
+    access: AccessPolicy,
+) -> Router {
     let (router, _document) = routes.split_for_parts();
+    let gate = Gate::new(state.clone(), access);
+    let router = if router.has_routes() {
+        router.route_layer(middleware::from_fn_with_state(gate, auth::access::gate))
+    } else {
+        router
+    };
     let compression = CompressionLayer::new().compress_when(
         SizeAbove::new(COMPRESSION_MIN_BYTES)
             .and(NotForContentType::GRPC)
@@ -69,10 +86,6 @@ pub fn build(state: AppState, routes: OpenApiRouter<AppState>) -> Router {
                 .layer(middleware::from_fn_with_state(
                     state.clone(),
                     auth::csrf::protect,
-                ))
-                .layer(middleware::from_fn_with_state(
-                    state.clone(),
-                    auth::session::authenticate,
                 )),
         )
         .with_state(state)

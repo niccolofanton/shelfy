@@ -3,6 +3,8 @@
 //! A link is keyed by the SHA-256 of its token. [`consume`] marks it used in
 //! the same statement that checks it, so a link signs in at most once even
 //! when two requests race (the control database has one writer).
+//! [`is_redeemable`] runs the same check on a reader first, so a guessed or
+//! stale token never takes the writer.
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 use shelfy_core::repo::{RepoError, Result};
@@ -66,6 +68,28 @@ pub fn insert(conn: &Connection, link: &NewMagicLink<'_>) -> Result<()> {
     Ok(())
 }
 
+/// Whether the link whose token hashes to `token_hash` would be used by
+/// [`consume`] at `now`: the same conditions, read-only.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn is_redeemable(
+    conn: &Connection,
+    token_hash: &TokenHash,
+    purpose: Purpose,
+    now: i64,
+) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM magic_links \
+         WHERE token_hash = ?1 AND purpose = ?2 AND used_at IS NULL AND expires_at > ?3 \
+         AND user_id IN (SELECT id FROM users WHERE status = 'active'))",
+        params![token_hash.as_slice(), purpose.as_str(), now],
+        |row| row.get(0),
+    )
+    .map_err(RepoError::from)
+}
+
 /// Uses the link whose token hashes to `token_hash`: it must have `purpose`,
 /// be unused and unexpired at `now`, and belong to an active user. Marks it
 /// used and returns its user; `None` when any condition fails.
@@ -124,6 +148,12 @@ mod tests {
         let hash = SecretToken::generate().hash();
         db.write(|tx| insert(tx, &link(&owner, &hash, Purpose::Login)))
             .unwrap();
+        let redeemable = |now| {
+            db.read(|conn| is_redeemable(conn, &hash, Purpose::Login, now))
+                .unwrap()
+        };
+        assert!(redeemable(NOW + MINUTE));
+        assert!(!redeemable(NOW + 15 * MINUTE), "expired");
         let first = db
             .write(|tx| consume(tx, &hash, Purpose::Login, NOW + MINUTE))
             .unwrap();
@@ -132,6 +162,7 @@ mod tests {
             .write(|tx| consume(tx, &hash, Purpose::Login, NOW + 2 * MINUTE))
             .unwrap();
         assert_eq!(second, None, "single use");
+        assert!(!redeemable(NOW + 2 * MINUTE), "used");
         let used_at: Option<i64> = db
             .read(|conn| {
                 conn.query_row(
@@ -169,6 +200,10 @@ mod tests {
             (&disabled, Purpose::Login, NOW),
             (&SecretToken::generate().hash(), Purpose::Login, NOW),
         ] {
+            assert!(
+                !db.read(|conn| is_redeemable(conn, hash, purpose, now))
+                    .unwrap()
+            );
             assert_eq!(
                 db.write(|tx| consume(tx, hash, purpose, now)).unwrap(),
                 None

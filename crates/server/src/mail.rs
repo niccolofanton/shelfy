@@ -9,8 +9,13 @@
 //! | `SHELFY_DEV_MAILBOX=true` | the dev mailbox: every message becomes an `.eml` file in `<data>/dev-mailbox/`, for local runs and tests |
 //! | neither | none: email is disabled; `admin login-link` is the way in |
 //!
-//! Setting both is a configuration error, so a production instance never
-//! writes sign-in links to disk by accident.
+//! Guards, so a production instance never leaks sign-in links by accident:
+//!
+//! - SMTP and the dev mailbox exclude each other;
+//! - the dev mailbox needs a loopback `SHELFY_PUBLIC_URL` (`localhost`);
+//! - `SHELFY_SMTP_TLS=none` (plain text) needs a local relay host: loopback,
+//!   a private address or a single-label name such as `mailpit`, and no
+//!   credentials.
 //!
 //! Addresses, subjects and bodies are never logged, and [`MailError`] never
 //! carries them: an SMTP reply can quote the recipient, so only its status
@@ -31,7 +36,8 @@ use lettre::{
     AsyncFileTransport, AsyncSmtpTransport, AsyncTransport as _, Message, Tokio1Executor,
 };
 
-use crate::config::{DataDir, create_private_dir};
+use crate::config::{DataDir, PublicUrl, create_private_dir};
+use crate::net;
 use crate::telemetry::redact::Redacted;
 
 /// The dev mailbox, inside the data directory.
@@ -57,8 +63,8 @@ pub struct MailArgs {
     pub smtp_host: Option<String>,
 
     /// How the SMTP connection is secured: `starttls` (required, not
-    /// opportunistic), `tls` (implicit TLS) or `none` (plain text, for a local
-    /// catcher only; refused together with credentials).
+    /// opportunistic), `tls` (implicit TLS) or `none` (plain text: only to a
+    /// loopback, private or single-label host, and without credentials).
     #[arg(
         long = "smtp-tls",
         env = "SHELFY_SMTP_TLS",
@@ -87,7 +93,8 @@ pub struct MailArgs {
     pub smtp_from: Option<String>,
 
     /// Write emails as `.eml` files to `<data>/dev-mailbox/` instead of sending
-    /// them. For local runs and tests; refused together with SMTP.
+    /// them. For local runs and tests: refused together with SMTP, and unless
+    /// the public URL is loopback (`localhost`).
     #[arg(long = "dev-mailbox", env = "SHELFY_DEV_MAILBOX")]
     pub dev_mailbox: bool,
 }
@@ -154,13 +161,18 @@ pub struct SmtpConfig {
 }
 
 impl MailConfig {
-    /// Validates the arguments; `data` places the dev mailbox. Empty values
-    /// count as unset, so a compose file may pass `SHELFY_SMTP_HOST=`.
+    /// Validates the arguments; `data` places the dev mailbox, and the dev
+    /// mailbox needs a loopback `public_url`. Empty values count as unset, so
+    /// a compose file may pass `SHELFY_SMTP_HOST=`.
     ///
     /// # Errors
     ///
     /// A message naming the variable at fault.
-    pub fn from_args(args: MailArgs, data: &DataDir) -> Result<Self, String> {
+    pub fn from_args(
+        args: MailArgs,
+        data: &DataDir,
+        public_url: &PublicUrl,
+    ) -> Result<Self, String> {
         let host = non_empty(args.smtp_host);
         let from = non_empty(args.smtp_from);
         let user = non_empty(args.smtp_user);
@@ -168,6 +180,12 @@ impl MailConfig {
         let Some(host) = host else {
             if !args.dev_mailbox {
                 return Ok(Self::Disabled);
+            }
+            if !public_url_is_loopback(public_url) {
+                return Err(format!(
+                    "SHELFY_DEV_MAILBOX writes sign-in links to disk: it needs a loopback \
+                     SHELFY_PUBLIC_URL such as http://localhost:8080, not {public_url}"
+                ));
             }
             let from = parse_mailbox(from.as_deref().unwrap_or(DEV_MAILBOX_FROM))?;
             return Ok(Self::DevMailbox {
@@ -194,11 +212,19 @@ impl MailConfig {
                 );
             }
         };
-        if credentials.is_some() && args.smtp_tls == SmtpTls::None {
-            return Err(
-                "SHELFY_SMTP_TLS=none would send the SMTP password in clear text: use starttls or tls"
-                    .to_owned(),
-            );
+        if args.smtp_tls == SmtpTls::None {
+            if credentials.is_some() {
+                return Err(
+                    "SHELFY_SMTP_TLS=none would send the SMTP password in clear text: use starttls or tls"
+                        .to_owned(),
+                );
+            }
+            if !net::is_local_host(&host) {
+                return Err(format!(
+                    "SHELFY_SMTP_TLS=none sends sign-in links in clear text: only to a local \
+                     catcher (loopback, private or single-label host), not {host:?}"
+                ));
+            }
         }
         Ok(Self::Smtp(SmtpConfig {
             host,
@@ -217,6 +243,14 @@ impl MailConfig {
             from: parse_mailbox(DEV_MAILBOX_FROM).expect("a valid default sender"),
         }
     }
+}
+
+/// Whether the public URL's host is this machine.
+fn public_url_is_loopback(public_url: &PublicUrl) -> bool {
+    url::Url::parse(public_url.as_str())
+        .ok()
+        .and_then(|url| url.host_str().map(net::is_loopback_host))
+        .unwrap_or(false)
 }
 
 fn non_empty(value: Option<String>) -> Option<String> {
@@ -497,9 +531,13 @@ mod tests {
         MailArgs::default()
     }
 
+    fn local() -> PublicUrl {
+        PublicUrl::parse("http://localhost:18090").unwrap()
+    }
+
     #[test]
     fn nothing_set_means_disabled() {
-        let config = MailConfig::from_args(args(), &data()).unwrap();
+        let config = MailConfig::from_args(args(), &data(), &local()).unwrap();
         assert!(matches!(config, MailConfig::Disabled));
         // Empty values from a compose file count as unset; so does a lone sender.
         let config = MailConfig::from_args(
@@ -509,6 +547,7 @@ mod tests {
                 ..args()
             },
             &data(),
+            &local(),
         )
         .unwrap();
         assert!(matches!(config, MailConfig::Disabled));
@@ -516,19 +555,38 @@ mod tests {
 
     #[test]
     fn the_dev_mailbox_lives_in_the_data_directory() {
-        let config = MailConfig::from_args(
-            MailArgs {
-                dev_mailbox: true,
-                ..args()
-            },
-            &data(),
-        )
-        .unwrap();
+        let dev = || MailArgs {
+            dev_mailbox: true,
+            ..args()
+        };
+        let config = MailConfig::from_args(dev(), &data(), &local()).unwrap();
         let MailConfig::DevMailbox { dir, from } = config else {
             panic!("expected the dev mailbox, got {config:?}");
         };
         assert_eq!(dir, PathBuf::from("/srv/shelfy/dev-mailbox"));
         assert_eq!(from.email.to_string(), "shelfy@localhost");
+        for loopback in [
+            "http://127.0.0.1:8080",
+            "http://[::1]:8080",
+            "http://app.localhost",
+        ] {
+            let url = PublicUrl::parse(loopback).unwrap();
+            assert!(
+                MailConfig::from_args(dev(), &data(), &url).is_ok(),
+                "{loopback}"
+            );
+        }
+
+        // Only on this machine: a public instance never writes links to disk.
+        for public in [
+            "https://refs.niccolofanton.dev",
+            "http://192.168.1.10:8080",
+            "http://localhost.evil.test",
+        ] {
+            let url = PublicUrl::parse(public).unwrap();
+            let err = MailConfig::from_args(dev(), &data(), &url).unwrap_err();
+            assert!(err.contains("loopback"), "{public}: {err}");
+        }
     }
 
     #[test]
@@ -542,7 +600,11 @@ mod tests {
                 ..MailArgs::default()
             };
             edit(&mut args);
-            MailConfig::from_args(args, &DataDir::new("/srv/shelfy").unwrap())
+            MailConfig::from_args(
+                args,
+                &DataDir::new("/srv/shelfy").unwrap(),
+                &PublicUrl::parse("https://refs.example.test").unwrap(),
+            )
         };
         let MailConfig::Smtp(config) = smtp(|_| {}).unwrap() else {
             panic!("expected SMTP");
@@ -603,6 +665,32 @@ mod tests {
         };
         assert_eq!((config.host.as_str(), config.port), ("::1", 1025));
         assert!(config.credentials.is_none());
+        let plain = |host: &'static str| {
+            smtp(match host {
+                "mailpit:1025" => |a| {
+                    a.smtp_host = Some("mailpit:1025".into());
+                    a.smtp_tls = SmtpTls::None;
+                    a.smtp_user = None;
+                    a.smtp_password = None;
+                },
+                "10.0.0.25:25" => |a| {
+                    a.smtp_host = Some("10.0.0.25:25".into());
+                    a.smtp_tls = SmtpTls::None;
+                    a.smtp_user = None;
+                    a.smtp_password = None;
+                },
+                _ => |a| {
+                    a.smtp_host = Some("smtp.resend.com:25".into());
+                    a.smtp_tls = SmtpTls::None;
+                    a.smtp_user = None;
+                    a.smtp_password = None;
+                },
+            })
+        };
+        assert!(plain("mailpit:1025").is_ok(), "a single-label container");
+        assert!(plain("10.0.0.25:25").is_ok(), "a private address");
+        let err = plain("smtp.resend.com:25").unwrap_err();
+        assert!(err.contains("local catcher"), "{err}");
     }
 
     #[test]

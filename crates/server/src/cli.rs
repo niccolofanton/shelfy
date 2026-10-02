@@ -116,6 +116,22 @@ mod tests {
     }
 
     #[test]
+    fn sign_in_flags_are_parsed_and_validated() {
+        let config = serve(&[]).unwrap();
+        assert!(config.trusted_proxies.is_empty(), "no proxy is trusted");
+        let config = serve(&["--trusted-proxies", "172.16.0.0/12, ::1"]).unwrap();
+        assert_eq!(config.trusted_proxies.to_string(), "172.16.0.0/12,::1/128");
+        let err = serve(&["--trusted-proxies", "172.16.0.0/40"]).unwrap_err();
+        assert!(err.contains("--trusted-proxies"), "{err}");
+
+        // The dev mailbox writes links to disk: loopback public URLs only.
+        assert!(serve(&["--dev-mailbox"]).is_ok());
+        let err =
+            serve(&["--dev-mailbox", "--public-url", "https://refs.example.test"]).unwrap_err();
+        assert!(err.contains("SHELFY_DEV_MAILBOX"), "{err}");
+    }
+
+    #[test]
     fn admin_commands_take_the_data_dir_anywhere() {
         let cli = Cli::try_parse_from([
             "shelfy-server",

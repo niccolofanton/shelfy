@@ -3,29 +3,34 @@
 //! **How a user signs in today.** The owner asks for an email link
 //! (`POST /api/v1/auth/magic-links`, when email is configured) or gets one
 //! from the operator (`shelfy-server admin login-link`, the way in while SMTP
-//! is optional). Opening it (`GET /api/v1/auth/magic/{token}`, or
-//! `POST /api/v1/auth/magic-links/redeem` from a page) creates an opaque
-//! server-side session held in the `__Host-shelfy_session` cookie. There is no
-//! sign-up: links exist only for existing accounts.
+//! is optional). The link is `<public url>/login/magic#<token>`: the SPA's
+//! sign-in page reads the token from the fragment and, after a click, redeems
+//! it with `POST /api/v1/auth/magic-links/redeem`, which creates an opaque
+//! server-side session held in the `__Host-shelfy_session` cookie. Nothing
+//! redeems on `GET` ([`magic_link`]). There is no sign-up: links exist only
+//! for existing accounts.
 //!
-//! **How a route requires it.** The authentication layer
-//! ([`session::authenticate`], in the stack of [`crate::app`]) verifies the
-//! session cookie of every request and, when it signs a user in, inserts
-//! [`CurrentUser`](crate::current_user::CurrentUser) and [`SessionUser`] into
-//! the request extensions and names the user in the request span. A handler
-//! takes [`CurrentUser`](crate::current_user::CurrentUser) (the user's data),
-//! [`SessionUser`] (the role and the session) or [`RecentAuth`] (sensitive
-//! actions); each answers 401 without a signed-in session. Cookie requests
-//! that change state also pass the [`csrf`] guard, which runs first.
+//! **Deny by default.** Every route needs a signed-in session unless the
+//! router's access policy ([`access`], lists in [`crate::routes`]) makes it
+//! public or opens it to scoped API tokens. The gate ([`access::gate`]) runs
+//! after routing and before the handler: it verifies the session cookie (or
+//! the token) the route accepts, inserts the user into the request extensions
+//! ([`CurrentUser`](crate::current_user::CurrentUser), [`SessionUser`],
+//! [`bearer::TokenPrincipal`]) and names it in the request span, or answers
+//! 401 itself. Handlers take the user as an extractor: [`CurrentUser`]
+//! (the user's data), [`SessionUser`] (role and session), [`RecentAuth`]
+//! (sensitive actions) or [`bearer::TokenUser`]. Unsafe requests without an
+//! `Authorization` header also pass the [`csrf`] guard, which runs first.
 //!
 //! | Module | Contents |
 //! |---|---|
+//! | [`access`] | the access policy and the gate |
 //! | [`cookie`] | the session cookie |
-//! | [`session`] | the authentication layer, [`SessionUser`], [`RecentAuth`], session creation and sign-out |
+//! | [`session`] | sessions: resolution, [`SessionUser`], [`RecentAuth`], creation and sign-out |
 //! | [`magic_link`] | sign-in links: email requests, minting, redemption |
 //! | [`csrf`] | the Origin / `Sec-Fetch-Site` / `X-Shelfy-Client` guard |
 //! | [`rate_limit`] | limits on sign-in requests |
-//! | [`bearer`] | API tokens: a typed extractor, completed by P1-17 |
+//! | [`bearer`] | API tokens: verification and [`bearer::TokenUser`]; P1-17 mints them |
 //! | [`openapi`] | the security schemes of the OpenAPI document |
 //!
 //! **Seams.**
@@ -33,21 +38,23 @@
 //! - Passkeys (P1-13): `auth/passkeys.rs` with `webauthn-rs`, RP ID and origin
 //!   from `SHELFY_PUBLIC_URL`; a successful assertion calls
 //!   [`session::create_session`] with method `passkey`, like a redeemed link.
+//!   Their routes go in [`crate::routes::PUBLIC_ROUTES`];
 //!   [`AuthMethods::passkeys`] turns true.
 //! - Re-authentication (P1-13): `POST /auth/reauth/{start,finish}` set the
 //!   session's `reauth_at` ([`crate::control::sessions::set_reauth`]) and call
 //!   [`AuthState::forget_session`]; routes that need it take [`RecentAuth`].
 //!   Links with purpose `reauth` already exist in the schema
 //!   ([`crate::control::magic_links::Purpose`]).
-//! - API tokens (P1-17): [`bearer::TokenUser`] reads `api_tokens`; P1-17 adds
-//!   creation, revocation and `last_used_at`, and an extractor for routes that
-//!   take the cookie or a token. The layer keeps inserting
-//!   [`CurrentUser`](crate::current_user::CurrentUser) for cookie sessions
-//!   only, so cookie routes keep refusing tokens.
+//! - API tokens (P1-17): [`bearer`] verifies `api_tokens`; P1-17 adds minting,
+//!   revocation and `last_used_at`. A route opens to tokens in
+//!   [`crate::routes::TOKEN_ROUTES`].
 //! - OpenAPI: the document's default security is the session
-//!   ([`openapi::SecuritySchemes`]); a public route opts out with
-//!   `security(())` in its `#[utoipa::path]`.
+//!   ([`openapi::SecuritySchemes`]); a public route also declares
+//!   `security(())` and a token route `security(("bearer" = ["<scope>"]))` in
+//!   its `#[utoipa::path]`. The authz test checks that the document and the
+//!   access policy agree.
 
+pub mod access;
 pub mod bearer;
 pub mod cookie;
 pub mod csrf;
@@ -57,6 +64,7 @@ pub mod rate_limit;
 pub mod session;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use moka::sync::Cache;
@@ -77,6 +85,8 @@ const DAY: Duration = Duration::from_secs(86_400);
 
 /// Most sessions kept in the lookup cache.
 const SESSION_CACHE_CAPACITY: u64 = 10_000;
+/// Most unknown session cookies remembered as misses.
+const MISS_CACHE_CAPACITY: u64 = 10_000;
 
 /// Lifetimes and limits of authentication. The defaults are the plan's;
 /// tests shorten them.
@@ -92,11 +102,15 @@ pub struct AuthConfig {
     /// process takes effect at once; changes made by another process (the
     /// admin CLI) within this delay.
     pub session_cache_ttl: Duration,
+    /// How long a cookie that signs nobody in is remembered as such, so a
+    /// stale or forged cookie does not cost a database read per request.
+    pub session_miss_ttl: Duration,
     /// How long a sign-in link stays valid (15 minutes).
     pub magic_link_ttl: Duration,
     /// How recent a sign-in must be for [`RecentAuth`] (5 minutes).
     pub reauth_window: Duration,
-    /// Sign-in requests per client IP (§2.9: 10 per minute).
+    /// Sign-in requests per client address (§2.9: 10 per minute; an IPv6
+    /// client counts by its /64).
     pub ip_limit: RateLimit,
     /// Sign-in emails per address (§2.11: 3 per hour).
     pub address_limit: RateLimit,
@@ -111,6 +125,7 @@ impl Default for AuthConfig {
             session_lifetime: 90 * DAY,
             session_touch_every: HOUR,
             session_cache_ttl: MINUTE,
+            session_miss_ttl: Duration::from_secs(30),
             magic_link_ttl: 15 * MINUTE,
             reauth_window: 5 * MINUTE,
             ip_limit: RateLimit {
@@ -135,6 +150,11 @@ pub(crate) fn millis(duration: Duration) -> i64 {
 pub struct AuthState {
     config: AuthConfig,
     sessions: Cache<TokenHash, Arc<CachedSession>>,
+    /// Session cookies that signed nobody in, recently.
+    misses: Cache<TokenHash, ()>,
+    /// Bumped by every revocation, so a lookup that raced one does not cache
+    /// what it read ([`AuthState::cache_session`]).
+    revocations: AtomicU64,
     ip_limiter: RateLimiter,
     address_limiter: RateLimiter,
     mail_slots: Arc<Semaphore>,
@@ -148,11 +168,17 @@ impl AuthState {
             .max_capacity(SESSION_CACHE_CAPACITY)
             .time_to_live(config.session_cache_ttl.max(Duration::from_millis(1)))
             .build();
+        let misses = Cache::builder()
+            .max_capacity(MISS_CACHE_CAPACITY)
+            .time_to_live(config.session_miss_ttl.max(Duration::from_millis(1)))
+            .build();
         Self {
             ip_limiter: RateLimiter::new(config.ip_limit),
             address_limiter: RateLimiter::new(config.address_limit),
             mail_slots: Arc::new(Semaphore::new(config.mail_concurrency.max(1))),
             sessions,
+            misses,
+            revocations: AtomicU64::new(0),
             config,
         }
     }
@@ -163,14 +189,19 @@ impl AuthState {
         &self.config
     }
 
-    /// Drops the cached lookup of one session, after it changed.
+    /// Drops the cached lookup of one session, after it changed (sign-out,
+    /// rotation, re-authentication).
     pub fn forget_session(&self, id_hash: &TokenHash) {
+        // Count first, then drop: a lookup that read the row before the
+        // change either sees the new count or loses its entry to this drop.
+        self.revocations.fetch_add(1, Ordering::SeqCst);
         self.sessions.invalidate(id_hash);
     }
 
     /// Drops every cached session lookup (sign-out everywhere, a user
     /// disabled). Lookups reload from the database.
     pub fn forget_all_sessions(&self) {
+        self.revocations.fetch_add(1, Ordering::SeqCst);
         self.sessions.invalidate_all();
     }
 
@@ -183,8 +214,51 @@ impl AuthState {
         }
     }
 
-    pub(crate) fn session_cache(&self) -> &Cache<TokenHash, Arc<CachedSession>> {
-        &self.sessions
+    /// The revocation count; read it before a database lookup whose result
+    /// goes to [`AuthState::cache_session`].
+    pub(crate) fn revision(&self) -> u64 {
+        self.revocations.load(Ordering::SeqCst)
+    }
+
+    /// The cached lookup of a session.
+    pub(crate) fn cached_session(&self, id_hash: &TokenHash) -> Option<Arc<CachedSession>> {
+        self.sessions.get(id_hash)
+    }
+
+    /// Caches a session read from the database when no revocation happened
+    /// since `seen` ([`AuthState::revision`] before the read). A revocation
+    /// that lands between the check and the insert is caught by the second
+    /// check, which drops the entry again; so a revoked session is never
+    /// served from the cache.
+    pub(crate) fn cache_session(&self, id_hash: TokenHash, entry: Arc<CachedSession>, seen: u64) {
+        if self.revision() != seen {
+            return;
+        }
+        self.sessions.insert(id_hash, entry);
+        if self.revision() != seen {
+            self.sessions.invalidate(&id_hash);
+        }
+    }
+
+    /// Drops a cached session that turned out unusable.
+    pub(crate) fn drop_session(&self, id_hash: &TokenHash) {
+        self.sessions.invalidate(id_hash);
+    }
+
+    /// Whether `id_hash` recently signed nobody in.
+    pub(crate) fn is_known_miss(&self, id_hash: &TokenHash) -> bool {
+        self.misses.contains_key(id_hash)
+    }
+
+    /// Remembers that `id_hash` signs nobody in, for
+    /// [`AuthConfig::session_miss_ttl`].
+    pub(crate) fn remember_miss(&self, id_hash: TokenHash) {
+        self.misses.insert(id_hash, ());
+    }
+
+    /// Forgets a remembered miss (a new session with this hash).
+    pub(crate) fn forget_miss(&self, id_hash: &TokenHash) {
+        self.misses.invalidate(id_hash);
     }
 
     pub(crate) fn ip_limiter(&self) -> &RateLimiter {

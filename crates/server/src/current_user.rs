@@ -3,20 +3,21 @@
 //!
 //! The contract:
 //!
-//! - authentication runs before the handler and, once it has verified the
-//!   request's credential (the session cookie; later a scoped bearer token),
-//!   inserts a [`CurrentUser`] into the request extensions;
-//! - a route that needs a user takes [`CurrentUser`] as an extractor. Without
-//!   one in the extensions, the request answers 401 `unauthorized`, before the
-//!   handler runs and before any database is opened.
+//! - the access gate ([`crate::auth::access`]) runs before the handler and,
+//!   once it has verified the credential the route accepts (the session
+//!   cookie, or a scoped API token on a token route), inserts a
+//!   [`CurrentUser`] into the request extensions. Without one, a route that is
+//!   not public answers 401 `unauthorized` at the gate, before the handler
+//!   runs and before any database is opened;
+//! - a route that needs a user takes [`CurrentUser`] as an extractor, which
+//!   answers 401 too when the extensions hold none.
 //!
 //! Request extensions are server-side only: a client cannot set one through a
-//! header, so the extractor trusts what it finds.
-//!
-//! The authentication layer ([`crate::auth::session::authenticate`]) inserts
-//! one for a valid session cookie. The read-API tests also insert one with a
-//! layer of their own (`tests/support/library.rs`), which stands in for a
-//! signed-in session and is not part of a build.
+//! header, so the gate and the extractor trust what they find. Tests that
+//! stand in for a signed-in session insert one with a layer of their own
+//! (`TestState::app_as` in `tests/support/library.rs`); such a layer must wrap
+//! the built application, because a layer inside the router runs after the
+//! gate. It is not part of a build.
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
