@@ -59,7 +59,8 @@ These owner decisions override the plan where they conflict.
 
 | Task | What | Status | Branch |
 |---|---|---|---|
-| P1-01 | Realtime: SSE bus, notifications, client errors, version | running | `web/p1-01-realtime` |
+| P1-01 | Realtime: SSE bus, notifications, client errors, version | done | `web/p1-01-realtime` (e7afc2c…86f34ca) |
+| P1-07 | Job system and jobs API | running | `web/p1-07-jobs` |
 
 ### Follow-ups
 
