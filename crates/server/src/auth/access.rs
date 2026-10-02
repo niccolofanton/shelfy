@@ -189,7 +189,7 @@ pub async fn gate(State(gate): State<Gate>, mut request: Request, next: Next) ->
         return refused.into_response();
     }
     if let Some(user) = request.extensions().get::<CurrentUser>()
-        && let Err(refused) = refuse_locked(&gate.state, user.id())
+        && let Err(refused) = refuse_locked(&gate.state, user.id()).await
     {
         return refused.into_response();
     }
@@ -201,13 +201,19 @@ pub async fn gate(State(gate): State<Gate>, mut request: Request, next: Next) ->
 /// once, so the restore does not wait for the next maintenance pass.
 ///
 /// One `stat` of the lock marker per request; the dentry is hot in the page
-/// cache, so it does not need the blocking pool.
-fn refuse_locked(state: &AppState, user_id: &str) -> Result<(), ApiError> {
+/// cache, so it does not need the blocking pool. Releasing the handle does:
+/// it checkpoints the library and may wait for its locks (`busy_timeout`),
+/// so it runs there. The 423 waits for it, so the handle is released and
+/// its generation retired before the client hears back.
+async fn refuse_locked(state: &AppState, user_id: &str) -> Result<(), ApiError> {
     let user_dbs = state.user_dbs();
     match user_dbs.is_locked(user_id) {
         Ok(false) => Ok(()),
         Ok(true) => {
-            user_dbs.evict(user_id);
+            let (user_dbs, user) = (Arc::clone(user_dbs), user_id.to_owned());
+            if let Err(err) = tokio::task::spawn_blocking(move || user_dbs.evict(&user)).await {
+                tracing::warn!(error = %err, "releasing a locked library failed");
+            }
             Err(ApiError::user_locked())
         }
         Err(err) => Err(ApiError::from(err)),

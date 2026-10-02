@@ -1068,6 +1068,62 @@ fn create_owner_leaves_a_locked_library_alone() {
     assert!(std::fs::metadata(&live).unwrap().len() > 0, "repaired");
 }
 
+/// The current-thread runtime of `#[tokio::test]` has one worker, so blocking
+/// it shows: this test fails if the 423 path blocks the async worker.
+#[tokio::test]
+async fn a_locked_users_request_does_not_block_the_async_worker() {
+    // Review of P1-12, L1: the 423 path released the library on the async
+    // worker: `PRAGMA optimize` and a TRUNCATE checkpoint, which wait up to
+    // the busy timeout (5 s) for another connection's lock.
+    let t = TestState::new();
+    let app = t.app();
+    let cookie = sign_in(&app, &t).await;
+    let data = t.data_dir();
+    let owner = support::auth::owner(&t);
+    let response = send(&app, with_session(get("/api/v1/posts"), &cookie)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(t.state.user_dbs().is_open(&owner));
+
+    // Another connection holds the library's write lock for a second.
+    let other = Connection::open(data.library_db(&owner)).unwrap();
+    other.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(1));
+        other.execute_batch("COMMIT").unwrap();
+    });
+    lock(&data, &owner, "restore").unwrap();
+
+    // A task that ticks every 10 ms records the longest gap between ticks.
+    let longest = Arc::new(std::sync::Mutex::new(Duration::ZERO));
+    let ticker = {
+        let longest = Arc::clone(&longest);
+        tokio::spawn(async move {
+            let mut last = Instant::now();
+            loop {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                let gap = last.elapsed();
+                last = Instant::now();
+                let mut longest = longest.lock().unwrap();
+                *longest = (*longest).max(gap);
+            }
+        })
+    };
+    tokio::task::yield_now().await;
+    let response = send(&app, with_session(get("/api/v1/posts"), &cookie)).await;
+    // Let the ticker see the time that passed.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    ticker.abort();
+    writer.join().unwrap();
+    assert_eq!(response.status(), StatusCode::LOCKED);
+    let longest = *longest.lock().unwrap();
+    assert!(
+        longest < Duration::from_millis(500),
+        "the async worker was blocked for {longest:?}"
+    );
+    // The 423 came after the release: the library is closed.
+    assert!(!t.state.user_dbs().is_open(&owner));
+}
+
 #[test]
 fn the_server_upgrades_an_older_control_database_at_boot() {
     // The control database as release v1 of the schema left it.
