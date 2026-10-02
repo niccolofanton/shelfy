@@ -388,7 +388,7 @@ impl From<DbError> for ApiError {
 
 /// Whether a database error clears up on its own: every reader stayed busy,
 /// or a lock outlasted `busy_timeout`.
-fn is_transient(err: &DbError) -> bool {
+pub(crate) fn is_transient(err: &DbError) -> bool {
     match err {
         DbError::ReaderTimeout => true,
         DbError::Sqlite(e) => matches!(

@@ -1,5 +1,6 @@
 //! The state shared by every request: the databases, the configuration,
-//! authentication, the mailer, the realtime event bus and the shutdown token.
+//! authentication, the mailer, the realtime event bus, the job system and
+//! the shutdown token.
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use crate::auth::{self, AuthState};
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::events::EventBus;
+use crate::jobs::Jobs;
 use crate::mail::Mailer;
 
 /// Cheap to clone: everything lives behind one `Arc`.
@@ -26,6 +28,7 @@ struct Inner {
     auth: AuthState,
     mailer: Mailer,
     events: EventBus,
+    jobs: Jobs,
     shutdown: CancellationToken,
 }
 
@@ -69,14 +72,18 @@ impl AppState {
             );
         }
         let auth = AuthState::new(config.auth.clone());
+        let control = Arc::new(control);
+        let events = EventBus::new();
+        let jobs = Jobs::new(&config.jobs, Arc::clone(&control), events.clone());
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
-                control: Arc::new(control),
+                control,
                 user_dbs: Arc::new(user_dbs),
                 auth,
                 mailer,
-                events: EventBus::new(),
+                events,
+                jobs,
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -116,6 +123,13 @@ impl AppState {
     #[must_use]
     pub fn events(&self) -> &EventBus {
         &self.inner.events
+    }
+
+    /// The job system: enqueue and control jobs. Its scheduler runs from
+    /// [`crate::serve::Server::run`].
+    #[must_use]
+    pub fn jobs(&self) -> &Jobs {
+        &self.inner.jobs
     }
 
     /// Cancelled when the server starts shutting down. Long-running work (job

@@ -33,7 +33,7 @@
 //! | [`admin`] | the operator commands |
 //! | [`migrations`] | installing a desktop library uploaded by `shelfy-migrate` (T9) |
 //! | [`events`] | the per-user realtime bus behind SSE: publish, replay, throttles |
-//! | [`jobs`] | the seam for the scheduler (P1-07) |
+//! | [`jobs`] | the job system: scheduler, workers, job-kind registry, `Idempotency-Key` |
 //!
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.2–§2.4 and §3.
 

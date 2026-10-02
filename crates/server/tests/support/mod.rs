@@ -4,6 +4,7 @@
 #![allow(dead_code)] // each test binary uses a different subset
 
 pub mod auth;
+pub mod jobs;
 pub mod library;
 pub mod sse;
 

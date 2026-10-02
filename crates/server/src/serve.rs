@@ -5,11 +5,14 @@
 //!   threads. Every SQLite call runs on the blocking pool.
 //! - **Listeners:** the API (`SHELFY_LISTEN_ADDR`) and Prometheus
 //!   (`SHELFY_METRICS_ADDR`), served side by side.
+//! - **Jobs:** the scheduler ([`crate::jobs`]) runs beside the listeners on
+//!   a child of the shutdown token.
 //! - **Shutdown** on SIGTERM or Ctrl-C: stop accepting, cancel the shutdown
-//!   token (job workers and streams stop), let in-flight requests finish,
-//!   checkpoint the WAL and close the databases, all within
-//!   [`Config::shutdown_grace`] (25 s). Interrupted jobs are re-queued on the
-//!   next boot (P1-07).
+//!   token (job workers and streams stop), let in-flight requests and job
+//!   workers finish, checkpoint the WAL and close the databases, all within
+//!   [`Config::shutdown_grace`] (25 s). Interrupted jobs go back to the
+//!   queue; a job still running at the deadline is re-queued on the next
+//!   boot.
 
 use std::future::{Future, IntoFuture as _};
 use std::io;
@@ -208,7 +211,10 @@ impl Server {
         let drain_timeout = config.shutdown_grace.saturating_sub(CLOSE_RESERVE);
 
         let maintenance = tokio::spawn(maintenance(state.clone(), metrics.clone(), token.clone()));
-        // P1-07: start the job scheduler here with `token.child_token()`.
+        let scheduler = state.jobs().start(state.clone(), token.child_token());
+        // When the shutdown began; the job workers stop within the same
+        // drain budget as the requests.
+        let mut stopping = None;
 
         let served = {
             // The peer address reaches the handlers as `ConnectInfo`: the
@@ -228,6 +234,7 @@ impl Server {
                 result = &mut servers => result,
                 () = &mut shutdown => {
                     tracing::info!("shutting down");
+                    stopping = Some(tokio::time::Instant::now());
                     token.cancel();
                     match tokio::time::timeout(drain_timeout, &mut servers).await {
                         Ok(result) => result,
@@ -246,7 +253,16 @@ impl Server {
         if let Err(err) = maintenance.await {
             tracing::warn!(error = %err, "maintenance task failed");
         }
-        // P1-07: wait for the job workers here, before the databases close.
+        // The job workers stop before the databases close; interrupted jobs
+        // are queued again, and any still running at the deadline are
+        // queued again at the next start.
+        let deadline = stopping.unwrap_or_else(tokio::time::Instant::now) + drain_timeout;
+        if !scheduler.stop(deadline).await {
+            tracing::warn!(
+                timeout_s = drain_timeout.as_secs(),
+                "jobs still running after the drain timeout were stopped; they run again at the next start"
+            );
+        }
         tokio::task::spawn_blocking(move || state.close())
             .await
             .context("closing the databases failed")?;

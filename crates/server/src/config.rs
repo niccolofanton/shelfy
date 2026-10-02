@@ -35,6 +35,7 @@ use shelfy_core::db::{ControlDbConfig, LIBRARY_FILE_NAME, UserDbCacheConfig, Use
 use url::Url;
 
 use crate::auth::AuthConfig;
+use crate::jobs::JobsConfig;
 use crate::mail::{MailArgs, MailConfig};
 use crate::net::TrustedProxies;
 
@@ -178,6 +179,8 @@ pub struct Config {
     pub mail: MailConfig,
     /// Session lifetimes and sign-in limits (plan §2.11).
     pub auth: AuthConfig,
+    /// The job kinds and the clock of the job system (plan §2.12).
+    pub jobs: JobsConfig,
 }
 
 impl Config {
@@ -221,6 +224,7 @@ impl Config {
             trusted_proxies: TrustedProxies::default(),
             mail: MailConfig::Disabled,
             auth: AuthConfig::default(),
+            jobs: JobsConfig::default(),
         }
     }
 }
