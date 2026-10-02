@@ -16,8 +16,19 @@
 //! moka evicts lazily, during cache operations. The capacity can be exceeded
 //! briefly and an idle entry outlives its time-to-idle until the next
 //! operation, so the server calls [`UserDbCache::run_maintenance`] on a timer
-//! (every 30–60 s), which also closes idle readers.
+//! (every 30–60 s), which also closes idle readers and releases the libraries
+//! of locked users.
+//!
+//! **Schema upgrades** (plan §3.8). A library is upgraded when it is opened:
+//! lazily, by the first request that needs it ([`UserDbCache::get`], which
+//! reports the upgrade to the [`UpgradeListener`]), or by the server's sweep
+//! after boot, one library at a time ([`UserDbCache::upgrade`]).
+//!
+//! **Locks** (plan §3.5). A library locked for maintenance
+//! ([`super::lock_library`]) is never opened through the cache.
 
+use std::fs::File;
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,7 +36,9 @@ use std::time::Duration;
 use moka::policy::EvictionPolicy;
 use moka::sync::Cache;
 
+use super::lock::is_library_locked;
 use super::{DbError, UserDb, UserDbConfig};
+use crate::schema::{Kind, Upgrade};
 
 /// File name of a user's library inside `<users_dir>/<user_id>/` (plan §2.5).
 pub const LIBRARY_FILE_NAME: &str = "library.sqlite";
@@ -48,11 +61,41 @@ impl Default for UserDbCacheConfig {
     }
 }
 
+/// Called with the user id when [`UserDbCache::get`] opens a library whose
+/// schema changed or is ahead of this build (anything but
+/// [`Upgrade::Current`]). It runs while the open is in progress: keep it
+/// short (a log line).
+pub type UpgradeListener = Arc<dyn Fn(&str, Upgrade) + Send + Sync>;
+
+/// What [`UserDbCache::upgrade`] found for one library.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LibraryUpgrade {
+    /// At this build's latest version, or already open (and so upgraded).
+    Current,
+    /// Migrated from `from` to `to`.
+    Upgraded {
+        /// The version before.
+        from: usize,
+        /// The version after.
+        to: usize,
+    },
+    /// Written by a newer release; used as is ([`Upgrade::Ahead`]).
+    Ahead {
+        /// The file's version.
+        found: usize,
+    },
+    /// Locked for maintenance: left alone.
+    Locked,
+    /// The user has no library.
+    Missing,
+}
+
 /// Open user databases, keyed by user id.
 pub struct UserDbCache {
     users_dir: PathBuf,
     db_config: UserDbConfig,
     cache: Cache<String, Arc<UserDb>>,
+    on_upgrade: Option<UpgradeListener>,
 }
 
 impl UserDbCache {
@@ -73,7 +116,18 @@ impl UserDbCache {
             users_dir: users_dir.into(),
             db_config,
             cache,
+            on_upgrade: None,
         }
+    }
+
+    /// Reports the schema upgrades of [`UserDbCache::get`] to `listener`.
+    #[must_use]
+    pub fn with_upgrade_listener(
+        mut self,
+        listener: impl Fn(&str, Upgrade) + Send + Sync + 'static,
+    ) -> Self {
+        self.on_upgrade = Some(Arc::new(listener));
+        self
     }
 
     /// Path of a user's `library.sqlite`.
@@ -87,16 +141,40 @@ impl UserDbCache {
         Ok(self.users_dir.join(user_id).join(LIBRARY_FILE_NAME))
     }
 
-    /// The open database of `user_id`, opening (and creating and migrating) it
-    /// when needed.
+    /// Whether `user_id`'s library is locked for maintenance. One `stat`.
     ///
     /// # Errors
     ///
-    /// [`DbError::InvalidUserId`], or [`DbError::Open`] wrapping the open error.
+    /// [`DbError::InvalidUserId`], or the file system refused the check.
+    pub fn is_locked(&self, user_id: &str) -> Result<bool, DbError> {
+        is_library_locked(&self.users_dir, user_id)
+    }
+
+    /// The open database of `user_id`, opening (and creating and upgrading)
+    /// it when needed.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::InvalidUserId`]; [`DbError::Locked`] while the library is
+    /// locked, after releasing its cached handle; or [`DbError::Open`]
+    /// wrapping the open error.
     pub fn get(&self, user_id: &str) -> Result<Arc<UserDb>, DbError> {
         let path = self.library_path(user_id)?;
+        if self.is_locked(user_id)? {
+            self.cache.invalidate(user_id);
+            return Err(DbError::Locked);
+        }
         self.cache
-            .try_get_with_by_ref(user_id, || open(&path, &self.db_config))
+            .try_get_with_by_ref(user_id, || {
+                let db = open(&path, &self.db_config)?;
+                let upgrade = db.schema_upgrade();
+                if let Some(listener) = &self.on_upgrade
+                    && upgrade != Upgrade::Current
+                {
+                    listener(user_id, upgrade);
+                }
+                Ok(db)
+            })
             .map_err(DbError::Open)
     }
 
@@ -112,19 +190,73 @@ impl UserDbCache {
         self.cache.get(user_id)
     }
 
+    /// Upgrades `user_id`'s library if it is behind this build: one step of
+    /// the sweep after boot.
+    ///
+    /// A library that is open is current (opening upgraded it). Otherwise the
+    /// version is read from the file header first, so a current library costs
+    /// one small read; an older one is opened outside the cache (the sweep
+    /// must not evict the handles of active users), upgraded and closed. A
+    /// request that opens the same library meanwhile is safe: migrations take
+    /// the write lock first, so the second opener finds nothing left to do.
+    ///
+    /// # Errors
+    ///
+    /// [`DbError::InvalidUserId`], or the open or the migration failed.
+    pub fn upgrade(&self, user_id: &str) -> Result<LibraryUpgrade, DbError> {
+        let path = self.library_path(user_id)?;
+        if self.is_locked(user_id)? {
+            return Ok(LibraryUpgrade::Locked);
+        }
+        if !path.is_file() {
+            return Ok(LibraryUpgrade::Missing);
+        }
+        if self.cache.contains_key(user_id) {
+            return Ok(LibraryUpgrade::Current);
+        }
+        let latest = Kind::Library.latest_version();
+        match header_version(&path)? {
+            Some(found) if found == latest => return Ok(LibraryUpgrade::Current),
+            Some(found) if found > latest => {
+                // Opening checks the compat floor of a newer file.
+                drop(UserDb::open(&path, &self.db_config)?);
+                return Ok(LibraryUpgrade::Ahead { found });
+            }
+            _ => {}
+        }
+        let db = UserDb::open(&path, &self.db_config)?;
+        let upgrade = db.schema_upgrade();
+        drop(db);
+        Ok(match upgrade {
+            Upgrade::Current => LibraryUpgrade::Current,
+            Upgrade::Upgraded { from, to } => LibraryUpgrade::Upgraded { from, to },
+            Upgrade::Ahead { found } => LibraryUpgrade::Ahead { found },
+        })
+    }
+
     /// Evicts and releases `user_id`'s database, for example before replacing
     /// or deleting its files.
     pub fn evict(&self, user_id: &str) {
         self.cache.invalidate(user_id);
     }
 
-    /// Applies pending evictions (capacity and time-to-idle) and closes readers
-    /// that have been idle too long.
+    /// Applies pending evictions (capacity and time-to-idle), closes readers
+    /// that have been idle too long, and releases the databases of locked
+    /// users. Blocking: one `stat` per open database.
     pub fn run_maintenance(&self) {
         self.cache.run_pending_tasks();
-        for (_, db) in &self.cache {
-            db.prune_idle_readers();
+        let mut locked = Vec::new();
+        for (user, db) in &self.cache {
+            if self.is_locked(&user).unwrap_or(false) {
+                locked.push(user);
+            } else {
+                db.prune_idle_readers();
+            }
         }
+        for user in locked {
+            self.cache.invalidate(user.as_str());
+        }
+        self.cache.run_pending_tasks();
     }
 
     /// Number of cached databases (approximate until maintenance runs).
@@ -138,6 +270,12 @@ impl UserDbCache {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Whether `user_id`'s database is in the cache.
+    #[must_use]
+    pub fn is_open(&self, user_id: &str) -> bool {
+        self.cache.contains_key(user_id)
+    }
 }
 
 fn open(path: &Path, config: &UserDbConfig) -> Result<Arc<UserDb>, DbError> {
@@ -147,12 +285,63 @@ fn open(path: &Path, config: &UserDbConfig) -> Result<Arc<UserDb>, DbError> {
     UserDb::open(path, config).map(Arc::new)
 }
 
-fn validate_user_id(user_id: &str) -> Result<(), DbError> {
-    let ok =
-        (1..=64).contains(&user_id.len()) && user_id.bytes().all(|b| b.is_ascii_alphanumeric());
-    if ok {
+/// Whether `user_id` can name a user's directory: 1–64 ASCII letters and
+/// digits (a ULID qualifies), so it is a single, safe path component.
+#[must_use]
+pub fn is_valid_user_id(user_id: &str) -> bool {
+    (1..=64).contains(&user_id.len()) && user_id.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+pub(super) fn validate_user_id(user_id: &str) -> Result<(), DbError> {
+    if is_valid_user_id(user_id) {
         Ok(())
     } else {
         Err(DbError::InvalidUserId)
     }
+}
+
+/// The ids of the users with a library under `users_dir`, sorted. Entries
+/// that are not valid user ids are ignored.
+///
+/// # Errors
+///
+/// The directory cannot be listed. A missing directory has no libraries.
+pub fn library_ids(users_dir: &Path) -> io::Result<Vec<String>> {
+    let entries = match std::fs::read_dir(users_dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let mut ids = Vec::new();
+    for entry in entries {
+        let entry = entry?;
+        if let Some(id) = entry.file_name().to_str()
+            && is_valid_user_id(id)
+            && entry.path().join(LIBRARY_FILE_NAME).is_file()
+        {
+            ids.push(id.to_owned());
+        }
+    }
+    ids.sort();
+    Ok(ids)
+}
+
+/// The schema version in the header of the SQLite file at `path`, without
+/// opening it: `None` when the file is shorter than a header or not SQLite.
+///
+/// The header can lag behind a write-ahead log that was not checkpointed
+/// yet; versions only grow, so a lagging header only makes the sweep open a
+/// library that turns out to be current.
+fn header_version(path: &Path) -> io::Result<Option<usize>> {
+    let mut header = [0_u8; 100];
+    match File::open(path)?.read_exact(&mut header) {
+        Ok(()) => {}
+        Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(err) => return Err(err),
+    }
+    if &header[..16] != b"SQLite format 3\0" {
+        return Ok(None);
+    }
+    let version = u32::from_be_bytes([header[60], header[61], header[62], header[63]]);
+    Ok(usize::try_from(version).ok())
 }

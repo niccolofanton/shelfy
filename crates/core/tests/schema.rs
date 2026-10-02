@@ -345,25 +345,3 @@ fn opening_refuses_foreign_files() {
         .unwrap();
     assert!(matches!(err, DbError::WrongApplication { .. }), "{err}");
 }
-
-#[test]
-fn opening_refuses_a_newer_schema() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("library.sqlite");
-    drop(UserDb::open(&path, &UserDbConfig::default()).unwrap());
-    let newer = i64::try_from(Kind::Library.latest_version()).unwrap() + 1;
-    Connection::open(&path)
-        .unwrap()
-        .pragma_update(None, "user_version", newer)
-        .unwrap();
-    let err = UserDb::open(&path, &UserDbConfig::default()).err().unwrap();
-    assert!(
-        matches!(
-            err,
-            DbError::Migration(rusqlite_migration::Error::MigrationDefinition(
-                rusqlite_migration::MigrationDefinitionError::DatabaseTooFarAhead
-            ))
-        ),
-        "{err}"
-    );
-}

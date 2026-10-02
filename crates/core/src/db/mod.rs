@@ -12,9 +12,14 @@
 //! (writes are short); if writers ever queue up, the server can put an async
 //! permit in front of [`UserDb::write`] so waiting tasks do not each hold a
 //! blocking thread.
+//!
+//! Opening a database upgrades its schema ([`crate::schema::upgrade`]); a
+//! library can also be locked for maintenance ([`lock_library`]), which the
+//! [`UserDbCache`] enforces.
 
 mod cache;
 mod conn;
+mod lock;
 mod pool;
 
 use std::path::Path;
@@ -23,10 +28,16 @@ use std::time::Duration;
 
 use rusqlite::{Connection, Transaction};
 
-pub use cache::{LIBRARY_FILE_NAME, UserDbCache, UserDbCacheConfig};
+pub use cache::{
+    LIBRARY_FILE_NAME, LibraryUpgrade, UpgradeListener, UserDbCache, UserDbCacheConfig,
+    is_valid_user_id, library_ids,
+};
 pub use conn::Pragmas;
+pub use lock::{
+    LOCK_FILE_NAME, is_library_locked, library_lock_path, lock_library, unlock_library,
+};
 
-use crate::schema::Kind;
+use crate::schema::{Kind, Upgrade};
 use pool::{Database, PoolConfig};
 
 /// Errors from opening or using a database.
@@ -58,9 +69,40 @@ pub enum DbError {
     /// A user id that cannot name a directory safely.
     #[error("invalid user id")]
     InvalidUserId,
+    /// The user's library is locked for maintenance ([`lock_library`]).
+    #[error("the library is locked for maintenance")]
+    Locked,
+    /// The file comes from a newer release whose migrations this build cannot
+    /// run on ([`crate::schema::upgrade`]).
+    #[error(
+        "the {kind} database is at schema v{found} and needs a build that supports v{needs}; \
+         this build supports up to v{supported}"
+    )]
+    SchemaTooNew {
+        /// `library` or `control`.
+        kind: &'static str,
+        /// The file's version.
+        found: usize,
+        /// The oldest supported version a build needs (`schema_compat`).
+        needs: usize,
+        /// This build's latest version.
+        supported: usize,
+    },
     /// Opening a database through the cache failed; concurrent callers share the error.
     #[error("{0}")]
     Open(Arc<DbError>),
+}
+
+impl DbError {
+    /// Whether this is [`DbError::Locked`], directly or through the cache.
+    #[must_use]
+    pub fn is_locked(&self) -> bool {
+        match self {
+            Self::Locked => true,
+            Self::Open(inner) => inner.is_locked(),
+            _ => false,
+        }
+    }
 }
 
 /// Identifies the state of a database for cache validation (ETags, cached
@@ -130,12 +172,14 @@ impl Default for ControlDbConfig {
 pub struct UserDb(Database);
 
 impl UserDb {
-    /// Opens (creating it if missing) and migrates a library database.
+    /// Opens (creating it if missing) and upgrades a library database
+    /// ([`crate::schema::upgrade`]).
     ///
     /// # Errors
     ///
     /// Fails when the file cannot be opened in WAL mode, belongs to another
-    /// application, is newer than this build, or a migration fails.
+    /// application, comes from a release this build cannot run on, or a
+    /// migration fails.
     pub fn open(path: impl AsRef<Path>, config: &UserDbConfig) -> Result<Self, DbError> {
         let pool = PoolConfig {
             max_readers: config.max_readers,
@@ -183,6 +227,12 @@ impl UserDb {
     #[must_use]
     pub fn path(&self) -> &Path {
         self.0.path()
+    }
+
+    /// What opening did to the schema.
+    #[must_use]
+    pub fn schema_upgrade(&self) -> Upgrade {
+        self.0.upgrade()
     }
 
     /// Runs `PRAGMA wal_checkpoint(TRUNCATE)`.
@@ -267,6 +317,13 @@ impl ControlDb {
     #[must_use]
     pub fn path(&self) -> &Path {
         self.0.path()
+    }
+
+    /// What opening did to the schema: the server migrates the control
+    /// database at boot.
+    #[must_use]
+    pub fn schema_upgrade(&self) -> Upgrade {
+        self.0.upgrade()
     }
 
     /// Runs `PRAGMA wal_checkpoint(TRUNCATE)`.

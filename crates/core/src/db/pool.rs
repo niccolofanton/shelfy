@@ -10,7 +10,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use super::conn::{Pragmas, open_reader, open_writer};
 use super::{DbError, Generation};
-use crate::schema::{self, Kind};
+use crate::schema::{self, Kind, Upgrade};
 
 /// How a [`Database`] manages its connections.
 #[derive(Clone, Debug)]
@@ -49,6 +49,8 @@ pub(crate) struct Database {
     reader_returned: Condvar,
     instance: u64,
     generation: AtomicU64,
+    /// What opening did to the schema.
+    upgrade: Upgrade,
 }
 
 /// Process-unique instance ids: the open time in nanoseconds plus a counter, so
@@ -74,8 +76,8 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Database {
-    /// Opens the writer, checks the file belongs to `kind`, migrates it to the
-    /// latest schema, and opens the readers when they are eager.
+    /// Opens the writer, checks the file belongs to `kind`, upgrades its
+    /// schema ([`schema::upgrade`]), and opens the readers when they are eager.
     pub(crate) fn open(path: &Path, kind: Kind, config: PoolConfig) -> Result<Self, DbError> {
         assert!(
             config.max_readers > 0,
@@ -83,7 +85,7 @@ impl Database {
         );
         let mut writer = open_writer(path, &config.pragmas)?;
         check_application_id(&writer, kind)?;
-        schema::migrate(&mut writer, kind)?;
+        let upgrade = schema::upgrade(&mut writer, kind)?;
         let db = Self {
             path: path.to_path_buf(),
             kind,
@@ -93,6 +95,7 @@ impl Database {
             reader_returned: Condvar::new(),
             instance: next_instance_id(),
             generation: AtomicU64::new(0),
+            upgrade,
         };
         if db.config.eager_readers {
             let mut readers = Vec::with_capacity(db.config.max_readers);
@@ -112,6 +115,10 @@ impl Database {
 
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(crate) fn upgrade(&self) -> Upgrade {
+        self.upgrade
     }
 
     pub(crate) fn generation(&self) -> Generation {

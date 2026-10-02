@@ -9,6 +9,7 @@ use std::time::Duration;
 use rusqlite::{Connection, ErrorCode};
 use shelfy_core::db::{
     ControlDb, ControlDbConfig, DbError, UserDb, UserDbCache, UserDbCacheConfig, UserDbConfig,
+    is_valid_user_id, library_ids, lock_library, unlock_library,
 };
 use shelfy_core::repo::{self, Platform, RepoError};
 use support::{NOW, bare_post};
@@ -406,4 +407,64 @@ fn get_if_present_never_opens_a_database() {
         "a new handle after the eviction"
     );
     assert_ne!(db.generation().instance, reopened.generation().instance);
+}
+
+#[test]
+fn a_locked_library_is_released_and_never_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let users = dir.path().join("users");
+    let cache = cache(&dir, 64, Duration::from_secs(600));
+    let db = cache.get("userA").unwrap();
+    db.write(|tx| repo::posts::insert(tx, &bare_post("ig_1", Platform::Instagram, NOW), NOW))
+        .unwrap();
+
+    assert!(lock_library(&users, "userA", "restore").unwrap());
+    assert!(cache.is_locked("userA").unwrap());
+    // Maintenance releases the handle of a locked user, with no request.
+    cache.run_maintenance();
+    assert!(!cache.is_open("userA"));
+    assert_eq!(db.open_connections(), (false, 0));
+    // Requests are refused while it is locked.
+    let err = cache.get("userA").err().unwrap();
+    assert!(matches!(err, DbError::Locked) && err.is_locked(), "{err}");
+
+    // A refusal releases a cached handle too, and the library of a user
+    // locked before their first request is never created.
+    let b = cache.get("userB").unwrap();
+    lock_library(&users, "userB", "").unwrap();
+    assert!(matches!(cache.get("userB"), Err(DbError::Locked)));
+    cache.run_maintenance();
+    assert_eq!(b.open_connections(), (false, 0));
+    lock_library(&users, "userC", "").unwrap();
+    assert!(matches!(cache.get("userC"), Err(DbError::Locked)));
+    assert!(!users.join("userC").join("library.sqlite").exists());
+
+    // Unlocked, the next request opens a new handle on the same data.
+    assert!(unlock_library(&users, "userA").unwrap());
+    let again = cache.get("userA").unwrap();
+    assert!(!Arc::ptr_eq(&db, &again));
+    assert_ne!(again.generation().instance, db.generation().instance);
+    let n: i64 = again
+        .read(|c| {
+            c.query_row("SELECT count(*) FROM posts", [], |r| r.get(0))
+                .map_err(DbError::from)
+        })
+        .unwrap();
+    assert_eq!(n, 1);
+}
+
+#[test]
+fn library_ids_lists_the_users_with_a_library() {
+    let dir = tempfile::tempdir().unwrap();
+    let users = dir.path().join("users");
+    assert!(library_ids(&users).unwrap().is_empty(), "no users dir yet");
+    let cache = cache(&dir, 64, Duration::from_secs(600));
+    cache.get("userB").unwrap();
+    cache.get("userA").unwrap();
+    std::fs::create_dir_all(users.join("noLibrary")).unwrap();
+    std::fs::create_dir_all(users.join("not.a.user")).unwrap();
+    std::fs::write(users.join("stray.sqlite"), b"").unwrap();
+    assert_eq!(library_ids(&users).unwrap(), ["userA", "userB"]);
+    assert!(is_valid_user_id("01J9Z3B8K4QW6TFX0V7G2N5RCA"));
+    assert!(!is_valid_user_id("../etc"));
 }
