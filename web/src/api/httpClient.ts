@@ -15,6 +15,7 @@ import type {
 import { createAccountApi } from './account';
 import { createEventStream, type EventStream } from './events';
 import { isApiError, type Http } from './http';
+import { createLinksApi } from './links';
 import {
   MAX_PAGE_SIZE,
   listPostsParams,
@@ -54,6 +55,7 @@ export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
   account: false,
   updates: false,
   localModels: false,
+  links: false,
 });
 
 // What the web app can do for a signed-in user, from `GET /me` (plan §2.19
@@ -65,7 +67,7 @@ export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
 // (AccountApi.signIn).
 export function webCapabilities(me: Schemas['Me'] | null | undefined): ShelfyCapabilities {
   if (!me) return WEB_CAPABILITIES;
-  return Object.freeze({ ...WEB_CAPABILITIES, account: true, settings: true });
+  return Object.freeze({ ...WEB_CAPABILITIES, account: true, settings: true, links: true });
 }
 
 // Opens only http(s) URLs, in a new tab without access to this window.
@@ -129,7 +131,7 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
   return {
     capabilities: options.capabilities ?? webCapabilities(me),
     media: webMedia,
-    ...(me ? { account: createAccountApi(http, me, { events }) } : {}),
+    ...(me ? { account: createAccountApi(http, me, { events }), links: createLinksApi(http) } : {}),
 
     // One window of `limit` posts: as many API pages as it takes (at most 200
     // each). The first page of a query also asks for the total.

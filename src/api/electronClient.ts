@@ -49,6 +49,7 @@ export function desktopCapabilities(platform: string | undefined): ShelfyCapabil
     account: false,
     updates: true,
     localModels: true,
+    links: false,
   };
 }
 
