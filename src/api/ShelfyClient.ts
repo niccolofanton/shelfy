@@ -164,9 +164,8 @@ export interface PostEdit {
 }
 
 // Options for deleting a folder (§1.2 #12). `deletePosts` also moves every
-// post currently in it to the trash; on the web this needs the trash/bulk API
-// (P1-11) and answers a problem until then, so the UI offers it only by
-// capability (`bulkActions`).
+// post currently in it to the trash (server-side since P1-11); the UI offers
+// the choice only once its own trash/bulk surface exists (`bulkActions`, P1-14).
 export interface CollectionDeleteOptions {
   deletePosts?: boolean;
 }

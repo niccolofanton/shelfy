@@ -208,8 +208,9 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
       id: number,
       options?: CollectionDeleteOptions,
     ): Promise<CollectionDeleteResult> {
-      // `mode=withPosts` answers a problem until the trash/bulk API lands
-      // (P1-11); the UI only offers it by capability (`bulkActions`).
+      // `mode=withPosts` moves the posts to the trash (server-side since
+      // P1-11); the UI only offers the choice once its own trash/bulk
+      // surface exists (capability `bulkActions`, P1-14).
       const mode = options?.deletePosts ? 'withPosts' : undefined;
       const path = `/api/v1/collections/${id}` + (mode ? `?mode=${mode}` : '');
       const res = await http.send('DELETE', path);

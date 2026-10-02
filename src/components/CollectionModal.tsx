@@ -73,9 +73,9 @@ export default function CollectionModal({
 }: CollectionModalProps) {
   const t = useT('collectionModal');
   const tc = useT('common');
-  // "Label and posts" moves every linked post to the trash: on the web that
-  // needs the trash/bulk API (P1-11), which isn't live until the gallery's own
-  // bulk actions are (`bulkActions`); offer the choice only once it is.
+  // "Label and posts" moves every linked post to the trash (server-side since
+  // P1-11): offer the choice only once the gallery's own trash/bulk surface
+  // does too (`bulkActions`, P1-14).
   const { bulkActions } = useCapabilities();
   const [name, setName] = useState<string>(initial?.name ?? '');
   const [color, setColor] = useState<string>(initial?.color ?? COLLECTION_COLORS[0]);
