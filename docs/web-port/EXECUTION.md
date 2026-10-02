@@ -44,6 +44,8 @@ Changes to the plan that the lead made during execution, with the reason.
 | L1 | 2026-10-02 | Sign-in links are `<public URL>/login/magic#<token>`. The SPA page redeems them with `POST /auth/magic-links/redeem` after a click; there is no GET route that signs in. | §2.9 `GET /auth/magic/{token}` that sets the cookie and redirects | Mail scanners and link previews fetch URLs and would spend the link or sign themselves in; a token in the path lands in the nginx and Cloudflare logs (T10 security review, M1). |
 | L2 | 2026-10-02 | Authentication is deny-by-default. A route answers 401 unless it is listed in `routes::PUBLIC_ROUTES` or `routes::TOKEN_ROUTES`; the authz test pins the OpenAPI document to those lists. | Per-route opt-in through the `CurrentUser` extractor | A route that forgets the extractor, or one missing from the document, would ship public (T10 security review, L5). |
 | L3 | 2026-10-02 | `CF-Connecting-IP` is trusted only when the TCP peer is inside `SHELFY_TRUSTED_PROXIES`; IPv6 clients are rate-limited per /64. | The header was trusted from any peer | Any container on the Docker network could set the header, and IPv6 clients rotate addresses inside their /64 (T10 security review, L3). |
+| L5 | 2026-10-02 | The `shelfy-api` image keeps Debian's `ffmpeg` and is 623 MB on arm64: ffmpeg about 400 MB, 153 MB of it Mesa and LLVM pulled in through libavdevice; yt-dlp 98 MB; base 97 MB; server 24 MB; web app 4 MB. | §3.2 estimate of ~180 MB | ffmpeg parses untrusted media, so Debian security updates matter more than size. Removing packages leaves dpkg broken, and a static ffmpeg gets no security updates. Revisit in P5. |
+| L6 | 2026-10-02 | The image ships yt-dlp's unpacked `yt-dlp_linux.zip` build, pinned by SHA-256 per architecture. | The one-file `yt-dlp_linux` binary | The one-file binary unpacks about 100 MB into `/tmp` on every run, and the container's tmpfs is `noexec`, so it fails to load `libz`. |
 | L4 | 2026-10-02 | P1-04 creates `web/playwright.config.ts` for its deep-link smoke test; P1-02 extends it. | P1-02 owns the file "if T12 left none" | T12 left none, and P1-04 runs before P1-02 because both edit `src/App.tsx`. |
 
 ## Status
@@ -84,7 +86,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-01 | Realtime: SSE bus, notifications, client errors, version | done | `web/p1-01-realtime` (e7afc2c…86f34ca) |
 | P1-07 | Job system and jobs API | done | `web/p1-07-jobs` (e9fce3a…9499f3c) |
 | P1-12 | Backup, restore and schema-upgrade tooling | done; the independent review found 2 high, 5 medium and 7 low issues, fixed in F4 | `web/p1-12-backup` (6989b13…61da797) |
-| P1-09 | Deployable server: SPA hosting, headers, image, release workflow, `compose.test` | running | `web/p1-09-deploy` |
+| P1-09 | Deployable server: SPA hosting, headers, image, release workflow, `compose.test` | done | `web/p1-09-deploy` (0f35249…04f00a5) |
 | P1-13 | Owner passkeys, re-auth, login-link bootstrap, optional SMTP | running | `web/p1-13-passkeys` |
 | P1-03 | Library writes, folders, selector, stats, ETags | running | `web/p1-03-writes` |
 | P1-04 | Client seam: routes, SSE client, error boundary, error codes | running | `web/p1-04-client-seam` |
