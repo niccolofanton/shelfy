@@ -203,23 +203,23 @@ Unix-ms timestamps throughout. SPIKE-2 samples its URLs from `items[].media`.
 
 `media[].slot` is `cover` (the item's thumbnail) or `slide` (`position` 0…n); `urlKind` is `image`, `poster` (the image the parsers keep for an IG/X video) or `video` (a direct Pinterest MP4/HLS URL); `expiresAt` is set only for signed IG/FB CDN URLs; each slot keeps its latest URL.
 
-## 8. Results — pending owner run
+## 8. Results — partial owner run (2026-10-02)
 
 | Listing | Desktop posts | Extension items | Matched | Missing | Extra | Parity (all sources) | Parity (passive only) | Pass |
 |---|---|---|---|---|---|---|---|---|
-| IG saved | | | | | | | | pending |
-| IG folder `<id>` | | | | | | | | pending |
-| X bookmarks | | | | | | | | pending |
+| IG saved | | | | | | | | skipped: same replay as the folder, about 4,000 posts |
+| IG folder (123 posts) | 123 | 123 | 123 | 0 | 0 | 100.00 % | 0.00 % | PASS with the replay |
+| X bookmarks | — | 20 (first page only) | — | — | — | n/a | n/a | pending: no desktop X import, list not scrolled to the end |
 | Pinterest board `<user>/<board>` | | | | | | | | pending |
 
 | Item | Value |
 |---|---|
 | Desktop counters per listing (scanned / new) | pending |
-| IG replay (Q2): pages, reason, last HTTP status, app id source, per listing | pending |
-| Census: IG GraphQL friendly names seen in scope, and whether they produced passive items | pending |
+| IG replay (Q2): pages, reason, last HTTP status, app id source, per listing | IG folder: 11 pages of `/api/v1/feed/collection/:id/posts/`, `end_of_feed`, 0 refused batches, 0 shortcode mismatches |
+| Census: IG GraphQL friendly names seen in scope, and whether they produced passive items | `PolarisProfilePostsTabContentQuery_connection` was in scope (1 request) and produced 0 items, which is risk 3. Out of scope: `PolarisProfilePostsQuery`, `PolarisStoriesV3AdsPoolQuery`. X: `Bookmarks` gave 20 items; `BookmarkFoldersSlice` was in scope. |
 | Background tabs (Q3): replay pages per minute foreground vs background; X capture in a background tab | pending |
 | Explanation of every extra and missing item | pending |
-| Decision: passive capture sufficient, or replay required per platform (input to the P2 sync controller) | pending |
+| Decision: passive capture sufficient, or replay required per platform (input to the P2 sync controller) | Instagram: replay required. X and Pinterest: pending the rest of the run. |
 
 ## 9. Known risks
 
