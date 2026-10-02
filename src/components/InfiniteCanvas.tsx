@@ -386,10 +386,44 @@ function InfiniteCanvas({
   // Set when a press turned into a pan, so the trailing click doesn't open a post.
   const suppressClickRef = useRef(false);
 
+  // ── Two-finger pinch (P1-02, touch) ─────────────────────────────────────────
+  // Every active pointer's last known position, by id — pinch is detected the
+  // moment a second one joins a first that's already down. `pinchRef` then
+  // tracks the gesture incrementally move-to-move (distance → scale ratio,
+  // midpoint → an extra pan term), the same style as the single-pointer drag
+  // above, rather than from the gesture's absolute start (which drifts).
+  const pointersRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{ lastDist: number; lastMid: { x: number; y: number } } | null>(null);
+  const pinchingRef = useRef(false);
+
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
       if (e.button !== 0) return;
       endFirstPaint();
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+      } catch {
+        /* capture unsupported — the window pointerup/cancel net still ends the gesture */
+      }
+
+      if (pointersRef.current.size === 2) {
+        // A second finger joined: hand off from single-finger pan to pinch.
+        dragRef.current = null;
+        const pts = [...pointersRef.current.values()];
+        pinchRef.current = {
+          lastDist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y),
+          lastMid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 },
+        };
+        pinchingRef.current = true;
+        velRef.current.vx = 0;
+        velRef.current.vy = 0;
+        draggingRef.current = true;
+        wake();
+        return;
+      }
+      if (pointersRef.current.size > 2) return; // a 3rd finger: ignore, keep pinching with the first two
+
       velRef.current.vx = 0;
       velRef.current.vy = 0;
       draggingRef.current = true;
@@ -401,36 +435,62 @@ function InfiniteCanvas({
         moved: 0,
         samples: [{ t: e.timeStamp, x: e.clientX, y: e.clientY }],
       };
-      try {
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      } catch {
-        /* capture unsupported — the window pointerup/cancel net still ends the drag */
-      }
       (e.currentTarget as HTMLElement).style.cursor = 'grabbing';
       wake();
     },
     [endFirstPaint, wake],
   );
 
-  const onPointerMove = useCallback((e: React.PointerEvent) => {
-    const d = dragRef.current;
-    if (!d || e.pointerId !== d.id) return;
-    const dx = e.clientX - d.lastX;
-    const dy = e.clientY - d.lastY;
-    d.lastX = e.clientX;
-    d.lastY = e.clientY;
-    d.moved += Math.abs(dx) + Math.abs(dy);
-    const cam = camRef.current;
-    cam.tx += dx;
-    cam.ty += dy;
-    // Apply immediately for zero-latency tracking; the loop handles re-culling.
-    applyTransform();
-    // Keep ~80ms of samples for the release-velocity estimate.
-    const s = d.samples;
-    s.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
-    while (s.length > 2 && e.timeStamp - s[0].t > 80) s.shift();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (pointersRef.current.has(e.pointerId)) {
+        pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+
+      if (pinchingRef.current) {
+        if (pointersRef.current.size < 2) return;
+        const pts = [...pointersRef.current.values()];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+        const pinch = pinchRef.current;
+        if (pinch && pinch.lastDist > 1 && dist > 1) {
+          const cam = camRef.current;
+          const newScale = clamp(cam.scale * (dist / pinch.lastDist), MIN_SCALE, MAX_SCALE);
+          const k = newScale / cam.scale;
+          // Keep `lastMid` fixed under the fingers at the new scale, then pan
+          // by however much the midpoint itself moved (a two-finger drag).
+          cam.tx = pinch.lastMid.x - (pinch.lastMid.x - cam.tx) * k + (mid.x - pinch.lastMid.x);
+          cam.ty = pinch.lastMid.y - (pinch.lastMid.y - cam.ty) * k + (mid.y - pinch.lastMid.y);
+          cam.scale = newScale;
+          // Keep the eased wheel-zoom target in lockstep, or the rAF loop
+          // would ease `scale` back to its last (now stale) wheel/pinch target
+          // the instant this gesture ends.
+          targetScaleRef.current = newScale;
+          applyTransform();
+        }
+        pinchRef.current = { lastDist: dist, lastMid: mid };
+        return;
+      }
+
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.id) return;
+      const dx = e.clientX - d.lastX;
+      const dy = e.clientY - d.lastY;
+      d.lastX = e.clientX;
+      d.lastY = e.clientY;
+      d.moved += Math.abs(dx) + Math.abs(dy);
+      const cam = camRef.current;
+      cam.tx += dx;
+      cam.ty += dy;
+      // Apply immediately for zero-latency tracking; the loop handles re-culling.
+      applyTransform();
+      // Keep ~80ms of samples for the release-velocity estimate.
+      const s = d.samples;
+      s.push({ t: e.timeStamp, x: e.clientX, y: e.clientY });
+      while (s.length > 2 && e.timeStamp - s[0].t > 80) s.shift();
+    },
+    [applyTransform],
+  );
 
   // Core drag termination — clears the drag, estimates release velocity, restores
   // the cursor. Idempotent (no-op if no drag is active) so it can be driven both
@@ -465,24 +525,46 @@ function InfiniteCanvas({
 
   const endDrag = useCallback(
     (e: React.PointerEvent) => {
-      const d = dragRef.current;
-      if (!d || e.pointerId !== d.id) return;
+      pointersRef.current.delete(e.pointerId);
       try {
         (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
       } catch {
         /* nothing captured */
       }
+
+      if (pinchingRef.current) {
+        if (pointersRef.current.size >= 2) return; // still ≥2 fingers down, keep pinching
+        pinchingRef.current = false;
+        pinchRef.current = null;
+        suppressClickRef.current = true; // a pinch gesture never opens a post
+        draggingRef.current = false;
+        const el = viewportRef.current;
+        if (el) el.style.cursor = 'grab';
+        wake();
+        return;
+      }
+
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.id) return;
       finishDrag();
     },
-    [finishDrag],
+    [finishDrag, wake],
   );
 
-  // Safety net: end any active drag on a window-level pointerup/cancel or a focus
-  // loss. A pointerup the viewport never receives — pointer capture denied, an
-  // alt-tab or context menu mid-drag — would otherwise leave draggingRef stuck
-  // true and the rAF loop spinning forever in a permanent grab.
+  // Safety net: end any active drag/pinch on a window-level pointerup/cancel or
+  // a focus loss. A pointerup the viewport never receives — pointer capture
+  // denied, an alt-tab or context menu mid-gesture — would otherwise leave
+  // draggingRef/pinchingRef stuck true and the rAF loop spinning forever in a
+  // permanent grab.
   useEffect(() => {
-    const end = (): void => finishDrag();
+    const end = (): void => {
+      finishDrag();
+      if (pinchingRef.current && pointersRef.current.size < 2) {
+        pinchingRef.current = false;
+        pinchRef.current = null;
+        draggingRef.current = dragRef.current != null;
+      }
+    };
     window.addEventListener('pointerup', end);
     window.addEventListener('pointercancel', end);
     window.addEventListener('blur', end);

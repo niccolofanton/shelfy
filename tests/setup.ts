@@ -15,6 +15,29 @@ if (typeof global.IntersectionObserver === 'undefined') {
   } as unknown as typeof IntersectionObserver;
 }
 
+// jsdom has no PointerEvent constructor: `fireEvent.pointerDown/Move/Up` (and
+// a bare `new PointerEvent(...)`) silently fall back to a plain Event that
+// carries none of clientX/clientY/pointerType/pointerId — the fields PostCard
+// (useLongPress, tap-to-preview) and InfiniteCanvas (pan/pinch) read directly
+// off the event (P1-02). A minimal polyfill — MouseEvent for the client
+// coordinates, plus the PointerEvent-only fields — is enough for tests.
+// `extension/tests/**` and other node-environment suites share this setup
+// file but have no `MouseEvent` at all, hence the guard.
+if (typeof MouseEvent !== 'undefined' && typeof global.PointerEvent === 'undefined') {
+  class PointerEventPolyfill extends MouseEvent {
+    readonly pointerId: number;
+    readonly pointerType: string;
+    readonly isPrimary: boolean;
+    constructor(type: string, params: PointerEventInit = {}) {
+      super(type, params);
+      this.pointerId = params.pointerId ?? 0;
+      this.pointerType = params.pointerType ?? '';
+      this.isPrimary = params.isPrimary ?? false;
+    }
+  }
+  global.PointerEvent = PointerEventPolyfill as unknown as typeof PointerEvent;
+}
+
 // Default resolved/return values for every electronAPI method, applied both at
 // initial mock creation and after each test's reset. Adding a new IPC method
 // only requires one entry here. Tests override specific methods as needed.

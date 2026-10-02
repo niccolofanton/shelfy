@@ -1,5 +1,5 @@
 import { render, screen, fireEvent, within } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ReactElement } from 'react';
 import PostCard from '../../src/components/PostCard';
 
@@ -503,6 +503,110 @@ describe('PostCard', () => {
         />,
       );
       expect(screen.queryByText('1')).toBeNull();
+    });
+  });
+
+  // Touch behavior (P1-02): a mouse keeps every test above unchanged (hover,
+  // click, the quick-select checkbox). onQuickSelect is provided directly
+  // here, exactly as Gallery passes it once P1-14 wires the `bulkActions`
+  // capability — the web Playwright suite (web/e2e/responsive-shell.spec.ts)
+  // can only check what's observable before then (the gesture is recognized
+  // and its trailing click is swallowed).
+  describe('long-press to select (touch)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('a touch long-press calls onQuickSelect and swallows the trailing click', () => {
+      const onOpen = vi.fn();
+      const onQuickSelect = vi.fn();
+      render(<PostCard post={basePost} onOpen={onOpen} onQuickSelect={onQuickSelect} />);
+      const card = screen.getByTestId('post-card');
+      fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 });
+      vi.advanceTimersByTime(600);
+      fireEvent.pointerUp(card, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 });
+      fireEvent.click(card);
+      expect(onQuickSelect).toHaveBeenCalledWith(basePost, expect.anything());
+      expect(onOpen).not.toHaveBeenCalled();
+    });
+
+    it('a mouse press never arms the long-press timer', () => {
+      const onOpen = vi.fn();
+      const onQuickSelect = vi.fn();
+      render(<PostCard post={basePost} onOpen={onOpen} onQuickSelect={onQuickSelect} />);
+      const card = screen.getByTestId('post-card');
+      fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'mouse', clientX: 10, clientY: 10 });
+      vi.advanceTimersByTime(600);
+      fireEvent.pointerUp(card, { pointerId: 1, pointerType: 'mouse', clientX: 10, clientY: 10 });
+      fireEvent.click(card);
+      expect(onQuickSelect).not.toHaveBeenCalled();
+      expect(onOpen).toHaveBeenCalledWith(basePost, expect.anything());
+    });
+
+    it('moving past the tolerance before the delay cancels the long-press', () => {
+      const onQuickSelect = vi.fn();
+      render(<PostCard post={basePost} onOpen={vi.fn()} onQuickSelect={onQuickSelect} />);
+      const card = screen.getByTestId('post-card');
+      fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 });
+      fireEvent.pointerMove(card, { pointerId: 1, pointerType: 'touch', clientX: 40, clientY: 10 });
+      vi.advanceTimersByTime(600);
+      fireEvent.pointerUp(card, { pointerId: 1, pointerType: 'touch', clientX: 40, clientY: 10 });
+      expect(onQuickSelect).not.toHaveBeenCalled();
+    });
+
+    it('a long-press while already selecting does not call onQuickSelect again', () => {
+      const onQuickSelect = vi.fn();
+      render(
+        <PostCard
+          post={basePost}
+          onOpen={vi.fn()}
+          onQuickSelect={onQuickSelect}
+          selectable
+          selected={false}
+        />,
+      );
+      const card = screen.getByTestId('post-card');
+      fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 });
+      vi.advanceTimersByTime(600);
+      fireEvent.pointerUp(card, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 });
+      expect(onQuickSelect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('tap-to-preview instead of hover (touch)', () => {
+    it('a first tap previews without opening; a second tap on the same card opens it', () => {
+      const onOpen = vi.fn();
+      const post = { ...basePost, thumbnailUrl: 'https://cdn.example.com/thumb.jpg' };
+      render(<PostCard post={post} onOpen={onOpen} />);
+      const card = screen.getByTestId('post-card');
+
+      fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 });
+      fireEvent.click(card);
+      expect(onOpen).not.toHaveBeenCalled();
+      expect(screen.getByTestId('post-card-overlay')).toBeInTheDocument();
+
+      fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 });
+      fireEvent.click(card);
+      expect(onOpen).toHaveBeenCalledWith(post, expect.anything());
+    });
+
+    it('a mouse click still opens on the first click, as before', () => {
+      const onOpen = vi.fn();
+      render(<PostCard post={basePost} onOpen={onOpen} />);
+      fireEvent.click(screen.getByTestId('post-card'));
+      expect(onOpen).toHaveBeenCalledWith(basePost, expect.anything());
+    });
+
+    it('select mode skips the preview step: a tap toggles immediately', () => {
+      const onOpen = vi.fn();
+      render(<PostCard post={basePost} onOpen={onOpen} selectable />);
+      const card = screen.getByTestId('post-card');
+      fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 });
+      fireEvent.click(card);
+      expect(onOpen).toHaveBeenCalledWith(basePost, expect.anything());
     });
   });
 });

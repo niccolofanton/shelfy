@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import type { MediaUrls } from '../api/ShelfyClient';
 import { useShelfy } from '../api/ShelfyProvider';
+import { useLongPress } from '../hooks/useLongPress';
 
 // Target box for grid-tile images. Local files are often full-resolution
 // originals (multi-MB); the asset protocol serves a cached fit-in-640px copy
@@ -335,6 +336,15 @@ function buildSlideshowImages(post: Shelfy.Post, media: MediaUrls): string[] {
 
 const SLIDESHOW_INTERVAL_MS = 800;
 
+// Tap-to-preview (P1-02, touch only): there is no hover on touch, so the FIRST
+// tap on a card previews it (the same overlay/video hover already shows) and
+// the SECOND tap opens it — mirroring "hover, then click" with two taps. A
+// window-wide event lets one card's tap close any other card's open preview
+// (at most one previews at a time), without lifting state through the grid
+// components that render PostCard (VirtualPostGrid, InfiniteCanvas) and are
+// not this task's to edit.
+const TOUCH_PREVIEW_EVENT = 'shelfy:postcard-touch-preview';
+
 interface PostCardProps {
   post: Shelfy.Post;
   onOpen: (post: Shelfy.Post, event?: React.SyntheticEvent) => void;
@@ -442,6 +452,35 @@ function PostCard({
   }, []);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
+  // ── Touch: tap-to-preview + long-press to select (P1-02) ────────────────────
+  // A mouse keeps today's hover/click/quick-select exactly as they are; only a
+  // touch/pen pointer takes this path. Tracked in a ref (not state) so the
+  // click/hover handlers below can read it synchronously without waiting for
+  // a render, and so a mouse-only test/user never pays for it.
+  const lastPointerTypeRef = useRef<string>('mouse');
+  const [touchPreviewing, setTouchPreviewing] = useState<boolean>(false);
+  const touchPreviewingRef = useRef<boolean>(false);
+  touchPreviewingRef.current = touchPreviewing;
+  const longPress = useLongPress((e) => {
+    // Mirrors handleQuickSelectClick's own guard below: already selecting, no-op.
+    if (!selectable) onQuickSelect?.(post, e);
+  });
+
+  // At most one card previews at a time: another card's tap drops this one's
+  // (closes the overlay, stops any playing video/slideshow).
+  useEffect(() => {
+    function onOtherPreview(e: Event): void {
+      const id = (e as CustomEvent<string>).detail;
+      if (id === post.id || !touchPreviewingRef.current) return;
+      setTouchPreviewing(false);
+      setHovering(false);
+      setSlide(0);
+      setVideoReady(false);
+    }
+    window.addEventListener(TOUCH_PREVIEW_EVENT, onOtherPreview);
+    return () => window.removeEventListener(TOUCH_PREVIEW_EVENT, onOtherPreview);
+  }, [post.id]);
+
   useEffect(() => {
     if (!hovering || slideshowImages.length < 2) return undefined;
     const id = setInterval(
@@ -489,17 +528,48 @@ function PostCard({
   }, []);
 
   function handleEnter(): void {
+    // Touch/pen fire a synthetic hover sequence after a tap too; that preview
+    // is driven explicitly from handleClick below instead.
+    if (lastPointerTypeRef.current !== 'mouse') return;
     setHovering(true);
     setEverHovered(true);
   }
 
   function handleLeave(): void {
+    if (lastPointerTypeRef.current !== 'mouse') return;
     setHovering(false);
     setSlide(0);
     setVideoReady(false);
   }
 
+  // Tracks the pointer that is about to press/click/long-press, and feeds the
+  // long-press timer (a mouse pointerdown is a no-op there).
+  function handlePointerDown(e: React.PointerEvent): void {
+    lastPointerTypeRef.current = e.pointerType;
+    longPress.onPointerDown(e);
+  }
+
+  // A touch/pen long-press opens its own native menu (iOS "Save Image", a
+  // context menu on Android/desktop touch screens) that would otherwise race
+  // the long-press-to-select gesture above.
+  function handleContextMenu(e: React.MouseEvent): void {
+    if (lastPointerTypeRef.current !== 'mouse') e.preventDefault();
+  }
+
   function handleClick(e: React.MouseEvent): void {
+    // The long-press above already acted (entered selection) — swallow the
+    // trailing click the browser still dispatches once the finger lifts.
+    if (longPress.consumeFired()) return;
+    if (!selectable && lastPointerTypeRef.current !== 'mouse' && !touchPreviewingRef.current) {
+      // First tap on touch/pen: preview instead of opening — there is no
+      // hover to do it for us. A second tap on this same card (now that
+      // touchPreviewingRef is true) falls through and opens it below.
+      setEverHovered(true);
+      setHovering(true);
+      setTouchPreviewing(true);
+      window.dispatchEvent(new CustomEvent(TOUCH_PREVIEW_EVENT, { detail: post.id }));
+      return;
+    }
     // Forward the original click event so callers can read modifier keys
     // (e.g. shift-click range selection in the Gallery).
     onOpen(post, e);
@@ -606,6 +676,11 @@ function PostCard({
       onKeyDown={handleKeyDown}
       onMouseEnter={handleEnter}
       onMouseLeave={handleLeave}
+      onPointerDown={handlePointerDown}
+      onPointerMove={longPress.onPointerMove}
+      onPointerUp={longPress.onPointerUp}
+      onPointerCancel={longPress.onPointerCancel}
+      onContextMenu={handleContextMenu}
       // Keyboard users reach the hover chrome too: focusing the card (or any
       // child) mounts the lazy overlay / quick-select so they're reachable.
       onFocus={() => setEverHovered(true)}
@@ -650,6 +725,8 @@ function PostCard({
             // element's antialiased/composited border → no pale seam at rest, mid-zoom, or
             // settled. Painted above the blur (later in DOM order). Web shots anchor to top.
             className={`absolute object-cover u-media-zoom ${isWeb ? 'object-top' : ''} ${
+              touchPreviewing ? 'scale-105' : ''
+            } ${
               imageLoaded ? (selectable && !selected ? 'opacity-80' : 'opacity-100') : 'opacity-0'
             }`}
             style={MEDIA_OVERSCAN}
@@ -726,7 +803,10 @@ function PostCard({
           // Swallow mousedown so the grid's drag-select machinery never sees a
           // press that starts on the checkbox.
           onMouseDown={(e) => e.stopPropagation()}
-          className="absolute top-1.5 left-1.5 z-20 flex items-center justify-center w-5 h-5 rounded-md border bg-black/50 border-white/60 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity u-transition u-press"
+          className={[
+            'absolute top-1.5 left-1.5 z-20 flex items-center justify-center w-5 h-5 rounded-md border bg-black/50 border-white/60 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity u-transition u-press',
+            touchPreviewing ? '!opacity-100' : '',
+          ].join(' ')}
         />
       )}
 
@@ -747,7 +827,13 @@ function PostCard({
         nodi DOM della card e quasi tutti gli SVG lucide — tenerlo fuori dal mount
         path è ciò che alleggerisce le righe rivelate durante lo scroll. */}
       {everHovered && !isTextCard && (
-        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity u-transition z-10 flex flex-col justify-end">
+        <div
+          data-testid="post-card-overlay"
+          className={[
+            'absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity u-transition z-10 flex flex-col justify-end',
+            touchPreviewing ? '!opacity-100' : '',
+          ].join(' ')}
+        >
           {/* Darkening gradient, deliberately LARGER than the card (-inset-2) so it
             still covers the hover-zoomed image (scale 1.05) right up to the edges:
             pushing the layer's own antialiased edge OUTSIDE the card removes the ~1px
@@ -762,7 +848,12 @@ function PostCard({
                 'linear-gradient(to top, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.72) 15%, rgba(0,0,0,0.46) 30%, rgba(0,0,0,0.20) 50%, rgba(0,0,0,0.05) 70%, transparent 100%)',
             }}
           />
-          <div className="relative px-2 pb-8 space-y-1 translate-y-1 group-hover:translate-y-0 transition-transform u-transition">
+          <div
+            className={[
+              'relative px-2 pb-8 space-y-1 translate-y-1 group-hover:translate-y-0 transition-transform u-transition',
+              touchPreviewing ? '!translate-y-0' : '',
+            ].join(' ')}
+          >
             <p className="text-white text-xs font-bold leading-tight truncate font-display">
               {isWeb
                 ? post.webDomain || post.authorName || t('website')
