@@ -209,4 +209,29 @@ describe('Root', () => {
     expect(auth.redeem).toHaveBeenCalledWith('tok_4');
     expect(window.location.pathname).toBe('/');
   });
+
+  it('takes a link opened over the link page, which only changes the fragment', async () => {
+    const auth = fakeAuth({
+      redeem: vi.fn().mockRejectedValueOnce(new ApiError(400, 'invalid_link')),
+    });
+    window.history.replaceState(null, '', '/login/magic');
+    render(
+      <Root
+        route={{ kind: 'magic', token: 'tok_old' }}
+        client={client}
+        auth={auth}
+        http={fakeHttp()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId('magic-sign-in'));
+    await screen.findByTestId('magic-invalid');
+
+    act(() => {
+      window.history.replaceState(null, '', '/login/magic#tok_new');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+    expect(window.location.hash).toBe('');
+    fireEvent.click(await screen.findByTestId('magic-sign-in'));
+    await waitFor(() => expect(auth.redeem).toHaveBeenLastCalledWith('tok_new'));
+  });
 });

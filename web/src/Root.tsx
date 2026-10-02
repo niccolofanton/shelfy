@@ -7,7 +7,7 @@ import type { AuthApi } from './api/auth';
 import type { Http } from './api/http';
 import LoginScreen from './auth/LoginScreen';
 import MagicLinkScreen from './auth/MagicLinkScreen';
-import { LOGIN_PATH, type InitialRoute } from './route';
+import { LOGIN_PATH, readInitialRoute, type InitialRoute } from './route';
 
 type Session = 'checking' | 'signedOut' | 'signedIn';
 
@@ -28,6 +28,17 @@ export default function Root({
   const [session, setSession] = useState<Session>('checking');
 
   useEffect(() => http.onUnauthorized(() => setSession('signedOut')), [http]);
+
+  // A link opened over the link page changes only the fragment, which does
+  // not reload the page: take its token the same way.
+  useEffect(() => {
+    const onHashChange = (): void => {
+      const next = readInitialRoute(window.location, window.history);
+      if (next.kind === 'magic' && next.token) setRoute(next);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   useEffect(() => {
     if (route.kind === 'magic' || session !== 'checking') return undefined;
@@ -57,7 +68,14 @@ export default function Root({
   }, []);
 
   if (route.kind === 'magic') {
-    return <MagicLinkScreen token={route.token} auth={auth} onSignedIn={handleSignedIn} />;
+    return (
+      <MagicLinkScreen
+        key={route.token ?? ''}
+        token={route.token}
+        auth={auth}
+        onSignedIn={handleSignedIn}
+      />
+    );
   }
   if (session === 'checking') {
     return (
