@@ -50,12 +50,16 @@ pub const LIBRARY_APPLICATION_ID: i32 = 0x5348_4C42;
 /// `PRAGMA application_id` of the control database: ASCII `SHLC`.
 pub const CONTROL_APPLICATION_ID: i32 = 0x5348_4C43;
 
-const LIBRARY_MIGRATIONS: &[M<'static>] =
-    &[
-        M::up(include_str!("../../migrations/library/0001_schema_v1.sql"))
-            .comment("library schema v1")
-            .foreign_key_check(),
-    ];
+const LIBRARY_MIGRATIONS: &[M<'static>] = &[
+    M::up(include_str!("../../migrations/library/0001_schema_v1.sql"))
+        .comment("library schema v1")
+        .foreign_key_check(),
+    M::up(include_str!(
+        "../../migrations/library/0002_search_infix.sql"
+    ))
+    .comment("library schema v2: posts_infix")
+    .foreign_key_check(),
+];
 
 const CONTROL_MIGRATIONS: &[M<'static>] = &[
     M::up(include_str!("../../migrations/control/0001_schema_v1.sql"))

@@ -1,21 +1,43 @@
-//! Maintenance of the `posts_fts` index (plan §2.7, §2.14).
+//! Maintenance of the search indexes (plan §2.7, §2.14): `posts_fts`, the
+//! token index that matches and ranks, and `posts_infix`, the trigram index
+//! that finds a term inside a longer token (schema v2, P1-05).
 //!
-//! The index is contentless (`content=''`, `contentless_delete=1`): it keeps
-//! only the inverted index, keyed by `posts.id`. It is maintained explicitly, in
+//! Both are contentless (`content=''`, `contentless_delete=1`): they keep only
+//! the inverted index, keyed by `posts.id`. They are maintained explicitly, in
 //! the same transaction as every write that changes searchable text, by deleting
-//! a post's row and inserting it again ([`reindex_post`]); there are no triggers,
-//! so the core decides exactly what is indexed. A post's document is rebuilt
-//! from the database each time ([`document`]), so callers never pass text.
+//! a post's rows and inserting them again ([`reindex_post`]); there are no
+//! triggers, so the core decides exactly what is indexed. A post's text is
+//! rebuilt from the database each time ([`document`] for `posts_fts`,
+//! [`INFIX_TEXT_SQL`] for `posts_infix`), so callers never pass text.
 //!
-//! Only live posts are indexed: moving a post to the trash removes its row and a
-//! restore indexes it again, so bm25 statistics ignore the trash. A purge must
-//! remove the row too: `posts.id` is a plain rowid that SQLite may reuse for
+//! Only live posts are indexed: moving a post to the trash removes its rows and
+//! a restore indexes it again, so bm25 statistics ignore the trash. A purge must
+//! remove the rows too: `posts.id` is a plain rowid that SQLite may reuse for
 //! the next insert.
+//!
+//! `posts_infix` is derived data added by a migration: [`rebuild_infix`] is its
+//! idempotent re-derivation, for a library that a build without the index
+//! wrote to (a rollback, `crate::schema`).
 
 use std::collections::HashSet;
 
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
+
+/// The text of a post's `posts_infix` row: an SQL expression over the post
+/// row `p` (caption, AI description, note, author, the AI and manual tag,
+/// keyword and entity lists as stored, and the tag rows' forms), its parts
+/// joined by newlines. Every part is matched as a substring, as the
+/// desktop's `LIKE '%term%'` search did; JSON punctuation adds no letters, so
+/// a term never matches across two list items.
+///
+/// The migration that created the index (`0002_search_infix.sql`) inlines
+/// this expression; a test checks that both agree.
+pub const INFIX_TEXT_SQL: &str = "concat_ws(char(10), p.caption, p.ai_description, p.user_note, \
+     p.author_username, p.author_name, p.ai_tags_json, p.ai_keywords_json, p.ai_entities_json, \
+     p.user_tags_json, (SELECT group_concat(tag_form, char(10)) FROM ( \
+        SELECT t.tag_form FROM post_tags t WHERE t.post_id = p.id \
+        ORDER BY t.tag_norm, t.source)))";
 
 /// Maximum characters of a document's `web_text` column (plan §2.7).
 pub const WEB_TEXT_MAX_CHARS: usize = 8000;
@@ -156,7 +178,7 @@ pub fn document(conn: &Connection, post_id: i64) -> rusqlite::Result<Option<Docu
     }))
 }
 
-/// Replaces the index row of `post_id` with its current document, or removes it
+/// Replaces the index rows of `post_id` with its current text, or removes them
 /// when the post no longer exists, is in the trash, or has no text.
 ///
 /// # Errors
@@ -170,6 +192,13 @@ pub fn reindex_post(conn: &Connection, post_id: i64) -> rusqlite::Result<()> {
     if !live {
         return Ok(());
     }
+    conn.prepare_cached(&format!(
+        "INSERT INTO posts_infix (rowid, text)
+         SELECT id, text FROM (SELECT p.id AS id, {INFIX_TEXT_SQL} AS text FROM posts p
+                               WHERE p.id = ?1)
+         WHERE text <> ''"
+    ))?
+    .execute([post_id])?;
     if let Some(doc) = document(conn, post_id)?
         && !doc.is_empty()
     {
@@ -203,7 +232,7 @@ pub fn reindex_post(conn: &Connection, post_id: i64) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Removes the index row of `post_id` (a no-op when there is none).
+/// Removes the index rows of `post_id` (a no-op when there are none).
 ///
 /// # Errors
 ///
@@ -211,21 +240,25 @@ pub fn reindex_post(conn: &Connection, post_id: i64) -> rusqlite::Result<()> {
 pub fn remove_post(conn: &Connection, post_id: i64) -> rusqlite::Result<()> {
     conn.prepare_cached("DELETE FROM posts_fts WHERE rowid = ?1")?
         .execute([post_id])?;
+    conn.prepare_cached("DELETE FROM posts_infix WHERE rowid = ?1")?
+        .execute([post_id])?;
     Ok(())
 }
 
-/// Rebuilds the whole index from the live posts. Used after a bulk install
+/// Rebuilds both indexes from the live posts. Used after a bulk install
 /// (migration) or a tokenizer change. Returns the posts visited.
 ///
 /// # Errors
 ///
-/// Fails when a query fails; run it inside a transaction to keep the old index
-/// on failure.
+/// Fails when a query fails; run it inside a transaction to keep the old
+/// indexes on failure.
 pub fn rebuild(conn: &Connection) -> rusqlite::Result<usize> {
-    conn.execute(
-        "INSERT INTO posts_fts (posts_fts) VALUES ('delete-all')",
-        [],
-    )?;
+    for table in ["posts_fts", "posts_infix"] {
+        conn.execute(
+            &format!("INSERT INTO {table} ({table}) VALUES ('delete-all')"),
+            [],
+        )?;
+    }
     let ids: Vec<i64> = conn
         .prepare("SELECT id FROM posts WHERE deleted_at IS NULL ORDER BY id")?
         .query_map([], |r| r.get(0))?
@@ -236,58 +269,96 @@ pub fn rebuild(conn: &Connection) -> rusqlite::Result<usize> {
     Ok(ids.len())
 }
 
+/// Rebuilds `posts_infix` alone from the live posts, in one statement: the
+/// re-derivation of schema v2 (see the module docs). Idempotent. Returns the
+/// rows written.
+///
+/// # Errors
+///
+/// Fails when a query fails; run it inside a transaction to keep the old
+/// index on failure.
+pub fn rebuild_infix(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO posts_infix (posts_infix) VALUES ('delete-all')",
+        [],
+    )?;
+    conn.execute(
+        &format!(
+            "INSERT INTO posts_infix (rowid, text)
+             SELECT id, text FROM (SELECT p.id AS id, {INFIX_TEXT_SQL} AS text FROM posts p
+                                   WHERE p.deleted_at IS NULL)
+             WHERE text <> ''"
+        ),
+        [],
+    )
+}
+
 /// Names of the temporary tables of [`verify`].
 const EXPECTED: &str = "shelfy_verify_expected";
 const EXPECTED_VOCAB: &str = "shelfy_verify_expected_vocab";
 const LIVE_VOCAB: &str = "shelfy_verify_live_vocab";
 
-/// Checks the index against the database: returns the rowids whose index
-/// entries differ from their post's current [`document`] (a post missing
-/// from the index or indexed with stale text, or a row left behind by a
-/// trashed, purged or textless post), sorted. Empty when the index is
-/// consistent.
+/// Checks both indexes against the database: returns the rowids whose index
+/// entries differ from their post's current text (a post missing from an
+/// index or indexed with stale text, or a row left behind by a trashed,
+/// purged or textless post), sorted. Empty when the indexes are consistent.
 ///
-/// It indexes every live post's document again in a temporary FTS5 table
-/// with the live table's columns and tokenizer, and compares the two indexes
-/// token by token (term, column and offset) through `fts5vocab`. For tests
-/// and operator checks: it reads the whole library, and needs a connection
-/// that may create temporary tables.
+/// For each index it indexes every live post's text again in a temporary
+/// FTS5 table with the live table's columns and tokenizer, and compares the
+/// two token by token (term, column and offset) through `fts5vocab`. For
+/// tests and operator checks: it reads the whole library twice, and needs a
+/// connection that may create temporary tables.
 ///
 /// # Errors
 ///
-/// Fails when a query fails, or when the live table's definition cannot be
+/// Fails when a query fails, or when a live table's definition cannot be
 /// read.
 pub fn verify(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
+    let mut stale = verify_table(conn, "posts_fts", fill_expected_documents)?;
+    stale.extend(verify_table(conn, "posts_infix", fill_expected_infix)?);
+    stale.sort_unstable();
+    stale.dedup();
+    Ok(stale)
+}
+
+/// Compares the live index `table` with a temporary copy that `fill` writes
+/// into the table named by its second argument.
+fn verify_table(
+    conn: &Connection,
+    table: &str,
+    fill: fn(&Connection, &str) -> rusqlite::Result<()>,
+) -> rusqlite::Result<Vec<i64>> {
     let definition: String = conn.query_row(
-        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'posts_fts'",
-        [],
+        "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+        [table],
         |r| r.get(0),
     )?;
     let arguments = expected_arguments(&definition).ok_or_else(|| {
         rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-            Some("unexpected posts_fts definition".to_owned()),
+            Some(format!("unexpected {table} definition")),
         )
     })?;
     drop_verify_tables(conn)?;
     conn.execute_batch(&format!(
         "CREATE VIRTUAL TABLE temp.{EXPECTED} USING fts5({arguments});
          CREATE VIRTUAL TABLE temp.{EXPECTED_VOCAB} USING fts5vocab(temp, {EXPECTED}, instance);
-         CREATE VIRTUAL TABLE temp.{LIVE_VOCAB} USING fts5vocab(main, posts_fts, instance);"
+         CREATE VIRTUAL TABLE temp.{LIVE_VOCAB} USING fts5vocab(main, {table}, instance);"
     ))?;
-    let outcome = compare(conn);
+    let outcome = fill(conn, &format!("temp.{EXPECTED}")).and_then(|()| compare(conn));
     drop_verify_tables(conn)?;
     outcome
 }
 
-fn compare(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
+/// Writes every live post's [`document`] into `target`.
+fn fill_expected_documents(conn: &Connection, target: &str) -> rusqlite::Result<()> {
     let ids: Vec<i64> = conn
         .prepare("SELECT id FROM posts WHERE deleted_at IS NULL ORDER BY id")?
         .query_map([], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let mut insert = conn.prepare(&format!(
-        "INSERT INTO temp.{EXPECTED} (rowid, tags, keywords, entities, description, note,
-                                      caption, author, web_text)
+        "INSERT INTO {target} (rowid, tags, keywords, entities, description, note, caption,
+                               author, web_text)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
     ))?;
     for id in ids {
@@ -300,6 +371,25 @@ fn compare(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
         let [c1, c2, c3, c4, c5, c6, c7, c8] = doc.columns();
         insert.execute(params![id, c1, c2, c3, c4, c5, c6, c7, c8])?;
     }
+    Ok(())
+}
+
+/// Writes every live post's [`INFIX_TEXT_SQL`] into `target`.
+fn fill_expected_infix(conn: &Connection, target: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        &format!(
+            "INSERT INTO {target} (rowid, text)
+             SELECT id, text FROM (SELECT p.id AS id, {INFIX_TEXT_SQL} AS text FROM posts p
+                                   WHERE p.deleted_at IS NULL)
+             WHERE text <> ''"
+        ),
+        [],
+    )?;
+    Ok(())
+}
+
+/// The rowids whose tokens differ between the live and the expected index.
+fn compare(conn: &Connection) -> rusqlite::Result<Vec<i64>> {
     let columns = "term, doc, col, offset";
     let sql = format!(
         "SELECT doc FROM (SELECT {columns} FROM temp.{LIVE_VOCAB}

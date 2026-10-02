@@ -728,6 +728,34 @@ pub fn dump(conn: &Connection, kind: Kind, title: &str) -> String {
             )
             .unwrap();
         }
+        // The infix index (schema v2 on), from its own text expression.
+        let has_infix: bool = conn
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE name = 'posts_infix')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        if has_infix {
+            let rows: Vec<(i64, String)> = conn
+                .prepare(&format!(
+                    "SELECT p.id, {} FROM posts p WHERE p.deleted_at IS NULL ORDER BY p.id",
+                    index::INFIX_TEXT_SQL
+                ))
+                .unwrap()
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            for (id, text) in rows.into_iter().filter(|(_, text)| !text.is_empty()) {
+                writeln!(
+                    out,
+                    "INSERT INTO posts_infix (rowid, text) VALUES ({id}, {});",
+                    literal(&Value::Text(text))
+                )
+                .unwrap();
+            }
+        }
     }
 
     out.push_str("COMMIT;\n");

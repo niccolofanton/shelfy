@@ -14,6 +14,7 @@ mod support;
 use rusqlite::Connection;
 use shelfy_core::db::{ControlDb, ControlDbConfig, DbError, UserDb, UserDbConfig};
 use shelfy_core::schema::{self, Kind};
+use shelfy_core::search::index;
 use support::{blessing, dump, fixture_control, fixture_library, fixture_path, load};
 
 const LIBRARY_TABLES: &[&str] = &[
@@ -290,19 +291,24 @@ fn every_fixture_upgrades_to_the_latest_version() {
                 .unwrap();
             assert_eq!(fk_violations, 0);
             for (table, before) in tables.iter().zip(counts_before) {
-                if table != "posts_fts" {
+                if !["posts_fts", "posts_infix"].contains(&table.as_str()) {
                     assert_eq!(count(&conn, table), before, "{table} lost rows");
                 }
             }
             if kind == Kind::Library {
-                let hits: i64 = conn
-                    .query_row(
-                        "SELECT count(*) FROM posts_fts WHERE posts_fts MATCH 'lampada'",
-                        [],
-                        |r| r.get(0),
-                    )
-                    .unwrap();
-                assert!(hits > 0, "the fixture's search index answers queries");
+                for (table, term) in [("posts_fts", "lampada"), ("posts_infix", "\"soffiat\"")] {
+                    let hits: i64 = conn
+                        .query_row(
+                            &format!("SELECT count(*) FROM {table} WHERE {table} MATCH ?1"),
+                            [term],
+                            |r| r.get(0),
+                        )
+                        .unwrap();
+                    assert!(hits > 0, "the fixture's {table} answers queries");
+                }
+                // The migrations fill the indexes exactly as the code
+                // maintains them.
+                assert_eq!(index::verify(&conn).unwrap(), Vec::<i64>::new());
             }
         }
     }

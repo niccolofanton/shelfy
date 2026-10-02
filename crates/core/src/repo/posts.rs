@@ -8,13 +8,18 @@
 //! Filter semantics mirror the desktop's `buildPostFilter` (`electron/db.ts`),
 //! with these deliberate changes:
 //!
-//! - search uses the FTS5 index (plan D10) instead of `LIKE` + a JS function:
-//!   a post matches when any content term prefix-matches one of its indexed
-//!   columns; the relevance score is the per-term model of
-//!   [`crate::search::query`] (clamped term weights over bm25's frequency
-//!   part, whole tokens above prefixes) plus an exact-tag and a phrase bonus
-//!   (§2.14, tuned by SPIKE-5); a term found only inside a longer token
-//!   (`#productdesign` for "design") no longer matches;
+//! - search uses the FTS5 indexes (plan D10) instead of `LIKE` + a JS
+//!   function: a post matches when any content term prefix-matches one of its
+//!   indexed columns (`posts_fts`), or, for a term of 3 or more characters,
+//!   appears anywhere in its text (`posts_infix`, a trigram index: `design`
+//!   in `#productdesign`, as the desktop's `LIKE '%term%'` found it); the
+//!   relevance score is the per-term model of [`crate::search::query`]
+//!   (clamped term weights over bm25's frequency part, whole tokens above
+//!   prefixes above infixes) plus an exact-tag and a phrase bonus (§2.14,
+//!   tuned by SPIKE-5 and P1-05);
+//! - relevance pages are offsets into a ranking of at most
+//!   [`RELEVANCE_WINDOW`] posts ([`rank`], [`ranked_page`]), which the API
+//!   computes once per search and keeps as a snapshot;
 //! - "downloaded" becomes [`PostFilter::stored`]: the post has at least one
 //!   archived object (cover, slide, poster or kept video);
 //! - trashed posts are hidden unless [`PostFilter::trash`] asks for them;
@@ -716,11 +721,20 @@ pub fn list(
     } else {
         page.sort
     };
+    if sort == Sort::Relevance {
+        // `ranked_page` attaches the slides and memberships itself.
+        let offset = relevance_offset(page.cursor)?;
+        if offset >= RELEVANCE_WINDOW {
+            return Ok(Page {
+                items: Vec::new(),
+                next_cursor: None,
+            });
+        }
+        let ranked = rank(conn, filter)?;
+        return ranked_page(conn, filter, &ranked, offset, limit);
+    }
     let where_sql = WhereSql::new(filter, &text);
-    let mut result = match sort {
-        Sort::Relevance => list_relevance(conn, where_sql, &text, limit, page.cursor)?,
-        Sort::Newest | Sort::Oldest => list_keyset(conn, where_sql, sort, limit, page.cursor)?,
-    };
+    let mut result = list_keyset(conn, where_sql, sort, limit, page.cursor)?;
     attach(conn, &mut result.items)?;
     Ok(result)
 }
@@ -1538,50 +1552,104 @@ fn list_keyset(
     Ok(Page { items, next_cursor })
 }
 
-fn list_relevance(
-    conn: &Connection,
-    w: WhereSql,
-    text: &TextPlan,
-    limit: u32,
-    cursor: Option<Cursor>,
-) -> Result<Page<PostSummary>> {
-    let offset = match cursor {
-        None => 0,
-        Some(Cursor::Relevance { offset }) => offset,
-        Some(_) => return Err(RepoError::InvalidCursor),
-    };
-    if offset >= RELEVANCE_WINDOW {
-        return Ok(Page {
-            items: Vec::new(),
-            next_cursor: None,
-        });
+/// The relevance order of `filter`: the internal ids of its first
+/// [`RELEVANCE_WINDOW`] posts, best first (ties newest first). It is the
+/// snapshot that relevance pages are cut from ([`ranked_page`]): the API
+/// computes it once per search and library state, and pages through it by
+/// offset (plan §2.14). Empty without search text.
+///
+/// # Errors
+///
+/// Database errors.
+pub fn rank(conn: &Connection, filter: &PostFilter) -> Result<Vec<i64>> {
+    let text = TextPlan::new(filter);
+    if !text.has_text {
+        return Ok(Vec::new());
     }
-    let take = limit.min(RELEVANCE_WINDOW - offset);
-    let scoring = scoring(conn, text)?;
-    let (sql, params) = relevance_query(w, text, &scoring, take, offset);
-    let mut items: Vec<PostSummary> = conn
+    let scoring = scoring(conn, &text)?;
+    let (sql, params) = rank_query(WhereSql::new(filter, &text), &text, &scoring);
+    let ids = conn
         .prepare_cached(&sql)?
-        .query_map(params_from_iter(params.iter()), |row| {
-            summary_from(&mut Cols::new(row))
-        })?
+        .query_map(params_from_iter(params.iter()), |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
-    let next_cursor = if items.len() > take as usize {
-        items.truncate(take as usize);
-        let next = offset + take;
-        (next < RELEVANCE_WINDOW).then_some(Cursor::Relevance { offset: next })
-    } else {
-        None
-    };
+    Ok(ids)
+}
+
+/// The relevance cursor's offset, if `cursor` belongs to the relevance order.
+///
+/// # Errors
+///
+/// [`RepoError::InvalidCursor`] for a cursor of another order.
+pub fn relevance_offset(cursor: Option<Cursor>) -> Result<u32> {
+    match cursor {
+        None => Ok(0),
+        Some(Cursor::Relevance { offset }) => Ok(offset),
+        Some(_) => Err(RepoError::InvalidCursor),
+    }
+}
+
+/// One page of a relevance search: the posts at positions `offset..` of
+/// `ranked` (a [`rank`] of `filter`), at most `limit` of them, and the cursor
+/// of the next page. A post that moved into or out of the trash since the
+/// ranking was taken is left out of the page; positions still count it, so
+/// pages never overlap.
+///
+/// # Errors
+///
+/// Database errors.
+pub fn ranked_page(
+    conn: &Connection,
+    filter: &PostFilter,
+    ranked: &[i64],
+    offset: u32,
+    limit: u32,
+) -> Result<Page<PostSummary>> {
+    let limit = limit.clamp(1, MAX_PAGE_SIZE);
+    let start = (offset as usize).min(ranked.len());
+    let end = start.saturating_add(limit as usize).min(ranked.len());
+    let slice = &ranked[start..end];
+    let mut items = Vec::with_capacity(slice.len());
+    if !slice.is_empty() {
+        let trash = if filter.trash {
+            "p.deleted_at IS NOT NULL"
+        } else {
+            "p.deleted_at IS NULL"
+        };
+        let sql = format!(
+            "SELECT {SUMMARY_COLUMNS} FROM {SUMMARY_FROM}
+             WHERE p.id IN (SELECT value FROM json_each(?1)) AND {trash}"
+        );
+        let mut found: HashMap<i64, PostSummary> = conn
+            .prepare_cached(&sql)?
+            .query_map([id_list(slice)], |row| summary_from(&mut Cols::new(row)))?
+            .map(|r| r.map(|p| (p.id, p)))
+            .collect::<rusqlite::Result<_>>()?;
+        items.extend(slice.iter().filter_map(|id| found.remove(id)));
+        attach(conn, &mut items)?;
+    }
+    let next = u32::try_from(end).unwrap_or(u32::MAX);
+    let next_cursor = (end < ranked.len() && next < RELEVANCE_WINDOW)
+        .then_some(Cursor::Relevance { offset: next });
     Ok(Page { items, next_cursor })
 }
 
-/// One scored FTS5 match of the relevance query: the posts it matches add
-/// `bm25 × factor` to their score.
+/// One scored FTS5 match of the relevance query.
 #[derive(Clone, Debug, PartialEq)]
 struct ScoreArm {
+    kind: ArmKind,
     expr: String,
-    /// `weight / idf`: replaces bm25's IDF with the term's clamped weight.
+    /// For a token arm, `weight / idf`: it replaces bm25's IDF with the term's
+    /// clamped weight. For an infix arm, the score itself (negative: a bonus).
     factor: f64,
+}
+
+/// What a [`ScoreArm`] matches against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArmKind {
+    /// `posts_fts`: the posts it matches add `bm25 × factor` to their score.
+    Tokens,
+    /// `posts_infix`: the posts it matches add `factor`.
+    Infix,
 }
 
 /// The inputs of the relevance score that depend on the library's statistics.
@@ -1615,27 +1683,55 @@ fn scoring(conn: &Connection, text: &TextPlan) -> Result<Scoring> {
         let n: i64 = count.query_row([expr], |r| r.get(0))?;
         Ok(u64::try_from(n).unwrap_or(0))
     };
+    let mut count_infix =
+        conn.prepare_cached("SELECT count(*) FROM posts_infix WHERE posts_infix MATCH ?1")?;
+    let mut df_infix = |expr: &str| -> Result<u64> {
+        let n: i64 = count_infix.query_row([expr], |r| r.get(0))?;
+        Ok(u64::try_from(n).unwrap_or(0))
+    };
     for term in &text.score_terms {
         let Some((prefix, exact)) = query::term_matches(term) else {
             continue;
         };
+        let infix = query::infix_unit(term);
         let prefix_df = df(&prefix)?;
-        if prefix_df == 0 {
-            continue;
-        }
-        let weight = query::term_weight(rows, prefix_df);
-        out.arms.push(ScoreArm {
-            expr: prefix,
-            factor: weight / query::fts5_idf(rows, prefix_df),
-        });
-        let Some(exact) = exact else {
-            continue;
+        // The weight comes from the token index, as SPIKE-5 tuned it. A term
+        // found only inside longer tokens takes it from the infix index; a
+        // prefix match is a substring match too, so it needs no count there.
+        let weight = if prefix_df > 0 {
+            query::term_weight(rows, prefix_df)
+        } else {
+            match &infix {
+                Some(expr) => match df_infix(expr)? {
+                    0 => continue,
+                    infix_df => query::term_weight(rows, infix_df),
+                },
+                None => continue,
+            }
         };
-        let exact_df = df(&exact)?;
-        if exact_df > 0 {
+        if prefix_df > 0 {
             out.arms.push(ScoreArm {
-                expr: exact,
-                factor: query::EXACT_TOKEN_WEIGHT * weight / query::fts5_idf(rows, exact_df),
+                kind: ArmKind::Tokens,
+                expr: prefix,
+                factor: weight / query::fts5_idf(rows, prefix_df),
+            });
+            if let Some(exact) = exact {
+                let exact_df = df(&exact)?;
+                if exact_df > 0 {
+                    out.arms.push(ScoreArm {
+                        kind: ArmKind::Tokens,
+                        expr: exact,
+                        factor: query::EXACT_TOKEN_WEIGHT * weight
+                            / query::fts5_idf(rows, exact_df),
+                    });
+                }
+            }
+        }
+        if let Some(expr) = infix {
+            out.arms.push(ScoreArm {
+                kind: ArmKind::Infix,
+                expr,
+                factor: -query::INFIX_WEIGHT * weight,
             });
         }
     }
@@ -1652,20 +1748,15 @@ fn scoring(conn: &Connection, text: &TextPlan) -> Result<Scoring> {
     Ok(out)
 }
 
-/// The relevance query (plan §2.14): the scored matches of every search unit,
-/// minus the exact-tag and phrase bonuses ([`scoring`]); lower is better.
-/// Fetches `take + 1` rows.
-fn relevance_query(
-    w: WhereSql,
-    text: &TextPlan,
-    scoring: &Scoring,
-    take: u32,
-    offset: u32,
-) -> (String, Vec<Value>) {
+/// The ranking query (plan §2.14): the ids of the first [`RELEVANCE_WINDOW`]
+/// matches by score, the scored matches of every search unit minus the
+/// exact-tag and phrase bonuses ([`scoring`]); lower is better, ties newest
+/// first.
+fn rank_query(w: WhereSql, text: &TextPlan, scoring: &Scoring) -> (String, Vec<Value>) {
     // Parameters bind in the order their `?` appear: WITH, SELECT list, WHERE.
     let mut params: Vec<Value> = Vec::new();
     let mut with = String::new();
-    let mut from = SUMMARY_FROM.to_owned();
+    let mut from = "posts p".to_owned();
     let mut score = "0.0".to_owned();
     if !scoring.arms.is_empty() {
         // Scored once and materialized: as a subquery inside the join, SQLite
@@ -1673,21 +1764,27 @@ fn relevance_query(
         // The arms get their own CTE: a lone arm flattened into the aggregate
         // makes bm25() fail ("unable to use function bm25 in the requested
         // context").
-        let arm_sql = format!(
+        let token_arm = format!(
             "SELECT rowid, {} * ? FROM posts_fts WHERE posts_fts MATCH ?",
             query::bm25_call()
         );
-        with = format!(
-            "WITH arms (rid, s) AS MATERIALIZED ({}),
-                  hits (rid, bm) AS MATERIALIZED (SELECT rid, sum(s) FROM arms GROUP BY rid) ",
-            vec![arm_sql; scoring.arms.len()].join(" UNION ALL ")
-        );
-        from.push_str(" LEFT JOIN hits h ON h.rid = p.id");
-        score = "COALESCE(h.bm, 0.0)".to_owned();
+        let infix_arm = "SELECT rowid, ? FROM posts_infix WHERE posts_infix MATCH ?";
+        let mut arms = Vec::with_capacity(scoring.arms.len());
         for arm in &scoring.arms {
             params.push(Value::Real(arm.factor));
             params.push(Value::Text(arm.expr.clone()));
+            arms.push(match arm.kind {
+                ArmKind::Tokens => token_arm.as_str(),
+                ArmKind::Infix => infix_arm,
+            });
         }
+        with = format!(
+            "WITH arms (rid, s) AS MATERIALIZED ({}),
+                  hits (rid, bm) AS MATERIALIZED (SELECT rid, sum(s) FROM arms GROUP BY rid) ",
+            arms.join(" UNION ALL ")
+        );
+        from.push_str(" LEFT JOIN hits h ON h.rid = p.id");
+        score = "COALESCE(h.bm, 0.0)".to_owned();
     }
     if !scoring.tag_boosts.is_empty() {
         score.push_str(
@@ -1706,11 +1803,10 @@ fn relevance_query(
         params.push(Value::Text(phrase.clone()));
     }
     params.extend(w.params);
-    params.push(Value::Integer(i64::from(take) + 1));
-    params.push(Value::Integer(i64::from(offset)));
+    params.push(Value::Integer(i64::from(RELEVANCE_WINDOW)));
     let sql = format!(
-        "{with}SELECT {SUMMARY_COLUMNS}, {score} AS score FROM {from} WHERE {}
-         ORDER BY score, p.sort_ts DESC, p.id DESC LIMIT ? OFFSET ?",
+        "{with}SELECT p.id, {score} AS score FROM {from} WHERE {}
+         ORDER BY score, p.sort_ts DESC, p.id DESC LIMIT ?",
         w.clauses.join(" AND ")
     );
     (sql, params)
@@ -1734,6 +1830,9 @@ struct TextPlan {
 }
 
 const FTS_BLOCK: &str = "p.id IN (SELECT rowid FROM posts_fts WHERE posts_fts MATCH ?)";
+const INFIX_BLOCK: &str = "p.id IN (SELECT rowid FROM posts_infix WHERE posts_infix MATCH ?)";
+const TEXT_BLOCK: &str = "p.id IN (SELECT rowid FROM posts_fts WHERE posts_fts MATCH ?
+                                   UNION SELECT rowid FROM posts_infix WHERE posts_infix MATCH ?)";
 const TAG_EXISTS: &str =
     "EXISTS (SELECT 1 FROM post_tags pt WHERE pt.post_id = p.id AND pt.tag_norm = ?)";
 
@@ -1750,16 +1849,20 @@ impl TextPlan {
 
         if let Some(q) = q {
             let parsed = TextQuery::parse(q);
-            blocks.push(fts_block(parsed.match_expr.clone()));
+            blocks.push(text_block(
+                parsed.match_expr.clone(),
+                parsed.infix_expr.clone(),
+            ));
             score_terms.extend(parsed.terms.iter().cloned());
             boost_terms.extend(parsed.terms);
             phrase_expr = parsed.phrase_expr;
         }
         for concept in &concepts {
             let unit = query::prefix_unit(concept);
-            blocks.push(fts_block(
+            blocks.push(text_block(
                 unit.as_ref()
                     .and_then(|u| query::any_of(std::slice::from_ref(u))),
+                query::infix_unit(concept),
             ));
             score_terms.push(concept.clone());
             boost_terms.push(concept.to_lowercase());
@@ -1789,11 +1892,18 @@ impl TextPlan {
     }
 }
 
-fn fts_block(expr: Option<String>) -> (String, Vec<Value>) {
-    match expr {
-        Some(expr) => (FTS_BLOCK.to_owned(), vec![Value::Text(expr)]),
+/// The membership clause of one search block: the posts the token index
+/// matches with `tokens`, plus those the infix index matches with `infix`.
+fn text_block(tokens: Option<String>, infix: Option<String>) -> (String, Vec<Value>) {
+    match (tokens, infix) {
+        (Some(tokens), Some(infix)) => (
+            TEXT_BLOCK.to_owned(),
+            vec![Value::Text(tokens), Value::Text(infix)],
+        ),
+        (Some(tokens), None) => (FTS_BLOCK.to_owned(), vec![Value::Text(tokens)]),
+        (None, Some(infix)) => (INFIX_BLOCK.to_owned(), vec![Value::Text(infix)]),
         // Nothing indexable in the text: the block matches no post.
-        None => ("0".to_owned(), Vec::new()),
+        (None, None) => ("0".to_owned(), Vec::new()),
     }
 }
 
@@ -2124,18 +2234,34 @@ mod tests {
         let (lampada, lampada_exact) = query::term_matches("lampada").unwrap();
         let (vetro, vetro_exact) = query::term_matches("vetro").unwrap();
         let (lampada_exact, vetro_exact) = (lampada_exact.unwrap(), vetro_exact.unwrap());
-        let exprs: Vec<&str> = s.arms.iter().map(|a| a.expr.as_str()).collect();
+        let (lampada_infix, vetro_infix) = (
+            query::infix_unit("lampada").unwrap(),
+            query::infix_unit("vetro").unwrap(),
+        );
+        let arms: Vec<(ArmKind, &str)> = s.arms.iter().map(|a| (a.kind, a.expr.as_str())).collect();
         // Terms without a match ("assente") or without an indexable character
         // ("!!!") are not scored; "lampadario" is a prefix hit only.
-        assert_eq!(exprs, [&lampada, &lampada_exact, &vetro, &vetro_exact]);
+        assert_eq!(
+            arms,
+            [
+                (ArmKind::Tokens, lampada.as_str()),
+                (ArmKind::Tokens, &lampada_exact),
+                (ArmKind::Infix, &lampada_infix),
+                (ArmKind::Tokens, &vetro),
+                (ArmKind::Tokens, &vetro_exact),
+                (ArmKind::Infix, &vetro_infix),
+            ]
+        );
         // 4 rows: "lampada"* is in 2 of them, the token "lampada" in 1; "vetro"
         // is in 2 (a caption and a tag).
         let weight = query::term_weight(4, 2);
         let expected = [
             weight / query::fts5_idf(4, 2),
             query::EXACT_TOKEN_WEIGHT * weight / query::fts5_idf(4, 1),
+            -query::INFIX_WEIGHT * weight,
             weight / query::fts5_idf(4, 2),
             query::EXACT_TOKEN_WEIGHT * weight / query::fts5_idf(4, 2),
+            -query::INFIX_WEIGHT * weight,
         ];
         for (arm, factor) in s.arms.iter().zip(expected) {
             assert!((arm.factor - factor).abs() < 1e-9, "{arm:?}");
@@ -2161,8 +2287,11 @@ mod tests {
         a.caption = Some("posters on the wall".into());
         let mut b = NewPost::new("ig_2", Platform::Instagram, "2", "image", 0);
         b.user_tags = vec!["glass".into()];
+        let mut c = NewPost::new("ig_3", Platform::Instagram, "3", "image", 0);
+        c.caption = Some("#productdesign".into());
         insert(&conn, &a, 0).unwrap();
         insert(&conn, &b, 0).unwrap();
+        insert(&conn, &c, 0).unwrap();
         let page = |filter: PostFilter| -> Vec<String> {
             let req = PageRequest {
                 sort: Sort::Relevance,
@@ -2175,13 +2304,29 @@ mod tests {
                 .map(|p| p.key)
                 .collect()
         };
-        // "poster" has a prefix match and no whole-token match: one arm.
+        let kinds = |filter: &PostFilter| -> Vec<ArmKind> {
+            scoring(&conn, &TextPlan::new(filter))
+                .unwrap()
+                .arms
+                .iter()
+                .map(|a| a.kind)
+                .collect()
+        };
+        // "poster" has a prefix match and no whole-token match: one token arm
+        // (and its infix arm).
         let one = PostFilter {
             q: Some("poster".into()),
             ..PostFilter::default()
         };
-        assert_eq!(scoring(&conn, &TextPlan::new(&one)).unwrap().arms.len(), 1);
+        assert_eq!(kinds(&one), [ArmKind::Tokens, ArmKind::Infix]);
         assert_eq!(page(one), ["ig_1"]);
+        // "design" is only inside a longer token: the infix arm alone.
+        let inside = PostFilter {
+            q: Some("design".into()),
+            ..PostFilter::default()
+        };
+        assert_eq!(kinds(&inside), [ArmKind::Infix]);
+        assert_eq!(page(inside), ["ig_3"]);
         // No term matches: the hybrid tag alone admits and scores the post.
         let none = PostFilter {
             q: Some("zzz".into()),
@@ -2206,19 +2351,33 @@ mod tests {
             ..PostFilter::default()
         };
         let text = TextPlan::new(&filter);
+        let mut arms = Vec::new();
+        for term in &text.score_terms {
+            let (prefix, exact) = query::term_matches(term).unwrap();
+            for expr in std::iter::once(prefix).chain(exact) {
+                arms.push(ScoreArm {
+                    kind: ArmKind::Tokens,
+                    expr,
+                    factor: 1.0,
+                });
+            }
+            arms.push(ScoreArm {
+                kind: ArmKind::Infix,
+                expr: query::infix_unit(term).unwrap(),
+                factor: -1.0,
+            });
+        }
         let inputs = Scoring {
-            arms: text
-                .score_terms
-                .iter()
-                .filter_map(|t| query::term_matches(t))
-                .flat_map(|(prefix, exact)| std::iter::once(prefix).chain(exact))
-                .map(|expr| ScoreArm { expr, factor: 1.0 })
-                .collect(),
+            arms,
             tag_boosts: vec![("glass".into(), 3.0)],
         };
-        let arms = &inputs.arms;
-        assert_eq!(arms.len(), 4);
-        let (sql, params) = relevance_query(WhereSql::new(&filter, &text), &text, &inputs, 60, 0);
+        let token_arms = inputs
+            .arms
+            .iter()
+            .filter(|a| a.kind == ArmKind::Tokens)
+            .count();
+        assert_eq!((token_arms, inputs.arms.len()), (4, 6));
+        let (sql, params) = rank_query(WhereSql::new(&filter, &text), &text, &inputs);
         let nodes: Vec<(i64, i64, String)> = conn
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
             .unwrap()
@@ -2232,17 +2391,26 @@ mod tests {
         let plan = text.join("\n");
         assert!(plan.contains("MATERIALIZE arms"), "{plan}");
         assert!(plan.contains("MATERIALIZE hits"), "{plan}");
-        // The FTS index is scanned once per scored match, once for the search
-        // block and once for the phrase bonus, never inside a correlated
+        // The token index is scanned once per scored match, once for the
+        // search block and once for the phrase bonus, the infix index once per
+        // infix match and once for the search block; never inside a correlated
         // (per-row) subquery: a per-row bm25 lookup made relevance take seconds
         // at 6k posts.
-        let fts_scans: Vec<i64> = nodes
-            .iter()
-            .filter(|n| n.2.starts_with("SCAN posts_fts"))
-            .map(|n| n.0)
-            .collect();
-        assert_eq!(fts_scans.len(), arms.len() + 2, "{plan}");
-        for id in fts_scans {
+        let scans = |table: &str| -> Vec<i64> {
+            nodes
+                .iter()
+                .filter(|n| n.2.starts_with(&format!("SCAN {table}")))
+                .map(|n| n.0)
+                .collect()
+        };
+        let (fts_scans, infix_scans) = (scans("posts_fts"), scans("posts_infix"));
+        assert_eq!(fts_scans.len(), token_arms + 2, "{plan}");
+        assert_eq!(
+            infix_scans.len(),
+            inputs.arms.len() - token_arms + 1,
+            "{plan}"
+        );
+        for id in fts_scans.into_iter().chain(infix_scans) {
             let mut parent = nodes.iter().find(|n| n.0 == id).map_or(0, |n| n.1);
             while parent != 0 {
                 let node = nodes.iter().find(|n| n.0 == parent).unwrap();

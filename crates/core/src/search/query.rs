@@ -86,6 +86,15 @@ pub const RELEVANCE_WINDOW: u32 = 1000;
 /// (`prefix='2 3'`), so the scan read most of the index (~45 ms at 18k posts).
 pub const MIN_PREFIX_CHARS: usize = 2;
 
+/// Shortest term, in characters, that the infix index (`posts_infix`, one
+/// trigram per 3 characters) can match.
+pub const INFIX_MIN_CHARS: usize = 3;
+
+/// Score of a post that has a term anywhere in its text (the infix match),
+/// per unit of the term's weight: the desktop's substring tier, below any
+/// token hit.
+pub const INFIX_WEIGHT: f64 = 1.0;
+
 static TOKEN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\p{L}\p{N}]+").expect("token pattern is valid"));
 
@@ -98,6 +107,9 @@ pub struct TextQuery {
     /// Prefix match on any term; `None` when no term holds an indexable character,
     /// in which case the query matches nothing.
     pub match_expr: Option<String>,
+    /// Infix match (`posts_infix`) on any term of at least
+    /// [`INFIX_MIN_CHARS`] characters; `None` when there is none.
+    pub infix_expr: Option<String>,
     /// The whole query as one phrase, for the phrase bonus; `None` for queries of
     /// fewer than two tokens, where it would just repeat the term match.
     pub phrase_expr: Option<String>,
@@ -105,27 +117,52 @@ pub struct TextQuery {
 
 impl TextQuery {
     /// Prepares `query`: content terms with the raw-query fallback (as the desktop
-    /// search does), the prefix-match expression and the phrase expression.
+    /// search does), the prefix- and infix-match expressions and the phrase
+    /// expression.
     #[must_use]
     pub fn parse(query: &str) -> Self {
         let terms = content_terms_or_raw(query, DEFAULT_MIN_LEN);
         let units: Vec<String> = terms.iter().filter_map(|t| prefix_unit(t)).collect();
         let match_expr = any_of(&units);
+        let infix: Vec<String> = terms.iter().filter_map(|t| infix_unit(t)).collect();
+        let infix_expr = any_infix(&infix);
         let trimmed = query.trim();
         let phrase_expr = (TOKEN.find_iter(trimmed).count() >= 2)
             .then(|| format!("{}: {}", column_filter(), quote(trimmed)));
         Self {
             terms,
             match_expr,
+            infix_expr,
             phrase_expr,
         }
     }
 }
 
-/// FTS5 string literal: double quotes, inner quotes doubled.
+/// The infix match of `text` in `posts_infix`: `text` quoted, a phrase of its
+/// trigrams, which matches it anywhere in a post's text. `None` when `text`
+/// has no character the token index would index (such a term matches
+/// nothing, as in [`prefix_unit`]) or is shorter than [`INFIX_MIN_CHARS`]
+/// characters (no trigram).
+#[must_use]
+pub fn infix_unit(text: &str) -> Option<String> {
+    let text = text.trim();
+    TOKEN.find(text)?;
+    (text.chars().count() >= INFIX_MIN_CHARS).then(|| quote(text))
+}
+
+/// `u1 OR u2 …` for `posts_infix` (one column, so no column filter), or
+/// `None` without units.
+#[must_use]
+pub fn any_infix(units: &[String]) -> Option<String> {
+    (!units.is_empty()).then(|| units.join(" OR "))
+}
+
+/// FTS5 string literal: double quotes, inner quotes doubled. A NUL character
+/// would end the literal inside FTS5's query parser ("unterminated string"),
+/// so it becomes a space, a separator for both tokenizers.
 #[must_use]
 pub fn quote(text: &str) -> String {
-    format!("\"{}\"", text.replace('"', "\"\""))
+    format!("\"{}\"", text.replace('"', "\"\"").replace('\0', " "))
 }
 
 /// One matched unit: a prefix match (`"text"*`), or a whole-token match
@@ -214,11 +251,29 @@ mod tests {
     #[test]
     fn escapes_quotes_and_skips_untokenizable_terms() {
         assert_eq!(quote("say \"hi\""), "\"say \"\"hi\"\"\"");
+        // A NUL would end the literal inside FTS5's parser.
+        assert_eq!(quote("a\0b"), "\"a b\"");
         let q = TextQuery::parse("!!!");
         assert_eq!(q.terms, ["!!!"]);
         assert_eq!(q.match_expr, None);
+        assert_eq!(q.infix_expr, None);
         assert_eq!(q.phrase_expr, None);
         assert_eq!(term_matches("!!!"), None);
+    }
+
+    #[test]
+    fn infix_matches_take_terms_of_three_characters_or_more() {
+        let q = TextQuery::parse("simulazioni di fluidi e 3d");
+        assert_eq!(q.terms, ["simulazioni", "fluidi", "3d"]);
+        // "3d" has no trigram: it stays a token match.
+        assert_eq!(
+            q.infix_expr.as_deref(),
+            Some("\"simulazioni\" OR \"fluidi\"")
+        );
+        assert_eq!(infix_unit(" abc "), Some("\"abc\"".to_owned()));
+        assert_eq!(infix_unit("ab"), None);
+        assert_eq!(infix_unit("¡¿!"), None, "nothing a token index would index");
+        assert_eq!(any_infix(&[]), None);
     }
 
     #[test]

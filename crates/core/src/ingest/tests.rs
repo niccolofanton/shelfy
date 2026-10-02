@@ -78,7 +78,8 @@ fn dump(conn: &Connection) -> String {
     let tables: Vec<String> = conn
         .prepare(
             "SELECT name FROM sqlite_schema WHERE type = 'table'
-               AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'posts_fts%' ORDER BY name",
+               AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'posts_fts%'
+               AND name NOT LIKE 'posts_infix%' ORDER BY name",
         )
         .unwrap()
         .query_map([], |r| r.get(0))
@@ -114,6 +115,20 @@ fn dump(conn: &Connection) -> String {
             index::document(conn, id).unwrap()
         ));
     }
+    // The infix index's rows; their text derives from the rows above, and
+    // `index::verify` checks it against them.
+    let infix: Vec<i64> = conn
+        .prepare("SELECT rowid FROM posts_infix ORDER BY rowid")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    out.push_str(&format!("infix {infix:?}\n"));
+    assert!(
+        index::verify(conn).unwrap().is_empty(),
+        "stale search index"
+    );
     out
 }
 

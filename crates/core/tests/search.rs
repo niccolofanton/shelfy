@@ -1,11 +1,12 @@
-//! The `posts_fts` index stays in step with every write that changes
-//! searchable text (plan §2.7): inserts, updates and deletes.
+//! The search indexes (`posts_fts`, and `posts_infix` since P1-05) stay in
+//! step with every write that changes searchable text (plan §2.7): inserts,
+//! updates and deletes.
 
 mod support;
 
 use rusqlite::Connection;
 use shelfy_core::repo::Platform;
-use shelfy_core::repo::posts::{self, AiLayer, PostFilter, UserContentPatch};
+use shelfy_core::repo::posts::{self, AiLayer, PageRequest, PostFilter, Sort, UserContentPatch};
 use shelfy_core::search::index;
 use support::{NOW, bare_post, fixture_library, insert_all, library, synthetic_posts};
 
@@ -79,6 +80,65 @@ fn search_folds_case_and_diacritics_and_matches_prefixes() {
         assert_eq!(search(&conn, q), ["ig_1"], "{q}");
     }
     assert!(search(&conn, "photographs").is_empty());
+}
+
+/// A term inside a longer token (a compound hashtag) is found through the
+/// infix index (P1-05), and ranks below a whole-token or prefix hit.
+#[test]
+fn terms_inside_longer_tokens_match_and_rank_last() {
+    let conn = library();
+    let mut inside = bare_post("ig_1", Platform::Instagram, NOW);
+    inside.caption = Some("#simulazionefluidi #productdesign".into());
+    let mut token = bare_post("ig_2", Platform::Instagram, NOW - 1);
+    token.caption = Some("fluidi e design".into());
+    let mut none = bare_post("ig_3", Platform::Instagram, NOW - 2);
+    none.caption = Some("fluid desi".into());
+    let ids = insert_all(&conn, &[inside, token, none]);
+    for q in ["fluidi", "design", "imulazion", "FLUIDI", "productdesign"] {
+        let mut expected = if q == "productdesign" || q == "imulazion" {
+            vec!["ig_1"]
+        } else {
+            vec!["ig_1", "ig_2"]
+        };
+        expected.sort_unstable();
+        assert_eq!(search(&conn, q), expected, "{q}");
+    }
+    // Too short for a trigram: "ui" is inside "fluidi", but only token
+    // prefixes match it.
+    assert!(search(&conn, "ui").is_empty());
+    assert_eq!(search(&conn, "fl"), ["ig_2", "ig_3"]);
+    let ranked: Vec<String> = posts::list(
+        &conn,
+        &PostFilter {
+            q: Some("fluidi".into()),
+            ..PostFilter::default()
+        },
+        &PageRequest {
+            sort: Sort::Relevance,
+            ..PageRequest::default()
+        },
+    )
+    .unwrap()
+    .items
+    .into_iter()
+    .map(|p| p.key)
+    .collect();
+    assert_eq!(ranked, ["ig_2", "ig_1"], "the whole token first");
+
+    // Writes keep the infix index in step: trash, restore, edit, purge.
+    posts::trash(&conn, &ids[..1], NOW).unwrap();
+    assert_eq!(search(&conn, "imulazion"), Vec::<String>::new());
+    posts::restore(&conn, &ids[..1], NOW).unwrap();
+    assert_eq!(search(&conn, "imulazion"), ["ig_1"]);
+    let patch = UserContentPatch {
+        note: Some(Some("#moodboardceramica".into())),
+        tags: None,
+    };
+    posts::update_user_content(&conn, ids[2], &patch, NOW).unwrap();
+    assert_eq!(search(&conn, "boardcera"), ["ig_3"]);
+    posts::purge(&conn, &ids[2..], NOW).unwrap();
+    assert!(search(&conn, "boardcera").is_empty());
+    assert_eq!(index::verify(&conn).unwrap(), Vec::<i64>::new());
 }
 
 #[test]
