@@ -12,12 +12,14 @@ anyhow.workspace = true
 axum.workspace = true
 base64.workspace = true
 clap = { workspace = true, features = ["env"] }
+futures-util.workspace = true
 getrandom.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 # `backup`: the SQLite online backup API behind `admin snapshot`.
 rusqlite = { workspace = true, features = ["backup"] }
 serde.workspace = true
+serde_html_form.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 shelfy-core = { path = "../core" }
@@ -42,7 +44,8 @@ utoipa-axum.workspace = true
 http-body-util.workspace = true
 jsonschema.workspace = true
 tempfile.workspace = true
-tokio = { workspace = true, features = ["io-util"] }
+# `test-util`: paused time for the SSE heartbeat test.
+tokio = { workspace = true, features = ["io-util", "test-util"] }
 tower = { workspace = true, features = ["util"] }
 
 [lints]
