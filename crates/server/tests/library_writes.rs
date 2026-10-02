@@ -28,6 +28,8 @@ use shelfy_server::error::ErrorCode;
 use shelfy_server::events::model::ChangeReason;
 use shelfy_server::ids::{new_ulid, now_ms};
 use shelfy_server::library::{self, Change};
+use shelfy_server::limits::RouteLimits;
+use shelfy_server::routes::post_edit::{MAX_LABEL_BYTES, MAX_LIST_ITEMS, MAX_TEXT_BYTES};
 use shelfy_server::tokens::{SecretToken, hash_token};
 use support::auth::{owner, sign_in, spa, with_session};
 use support::library::{
@@ -1513,4 +1515,65 @@ async fn a_write_whose_request_was_dropped_is_still_announced() {
     assert_eq!(changed_keys(&event), Some(vec!["x_2001".to_owned()]));
     let shown = ok(&app, get("/api/v1/posts/x_2001")).await;
     assert_eq!(shown["userNote"], "applied", "the write committed");
+}
+
+/// F6 (P1-03 review, L6): the caps of `PATCH /posts/{key}` agree with the
+/// 64 KiB body limit in every script. In characters, a note at its cap in
+/// 4-byte characters was past the body limit (413). In bytes, the three
+/// long texts and the labels at their caps fit in one body, in 4-byte
+/// characters too, and one byte over a cap is a 422 that names the field.
+/// Only a body past the limit is a 413.
+#[tokio::test]
+async fn the_edit_caps_fit_in_the_body_limit() {
+    let (t, _) = two_libraries().await;
+    let app = t.app_as(ALICE);
+    let uri = "/api/v1/posts/x_2001";
+    // `bytes` bytes of 4-byte characters, and one byte more.
+    let wide = |bytes: usize| "😀".repeat(bytes / 4);
+    let over = |bytes: usize| format!("{}a", wide(bytes));
+
+    let at_caps = json!({
+        "userNote": wide(MAX_TEXT_BYTES),
+        "aiDescription": wide(MAX_TEXT_BYTES),
+        "aiSaveReason": wide(MAX_TEXT_BYTES),
+        "aiCategory": wide(MAX_LABEL_BYTES),
+        "aiContentType": wide(MAX_LABEL_BYTES),
+        "aiLanguage": wide(MAX_LABEL_BYTES),
+    });
+    assert!(at_caps.to_string().len() <= RouteLimits::STANDARD.body_bytes);
+    let saved = ok(&app, patch(uri, &at_caps)).await;
+    for field in ["userNote", "aiDescription", "aiSaveReason", "aiLanguage"] {
+        assert_eq!(saved[field], at_caps[field], "{field}");
+    }
+    let tags = vec![wide(MAX_LABEL_BYTES); MAX_LIST_ITEMS];
+    ok(&app, patch(uri, &json!({ "aiTags": tags }))).await;
+
+    for field in ["userNote", "aiDescription", "aiSaveReason"] {
+        invalid(
+            &app,
+            patch(uri, &json!({ field: over(MAX_TEXT_BYTES) })),
+            field,
+        )
+        .await;
+    }
+    for field in ["aiCategory", "aiContentType", "aiLanguage"] {
+        invalid(
+            &app,
+            patch(uri, &json!({ field: over(MAX_LABEL_BYTES) })),
+            field,
+        )
+        .await;
+    }
+    for field in ["userTags", "aiTags", "aiEntities", "aiKeywords"] {
+        let list = json!({ field: [over(MAX_LABEL_BYTES)] });
+        invalid(&app, patch(uri, &list), field).await;
+    }
+
+    let huge = json!({ "userNote": "a".repeat(RouteLimits::STANDARD.body_bytes) });
+    let refused = problem(
+        send(&app, patch(uri, &huge)).await,
+        StatusCode::PAYLOAD_TOO_LARGE,
+    )
+    .await;
+    assert_eq!(refused.code, ErrorCode::PayloadTooLarge);
 }

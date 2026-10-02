@@ -5126,59 +5126,59 @@
       },
       "PostPatch": {
         "type": "object",
-        "description": "Changes to a post. Every field is optional: absent fields are left\nalone, and `null` clears one.",
+        "description": "Changes to a post. Every field is optional: absent fields are left\nalone, and `null` clears one. Caps count bytes of UTF-8; the whole body\nis at most 64 KiB.",
         "properties": {
           "aiCategory": {
             "type": ["string", "null"],
-            "description": "Manual AI edit: the category, at most 200 characters."
+            "description": "Manual AI edit: the category, at most 200 bytes of UTF-8."
           },
           "aiContentType": {
             "type": ["string", "null"],
-            "description": "Manual AI edit: the content type, at most 200 characters."
+            "description": "Manual AI edit: the content type, at most 200 bytes of UTF-8."
           },
           "aiDescription": {
             "type": ["string", "null"],
-            "description": "Manual AI edit: the description, at most 20,000 characters."
+            "description": "Manual AI edit: the description, at most 20,000 bytes of UTF-8."
           },
           "aiEntities": {
             "type": ["array", "null"],
             "items": {
               "type": "string"
             },
-            "description": "Manual AI edit: the entities (at most 100, of at most 200 characters)."
+            "description": "Manual AI edit: the entities (at most 100, of at most 200 bytes each)."
           },
           "aiKeywords": {
             "type": ["array", "null"],
             "items": {
               "type": "string"
             },
-            "description": "Manual AI edit: the keywords (at most 100, of at most 200 characters)."
+            "description": "Manual AI edit: the keywords (at most 100, of at most 200 bytes each)."
           },
           "aiLanguage": {
             "type": ["string", "null"],
-            "description": "Manual AI edit: the language, at most 200 characters."
+            "description": "Manual AI edit: the language, at most 200 bytes of UTF-8."
           },
           "aiSaveReason": {
             "type": ["string", "null"],
-            "description": "Manual AI edit: why the post was saved, at most 20,000 characters."
+            "description": "Manual AI edit: why the post was saved, at most 20,000 bytes of UTF-8."
           },
           "aiTags": {
             "type": ["array", "null"],
             "items": {
               "type": "string"
             },
-            "description": "Manual AI edit: the AI tags, replacing the old ones (at most 100, of\nat most 200 characters)."
+            "description": "Manual AI edit: the AI tags, replacing the old ones (at most 100, of\nat most 200 bytes each)."
           },
           "userNote": {
             "type": ["string", "null"],
-            "description": "The user's note, at most 20,000 characters, stored as given."
+            "description": "The user's note, at most 20,000 bytes of UTF-8, stored as given."
           },
           "userTags": {
             "type": ["array", "null"],
             "items": {
               "type": "string"
             },
-            "description": "The user's tags, replacing the old ones: at most 100, of at most 200\ncharacters. `null` clears them, like `[]`."
+            "description": "The user's tags, replacing the old ones: at most 100, of at most 200\nbytes each. `null` clears them, like `[]`."
           }
         },
         "additionalProperties": false

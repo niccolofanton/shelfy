@@ -21,6 +21,13 @@
 //! (plan §1.2 #3). The search index is rewritten in the same transaction.
 //! The answer is the post after the edit; an edit that changed something
 //! announces `posts.changed` (`edit`, the key) and `stats.changed`.
+//!
+//! **Caps** count bytes of UTF-8, not characters, so that they agree with
+//! the 64 KiB body limit of the route group ([`RouteLimits::STANDARD`]) in
+//! every script: the three long texts at their caps fit in one body, and a
+//! field over its cap is a 422 that names it, where a cap in characters let
+//! a note in 4-byte characters reach the body limit first (413). A body over
+//! the limit is still a 413 `payload_too_large`.
 
 use axum::extract::State;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -36,22 +43,30 @@ use crate::events::model::ChangeReason;
 use crate::extract::{Json, Path};
 use crate::ids::now_ms;
 use crate::library::{self, Change};
+use crate::limits::RouteLimits;
 use crate::state::AppState;
 
-/// Longest note, description or save reason, in characters (like a caption).
-pub const MAX_TEXT_CHARS: usize = 20_000;
+/// Longest note, description or save reason, in bytes of UTF-8: three of
+/// them fit in the 64 KiB body limit (module docs).
+pub const MAX_TEXT_BYTES: usize = 20_000;
 /// Longest tag, entity, keyword, category, content type or language, in
-/// characters.
-pub const MAX_LABEL_CHARS: usize = 200;
+/// bytes of UTF-8.
+pub const MAX_LABEL_BYTES: usize = 200;
 /// Most items of a tag, entity or keyword list.
 pub const MAX_LIST_ITEMS: usize = 100;
 
+// The three long texts and the three labels at their caps fit in one body,
+// with room for the JSON around them.
+const _: () =
+    assert!(3 * MAX_TEXT_BYTES + 3 * MAX_LABEL_BYTES + 1_024 <= RouteLimits::STANDARD.body_bytes);
+
 /// Changes to a post. Every field is optional: absent fields are left
-/// alone, and `null` clears one.
+/// alone, and `null` clears one. Caps count bytes of UTF-8; the whole body
+/// is at most 64 KiB.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct PostPatch {
-    /// The user's note, at most 20,000 characters, stored as given.
+    /// The user's note, at most 20,000 bytes of UTF-8, stored as given.
     #[serde(
         default,
         deserialize_with = "present",
@@ -60,7 +75,7 @@ pub struct PostPatch {
     #[schema(value_type = Option<String>)]
     pub user_note: Option<Option<String>>,
     /// The user's tags, replacing the old ones: at most 100, of at most 200
-    /// characters. `null` clears them, like `[]`.
+    /// bytes each. `null` clears them, like `[]`.
     #[serde(
         default,
         deserialize_with = "present",
@@ -68,7 +83,7 @@ pub struct PostPatch {
     )]
     #[schema(value_type = Option<Vec<String>>)]
     pub user_tags: Option<Option<Vec<String>>>,
-    /// Manual AI edit: the description, at most 20,000 characters.
+    /// Manual AI edit: the description, at most 20,000 bytes of UTF-8.
     #[serde(
         default,
         deserialize_with = "present",
@@ -77,7 +92,7 @@ pub struct PostPatch {
     #[schema(value_type = Option<String>)]
     pub ai_description: Option<Option<String>>,
     /// Manual AI edit: the AI tags, replacing the old ones (at most 100, of
-    /// at most 200 characters).
+    /// at most 200 bytes each).
     #[serde(
         default,
         deserialize_with = "present",
@@ -85,7 +100,7 @@ pub struct PostPatch {
     )]
     #[schema(value_type = Option<Vec<String>>)]
     pub ai_tags: Option<Option<Vec<String>>>,
-    /// Manual AI edit: why the post was saved, at most 20,000 characters.
+    /// Manual AI edit: why the post was saved, at most 20,000 bytes of UTF-8.
     #[serde(
         default,
         deserialize_with = "present",
@@ -93,7 +108,7 @@ pub struct PostPatch {
     )]
     #[schema(value_type = Option<String>)]
     pub ai_save_reason: Option<Option<String>>,
-    /// Manual AI edit: the category, at most 200 characters.
+    /// Manual AI edit: the category, at most 200 bytes of UTF-8.
     #[serde(
         default,
         deserialize_with = "present",
@@ -101,7 +116,7 @@ pub struct PostPatch {
     )]
     #[schema(value_type = Option<String>)]
     pub ai_category: Option<Option<String>>,
-    /// Manual AI edit: the content type, at most 200 characters.
+    /// Manual AI edit: the content type, at most 200 bytes of UTF-8.
     #[serde(
         default,
         deserialize_with = "present",
@@ -109,7 +124,7 @@ pub struct PostPatch {
     )]
     #[schema(value_type = Option<String>)]
     pub ai_content_type: Option<Option<String>>,
-    /// Manual AI edit: the language, at most 200 characters.
+    /// Manual AI edit: the language, at most 200 bytes of UTF-8.
     #[serde(
         default,
         deserialize_with = "present",
@@ -117,7 +132,7 @@ pub struct PostPatch {
     )]
     #[schema(value_type = Option<String>)]
     pub ai_language: Option<Option<String>>,
-    /// Manual AI edit: the entities (at most 100, of at most 200 characters).
+    /// Manual AI edit: the entities (at most 100, of at most 200 bytes each).
     #[serde(
         default,
         deserialize_with = "present",
@@ -125,7 +140,7 @@ pub struct PostPatch {
     )]
     #[schema(value_type = Option<Vec<String>>)]
     pub ai_entities: Option<Option<Vec<String>>>,
-    /// Manual AI edit: the keywords (at most 100, of at most 200 characters).
+    /// Manual AI edit: the keywords (at most 100, of at most 200 bytes each).
     #[serde(
         default,
         deserialize_with = "present",
@@ -143,23 +158,24 @@ fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
 }
 
 impl PostPatch {
-    /// Refuses over-long text and lists (422 `validation_failed`).
+    /// Refuses over-long text and lists (422 `validation_failed`). Lengths
+    /// are in bytes of UTF-8 (module docs).
     fn validate(&self) -> Result<(), ApiError> {
         let texts = [
-            ("userNote", &self.user_note, MAX_TEXT_CHARS),
-            ("aiDescription", &self.ai_description, MAX_TEXT_CHARS),
-            ("aiSaveReason", &self.ai_save_reason, MAX_TEXT_CHARS),
-            ("aiCategory", &self.ai_category, MAX_LABEL_CHARS),
-            ("aiContentType", &self.ai_content_type, MAX_LABEL_CHARS),
-            ("aiLanguage", &self.ai_language, MAX_LABEL_CHARS),
+            ("userNote", &self.user_note, MAX_TEXT_BYTES),
+            ("aiDescription", &self.ai_description, MAX_TEXT_BYTES),
+            ("aiSaveReason", &self.ai_save_reason, MAX_TEXT_BYTES),
+            ("aiCategory", &self.ai_category, MAX_LABEL_BYTES),
+            ("aiContentType", &self.ai_content_type, MAX_LABEL_BYTES),
+            ("aiLanguage", &self.ai_language, MAX_LABEL_BYTES),
         ];
         for (field, value, max) in texts {
             if let Some(Some(text)) = value
-                && text.chars().count() > max
+                && text.len() > max
             {
                 return Err(ApiError::invalid_field(
                     field,
-                    format!("longer than {max} characters"),
+                    format!("longer than {max} bytes"),
                 ));
             }
         }
@@ -179,13 +195,10 @@ impl PostPatch {
                     format!("more than {MAX_LIST_ITEMS} items"),
                 ));
             }
-            if items
-                .iter()
-                .any(|item| item.chars().count() > MAX_LABEL_CHARS)
-            {
+            if items.iter().any(|item| item.len() > MAX_LABEL_BYTES) {
                 return Err(ApiError::invalid_field(
                     field,
-                    format!("an item longer than {MAX_LABEL_CHARS} characters"),
+                    format!("an item longer than {MAX_LABEL_BYTES} bytes"),
                 ));
             }
         }
@@ -302,13 +315,16 @@ mod tests {
     fn unknown_fields_and_over_long_values_are_refused() {
         assert!(serde_json::from_value::<PostPatch>(json!({ "note": "x" })).is_err());
         assert!(serde_json::from_value::<PostPatch>(json!({ "aiStatus": "done" })).is_err());
+        // Caps count bytes: "é" is 2 bytes of UTF-8, "😀" 4.
+        let over = |unit: &str, max: usize| format!("{}a", unit.repeat(max / unit.len()));
         let cases = [
+            (json!({ "userNote": over("n", MAX_TEXT_BYTES) }), "userNote"),
             (
-                json!({ "userNote": "n".repeat(MAX_TEXT_CHARS + 1) }),
-                "userNote",
+                json!({ "aiDescription": over("😀", MAX_TEXT_BYTES) }),
+                "aiDescription",
             ),
             (
-                json!({ "aiCategory": "c".repeat(MAX_LABEL_CHARS + 1) }),
+                json!({ "aiCategory": over("é", MAX_LABEL_BYTES) }),
                 "aiCategory",
             ),
             (
@@ -316,7 +332,7 @@ mod tests {
                 "userTags",
             ),
             (
-                json!({ "aiKeywords": ["k".repeat(MAX_LABEL_CHARS + 1)] }),
+                json!({ "aiKeywords": [over("😀", MAX_LABEL_BYTES)] }),
                 "aiKeywords",
             ),
         ];
@@ -326,8 +342,10 @@ mod tests {
             assert_eq!(err.problem().errors[0].field, field);
         }
         let fine = patch(json!({
-            "userNote": "é".repeat(MAX_TEXT_CHARS),
-            "userTags": vec!["t"; MAX_LIST_ITEMS],
+            "userNote": "é".repeat(MAX_TEXT_BYTES / 2),
+            "aiDescription": "😀".repeat(MAX_TEXT_BYTES / 4),
+            "aiLanguage": "😀".repeat(MAX_LABEL_BYTES / 4),
+            "userTags": vec!["😀".repeat(MAX_LABEL_BYTES / 4); MAX_LIST_ITEMS],
         }));
         assert!(fine.validate().is_ok());
     }
