@@ -132,6 +132,27 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/client-errors': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Reports an error caught by the web app.
+     * @description The report is logged for the operator; nothing is stored. Unknown fields
+     *     are refused: a report carries no post content.
+     */
+    post: operations['reportClientError'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/collections': {
     parameters: {
       query?: never;
@@ -158,9 +179,29 @@ export interface paths {
     };
     /**
      * The realtime stream of the signed-in user.
-     * @description A `text/event-stream`: the `hello` event (data: `HelloEvent`), then a
-     *     comment line every 20 s. The stream ends when the server shuts down;
-     *     reconnect with backoff.
+     * @description A `text/event-stream`. Every frame's `data:` is one line of JSON; the
+     *     `ServerEvent` schema maps each event name to its payload:
+     *
+     *     | `event:` | `data:` |
+     *     |---|---|
+     *     | `hello` | `HelloEvent`, first on every stream |
+     *     | `resync` | `ResyncEvent`: events were lost, reload everything |
+     *     | `posts.changed` | `PostsChangedEvent` |
+     *     | `stats.changed` | `StatsChangedEvent` |
+     *     | `job.updated` | `JobUpdatedEvent` |
+     *     | `notification` | `Notification` |
+     *
+     *     Published events carry an `id:`. To resume after a disconnection, send the
+     *     last one received as `Last-Event-ID` (`EventSource` does it when it
+     *     reconnects by itself) or as `lastEventId`: the missed events follow
+     *     `hello`, or `resync` when they are no longer kept (256 events, 5 minutes).
+     *     A fresh stream's `hello` carries the current position as its `id:`; a
+     *     resuming stream's `hello` has none. Keep the last non-empty
+     *     `lastEventId` seen.
+     *
+     *     A comment line comes after 20 s without a frame. The stream ends when the
+     *     server shuts down, and within 20 s of the end of its session (sign-out,
+     *     expiry); reconnect with backoff, and sign in again on 401.
      */
     get: operations['streamEvents'];
     put?: never;
@@ -185,6 +226,48 @@ export interface paths {
     get: operations['getMe'];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/notifications': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * The user's notifications, newest first, with the unread count.
+     * @description The response is conditional: send the `ETag` back in `If-None-Match` and
+     *     an unchanged page answers 304.
+     */
+    get: operations['listNotifications'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/notifications/read': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Marks notifications read.
+     * @description Give `ids`, or `upTo` to mark everything up to the newest notification
+     *     shown. Repeating a call changes nothing.
+     */
+    post: operations['markNotificationsRead'];
     delete?: never;
     options?: never;
     head?: never;
@@ -284,6 +367,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/version': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The server's versions. */
+    get: operations['getVersion'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/health': {
     parameters: {
       query?: never;
@@ -325,10 +425,49 @@ export interface components {
       passkeys: boolean;
     };
     /**
+     * @description What changed posts (plan §2.10).
+     * @enum {string}
+     */
+    ChangeReason: 'ingest' | 'archive' | 'ai' | 'edit' | 'delete' | 'capture' | 'import';
+    /**
      * @description Result of one check.
      * @enum {string}
      */
     CheckStatus: 'ok' | 'fail';
+    /** @description An error caught by an error boundary of the web app. */
+    ClientErrorReport: {
+      /**
+       * @description The web app's build version: at most 64 characters of letters,
+       *     digits, `.`, `+`, `-`, `_`.
+       */
+      clientVersion?: string;
+      /** @description React's component stack; the first 8,000 characters are kept. */
+      componentStack?: string;
+      /**
+       * @description The error's message; the first 1,000 characters are kept. Never put
+       *     post content in it.
+       */
+      message: string;
+      /** @description The error's name (`TypeError`); the first 100 characters are kept. */
+      name?: string;
+      /**
+       * Format: int64
+       * @description When it happened, by the client's clock (unix ms).
+       */
+      occurredAt?: number;
+      /**
+       * @description The route pattern of the view (`/p/:key`), never the URL: at most 200
+       *     characters, starting with `/`, without `?` or `#`.
+       */
+      route?: string;
+      /** @description The JavaScript stack; the first 8,000 characters are kept. */
+      stack?: string;
+      /**
+       * @description The view whose boundary caught the error (`gallery`, `postModal`,
+       *     `settings`): 1–64 characters of letters, digits, `.`, `_`, `-`, `:`.
+       */
+      view: string;
+    };
     /**
      * @description A collection ("source" in the UI): a manual one, or a saved folder or board
      *     linked to a platform.
@@ -397,6 +536,13 @@ export interface components {
       | 'internal'
       | 'unavailable'
       | 'timeout';
+    /**
+     * @description The name of a published event; the `topics` filter selects by it.
+     *
+     *     `hello` and `resync` are not topics: every stream gets them.
+     * @enum {string}
+     */
+    EventTopic: 'posts.changed' | 'stats.changed' | 'job.updated' | 'notification';
     /** @description One field that failed validation. */
     FieldError: {
       /** @description The field, as named in the request (camelCase). */
@@ -418,7 +564,7 @@ export interface components {
       /** @description The control database answers a query within 2 s. */
       controlDb: components['schemas']['CheckStatus'];
     };
-    /** @description The `data` of the `hello` event, the first event of every stream. */
+    /** @description `hello`, the first event of every stream. */
     HelloEvent: {
       /**
        * Format: int64
@@ -426,13 +572,70 @@ export interface components {
        *     longer is dead: reconnect.
        */
       heartbeatMs: number;
+      /**
+       * @description The id of the newest event of your stream when it opened: resume from
+       *     it (`Last-Event-ID` or `lastEventId`) to miss nothing after this point.
+       */
+      lastEventId: string;
       /** @description Version of the server build; a change means a new deploy. */
       version: string;
+    };
+    /**
+     * @description State of a job (plan §2.6 `jobs.state`).
+     * @enum {string}
+     */
+    JobState: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+    /** @description `job.updated`: the latest state of a job, at most every 250 ms per job. */
+    JobUpdatedEvent: {
+      /** @description Why the job failed (`failed`), or its last error before a retry. */
+      errorCode: string | null;
+      /**
+       * Format: int64
+       * @description Job id.
+       */
+      id: number;
+      /** @description Job kind (`archive.drain`, `capture.site`, …). */
+      kind: string;
+      /** @description The post the job works on, if one. */
+      postKey: string | null;
+      /**
+       * Format: double
+       * @description Progress from 0 to 1, when known.
+       */
+      progress: number | null;
+      /** @description Current stage, a code, when the job has stages. */
+      stage: string | null;
+      /** @description State. */
+      state: components['schemas']['JobState'];
     };
     /** @description Body of `POST /api/v1/auth/magic-links`. */
     MagicLinkRequest: {
       /** @description The account's email address. */
       email: string;
+    };
+    /** @description Which notifications to mark read: exactly one of `ids` and `upTo`. */
+    MarkReadRequest: {
+      /** @description These notifications, at most 200. Ids that do not exist are skipped. */
+      ids?: number[];
+      /**
+       * Format: int64
+       * @description Every notification up to this id, included: "mark all read" with the
+       *     newest id shown, which leaves alone any that arrived since.
+       */
+      upTo?: number;
+    };
+    /** @description The outcome of `POST /notifications/read`. */
+    MarkReadResult: {
+      /**
+       * Format: int64
+       * @description Unread notifications left.
+       */
+      unreadCount: number;
+      /**
+       * Format: int64
+       * @description Notifications that went from unread to read.
+       */
+      updated: number;
     };
     /**
      * @description How several values of a list filter combine.
@@ -492,6 +695,50 @@ export interface components {
      * @enum {string}
      */
     MediaType: 'image' | 'images' | 'carousel' | 'video' | 'text' | 'website' | 'file';
+    /**
+     * @description A notification: an item of `GET /notifications` and the payload of the
+     *     `notification` event. It carries codes, not text: the client writes the
+     *     message from `kind`, `code` and `params`.
+     */
+    Notification: {
+      /** @description What happened (`job.failed`, …), stable like an error code. */
+      code: string;
+      /**
+       * Format: int64
+       * @description When it was created.
+       */
+      createdAt: number;
+      /**
+       * Format: int64
+       * @description Id; newer notifications have larger ids.
+       */
+      id: number;
+      /** @description Area (`job`, `migration`, `quota`, …). */
+      kind: string;
+      /** @description Values for the message; `{}` when there are none. */
+      params: {
+        [key: string]: unknown;
+      };
+      /**
+       * Format: int64
+       * @description When it was marked read; `null` while unread.
+       */
+      readAt: number | null;
+      /** @description Where the notification leads: a post key or an app route. */
+      target: string | null;
+    };
+    /** @description One page of notifications, newest first. */
+    NotificationPage: {
+      /** @description The notifications of this page. */
+      items: components['schemas']['Notification'][];
+      /** @description Pass it as `cursor` to get the next page; `null` on the last page. */
+      nextCursor: string | null;
+      /**
+       * Format: int64
+       * @description Unread notifications, over all pages.
+       */
+      unreadCount: number;
+    };
     /**
      * @description Source platform of a post.
      * @enum {string}
@@ -736,6 +983,16 @@ export interface components {
       /** @description `general` or `specific`, for AI tags with a tier. */
       tier: string | null;
     };
+    /** @description `posts.changed`: reload the views that show these posts. */
+    PostsChangedEvent: {
+      /**
+       * @description The posts that changed, at most 200. `null` when more changed, or the
+       *     change was not about listed posts: reload the whole view.
+       */
+      keys: string[] | null;
+      /** @description What changed them. */
+      reason: components['schemas']['ChangeReason'];
+    };
     /** @description An error body: RFC 9457 problem details plus the stable `code`. */
     Problem: {
       /** @description What went wrong. Clients map it to their own message. */
@@ -759,6 +1016,19 @@ export interface components {
       /** @description The link's token: the last path segment of its URL. */
       token: string;
     };
+    /**
+     * @description `resync`: events were lost. Reload every view (posts, stats, jobs,
+     *     notifications), then carry on with the stream.
+     */
+    ResyncEvent: {
+      /** @description Why; the reaction is the same for every reason. */
+      reason: components['schemas']['ResyncReason'];
+    };
+    /**
+     * @description Why a stream asks the client to reload everything.
+     * @enum {string}
+     */
+    ResyncReason: 'expired' | 'unknown' | 'lagged';
     /** @description One page of `GET /api/v1/search`. */
     SearchPage: {
       /** @description The results of this page, best match first. */
@@ -777,6 +1047,48 @@ export interface components {
      * @enum {string}
      */
     SearchScope: 'all' | 'sites' | 'social';
+    /**
+     * @description Every event of `GET /api/v1/events`: `event` is the SSE event name and
+     *     `data` the JSON of its `data:` line. A type for clients; no response sends
+     *     this object as such.
+     */
+    ServerEvent:
+      | {
+          /** @description First event of every stream. */
+          data: components['schemas']['HelloEvent'];
+          /** @enum {string} */
+          event: 'hello';
+        }
+      | {
+          /** @description Events were lost: reload everything. */
+          data: components['schemas']['ResyncEvent'];
+          /** @enum {string} */
+          event: 'resync';
+        }
+      | {
+          /** @description Posts changed. */
+          data: components['schemas']['PostsChangedEvent'];
+          /** @enum {string} */
+          event: 'posts.changed';
+        }
+      | {
+          /** @description The counters changed. */
+          data: components['schemas']['StatsChangedEvent'];
+          /** @enum {string} */
+          event: 'stats.changed';
+        }
+      | {
+          /** @description A job moved on. */
+          data: components['schemas']['JobUpdatedEvent'];
+          /** @enum {string} */
+          event: 'job.updated';
+        }
+      | {
+          /** @description A new notification. */
+          data: components['schemas']['Notification'];
+          /** @enum {string} */
+          event: 'notification';
+        };
     /**
      * @description Kind of slide (`post_media.kind`).
      * @enum {string}
@@ -808,6 +1120,8 @@ export interface components {
        */
       trashed: number;
     };
+    /** @description `stats.changed`: reload `GET /stats`. No payload: `{}`. */
+    StatsChangedEvent: Record<string, never>;
     /** @description Posts with a stored object of each kind. */
     StoredByKind: {
       /**
@@ -836,6 +1150,13 @@ export interface components {
      * @enum {string}
      */
     UserRole: 'owner' | 'member';
+    /** @description Versions of the server. */
+    VersionInfo: {
+      /** @description Major version of the API: the `1` of `/api/v1`. */
+      apiVersion: string;
+      /** @description Version of the server build. */
+      version: string;
+    };
     /** @description The current capture of a website, without its page texts. */
     WebCapture: {
       /** @description Awards, as captured. */
@@ -1024,6 +1345,29 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  reportClientError: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ClientErrorReport'];
+      };
+    };
+    responses: {
+      /** @description The report was logged. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   listCollections: {
     parameters: {
       query?: never;
@@ -1066,14 +1410,28 @@ export interface operations {
   };
   streamEvents: {
     parameters: {
-      query?: never;
-      header?: never;
+      query?: {
+        /** @description Only these events. Repeatable. Default: every topic. */
+        topics?: components['schemas']['EventTopic'][];
+        /**
+         * @description Resume after this event id, like `Last-Event-ID`; for clients that
+         *     reconnect with a new `EventSource`. The header wins when both are sent.
+         */
+        lastEventId?: string;
+      };
+      header?: {
+        /**
+         * @description The id of the last event received; `EventSource` sends it when it
+         *     reconnects by itself.
+         */
+        'Last-Event-ID'?: string;
+      };
       path?: never;
       cookie?: never;
     };
     requestBody?: never;
     responses: {
-      /** @description Server-sent events: `hello` first, then a heartbeat comment every 20 s. */
+      /** @description Server-sent events: `hello`, the missed events or `resync` when resuming, then live events; a heartbeat comment after 20 s without a frame. */
       200: {
         headers: {
           /** @description `no-store`. */
@@ -1105,6 +1463,76 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['Me'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  listNotifications: {
+    parameters: {
+      query?: {
+        /** @description Page size, 1–200 (larger values are clamped). Default 60. */
+        limit?: number;
+        /** @description `nextCursor` of the previous page. */
+        cursor?: string;
+      };
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description One page of notifications. */
+      200: {
+        headers: {
+          /** @description `private, no-cache`. */
+          'Cache-Control'?: string;
+          /** @description Weak ETag of this page of this library state. */
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['NotificationPage'];
+        };
+      };
+      /** @description The page is unchanged since the ETag in `If-None-Match`; no body. */
+      304: {
+        headers: {
+          /** @description The same ETag. */
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  markNotificationsRead: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['MarkReadRequest'];
+      };
+    };
+    responses: {
+      /** @description How many changed, and what is left unread. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['MarkReadResult'];
         };
       };
       default: components['responses']['Problem'];
@@ -1376,6 +1804,29 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getVersion: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The versions. */
+      200: {
+        headers: {
+          /** @description `no-store`. */
+          'Cache-Control'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['VersionInfo'];
+        };
       };
       default: components['responses']['Problem'];
     };
