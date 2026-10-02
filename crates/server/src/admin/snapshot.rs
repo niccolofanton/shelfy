@@ -20,10 +20,14 @@
 //! library is copied again on the next run.
 //!
 //! A library locked for maintenance (`admin user lock`) is skipped and keeps
-//! its previous copy. A run over every library (no `--user`) also removes the
-//! copies of users whose library is gone (deleted accounts), so a restore
-//! never brings them back. One snapshot at a time writes to a directory: the
-//! run holds an exclusive lock on `<out>/.lock`.
+//! its previous copy; the lock is checked again once the source is open, so
+//! a lock taken during the run is honored too. A run over every library (no
+//! `--user`) also removes the copies of deleted accounts (no longer in the
+//! control database, or being deleted), so a restore never brings them back.
+//! An account whose library is missing from the data directory keeps its
+//! last copy, and the run fails: losing a library must not also lose its
+//! backup. One snapshot at a time writes to a directory: the run holds an
+//! exclusive lock on `<out>/.lock`.
 //!
 //! The restore side is in [`super::verify`], [`super::install`] and
 //! [`super::user`].
@@ -40,9 +44,10 @@ use clap::Args;
 use rusqlite::backup::{Backup, StepResult};
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
-use shelfy_core::db::{is_library_locked, is_valid_user_id, library_ids};
+use shelfy_core::db::{is_library_file_locked, is_library_locked, is_valid_user_id, library_ids};
 use shelfy_core::schema::Kind;
 
+use super::verify::accounts;
 use crate::config::{CONTROL_DB_FILE, DataDir, create_private_dir};
 
 /// How long a source may stay locked before the snapshot gives up.
@@ -122,9 +127,10 @@ pub struct SnapshotReport {
     pub dir: PathBuf,
     /// The control database first, then the libraries by user id.
     pub files: Vec<SnapshotFile>,
-    /// Copies removed because their library is gone.
+    /// Copies removed because their account is gone.
     pub removed: Vec<String>,
-    /// Libraries that could not be copied, with the reason; the others were.
+    /// Libraries that could not be copied or are missing, with the reason;
+    /// the others were copied.
     pub failed: Vec<(String, String)>,
 }
 
@@ -173,7 +179,7 @@ pub fn run(data: &DataDir, args: &SnapshotArgs, out: &mut dyn Write) -> anyhow::
             eprintln!("cannot snapshot {name}: {reason}");
         }
         anyhow::bail!(
-            "{} of the libraries could not be copied",
+            "{} libraries could not be copied or are missing",
             report.failed.len()
         );
     }
@@ -257,13 +263,40 @@ pub fn snapshot(
     }
 
     if all {
-        for (id, path) in copies_in(&users_out)? {
-            if users.binary_search(&id).is_ok() || is_library_locked(&data.users_dir(), &id)? {
+        // The accounts of the control database just copied: a library gone
+        // from the data directory is a deleted account only if the account
+        // is gone too (or being deleted); otherwise it is data to restore.
+        let accounts = accounts(&out.join(CONTROL_DB_FILE))?;
+        let needs_library = |id: &str| accounts.iter().any(|a| a.id == id && a.needs_library());
+        let copies = copies_in(&users_out)?;
+        for (id, path) in &copies {
+            if users.binary_search(id).is_ok() || is_library_locked(&data.users_dir(), id)? {
                 continue;
             }
-            fs::remove_file(&path).with_context(|| format!("cannot remove {}", path.display()))?;
-            state.libraries.remove(&id);
+            if needs_library(id) {
+                report.failed.push((
+                    format!("users/{id}.sqlite"),
+                    "the user's library is missing from the data directory; its last copy is \
+                     kept"
+                        .to_owned(),
+                ));
+                continue;
+            }
+            fs::remove_file(path).with_context(|| format!("cannot remove {}", path.display()))?;
+            state.libraries.remove(id);
             report.removed.push(format!("users/{id}.sqlite"));
+        }
+        for account in accounts.iter().filter(|a| a.needs_library()) {
+            let id = account.id.as_str();
+            if users.binary_search(&account.id).is_err()
+                && !copies.iter().any(|(copy, _)| copy == id)
+                && !is_library_locked(&data.users_dir(), id)?
+            {
+                report.failed.push((
+                    format!("users/{id}.sqlite"),
+                    "the user has no library in the data directory and no copy".to_owned(),
+                ));
+            }
         }
         state
             .libraries
@@ -298,7 +331,13 @@ fn snapshot_library(
     {
         return Ok(CopyStatus::Unchanged);
     }
-    copy_database(&source, target, Kind::Library)?;
+    let src = open_source(&source, Kind::Library)?;
+    // Again now that the source holds SQLite's shared lock, which a restore
+    // waits for: a lock taken since the check above wins.
+    if is_library_file_locked(&source)? {
+        return Ok(CopyStatus::Locked);
+    }
+    copy_from(&src, &source, target)?;
     state.libraries.insert(id.to_owned(), observed);
     Ok(CopyStatus::Copied)
 }
@@ -451,6 +490,13 @@ pub(crate) fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 /// The source is missing, foreign or stays locked; the copy fails its quick
 /// check; or an I/O error.
 pub(crate) fn copy_database(source: &Path, target: &Path, kind: Kind) -> anyhow::Result<u64> {
+    let src = open_source(source, kind)?;
+    copy_from(&src, source, target)
+}
+
+/// Opens the `kind` database at `source` to copy it, and reads its header,
+/// which takes SQLite's shared lock in WAL mode.
+fn open_source(source: &Path, kind: Kind) -> anyhow::Result<Connection> {
     let context = || format!("cannot copy {}", source.display());
     // Read-write without CREATE: never creates a file, and can open the WAL
     // index even when the server is not running. Nothing is written.
@@ -471,16 +517,43 @@ pub(crate) fn copy_database(source: &Path, target: &Path, kind: Kind) -> anyhow:
             kind.name()
         );
     }
+    Ok(src)
+}
 
+/// Copies the database open on `src` (at `source`, for messages) into a new
+/// file at `target` with the online backup API: one consistent snapshot,
+/// switched to a rollback journal so it is one self-contained file, checked
+/// with `PRAGMA quick_check`, fsynced and renamed into place. Returns the
+/// copy's size.
+///
+/// # Errors
+///
+/// The source stays locked, the copy fails its quick check, or an I/O
+/// error.
+pub(crate) fn copy_from(src: &Connection, source: &Path, target: &Path) -> anyhow::Result<u64> {
     let partial = partial_path(target);
     remove_if_exists(&partial)?;
-    let mut dst = Connection::open(&partial)
+    let copied = copy_through(src, source, &partial, target);
+    if copied.is_err() {
+        let _ = remove_if_exists(&partial);
+    }
+    copied
+}
+
+/// [`copy_from`] by way of `partial`.
+fn copy_through(
+    src: &Connection,
+    source: &Path,
+    partial: &Path,
+    target: &Path,
+) -> anyhow::Result<u64> {
+    let context = || format!("cannot copy {}", source.display());
+    let mut dst = Connection::open(partial)
         .with_context(|| format!("cannot create {}", partial.display()))?;
     {
-        let backup = Backup::new(&src, &mut dst).with_context(context)?;
+        let backup = Backup::new(src, &mut dst).with_context(context)?;
         copy_all_pages(&backup).with_context(context)?;
     }
-    drop(src);
     // The copy inherits the source's WAL flag; a rollback journal makes it
     // one self-contained file.
     let mode: String = dst
@@ -500,10 +573,10 @@ pub(crate) fn copy_database(source: &Path, target: &Path, kind: Kind) -> anyhow:
     }
     dst.close().map_err(|(_, err)| err).with_context(context)?;
 
-    File::open(&partial)
+    File::open(partial)
         .and_then(|f| f.sync_all())
         .with_context(|| format!("cannot sync {}", partial.display()))?;
-    fs::rename(&partial, target)
+    fs::rename(partial, target)
         .with_context(|| format!("cannot move the copy to {}", target.display()))?;
     if let Some(dir) = target.parent() {
         sync_dir(dir)?;
@@ -512,8 +585,9 @@ pub(crate) fn copy_database(source: &Path, target: &Path, kind: Kind) -> anyhow:
 }
 
 /// Copies every page in one step, so the copy is one consistent snapshot of
-/// the source; retries while the source is locked.
-fn copy_all_pages(backup: &Backup<'_, '_>) -> anyhow::Result<()> {
+/// the source; retries while the source (or, when copying into a live
+/// database, the target) is locked.
+pub(crate) fn copy_all_pages(backup: &Backup<'_, '_>) -> anyhow::Result<()> {
     for _ in 0..BUSY_RETRIES {
         match backup.step(-1)? {
             StepResult::Done => return Ok(()),

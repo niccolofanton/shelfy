@@ -9,7 +9,8 @@
 //! 3. `admin user restore-db <id> <file>`: checks the file (integrity,
 //!    foreign keys, schema), waits until no process holds the library open,
 //!    keeps the current one as `users/<id>/library.pre-restore-<time>.sqlite`
-//!    and swaps the restored copy in atomically ([`install_file`]).
+//!    and swaps the restored copy in atomically ([`install_file`]). A handle
+//!    the server still holds cannot reopen the library while it is locked.
 //! 4. `admin user unlock <id>`: the next request opens the restored library.
 //!
 //! Objects the restored library references but the store lost are
@@ -130,6 +131,7 @@ pub fn run(data: &DataDir, args: &UserArgs, out: &mut dyn Write) -> anyhow::Resu
                 &args.file,
                 Duration::from_secs(args.wait_secs),
             )?;
+            // The swap is done: say so before anything else can fail.
             writeln!(
                 out,
                 "restored user {}'s library from {} ({} bytes)",
@@ -144,6 +146,10 @@ pub fn run(data: &DataDir, args: &UserArgs, out: &mut dyn Write) -> anyhow::Resu
                 out,
                 "unlock the user when done: shelfy-server admin user unlock {}",
                 args.user
+            )?;
+            out.flush()?;
+            record_restore(data, &args.user, &installed).context(
+                "the library is restored (see above), but its audit row could not be written",
             )?;
         }
     }
@@ -187,7 +193,9 @@ pub fn unlock(data: &DataDir, user_id: &str) -> anyhow::Result<bool> {
 }
 
 /// Replaces the library of the locked user `user_id` with the copy at
-/// `file`, waiting up to `wait` for the server to release it.
+/// `file`, waiting up to `wait` for the server to release it. The caller
+/// then records it in the audit log ([`record_restore`]), after reporting
+/// the swap: a failed audit write must not hide a restore that happened.
 ///
 /// # Errors
 ///
@@ -223,14 +231,21 @@ pub fn restore_db(
             .with_context(|| format!("cannot create {}", dir.display()))?;
     }
     let keep = kept_path(&live, &restore_stamp(now_ms()));
-    let installed = install_file(file, &live, Kind::Library, &keep, wait)?;
+    install_file(file, &live, Kind::Library, &keep, wait)
+}
+
+/// Writes the audit row of a [`restore_db`] of `user_id`'s library.
+///
+/// # Errors
+///
+/// The control database cannot be written.
+pub fn record_restore(data: &DataDir, user_id: &str, installed: &Installed) -> anyhow::Result<()> {
     let meta = json!({
         "via": "cli",
         "bytes": installed.bytes,
         "keptPrevious": installed.kept.is_some(),
     });
-    record(data, audit::LIBRARY_RESTORE, user_id, &meta)?;
-    Ok(installed)
+    record(data, audit::LIBRARY_RESTORE, user_id, &meta)
 }
 
 /// Checks the id and that the user exists.

@@ -18,9 +18,14 @@
 //!   resolves to a file of the recorded size in the live store
 //!   (`users/<id>/media/`), with its `g480` rendition when it has one.
 //!
+//! Without `--user`, the set must also be complete ([`completeness`]): the
+//! control database has accounts, and each account (but one being deleted)
+//! has its library copy, or a full restore of the set would lose it.
+//!
 //! The command exits with status 1 when anything failed. A copy without a
 //! live database (a user deleted since the snapshot, a host not restored yet)
-//! is checked on its own and noted.
+//! is checked on its own and noted, and so is a library locked for
+//! maintenance (`admin user lock`): its live database is left alone.
 
 use std::fmt::Write as _;
 use std::fs;
@@ -31,7 +36,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use clap::Args;
 use rusqlite::{Connection, OpenFlags};
-use shelfy_core::db::is_valid_user_id;
+use shelfy_core::db::{is_library_file_locked, is_valid_user_id};
 use shelfy_core::schema::{self, Kind};
 use shelfy_media::refs::REFERENCES;
 use shelfy_media::store::MediaStore;
@@ -257,12 +262,17 @@ pub fn verify(
         &data.control_db(),
         options.max_drift,
     )?;
-    let known = known_users(&control).unwrap_or_default();
-    for id in &users {
-        if !known.contains(id) {
-            control_report.notes.push(format!(
-                "users/{id}.sqlite belongs to no user of this control database"
-            ));
+    if control_report.problems.is_empty() {
+        let known = accounts(&control)?;
+        for id in &users {
+            if !known.iter().any(|account| &account.id == id) {
+                control_report.notes.push(format!(
+                    "users/{id}.sqlite belongs to no user of this control database"
+                ));
+            }
+        }
+        if options.users.is_empty() {
+            control_report.problems.extend(completeness(&known, &users));
         }
     }
     databases.push(control_report);
@@ -438,8 +448,15 @@ fn check_database(
     } else if copy_counts.is_empty() {
         None
     } else {
-        match table_counts(live) {
-            Ok(counts) => Some(counts),
+        match live_table_counts(live, kind) {
+            Ok(Some(counts)) => Some(counts),
+            Ok(None) => {
+                notes.push(format!(
+                    "the live library {} is locked for maintenance: left alone, nothing compared",
+                    live.display()
+                ));
+                None
+            }
             Err(err) => {
                 problems.push(format!(
                     "cannot count the rows of the live database {}: {err:#}",
@@ -531,7 +548,39 @@ pub fn within_drift(a: i64, b: i64, percent: u8) -> bool {
 fn table_counts(path: &Path) -> anyhow::Result<Vec<(String, i64)>> {
     let mut conn = open_read(path)?;
     let tx = conn.transaction()?;
-    let tables: Vec<String> = tx
+    let counts = counts_in(&tx)?;
+    tx.commit()?;
+    Ok(counts)
+}
+
+/// [`table_counts`] of a live `kind` database; `None` for a library locked
+/// for maintenance, which is not opened (or, when the lock comes while it
+/// opens, not read).
+fn live_table_counts(path: &Path, kind: Kind) -> anyhow::Result<Option<Vec<(String, i64)>>> {
+    let locked = || -> anyhow::Result<bool> {
+        Ok(kind == Kind::Library
+            && is_library_file_locked(path)
+                .with_context(|| format!("cannot check the lock of {}", path.display()))?)
+    };
+    if locked()? {
+        return Ok(None);
+    }
+    let mut conn = open_read(path)?;
+    let tx = conn.transaction()?;
+    // The read holds SQLite's shared lock, which a restore waits for: a lock
+    // taken since the check above is seen now.
+    tx.query_row("SELECT count(*) FROM sqlite_schema", [], |_| Ok(()))?;
+    if locked()? {
+        return Ok(None);
+    }
+    let counts = counts_in(&tx)?;
+    tx.commit()?;
+    Ok(Some(counts))
+}
+
+/// Row counts of the user tables, in `conn`'s transaction.
+fn counts_in(conn: &Connection) -> anyhow::Result<Vec<(String, i64)>> {
+    let tables: Vec<String> = conn
         .prepare(
             "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
                AND sql NOT LIKE 'CREATE VIRTUAL%'
@@ -542,14 +591,13 @@ fn table_counts(path: &Path) -> anyhow::Result<Vec<(String, i64)>> {
         .collect::<rusqlite::Result<_>>()?;
     let mut counts = Vec::with_capacity(tables.len());
     for table in tables {
-        let n: i64 = tx.query_row(
+        let n: i64 = conn.query_row(
             &format!("SELECT count(*) FROM \"{}\"", table.replace('"', "\"\"")),
             [],
             |row| row.get(0),
         )?;
         counts.push((table, n));
     }
-    tx.commit()?;
     Ok(counts)
 }
 
@@ -632,14 +680,64 @@ fn copies_in(users_dir: &Path) -> anyhow::Result<Vec<String>> {
     Ok(ids)
 }
 
-/// The user ids of the control database copy at `path`.
-fn known_users(path: &Path) -> anyhow::Result<Vec<String>> {
-    let conn = open_read(path)?;
-    let ids = conn
-        .prepare("SELECT id FROM users")?
-        .query_map([], |row| row.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(ids)
+/// An account of a control database.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Account {
+    /// The user id.
+    pub id: String,
+    /// `users.status`: `active`, `disabled` or `deleting`.
+    pub status: String,
+}
+
+impl Account {
+    /// Whether the account has a library to keep: every account but one
+    /// being deleted (a disabled user's library stays).
+    #[must_use]
+    pub fn needs_library(&self) -> bool {
+        self.status != "deleting"
+    }
+}
+
+/// The accounts of the control database (or copy) at `path`, by id.
+///
+/// # Errors
+///
+/// The database cannot be read.
+pub fn accounts(path: &Path) -> anyhow::Result<Vec<Account>> {
+    let conn = open_read(path).with_context(|| format!("cannot open {}", path.display()))?;
+    let accounts = conn
+        .prepare("SELECT id, status FROM users ORDER BY id")?
+        .query_map([], |row| {
+            Ok(Account {
+                id: row.get(0)?,
+                status: row.get(1)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()
+        .with_context(|| format!("cannot read the users of {}", path.display()))?;
+    Ok(accounts)
+}
+
+/// What makes a set of copies unfit for a full restore: a control database
+/// without accounts (the backup of an empty host, not of this one), or an
+/// account without its library copy among `copies` (sorted user ids).
+#[must_use]
+pub fn completeness(accounts: &[Account], copies: &[String]) -> Vec<String> {
+    if accounts.is_empty() {
+        return vec![
+            "the control database has no users: it is not the backup of a host in use".to_owned(),
+        ];
+    }
+    accounts
+        .iter()
+        .filter(|account| account.needs_library() && copies.binary_search(&account.id).is_err())
+        .map(|account| {
+            format!(
+                "user {} has no library copy (users/{}.sqlite): a full restore would lose it",
+                account.id, account.id
+            )
+        })
+        .collect()
 }
 
 /// Opens a database to read it: read-write without CREATE (so the WAL index
@@ -669,6 +767,33 @@ mod tests {
         assert!(within_drift(2, 3, 10), "a small table may move by one row");
         assert!(!within_drift(1, 3, 10));
         assert!(within_drift(0, 0, 0));
+    }
+
+    fn account(id: &str, status: &str) -> Account {
+        Account {
+            id: id.to_owned(),
+            status: status.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_full_set_has_a_library_copy_for_every_account() {
+        let copies = ["A".to_owned(), "C".to_owned()];
+        assert!(
+            completeness(&[account("A", "active"), account("C", "disabled")], &copies).is_empty()
+        );
+        assert!(
+            completeness(&[account("A", "active"), account("B", "deleting")], &copies).is_empty(),
+            "an account being deleted needs no copy"
+        );
+        let problems = completeness(&[account("A", "active"), account("B", "active")], &copies);
+        assert_eq!(problems.len(), 1);
+        assert!(
+            problems[0].starts_with("user B has no library copy"),
+            "{problems:?}"
+        );
+        let problems = completeness(&[], &copies);
+        assert!(problems[0].contains("no users"), "{problems:?}");
     }
 
     #[test]

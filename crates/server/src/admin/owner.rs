@@ -11,7 +11,7 @@ use std::io::Write;
 use anyhow::Context as _;
 use clap::Args;
 use serde_json::json;
-use shelfy_core::db::{UserDb, UserDbConfig};
+use shelfy_core::db::{DbError, UserDb, UserDbConfig};
 use shelfy_core::repo::RepoError;
 
 use super::open_control;
@@ -115,15 +115,26 @@ pub fn create_owner(data: &DataDir, email: &str) -> anyhow::Result<CreateOwnerOu
 }
 
 /// Creates (or opens and migrates) the user's empty library, so a fresh
-/// install has the whole layout of §2.5.
+/// install has the whole layout of §2.5. A library locked for maintenance is
+/// left to the operator who locked it.
 fn create_library(data: &DataDir, user_id: &str) -> anyhow::Result<()> {
     let path = data.library_db(user_id);
     if let Some(dir) = path.parent() {
         create_private_dir(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     }
-    UserDb::open(&path, &UserDbConfig::default())
-        .with_context(|| format!("cannot create the library {}", path.display()))?;
-    Ok(())
+    match UserDb::open(&path, &UserDbConfig::default()) {
+        Ok(_) => Ok(()),
+        Err(DbError::Locked) => {
+            eprintln!(
+                "note: {} is locked for maintenance; it was left alone",
+                path.display()
+            );
+            Ok(())
+        }
+        Err(err) => {
+            Err(err).with_context(|| format!("cannot create the library {}", path.display()))
+        }
+    }
 }
 
 fn describe(err: RepoError) -> anyhow::Error {

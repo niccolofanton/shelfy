@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::http::{Method, StatusCode, header};
 use axum::routing::post as post_route;
@@ -30,7 +30,7 @@ use shelfy_media::{Digest, MediaKind, Rendition};
 use shelfy_server::admin::install::install_snapshots;
 use shelfy_server::admin::owner::create_owner;
 use shelfy_server::admin::snapshot::{CopyStatus, SnapshotOptions, snapshot};
-use shelfy_server::admin::user::{lock, restore_db, unlock};
+use shelfy_server::admin::user::{lock, record_restore, restore_db, unlock};
 use shelfy_server::admin::verify::{VerifyOptions, verify};
 use shelfy_server::auth::bearer::{Scope, TokenUser, scopes};
 use shelfy_server::config::{DataDir, create_private_dir};
@@ -563,7 +563,12 @@ fn restore_db_swaps_a_locked_library_and_keeps_the_old_one() {
         drop(held);
     });
     let installed = restore_db(&data, &owner, &copy, Duration::from_secs(10)).unwrap();
+    record_restore(&data, &owner, &installed).unwrap();
     holder.join().unwrap();
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let sidecar = PathBuf::from(format!("{}{suffix}", live.display()));
+        assert!(!sidecar.exists(), "{suffix} left next to the library");
+    }
 
     assert_eq!(post_count(&live), 30, "the restored library is live");
     let kept = installed.kept.expect("the previous library is kept");
@@ -575,18 +580,13 @@ fn restore_db_swaps_a_locked_library_and_keeps_the_old_one() {
             .starts_with("library.pre-restore-")
     );
     assert_eq!(post_count(&kept), 42);
-    assert!(!PathBuf::from(format!("{}-wal", live.display())).exists());
     assert!(
         data.users_dir().join(&owner).join(LOCK_FILE_NAME).exists(),
         "still locked"
     );
     // The restored library is intact; the server cannot open it until the
     // unlock.
-    let integrity: String = Connection::open(&live)
-        .unwrap()
-        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
-        .unwrap();
-    assert_eq!(integrity, "ok");
+    assert_eq!(integrity(&Connection::open(&live).unwrap()), ["ok"]);
     assert!(matches!(
         UserDb::open(&live, &UserDbConfig::default()),
         Err(DbError::Locked)
@@ -691,6 +691,381 @@ fn copy_tree(from: &Path, to: &Path) {
             std::fs::copy(entry.path(), target).unwrap();
         }
     }
+}
+
+/// A standalone library at `path` with `n` synthetic posts: a restored copy
+/// with a history of its own.
+fn library_copy(path: &Path, n: usize, seed: u64) {
+    let db = UserDb::open(path, &UserDbConfig::default()).unwrap();
+    db.write(|tx| {
+        for post in synthetic_posts(n, seed, &[]) {
+            posts::insert(tx, &post, NOW)?;
+        }
+        Ok::<_, RepoError>(())
+    })
+    .unwrap();
+    db.checkpoint().unwrap();
+}
+
+/// `PRAGMA integrity_check`, first messages; `["ok"]` when intact.
+fn integrity(conn: &Connection) -> Vec<String> {
+    conn.prepare("PRAGMA integrity_check")
+        .and_then(|mut stmt| {
+            stmt.query_map([], |r| r.get(0))?
+                .take(3)
+                .collect::<rusqlite::Result<Vec<String>>>()
+        })
+        .unwrap_or_else(|err| vec![format!("error: {err}")])
+}
+
+fn count(path: &Path, table: &str) -> i64 {
+    Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .unwrap()
+        .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))
+        .unwrap()
+}
+
+fn new_collection(name: &str) -> NewCollection {
+    NewCollection {
+        name: name.into(),
+        ..NewCollection::default()
+    }
+}
+
+#[tokio::test]
+async fn a_handle_from_before_the_lock_cannot_write_into_the_restored_library() {
+    // Review of P1-12, H1: `restore-db` proved that no connection was open,
+    // but a handle taken before the lock (a request or a job chunk in
+    // flight) reopened the library by path after the server released it, so
+    // its write landed in the restored library while the user was locked.
+    let t = TestState::new();
+    let data = t.data_dir();
+    let owner = support::auth::owner(&t);
+    let held = t.state.user_db(&owner).await.unwrap();
+    held.write(|tx| collections::create(tx, &new_collection("before"), NOW))
+        .unwrap();
+    let out = data.root().join("snap");
+    snapshot(&data, &out, &all()).unwrap();
+    let copy = out.join(format!("users/{owner}.sqlite"));
+
+    lock(&data, &owner, "restore").unwrap();
+    t.state.user_dbs().run_maintenance(); // the server releases the library
+    restore_db(&data, &owner, &copy, Duration::ZERO).unwrap();
+
+    // The work in flight goes on with its handle, and is refused.
+    let err = held
+        .write(|tx| collections::create(tx, &new_collection("while locked"), NOW))
+        .unwrap_err();
+    assert!(matches!(&err, RepoError::Db(db) if db.is_locked()), "{err}");
+    let live = data.library_db(&owner);
+    assert_eq!(count(&live, "collections"), 1, "only the restored row");
+    assert_eq!(held.open_connections(), (false, 0));
+
+    // After the unlock, the user's next request serves the restored library.
+    unlock(&data, &owner).unwrap();
+    drop(held);
+    let names: Vec<String> = t
+        .state
+        .user_db(&owner)
+        .await
+        .unwrap()
+        .read(collections::list)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    assert_eq!(names, ["before"]);
+}
+
+#[test]
+fn a_connection_that_opened_the_library_before_a_restore_never_corrupts_it() {
+    // Review of P1-12, H1: the restored copy was renamed over the live file.
+    // A connection that had opened the old file (a released server handle
+    // reopening it, an operator command) found its `-wal` and `-shm` by
+    // name, next to the restored file: its write corrupted the restored
+    // library ("Rowid out of order", "row missing from index"), for good.
+    let (_dir, data, owner) = data_dir();
+    seed_library(&data, &owner, 300, 0, 1);
+    let copy = data.root().join("restored.sqlite");
+    library_copy(&copy, 40, 2);
+    let live = data.library_db(&owner);
+
+    // Opened before the restore, not used yet: SQLite reads and locks
+    // nothing before the first statement, so the restore finds it unused.
+    let stale = Connection::open(&live).unwrap();
+    lock(&data, &owner, "restore").unwrap();
+    restore_db(&data, &owner, &copy, Duration::ZERO).unwrap();
+    // Then it writes, as a connection that ignores the lock would.
+    stale
+        .execute("UPDATE posts SET caption = 'stale write ' || id", [])
+        .unwrap();
+
+    // While it is still open, the restored library is one intact database.
+    let fresh = Connection::open(&live).unwrap();
+    assert_eq!(integrity(&fresh), ["ok"]);
+    let posts: i64 = fresh
+        .query_row("SELECT count(*) FROM posts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(posts, 40, "the restored library");
+    drop((stale, fresh));
+    let after = Connection::open(&live).unwrap();
+    assert_eq!(integrity(&after), ["ok"]);
+    assert_eq!(post_count(&live), 40);
+}
+
+/// Copies the write-ahead log of a library at `path` with `n` posts while
+/// it is open, so the copy holds frames that recovery would replay.
+fn foreign_wal(path: &Path, n: usize) -> Vec<u8> {
+    let db = UserDb::open(path, &UserDbConfig::default()).unwrap();
+    db.write(|tx| {
+        for post in synthetic_posts(n, 9, &[]) {
+            posts::insert(tx, &post, NOW)?;
+        }
+        Ok::<_, RepoError>(())
+    })
+    .unwrap();
+    let wal = std::fs::read(format!("{}-wal", path.display())).unwrap();
+    assert!(!wal.is_empty());
+    wal
+}
+
+/// The rollback journal of a library at `path` with `n` posts, caught in
+/// the middle of a write as a crash leaves it: a hot journal that SQLite
+/// plays back into whatever database it finds next to it.
+fn foreign_hot_journal(path: &Path, n: usize) -> Vec<u8> {
+    library_copy(path, n, 9);
+    let conn = Connection::open(path).unwrap();
+    conn.pragma_update(None, "journal_mode", "DELETE").unwrap();
+    // Without syncs the journal header is complete at once.
+    conn.pragma_update(None, "synchronous", "OFF").unwrap();
+    conn.execute_batch("BEGIN; UPDATE posts SET caption = 'x' || caption;")
+        .unwrap();
+    let journal = std::fs::read(format!("{}-journal", path.display())).unwrap();
+    conn.execute_batch("ROLLBACK").unwrap();
+    assert!(journal.len() > 4096);
+    journal
+}
+
+#[test]
+fn stray_logs_and_journals_never_meet_the_restored_library() {
+    // Review of P1-12, L2: the swap moved `-wal` and `-shm` aside only when
+    // the live file existed, and never `-journal`. The stray log or journal
+    // of a library that went missing was played into the restored one when
+    // it was next opened.
+    let (_dir, data, owner) = data_dir();
+    let copy = data.root().join("restored.sqlite");
+    library_copy(&copy, 25, 2);
+    let live = data.library_db(&owner);
+    let sidecar = |suffix: &str| PathBuf::from(format!("{}{suffix}", live.display()));
+    let wal = foreign_wal(&data.root().join("other.sqlite"), 100);
+    let journal = foreign_hot_journal(&data.root().join("third.sqlite"), 200);
+    lock(&data, &owner, "restore").unwrap();
+
+    for (suffix, bytes) in [("-wal", &wal), ("-journal", &journal)] {
+        std::fs::remove_file(&live).unwrap();
+        std::fs::write(sidecar(suffix), bytes).unwrap();
+        let installed = restore_db(&data, &owner, &copy, Duration::ZERO).unwrap();
+        assert_eq!(installed.kept, None, "there was no library");
+        let conn = Connection::open(&live).unwrap();
+        assert_eq!(integrity(&conn), ["ok"], "{suffix}");
+        let posts: i64 = conn
+            .query_row("SELECT count(*) FROM posts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(posts, 25, "the stray {suffix} was not played back");
+        drop(conn);
+        let kept: Vec<_> = std::fs::read_dir(live.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                p.to_str()
+                    .is_some_and(|p| p.contains("library.pre-restore-") && p.ends_with(suffix))
+            })
+            .collect();
+        assert_eq!(kept.len(), 1, "kept aside: {kept:?}");
+        assert_eq!(&std::fs::read(&kept[0]).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn install_snapshots_stages_every_copy_before_it_replaces_anything() {
+    // Review of P1-12, L3: each copy was staged and swapped in turn, so an
+    // I/O error on a library (a full disk) left the control database of the
+    // snapshot installed and the library not.
+    let (_dir, data, owner) = data_dir();
+    seed_library(&data, &owner, 20, 0, 1);
+    let out = data.root().join("snap");
+    snapshot(&data, &out, &all()).unwrap();
+    let new_dir = tempfile::tempdir().unwrap();
+    let host = DataDir::new(new_dir.path().join("shelfy")).unwrap();
+    // The library's copy cannot be staged: a directory is in its way.
+    let blocked = PathBuf::from(format!("{}.restore", host.library_db(&owner).display()));
+    std::fs::create_dir_all(&blocked).unwrap();
+
+    let err = install_snapshots(&host, &out, false).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("nothing was installed"),
+        "{err:#}"
+    );
+    assert!(!host.control_db().exists(), "the control database waits");
+    assert!(!host.library_db(&owner).exists());
+    let staged = PathBuf::from(format!("{}.restore", host.control_db().display()));
+    assert!(!staged.exists(), "no staged copy is left behind");
+
+    std::fs::remove_dir(&blocked).unwrap();
+    let report = install_snapshots(&host, &out, false).unwrap();
+    assert!(report.verify.is_ok(), "{:#?}", report.verify);
+    assert_eq!(post_count(&host.library_db(&owner)), 20);
+}
+
+#[test]
+fn restore_db_reports_the_swap_even_when_the_audit_log_cannot_be_written() {
+    // Review of P1-12, L3: the audit row was written before the command said
+    // the library was restored, so a failed write hid a restore that had
+    // happened, and an operator would run it again.
+    let (_dir, data, owner) = data_dir();
+    seed_library(&data, &owner, 30, 0, 1);
+    let out = data.root().join("snap");
+    snapshot(&data, &out, &all()).unwrap();
+    add_posts(&data, &owner, 12, 5);
+    stdout(&admin(&data, &["user", "lock", &owner]));
+    // Something holds the control database's write lock past the busy
+    // timeout.
+    let control = Connection::open(data.control_db()).unwrap();
+    control.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let copy = out.join(format!("users/{owner}.sqlite"));
+    let output = admin(
+        &data,
+        &["user", "restore-db", &owner, copy.to_str().unwrap()],
+    );
+    control.execute_batch("ROLLBACK").unwrap();
+
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        text.contains(&format!("restored user {owner}'s library")),
+        "{text}"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("audit row could not be written"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(post_count(&data.library_db(&owner)), 30);
+}
+
+#[test]
+fn a_missing_library_keeps_its_copy_and_no_restore_goes_without_it() {
+    // Review of P1-12, M4: a snapshot removed the copy of a user whose
+    // library was gone from the data directory although the account
+    // existed, and `verify` and `install-snapshots` accepted a set without
+    // it: a full restore silently lost the library.
+    let (_dir, data, owner) = data_dir();
+    seed_library(&data, &owner, 10, 0, 1);
+    let out = data.root().join("backup-staging/db");
+    snapshot(&data, &out, &all()).unwrap();
+    let copy = out.join(format!("users/{owner}.sqlite"));
+
+    std::fs::remove_dir_all(data.users_dir().join(&owner)).unwrap();
+    let report = snapshot(&data, &out, &changed()).unwrap();
+    assert!(report.removed.is_empty(), "{:?}", report.removed);
+    assert_eq!(report.failed.len(), 1, "{:?}", report.failed);
+    assert!(
+        report.failed[0].1.contains("missing"),
+        "{:?}",
+        report.failed
+    );
+    assert_eq!(post_count(&copy), 10, "the last copy is kept");
+
+    // A set without the library fails `verify` and installs nothing.
+    std::fs::remove_file(&copy).unwrap();
+    let report = verify(&data, &out, &VerifyOptions::default()).unwrap();
+    assert!(!report.is_ok());
+    assert!(
+        report.databases[0].problems[0].contains(&format!("user {owner} has no library copy")),
+        "{:?}",
+        report.databases[0].problems
+    );
+    let new_dir = tempfile::tempdir().unwrap();
+    let host = DataDir::new(new_dir.path().join("shelfy")).unwrap();
+    let err = install_snapshots(&host, &out, false).unwrap_err();
+    let message = format!("{err:#}");
+    assert!(message.contains("nothing was installed"), "{message}");
+    assert!(message.contains("has no library copy"), "{message}");
+    assert!(!host.control_db().exists());
+
+    // So is the backup of a host without users (an empty host that was
+    // backed up after the loss, picked as "latest").
+    let empty_dir = tempfile::tempdir().unwrap();
+    let empty = DataDir::new(empty_dir.path().join("shelfy")).unwrap();
+    empty.create_layout().unwrap();
+    drop(shelfy_core::db::ControlDb::open(empty.control_db(), &Default::default()).unwrap());
+    let empty_out = empty.root().join("snap");
+    snapshot(&empty, &empty_out, &all()).unwrap();
+    let err = install_snapshots(&host, &empty_out, false).unwrap_err();
+    assert!(format!("{err:#}").contains("no users"), "{err:#}");
+}
+
+#[test]
+fn verify_leaves_the_live_library_of_a_locked_user_alone() {
+    // Review of P1-12, H1: `admin verify` opened the live library of a user
+    // being restored to count its rows.
+    let (_dir, data, owner) = data_dir();
+    seed_library(&data, &owner, 20, 2, 1);
+    let out = data.root().join("snap");
+    snapshot(&data, &out, &all()).unwrap();
+    lock(&data, &owner, "restore").unwrap();
+    // The restore holds the library.
+    let restore = Connection::open(data.library_db(&owner)).unwrap();
+    restore.busy_timeout(Duration::ZERO).unwrap();
+    restore
+        .pragma_update(None, "locking_mode", "EXCLUSIVE")
+        .unwrap();
+    restore
+        .query_row("SELECT count(*) FROM sqlite_schema", [], |_| Ok(()))
+        .unwrap();
+    restore.execute_batch("BEGIN EXCLUSIVE; COMMIT;").unwrap();
+
+    let started = Instant::now();
+    let users = [owner.clone()];
+    let drill = VerifyOptions {
+        users: &users,
+        max_drift: 10,
+    };
+    let report = verify(&data, &out, &drill).unwrap();
+    assert!(report.is_ok(), "{report:#?}");
+    assert!(
+        report.databases[1]
+            .notes
+            .iter()
+            .any(|n| n.contains("locked for maintenance")),
+        "{:?}",
+        report.databases[1].notes
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "it did not wait"
+    );
+}
+
+#[test]
+fn create_owner_leaves_a_locked_library_alone() {
+    // Review of P1-12, H1: running `create-owner` again (deploy scripts do)
+    // opened, and could migrate, the library of an owner being restored.
+    let (_dir, data, owner) = data_dir();
+    lock(&data, &owner, "restore").unwrap();
+    // The restore has the file in some state of its own: here, empty.
+    let live = data.library_db(&owner);
+    std::fs::write(&live, b"").unwrap();
+    let outcome = create_owner(&data, OWNER_EMAIL).unwrap();
+    assert_eq!(outcome.user_id(), owner);
+    assert_eq!(
+        std::fs::metadata(&live).unwrap().len(),
+        0,
+        "neither opened nor migrated"
+    );
+    unlock(&data, &owner).unwrap();
+    create_owner(&data, OWNER_EMAIL).unwrap();
+    assert!(std::fs::metadata(&live).unwrap().len() > 0, "repaired");
 }
 
 #[test]
