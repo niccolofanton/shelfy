@@ -28,7 +28,6 @@ import { ActivityProvider } from './hooks/useActivity';
 import type { SourceSyncApi, SyncTarget } from './hooks/useSourceSync';
 import { useT, useLang, localeTag } from './i18n';
 import { useShelfy } from './api/ShelfyProvider';
-import { errorMessageKey } from './api/errors';
 import {
   DEFAULT_SETTINGS_SECTION,
   useNavigation,
@@ -127,14 +126,6 @@ interface CollectionDraft {
 // Patch applied by the global AI modal (currently carries a tag chip).
 interface AiFilterPatch {
   tag?: string | null;
-}
-
-// The post of a `/p/:key` address once fetched: `post` is null when it could
-// not be opened (missing, or `error`).
-interface RoutePost {
-  key: string;
-  post: Shelfy.Post | null;
-  error: unknown;
 }
 
 // Non-browser views, in render order. Each is kept alive once visited (see the
@@ -252,7 +243,6 @@ function AppInner(): React.JSX.Element {
   const nav = useNavigation();
   const route = nav?.route ?? null;
   const navigate = nav?.navigate;
-  const navigateBack = nav?.back;
   const [stateView, setStateView] = useState<View>('gallery');
   const view: View = route ? viewOfRoute(route) : stateView;
   // Views that have been opened at least once — kept mounted thereafter so
@@ -461,28 +451,6 @@ function AppInner(): React.JSX.Element {
   );
   const openAddSite = useCallback(() => setShowAddSite(true), []);
   const openAddBookmark = useCallback(() => setShowAddBookmark(true), []);
-
-  // Web: `/p/:key` opens that post's modal over the library (a deep link; the
-  // gallery's own modal moves onto the route in P1-06). `null` while it loads.
-  const routeKey = route?.name === 'post' ? route.key : null;
-  const [routePost, setRoutePost] = useState<RoutePost | null>(null);
-  useEffect(() => {
-    setRoutePost(null);
-    if (!routeKey) return undefined;
-    let alive = true;
-    client.getPostsByIds([routeKey]).then(
-      ([post]) => alive && setRoutePost({ key: routeKey, post: post ?? null, error: null }),
-      (error: unknown) => {
-        console.error('[App] cannot open the post of the address:', error);
-        if (alive) setRoutePost({ key: routeKey, post: null, error });
-      },
-    );
-    return () => {
-      alive = false;
-    };
-  }, [client, routeKey]);
-  // Back where the modal was opened from; a deep link goes to the library.
-  const closeRoutePost = useCallback(() => navigateBack?.({ name: 'library' }), [navigateBack]);
 
   // Download queue — lifted here (App is always mounted) so the sidebar can show
   // live progress regardless of the current view, and the Downloads view shares
@@ -809,23 +777,21 @@ function AppInner(): React.JSX.Element {
       actions={[{ ...backToLibrary, onClick: () => handleSelectSource(ALL_SOURCE) }]}
     />
   );
-  let routePanel: React.ReactNode = null;
-  const missingPost = routeKey !== null && routePost?.key === routeKey && !routePost.post;
-  if (route?.name === 'notFound' || missingPost) {
-    // A post that failed to load says why when its error has a message.
-    const reasonKey = missingPost ? errorMessageKey(routePost?.error) : null;
-    routePanel = (
+  // An address this app has nothing for at all. A `/p/:key` whose post is
+  // missing is Gallery's own not-found panel now (P1-06): the gallery is what
+  // resolves the route to a post, so it is what finds out there isn't one.
+  const routePanel: React.ReactNode =
+    route?.name === 'notFound' ? (
       <ErrorPanel
         testId="route-not-found"
         icon={FileQuestion}
-        title={te(missingPost ? 'postMissingTitle' : 'notFoundTitle')}
-        message={te(reasonKey ?? (missingPost ? 'postMissing' : 'notFound'))}
+        title={te('notFoundTitle')}
+        message={te('notFound')}
         actions={[
           { ...backToLibrary, onClick: () => navigate?.({ name: 'library' }, { replace: true }) },
         ]}
       />
-    );
-  }
+    ) : null;
 
   const lastUpdate = new Date(buildTime).toLocaleTimeString(localeTag(lang), {
     hour: '2-digit',
@@ -1138,28 +1104,10 @@ function AppInner(): React.JSX.Element {
             />
           </ErrorBoundary>
         )}
-        {/* Web: the post of a `/p/:key` address. */}
-        {routePost?.post && routePost.key === routeKey && (
-          <ErrorBoundary
-            view="postModal"
-            layout="dialog"
-            resetKey={routeKey}
-            onDismiss={closeRoutePost}
-          >
-            <PostModal
-              post={routePost.post}
-              onClose={closeRoutePost}
-              onPostUpdated={(postId: string, fields: Partial<Shelfy.Post>) =>
-                setRoutePost((prev) =>
-                  prev?.post && prev.post.id === postId
-                    ? { ...prev, post: { ...prev.post, ...fields } }
-                    : prev,
-                )
-              }
-              onAssigned={reloadCollections}
-            />
-          </ErrorBoundary>
-        )}
+        {/* Web: the post of a `/p/:key` address now opens inside Gallery itself
+          (P1-06), the same modal a card click opens — so it's rendered there,
+          not here. This file still renders `routePanel` (above) when the
+          address is `notFound`, and the folder-create/edit modal below. */}
         {/* First-run legal gate: blocks the app until the current notices are
           accepted (localStorage on the desktop, the account on the web). */}
         <ConsentGate />

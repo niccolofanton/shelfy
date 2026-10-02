@@ -16,7 +16,10 @@ import { toApiFilters } from '../lib/postFilters';
 import { useDownloadPrefs } from '../hooks/useDownloadPrefs';
 import { useRangeSelect } from '../hooks/useRangeSelect';
 import { useViewMode } from '../hooks/useViewMode';
-import { useCapabilities } from '../api/ShelfyProvider';
+import { useCapabilities, useShelfy } from '../api/ShelfyProvider';
+import { useNavigation } from '../api/navigation';
+import { errorMessageKey } from '../api/errors';
+import ErrorBoundary, { ErrorPanel } from '../components/ErrorBoundary';
 import { useT } from '../i18n';
 import {
   RefreshCw,
@@ -39,6 +42,7 @@ import {
   Loader2,
   LayoutGrid,
   Telescope,
+  FileQuestion,
 } from 'lucide-react';
 
 // Date-sort direction surfaced by the toolbar's sort toggle.
@@ -202,9 +206,16 @@ export default function Gallery({
 }: GalleryProps): React.JSX.Element {
   const t: Translate = useT('gallery');
   const tc: Translate = useT('common');
+  const te: Translate = useT('errors');
   // What the client can do: selection and bulk actions, AI suggestions and the
   // window chrome are hidden where it cannot back them (the web app, for now).
   const caps = useCapabilities();
+  const client = useShelfy();
+  // The address bar (web only; null on the desktop, which keeps its local
+  // activePost state below). P1-06: the gallery's own modal moves onto the
+  // `/p/:key` route — a card click navigates, closing goes back, prev/next
+  // replace the route — so one modal owns it (App no longer renders its own).
+  const nav = useNavigation();
   const winControlsInset = caps.windowControls ? WIN_CONTROLS_W : 0;
   // View mode (shared, persisted): 'grid' is the date-ordered row grid; 'canvas'
   // is the infinite pan/zoom wall where date ordering is intentionally inactive.
@@ -272,6 +283,9 @@ export default function Gallery({
   const { selectedTypes } = useDownloadPrefs();
 
   const [activePost, setActivePost] = useState<Shelfy.Post | null>(null);
+  // Web only: the routed key resolved to nothing (a deep link, or a stale
+  // link to a deleted post) — the not-found panel below instead of the modal.
+  const [routeMissing, setRouteMissing] = useState<{ key: string; error: unknown } | null>(null);
 
   // Right-hand filters drawer (sources + media/download/AI filters). Toggled by
   // the Filtri button in the FilterBar; stays open while picking a source.
@@ -479,6 +493,49 @@ export default function Gallery({
   postsRef.current = posts;
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  // Read by the stable handlePrev/handleNext/handleCardOpen below, so they
+  // don't need `nav`/`activePost` in their dep arrays (nav is a fresh object
+  // on every address change — see src/api/navigation.tsx).
+  const navRef = useRef(nav);
+  navRef.current = nav;
+  const activePostRef = useRef(activePost);
+  activePostRef.current = activePost;
+
+  // Web only: the modal follows the `/p/:key` route instead of `activePost`
+  // being set directly. A card click / prev / next below just navigates; this
+  // effect is the one place that actually resolves the routed key to a post,
+  // first from the already-loaded list (the common case: no network), else by
+  // fetching it (a deep link, a reload, or a key outside the loaded window).
+  const routeKey = nav && nav.route.name === 'post' ? nav.route.key : null;
+  useEffect(() => {
+    if (!nav) return undefined; // desktop: activePost is only ever set directly
+    if (!routeKey) {
+      setActivePost(null);
+      setRouteMissing(null);
+      return undefined;
+    }
+    setRouteMissing(null);
+    const local = postsRef.current.find((p) => p.id === routeKey) ?? null;
+    if (local) {
+      setActivePost(local);
+      return undefined;
+    }
+    setActivePost(null);
+    let alive = true;
+    client.getPostsByIds([routeKey]).then(
+      ([found]) => {
+        if (!alive) return;
+        if (found) setActivePost(found);
+        else setRouteMissing({ key: routeKey, error: null });
+      },
+      (error: unknown) => {
+        if (alive) setRouteMissing({ key: routeKey, error });
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [nav, routeKey, client]);
 
   // ── Drag-select (iPhone-Photos-like) ─────────────────────────────────────
   // In select mode, pressing on a card and sweeping the mouse over others
@@ -588,21 +645,37 @@ export default function Gallery({
   );
   const hasPrev = activeIndex > 0;
   const hasNext = activeIndex >= 0 && activeIndex < posts.length - 1;
+  // On the web this replaces the route instead of pushing a new one (P1-04/
+  // P1-06): stepping through the modal shouldn't pile up history entries.
   const handlePrev = useCallback(() => {
-    setActivePost((cur) => {
-      if (!cur) return cur;
-      const list = postsRef.current;
-      const i = list.findIndex((p) => p.id === cur.id);
-      return i > 0 ? list[i - 1] : cur;
-    });
+    const cur = activePostRef.current;
+    if (!cur) return;
+    const list = postsRef.current;
+    const i = list.findIndex((p) => p.id === cur.id);
+    if (i <= 0) return;
+    const target = list[i - 1];
+    if (navRef.current)
+      navRef.current.navigate({ name: 'post', key: target.id }, { replace: true });
+    else setActivePost(target);
   }, []);
   const handleNext = useCallback(() => {
-    setActivePost((cur) => {
-      if (!cur) return cur;
-      const list = postsRef.current;
-      const i = list.findIndex((p) => p.id === cur.id);
-      return i >= 0 && i < list.length - 1 ? list[i + 1] : cur;
-    });
+    const cur = activePostRef.current;
+    if (!cur) return;
+    const list = postsRef.current;
+    const i = list.findIndex((p) => p.id === cur.id);
+    if (i < 0 || i >= list.length - 1) return;
+    const target = list[i + 1];
+    if (navRef.current)
+      navRef.current.navigate({ name: 'post', key: target.id }, { replace: true });
+    else setActivePost(target);
+  }, []);
+
+  // Closes the modal: back where it was opened from on the web (a deep link
+  // has nothing in the app to go back to, hence the library fallback), or
+  // just clears the local state on the desktop.
+  const closeModal = useCallback(() => {
+    if (navRef.current) navRef.current.back({ name: 'library' });
+    else setActivePost(null);
   }, []);
 
   // Stable across renders: reads volatile state via refs so PostCard's
@@ -627,6 +700,10 @@ export default function Gallery({
       if (selectModeRef.current) {
         const shiftKey = evt && 'shiftKey' in evt ? (evt as { shiftKey: boolean }).shiftKey : false;
         toggleAt(post.id, index, shiftKey);
+      } else if (navRef.current) {
+        // Web: the route-sync effect above resolves `post` right back from
+        // `postsRef` (already loaded, so no fetch) and opens the modal.
+        navRef.current.navigate({ name: 'post', key: post.id });
       } else {
         setActivePost(post);
       }
@@ -1698,49 +1775,77 @@ export default function Gallery({
       />
 
       {activePost && !selectMode && (
-        <PostModal
-          post={activePost}
-          onClose={() => setActivePost(null)}
-          onPrev={handlePrev}
-          onNext={handleNext}
-          hasPrev={hasPrev}
-          hasNext={hasNext}
-          onApplyAiFilter={(patch: FilterPatch) => {
-            setFilters((prev) => ({
-              ...prev,
-              ...patch,
-              limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH,
-            }));
-            setActivePost(null);
-          }}
-          onLocalFilesDeleted={() => reload()}
-          onPostUpdated={(postId: string, fields: PostUpdateFields) =>
-            setActivePost((prev) => (prev && prev.id === postId ? { ...prev, ...fields } : prev))
-          }
-          onAssigned={() => onAssigned?.()}
-          onPostDeleted={() => {
-            showFeedback(t('fbPostDeleted'));
-            reload();
-            onAssigned?.();
-            onStatsChanged?.(); // keep App-level sidebar counts in sync
-          }}
-          onOpenInWebsites={
-            onOpenInWebsites
-              ? () => {
-                  setActivePost(null);
-                  onOpenInWebsites();
-                }
-              : undefined
-          }
-          onReanalyzeWeb={
-            onReanalyzeWeb
-              ? (p: Shelfy.Post) => {
-                  setActivePost(null);
-                  onReanalyzeWeb(p);
-                }
-              : undefined
-          }
-        />
+        <ErrorBoundary
+          view="postModal"
+          layout="dialog"
+          resetKey={activePost.id}
+          onDismiss={closeModal}
+        >
+          <PostModal
+            post={activePost}
+            onClose={closeModal}
+            onPrev={handlePrev}
+            onNext={handleNext}
+            hasPrev={hasPrev}
+            hasNext={hasNext}
+            onApplyAiFilter={(patch: FilterPatch) => {
+              setFilters((prev) => ({
+                ...prev,
+                ...patch,
+                limit: canvasRef.current ? CANVAS_POOL : LOAD_BATCH,
+              }));
+              closeModal();
+            }}
+            onLocalFilesDeleted={() => reload()}
+            onPostUpdated={(postId: string, fields: PostUpdateFields) =>
+              setActivePost((prev) => (prev && prev.id === postId ? { ...prev, ...fields } : prev))
+            }
+            onAssigned={() => onAssigned?.()}
+            onPostDeleted={() => {
+              showFeedback(t('fbPostDeleted'));
+              reload();
+              onAssigned?.();
+              onStatsChanged?.(); // keep App-level sidebar counts in sync
+            }}
+            onOpenInWebsites={
+              onOpenInWebsites
+                ? () => {
+                    closeModal();
+                    onOpenInWebsites();
+                  }
+                : undefined
+            }
+            onReanalyzeWeb={
+              onReanalyzeWeb
+                ? (p: Shelfy.Post) => {
+                    closeModal();
+                    onReanalyzeWeb(p);
+                  }
+                : undefined
+            }
+          />
+        </ErrorBoundary>
+      )}
+
+      {/* Web: a `/p/:key` address whose post doesn't exist (deleted, or a bad
+        link) — over the gallery, same spot the modal would take. */}
+      {routeMissing && !activePost && (
+        <div className="absolute inset-0 z-[60] bg-[#0f0f0f]">
+          <ErrorPanel
+            testId="route-not-found"
+            icon={FileQuestion}
+            title={te('postMissingTitle')}
+            message={te(errorMessageKey(routeMissing.error) ?? 'postMissing')}
+            actions={[
+              {
+                label: te('backToLibrary'),
+                testId: 'route-back',
+                primary: true,
+                onClick: () => nav?.navigate({ name: 'library' }, { replace: true }),
+              },
+            ]}
+          />
+        </div>
       )}
 
       {showCreate && (
