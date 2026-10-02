@@ -6,6 +6,8 @@
 //! fails for a file without one. How to regenerate the files and add a
 //! function: `scripts/golden/README.md`.
 
+mod golden_merge;
+
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -14,8 +16,9 @@ use serde::de::DeserializeOwned;
 use serde_json::value::RawValue;
 use shelfy_core::search::terms::{SHORT_CONTENT_TERMS, STOPWORDS, extract_content_terms};
 
-/// Golden sets with a check in this file.
-const CHECKED: &[&str] = &["extract-content-terms"];
+/// Golden sets with a check in this file; `<dir>/` stands for every file in
+/// that directory.
+const CHECKED: &[&str] = &["extract-content-terms", "merge/"];
 
 #[derive(Deserialize)]
 struct Header {
@@ -81,25 +84,50 @@ fn check<A: DeserializeOwned, R: serde::Serialize>(name: &str, port: impl Fn(A) 
     );
 }
 
+/// The golden sets under `dir`, as `<subdir>/<name>` without `.jsonl`.
+fn golden_files(dir: &Path, prefix: &str, found: &mut Vec<String>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+        if path.is_dir() {
+            golden_files(&path, &format!("{prefix}{name}/"), found);
+        } else if path.extension().is_some_and(|e| e == "jsonl") {
+            found.push(format!("{prefix}{name}"));
+        }
+    }
+}
+
 #[test]
 fn every_golden_file_has_a_check() {
     let mut found = Vec::new();
-    for entry in std::fs::read_dir(golden_dir()).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().is_some_and(|e| e == "jsonl") {
-            found.push(path.file_stem().unwrap().to_string_lossy().into_owned());
-        }
-    }
+    golden_files(&golden_dir(), "", &mut found);
     found.sort();
+    let covers = |check: &str, name: &str| {
+        check == name || (check.ends_with('/') && name.starts_with(check))
+    };
     for name in &found {
         assert!(
-            CHECKED.contains(&name.as_str()),
+            CHECKED.iter().any(|check| covers(check, name)),
             "{name}.jsonl has no check in golden.rs"
         );
     }
-    for name in CHECKED {
-        assert!(found.iter().any(|f| f == name), "{name}.jsonl is missing");
+    for check in CHECKED {
+        assert!(
+            found.iter().any(|name| covers(check, name)),
+            "{check}: no golden file"
+        );
     }
+}
+
+#[test]
+fn merge_matches_the_desktop() {
+    let (steps, failures) = golden_merge::check_dir(&golden_dir().join("merge"));
+    assert!(
+        failures.is_empty(),
+        "merge: {} of {steps} steps differ from the desktop:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 #[derive(Deserialize)]
