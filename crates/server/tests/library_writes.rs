@@ -1137,6 +1137,43 @@ async fn every_write_announces_its_posts_and_the_stats() {
     );
 }
 
+/// While a library is locked for maintenance (P1-12) writes answer 423
+/// `user_locked` and change nothing; after the unlock, no ETag from before
+/// matches (the library may have been replaced), even with a handle from
+/// before the lock still held.
+#[tokio::test]
+async fn writes_wait_for_a_locked_library_and_its_etags_start_over() {
+    let (t, _) = two_libraries().await;
+    let app = t.app_as(ALICE);
+    let uri = "/api/v1/stats";
+    let before = etag(&app, uri).await;
+    let held = t.state.user_db(ALICE).await.unwrap();
+    let users = t.data_dir().users_dir();
+    assert!(shelfy_core::db::lock_library(&users, ALICE, "restore").unwrap());
+    for request in [
+        patch("/api/v1/posts/ig_1001", &json!({ "userNote": "x" })),
+        post("/api/v1/collections", &json!({ "name": "x" })),
+        post(
+            "/api/v1/collections/2/posts",
+            &json!({ "selector": { "keys": ["x_2001"] } }),
+        ),
+    ] {
+        let route = format!("{} {}", request.method(), request.uri());
+        let locked = problem(send(&app, request).await, StatusCode::LOCKED).await;
+        assert_eq!(locked.code, ErrorCode::UserLocked, "{route}");
+    }
+    assert!(shelfy_core::db::unlock_library(&users, ALICE).unwrap());
+    let response = send(&app, get_if_none_match(uri, &before)).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a new generation after the lock"
+    );
+    let shown = ok(&app, get("/api/v1/posts/ig_1001")).await;
+    assert_eq!(shown["userNote"], Value::Null, "nothing was written");
+    drop(held);
+}
+
 /// The *From T11* note, through the API: a request that still holds a
 /// handle the cache has dropped for idleness writes through it; the next
 /// request reads another handle, and its ETags still see the write.
