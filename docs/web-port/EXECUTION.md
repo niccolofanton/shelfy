@@ -71,6 +71,7 @@ Changes to the plan that the lead made during execution, with the reason.
 |---|---|---|---|
 | P1-01 | Realtime: SSE bus, notifications, client errors, version | done | `web/p1-01-realtime` (e7afc2c…86f34ca) |
 | P1-07 | Job system and jobs API | running | `web/p1-07-jobs` |
+| P1-12 | Backup, restore and schema-upgrade tooling | running | `web/p1-12-backup` |
 
 ### Follow-ups
 
