@@ -1,17 +1,24 @@
 //! `shelfy-migrate run` (plan §4.1 step 4): the desktop library to the
 //! server, end to end.
 //!
-//! 1. **Read** a consistent snapshot of the library ([`crate::snapshot`],
-//!    OI-8) and dry-run it ([`crate::plan`]). A plan that fails its criteria
-//!    stops the run.
-//! 2. **Bundle** it ([`crate::bundle`]) into the work directory.
-//! 3. **Ask** the server which objects it lacks
-//!    (`POST /migrations/missing-objects`) and **upload** only those with
-//!    tus, then the database last. Unfinished uploads are recorded in
-//!    `state.json` in the work directory; a re-run continues each one where
-//!    it stopped, and skips the objects the server already has.
-//! 4. **Install** (`POST /migrations`) and follow the install until it ends.
-//! 5. **Reconcile**: desktop rows, bundle rows and installed rows side by
+//! 1. **Check** that the desktop app does not hold the library open
+//!    ([`crate::desktop`]; `--allow-open` reads a snapshot instead, OI-8),
+//!    and ask the server whether its library is empty (a run replaces it) or
+//!    needs `--merge`, before anything is uploaded.
+//! 2. **Read** a consistent copy of the library ([`crate::snapshot`]) and
+//!    dry-run it ([`crate::plan`]). A plan that fails its criteria stops the
+//!    run.
+//! 3. **Bundle** it ([`crate::bundle`]) into the work directory, with the
+//!    desktop settings ([`crate::settings`]).
+//! 4. **Ask** the server which objects it lacks
+//!    (`POST /migrations/missing-objects`), check the quota, and **upload**
+//!    only those with tus, then the database last. Unfinished uploads are
+//!    recorded in `state.json` in the work directory; a re-run continues each
+//!    one where it stopped (even after the process was killed), and skips the
+//!    objects the server already has.
+//! 5. **Install** (`POST /migrations` with an `Idempotency-Key`, the
+//!    `migrate` job) and follow it until it ends.
+//! 6. **Reconcile**: desktop rows, bundle rows and installed rows side by
 //!    side. On success the work files are removed, unless `--keep-work`.
 //!
 //! The desktop library and its files are only read. Progress goes to the log
@@ -30,7 +37,8 @@ use serde::{Deserialize, Serialize};
 use shelfy_core::legacy::LegacyDb;
 
 use crate::bundle::{self, Bundle, BundleOptions, BundleSummary};
-use crate::client::{self, ApiError, Client, ObjectRef};
+use crate::client::{self, ApiError, Client, Header, ObjectRef};
+use crate::desktop;
 use crate::files;
 use crate::plan::{PlanOptions, plan_with_mapping};
 use crate::report::PlanReport;
@@ -49,6 +57,8 @@ pub const PURPOSE_DATABASE: &str = "migration-db";
 
 /// Attempts per chunk when the connection breaks.
 const CHUNK_ATTEMPTS: u32 = 5;
+/// How often a long phase reports its progress.
+const REPORT_EVERY: Duration = Duration::from_secs(5);
 
 /// What `run` does.
 #[derive(Debug, Clone)]
@@ -61,18 +71,75 @@ pub struct RunOptions {
     pub server: String,
     /// A `migrate` token.
     pub token: String,
+    /// Extra headers on every request (the Access service token, G2).
+    pub headers: Vec<Header>,
     /// Where the snapshot, the bundle and the resume state go.
     pub work_dir: PathBuf,
     /// Include kept videos.
     pub with_videos: bool,
-    /// Merge into a non-empty web library (not supported by the server yet).
+    /// Merge into a web library that is not empty.
     pub merge: bool,
+    /// Read the library while another process (the desktop app) holds it
+    /// open: from a snapshot.
+    pub allow_open: bool,
     /// Keep the work files after a successful install.
     pub keep_work: bool,
     /// Also list the orphan files under `assets/` (OI-11).
     pub list_orphans: bool,
     /// How often the install is polled.
     pub poll_interval: Duration,
+    /// Bytes per upload request.
+    pub chunk_bytes: usize,
+}
+
+impl RunOptions {
+    /// Options with the defaults: no headers, videos left out, no merge, a
+    /// one-second poll, 8 MiB chunks.
+    #[must_use]
+    pub fn new(db: PathBuf, server: &str, token: &str, work_dir: PathBuf) -> Self {
+        RunOptions {
+            db,
+            media_root: None,
+            server: server.to_owned(),
+            token: token.to_owned(),
+            headers: Vec::new(),
+            work_dir,
+            with_videos: false,
+            merge: false,
+            allow_open: false,
+            keep_work: false,
+            list_orphans: false,
+            poll_interval: Duration::from_secs(1),
+            chunk_bytes: CHUNK_BYTES,
+        }
+    }
+}
+
+/// The desktop app holds the library open: `plan` and `run` stop (exit
+/// status 4) unless `--allow-open`.
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+#[error(
+    "another program{} has the desktop library open: quit the Shelfy desktop app and try again \
+     (or pass --allow-open to read a snapshot as it is now)",
+    pid.map(|p| format!(" (process {p})")).unwrap_or_default()
+)]
+pub struct DesktopOpen {
+    pub pid: Option<u32>,
+}
+
+/// Stops when another process holds `db` open, unless `allow_open`.
+/// Returns whether it is open.
+///
+/// # Errors
+///
+/// [`DesktopOpen`]; or the library cannot be opened.
+pub fn check_desktop(db: &Path, allow_open: bool) -> anyhow::Result<bool> {
+    let state = desktop::state(db)
+        .with_context(|| format!("cannot read the library at {}", db.display()))?;
+    match state {
+        desktop::DesktopState::Open { pid } if !allow_open => Err(DesktopOpen { pid }.into()),
+        state => Ok(state.is_open()),
+    }
 }
 
 /// Upload counts of a run.
@@ -87,6 +154,8 @@ pub struct UploadCounts {
     pub uploaded_bytes: u64,
     /// Uploads continued from an earlier run.
     pub resumed: u64,
+    /// Uploads of an earlier run dropped because their file changed.
+    pub dropped: u64,
     pub database_bytes: u64,
 }
 
@@ -108,8 +177,9 @@ pub struct Line {
     pub desktop: Option<u64>,
     /// Rows written to the bundle.
     pub bundle: u64,
-    /// Rows of the installed library.
-    pub installed: u64,
+    /// Rows of the installed library (a replace), or the bundle's rows that
+    /// landed (a merge); `None` where a merge has no count to compare.
+    pub installed: Option<u64>,
     pub matches: bool,
 }
 
@@ -159,18 +229,37 @@ impl State {
 ///
 /// # Errors
 ///
-/// The library cannot be read or fails its dry run, the server cannot be
-/// reached or refuses the bundle, or the install fails. The work directory
-/// then keeps what a re-run continues from.
+/// The desktop app holds the library ([`DesktopOpen`]), the library cannot
+/// be read or fails its dry run, the server cannot be reached or refuses the
+/// bundle (a library that needs `--merge`, the quota), or the install fails.
+/// The work directory then keeps what a re-run continues from.
 pub fn run(opts: &RunOptions, log: &mut dyn Write) -> anyhow::Result<RunOutcome> {
     let started = Instant::now();
+    // 1. Nothing opens the library before this check (desktop.rs).
+    let open = check_desktop(&opts.db, opts.allow_open)?;
+    if open {
+        writeln!(
+            log,
+            "the desktop app has the library open: reading a snapshot of it as it is now"
+        )?;
+    }
+    let client = Client::with_headers(&opts.server, Some(&opts.token), &opts.headers)?;
+    let preflight = client.preflight().context("cannot ask the server")?;
+    anyhow::ensure!(
+        preflight.library_empty || opts.merge,
+        "the web library is not empty ({} posts): pass --merge to merge the desktop library into it",
+        preflight.posts
+    );
     fs::create_dir_all(&opts.work_dir)
         .with_context(|| format!("cannot create {}", opts.work_dir.display()))?;
-    let client = Client::new(&opts.server, &opts.token)?;
 
-    // 1–2. Snapshot, dry run, bundle.
-    let source = snapshot::prepare(&opts.db, &opts.work_dir)?;
-    if source.snapshot {
+    // 2–3. Snapshot, dry run, bundle.
+    let source = if open {
+        snapshot::snapshot(&opts.db, &opts.work_dir)?
+    } else {
+        snapshot::prepare(&opts.db, &opts.work_dir)?
+    };
+    if source.snapshot && !open {
         writeln!(
             log,
             "the library has a -wal file: read from a snapshot (close Shelfy for a final migration)"
@@ -212,6 +301,7 @@ pub fn run(opts: &RunOptions, log: &mut dyn Write) -> anyhow::Result<RunOutcome>
             with_videos: opts.with_videos,
             snapshot: source.snapshot,
             now_ms: now,
+            settings: plan.settings.clone().filter(|s| s.source == "found"),
         },
     )?;
     drop(legacy);
@@ -229,7 +319,7 @@ pub fn run(opts: &RunOptions, log: &mut dyn Write) -> anyhow::Result<RunOutcome>
         bytes(bundle.db_bytes)
     )?;
 
-    // 3. Upload what the server lacks, then the database.
+    // 4. Upload what the server lacks, then the database.
     let uploading = Instant::now();
     let state_path = opts.work_dir.join(STATE_FILE);
     let mut state = State::load(&state_path);
@@ -250,17 +340,20 @@ pub fn run(opts: &RunOptions, log: &mut dyn Write) -> anyhow::Result<RunOutcome>
     let missing: std::collections::HashSet<String> =
         client.missing_objects(&refs)?.into_iter().collect();
     counts.missing = missing.len() as u64;
-    writeln!(
-        log,
-        "upload: the server lacks {} of {} objects",
-        counts.missing, counts.objects
-    )?;
     let total_missing_bytes: u64 = bundle
         .objects
         .iter()
         .filter(|o| missing.contains(&o.sha256))
         .map(|o| o.bytes)
         .sum();
+    writeln!(
+        log,
+        "upload: the server lacks {} of {} objects ({})",
+        counts.missing,
+        counts.objects,
+        bytes(total_missing_bytes)
+    )?;
+    check_quota(&preflight, total_missing_bytes + bundle.db_bytes)?;
     let mut last_report = Instant::now();
     for object in bundle
         .objects
@@ -272,19 +365,16 @@ pub fn run(opts: &RunOptions, log: &mut dyn Write) -> anyhow::Result<RunOutcome>
             ("sha256", object.sha256.as_str()),
             ("ext", object.ext),
         ];
-        upload(
-            &client,
-            &mut state,
-            &state_path,
-            &object.sha256,
-            &object.path,
-            object.bytes,
-            &metadata,
-            &mut counts,
-        )?;
+        let target = Upload {
+            key: &object.sha256,
+            path: &object.path,
+            length: object.bytes,
+            metadata: &metadata,
+        };
+        upload(&client, opts, &mut state, &state_path, &target, &mut counts)?;
         counts.uploaded += 1;
         counts.uploaded_bytes += object.bytes;
-        if last_report.elapsed() >= Duration::from_secs(5) || counts.uploaded == counts.missing {
+        if last_report.elapsed() >= REPORT_EVERY || counts.uploaded == counts.missing {
             writeln!(
                 log,
                 "upload: {}/{} objects, {} of {}",
@@ -300,16 +390,13 @@ pub fn run(opts: &RunOptions, log: &mut dyn Write) -> anyhow::Result<RunOutcome>
         ("purpose", PURPOSE_DATABASE),
         ("sha256", bundle.db_sha256.as_str()),
     ];
-    let db_url = upload(
-        &client,
-        &mut state,
-        &state_path,
-        &bundle.db_sha256,
-        &bundle.db_path,
-        bundle.db_bytes,
-        &metadata,
-        &mut counts,
-    )?;
+    let target = Upload {
+        key: &bundle.db_sha256,
+        path: &bundle.db_path,
+        length: bundle.db_bytes,
+        metadata: &metadata,
+    };
+    let db_url = upload(&client, opts, &mut state, &state_path, &target, &mut counts)?;
     let db_upload_id = db_url
         .rsplit('/')
         .next()
@@ -319,17 +406,34 @@ pub fn run(opts: &RunOptions, log: &mut dyn Write) -> anyhow::Result<RunOutcome>
     writeln!(log, "upload: database sent")?;
     let upload_ms = elapsed_ms(uploading);
 
-    // 4. Install.
+    // 5. Install: the `migrate` job.
     let installing = Instant::now();
-    let mut status = client.start_migration(&db_upload_id, opts.merge)?;
+    let key = format!("shelfy-migrate:{db_upload_id}:{}", opts.merge);
+    let mut status = client.start_migration(&db_upload_id, opts.merge, &key)?;
     writeln!(log, "install {}: {}", status.id, status.stage)?;
     let mut stage = status.stage.clone();
+    let mut last_report = Instant::now();
     while status.state == "running" {
         thread::sleep(opts.poll_interval);
         status = client.migration(&status.id)?;
-        if status.stage != stage {
-            writeln!(log, "install: {}", status.stage)?;
+        if status.stage != stage || last_report.elapsed() >= REPORT_EVERY {
+            let retry = match (&status.error, status.attempts) {
+                (Some(error), attempts) if attempts > 0 => format!(
+                    " (try {} of {} after {})",
+                    attempts + 1,
+                    status.max_attempts,
+                    error.code
+                ),
+                _ => String::new(),
+            };
+            writeln!(
+                log,
+                "install: {} {:.0} %{retry}",
+                status.stage,
+                status.progress * 100.0
+            )?;
             stage = status.stage.clone();
+            last_report = Instant::now();
         }
     }
     let install_ms = elapsed_ms(installing);
@@ -348,7 +452,7 @@ pub fn run(opts: &RunOptions, log: &mut dyn Write) -> anyhow::Result<RunOutcome>
         .clone()
         .context("the server reported no reconciliation")?;
 
-    // 5. Reconcile, then clean up.
+    // 6. Reconcile, then clean up.
     let reconciliation = reconcile(&plan, &bundle, &report);
     let matches = reconciliation.iter().all(|line| line.matches);
     if !opts.keep_work {
@@ -372,48 +476,81 @@ pub fn run(opts: &RunOptions, log: &mut dyn Write) -> anyhow::Result<RunOutcome>
     })
 }
 
-/// Uploads the file at `path` (`length` bytes) with tus, continuing the
-/// upload recorded for `key` in `state` when the server still has it.
-/// Returns the upload's URL.
-#[allow(clippy::too_many_arguments)]
+/// Stops before uploading when the library would go over its quota.
+fn check_quota(preflight: &client::Preflight, new_bytes: u64) -> anyhow::Result<()> {
+    if preflight.quota_bytes <= 0 {
+        return Ok(());
+    }
+    let after = preflight
+        .used_bytes
+        .saturating_add(i64::try_from(new_bytes).unwrap_or(i64::MAX));
+    anyhow::ensure!(
+        after <= preflight.quota_bytes,
+        "the upload ({}) would take the web library over its quota ({} of {} used)",
+        bytes(new_bytes),
+        bytes(u64::try_from(preflight.used_bytes).unwrap_or(0)),
+        bytes(u64::try_from(preflight.quota_bytes).unwrap_or(0))
+    );
+    Ok(())
+}
+
+/// One file to upload.
+struct Upload<'a> {
+    /// Its key in the resume state (its hash).
+    key: &'a str,
+    path: &'a Path,
+    length: u64,
+    metadata: &'a [(&'a str, &'a str)],
+}
+
+/// Uploads `target` with tus, continuing the upload recorded for its key in
+/// `state` when the server still has it. Returns the upload's URL.
 fn upload(
     client: &Client,
+    opts: &RunOptions,
     state: &mut State,
     state_path: &Path,
-    key: &str,
-    path: &Path,
-    length: u64,
-    metadata: &[(&str, &str)],
+    target: &Upload<'_>,
     counts: &mut UploadCounts,
 ) -> anyhow::Result<String> {
+    let length = target.length;
     let mut offset = 0;
     let mut url = None;
-    if let Some(known) = state.uploads.get(key)
-        && let Some(found) = client.upload_state(known)?
-        && found.length == length
-    {
-        offset = found.offset;
-        url = Some(known.clone());
-        if offset > 0 {
-            counts.resumed += 1;
+    if let Some(known) = state.uploads.get(target.key).cloned() {
+        match client.upload_state(&known)? {
+            Some(found) if found.length == length => {
+                offset = found.offset;
+                url = Some(known);
+                if offset > 0 {
+                    counts.resumed += 1;
+                }
+            }
+            Some(_) => {
+                // The file changed since: drop the old upload on the server.
+                client.delete_upload(&known)?;
+                counts.dropped += 1;
+            }
+            None => {}
         }
     }
     let url = match url {
         Some(url) => url,
         None => {
-            let url = client.create_upload(length, metadata)?;
-            state.uploads.insert(key.to_owned(), url.clone());
+            let url = client.create_upload(length, target.metadata)?;
+            state.uploads.insert(target.key.to_owned(), url.clone());
             state.save(state_path)?;
             url
         }
     };
+    let path = target.path;
     let mut file = File::open(path).with_context(|| format!("cannot read {}", path.display()))?;
-    let mut buffer = vec![0u8; CHUNK_BYTES];
+    let chunk_bytes = opts.chunk_bytes.clamp(1, CHUNK_BYTES * 2);
+    let mut buffer = vec![0u8; chunk_bytes];
     let mut failures = 0;
     while offset < length {
         file.seek(SeekFrom::Start(offset))?;
         let wanted =
-            usize::try_from((length - offset).min(CHUNK_BYTES as u64)).unwrap_or(CHUNK_BYTES);
+            usize::try_from((length - offset).min(chunk_bytes as u64)).unwrap_or(chunk_bytes);
         read_exact_or_shorter(&mut file, &mut buffer[..wanted])
             .with_context(|| format!("{} changed while it was uploaded", path.display()))?;
         match client.append(&url, offset, &buffer[..wanted]) {
@@ -439,7 +576,7 @@ fn upload(
             }
         }
     }
-    state.uploads.remove(key);
+    state.uploads.remove(target.key);
     state.save(state_path)?;
     Ok(url)
 }
@@ -473,9 +610,10 @@ fn reconcile(plan: &PlanReport, bundle: &Bundle, report: &client::InstallReport)
     };
     let summary = &bundle.summary;
     let installed = &report.installed;
+    let merge = report.merge.as_ref();
     let mut lines = Vec::new();
-    let mut line = |what: &str, desktop: Option<u64>, bundle: u64, installed: u64| {
-        let matches = bundle == installed && desktop.is_none_or(|d| d == bundle);
+    let mut line = |what: &str, desktop: Option<u64>, bundle: u64, installed: Option<u64>| {
+        let matches = installed.is_none_or(|i| i == bundle) && desktop.is_none_or(|d| d == bundle);
         lines.push(Line {
             what: what.to_owned(),
             desktop,
@@ -484,11 +622,25 @@ fn reconcile(plan: &PlanReport, bundle: &Bundle, report: &client::InstallReport)
             matches,
         });
     };
+    // A replace compares with the installed library; a merge with what of
+    // the bundle landed in the library it merged into.
+    let landed = |replace: u64, merged: Option<u64>| match merge {
+        Some(_) => merged,
+        None => Some(replace),
+    };
+    let posts_landed: BTreeMap<String, u64> = match merge {
+        Some(m) => m
+            .posts
+            .iter()
+            .map(|(platform, p)| (platform.clone(), p.inserted + p.merged))
+            .collect(),
+        None => installed.posts.clone(),
+    };
     let mut platforms: Vec<&String> = summary
         .posts
         .written
         .keys()
-        .chain(installed.posts.keys())
+        .chain(posts_landed.keys())
         .collect();
     platforms.sort();
     platforms.dedup();
@@ -501,76 +653,85 @@ fn reconcile(plan: &PlanReport, bundle: &Bundle, report: &client::InstallReport)
             // The desktop rows of a platform minus those merged into another.
             Some(desktop - (read - written).min(desktop)),
             written,
-            installed.posts.get(platform).copied().unwrap_or(0),
+            Some(posts_landed.get(platform).copied().unwrap_or(0)),
         );
     }
     line(
         "slides",
         outcome("post_media", "insert"),
         summary.rows.slides,
-        installed.slides,
+        landed(installed.slides, None),
     );
     line(
         "collections",
         outcome("collections", "insert"),
         summary.rows.collections,
-        installed.collections,
+        landed(
+            installed.collections,
+            merge.map(|m| m.collections_inserted + m.collections_matched),
+        ),
     );
     line(
         "memberships",
         outcome("post_collections", "insert"),
         summary.rows.memberships,
-        installed.memberships,
+        landed(
+            installed.memberships,
+            merge.map(|m| m.memberships_added + m.memberships_present),
+        ),
     );
     line(
         "post_tags",
         outcome("post_tags", "insert"),
         summary.rows.post_tags,
-        installed.post_tags,
+        landed(installed.post_tags, None),
     );
     line(
         "post_entities",
         outcome("post_entities", "insert"),
         summary.rows.post_entities,
-        installed.post_entities,
+        landed(installed.post_entities, None),
     );
     line(
         "tag_aliases",
         outcome("tag_alias", "insert"),
         summary.rows.tag_aliases,
-        installed.tag_aliases,
+        landed(installed.tag_aliases, None),
     );
     line(
         "tag_clusters",
         outcome("tag_cluster", "insert"),
         summary.rows.tag_clusters,
-        installed.tag_clusters,
+        landed(installed.tag_clusters, None),
     );
     line(
         "web captures",
         Some(plan.web.web_captures),
         summary.rows.web_captures,
-        installed.web_captures,
+        landed(
+            installed.web_captures,
+            merge.map(|m| m.captures_added + m.captures_present),
+        ),
     );
     line(
         "media objects",
         None,
         summary.objects.count,
-        installed.media_objects,
+        landed(installed.media_objects, Some(report.objects.total)),
     );
     let plan_files = &plan.files.totals;
     lines.push(Line {
         what: "files present".to_owned(),
         desktop: Some(plan_files.present),
         bundle: summary.files.present,
-        installed: summary.files.present,
+        installed: None,
         matches: plan_files.present == summary.files.present,
     });
     lines.push(Line {
         what: "files missing".to_owned(),
         desktop: Some(plan_files.missing),
         bundle: summary.files.missing,
-        installed: summary.files.missing,
+        installed: None,
         matches: plan_files.missing == summary.files.missing,
     });
     lines
@@ -611,9 +772,14 @@ pub fn render(outcome: &RunOutcome) -> String {
     let d = &outcome.durations;
     let _ = writeln!(
         out,
-        "shelfy-migrate {} · run · install {}",
+        "shelfy-migrate {} · run · install {} · {}",
         env!("CARGO_PKG_VERSION"),
-        outcome.migration_id
+        outcome.migration_id,
+        if r.mode == "merge" {
+            "merged into the web library"
+        } else {
+            "replaced the empty web library"
+        }
     );
     let _ = writeln!(out);
     let _ = writeln!(
@@ -645,9 +811,17 @@ pub fn render(outcome: &RunOutcome) -> String {
         u.resumed,
         bytes(u.database_bytes)
     );
+    let covers = r.renditions.cover_bytes.map_or_else(String::new, |c| {
+        format!(
+            " · cover g480 p50 {} p95 {} ({} covers)",
+            bytes(c.p50),
+            bytes(c.p95),
+            c.count
+        )
+    });
     let _ = writeln!(
         out,
-        "Install   {} objects stored ({} from uploads, {} already stored, {}) · g480 {} rendered, {} existing, {} failed, {} not renderable · ThumbHash {}",
+        "Install   {} objects stored ({} from uploads, {} already stored, {}) · g480 {} rendered, {} existing, {} failed, {} not renderable · ThumbHash {}{covers}",
         r.objects.total,
         r.objects.from_uploads,
         r.objects.already_stored,
@@ -658,6 +832,25 @@ pub fn render(outcome: &RunOutcome) -> String {
         r.renditions.not_renderable,
         r.renditions.thumbhashes
     );
+    if let Some(m) = &r.merge {
+        let inserted: u64 = m.posts.values().map(|p| p.inserted).sum();
+        let merged: u64 = m.posts.values().map(|p| p.merged).sum();
+        let _ = writeln!(
+            out,
+            "Merge     {inserted} new posts, {merged} merged into posts the library had ({} took the desktop row, {} unchanged; AI filled {}, dates {}, notes joined {}, tags added {}) · collections {} new, {} matched · memberships {} new · site versions {} new, {} present",
+            m.replaced,
+            m.unchanged,
+            m.ai_filled,
+            m.dates_filled,
+            m.notes_joined,
+            m.tags_added,
+            m.collections_inserted,
+            m.collections_matched,
+            m.memberships_added,
+            m.captures_added,
+            m.captures_present
+        );
+    }
     let a = &r.archive;
     let states: Vec<String> = a.by_state.iter().map(|(k, v)| format!("{k} {v}")).collect();
     let _ = writeln!(
@@ -671,6 +864,16 @@ pub fn render(outcome: &RunOutcome) -> String {
         a.pinterest_cover,
         a.other_cover,
         a.image_slides_pending
+    );
+    let _ = writeln!(
+        out,
+        "Settings  {} · previous library kept 7 days as {}",
+        if r.settings.is_empty() {
+            "none taken from the desktop".to_owned()
+        } else {
+            format!("taken from the desktop: {}", r.settings.join(", "))
+        },
+        r.previous.as_deref().unwrap_or("-")
     );
     let _ = writeln!(
         out,
@@ -694,7 +897,14 @@ pub fn render(outcome: &RunOutcome) -> String {
     let _ = writeln!(
         out,
         "  {:<20} {:>9} {:>9} {:>9}",
-        "reconciliation", "desktop", "bundle", "installed"
+        "reconciliation",
+        "desktop",
+        "bundle",
+        if r.mode == "merge" {
+            "landed"
+        } else {
+            "installed"
+        }
     );
     for line in &outcome.reconciliation {
         let _ = writeln!(
@@ -704,7 +914,8 @@ pub fn render(outcome: &RunOutcome) -> String {
             line.desktop
                 .map_or_else(|| "-".to_owned(), |d| d.to_string()),
             line.bundle,
-            line.installed,
+            line.installed
+                .map_or_else(|| "-".to_owned(), |i| i.to_string()),
             if line.matches { "" } else { "  MISMATCH" }
         );
     }
@@ -800,5 +1011,19 @@ mod tests {
         fs::create_dir_all(work.join(BUNDLE_DIR)).unwrap();
         clean_work_dir(&work, false).unwrap();
         assert!(!work.exists(), "an emptied work directory goes too");
+    }
+
+    #[test]
+    fn the_quota_stops_an_upload_that_does_not_fit() {
+        let preflight = client::Preflight {
+            quota_bytes: 1_000,
+            used_bytes: 600,
+            ..client::Preflight::default()
+        };
+        assert!(check_quota(&preflight, 400).is_ok());
+        let err = check_quota(&preflight, 401).unwrap_err().to_string();
+        assert!(err.contains("over its quota"), "{err}");
+        let unlimited = client::Preflight::default();
+        assert!(check_quota(&unlimited, u64::MAX).is_ok());
     }
 }

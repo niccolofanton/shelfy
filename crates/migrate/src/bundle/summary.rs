@@ -33,6 +33,9 @@ pub struct BundleSummary {
     pub objects: ObjectCounts,
     pub covers: CoverCounts,
     pub repairs: RepairCounts,
+    /// The desktop settings carried (`language`, `archiveAssetTypes`).
+    #[serde(default)]
+    pub settings: Vec<String>,
 }
 
 /// Posts in and out.
@@ -143,6 +146,13 @@ pub struct RepairCounts {
     pub videos_missing: u64,
     /// `ai_status = 'analyzing'` reset (desktop DATA-47).
     pub ai_stuck_reset: u64,
+    /// Manual AI edits (desktop model `manuale`) mapped to the web's model
+    /// `manual`, without a provider (P1-03 review, L5).
+    #[serde(default)]
+    pub manual_ai_edits: u64,
+    /// Kept rows without an analysis that took a folded duplicate's (§4.2).
+    #[serde(default)]
+    pub ai_from_duplicates: u64,
     /// `ai_web_json` values that are not JSON, dropped.
     pub ai_web_json_invalid: u64,
     /// Collections whose name was blank or whose color was invalid.

@@ -11,12 +11,17 @@
 //!
 //! - `posts` → `posts` through `shelfy_core::repo::posts::insert`, with the
 //!   slides, the AI layer (`ai_provider = 'desktop-local'`, schema 1) and the
-//!   user layer. The cover is the first file present of `thumbnail_path`,
-//!   `image_path` and `preview_path`, the desktop card's order. A file that
-//!   is missing leaves its slot pending for the archive (OI-6: a missing kept
-//!   video just means "not kept").
+//!   user layer. A manual AI edit (desktop model `manuale`) becomes the web's
+//!   manual edit: model `manual`, no provider and no schema version. The
+//!   cover is the first file present of `thumbnail_path`, `image_path` and
+//!   `preview_path`, the desktop card's order. A file that is missing leaves
+//!   its slot pending for the archive (OI-6: a missing kept video just means
+//!   "not kept").
 //! - Duplicate rows (same key) fold into the kept row: their collections and
-//!   manual tags are unioned and their notes appended (§4.2).
+//!   manual tags are unioned and their notes joined, each once (§4.2, the
+//!   core's `ingest::duplicates`).
+//! - The desktop settings found in its localStorage (language and asset
+//!   types, [`crate::settings`]) become `settings` rows.
 //! - `post_tags` and `post_entities` are carried verbatim, tiers included;
 //!   files from before desktop schema v1 get them rebuilt from the JSON
 //!   columns instead, as the desktop's own repair would.
@@ -46,6 +51,7 @@ use rusqlite::{Connection, Transaction, params};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use shelfy_core::ids::{Platform, ig};
+use shelfy_core::ingest::duplicates;
 use shelfy_core::legacy::convert::{
     Timestamp, cdn_url_expiry_ms, classify_timestamp, epoch_to_ms, is_local_path, json_string_array,
 };
@@ -53,12 +59,15 @@ use shelfy_core::legacy::{
     CollectionRow, LegacyDb, PostCollectionRow, PostEntityRow, PostMediaRow, PostRow, PostTagRow,
     TagAliasRow, TagClusterMembershipRow, TagClusterRow, WebSnapshotRow,
 };
-use shelfy_core::repo::posts::{self, AiLayer, CAPTION_MAX_CHARS, NewMedia, NewPost};
+use shelfy_core::repo::posts::{
+    self, AiLayer, CAPTION_MAX_CHARS, MANUAL_AI_MODEL, NewMedia, NewPost,
+};
 use shelfy_core::schema::{self, Kind};
 use shelfy_core::search::index;
 
 use crate::files::FileState;
 use crate::plan::{PlanMapping, PostMapping};
+use crate::settings::DesktopSettings;
 use objects::{ObjectTable, Role};
 pub use summary::{BundleSummary, SUMMARY_META_KEY};
 use web::Capture;
@@ -69,13 +78,15 @@ pub const BUNDLE_DB_FILE: &str = "library.sqlite";
 pub const DESKTOP_AI_PROVIDER: &str = "desktop-local";
 /// `posts.ai_schema_version` of a desktop analysis.
 pub const DESKTOP_AI_SCHEMA: i64 = 1;
+/// `posts.ai_model` of a manual AI edit on the desktop (`analyze:updateManual`).
+pub const DESKTOP_MANUAL_AI_MODEL: &str = "manuale";
 /// `meta.key` prefix of a manual post's desktop id, for traceability (§4.2).
 pub const LEGACY_ID_META_PREFIX: &str = "legacy_id:";
 /// What joins the notes of merged duplicates.
-pub const NOTE_SEPARATOR: &str = "\n\n";
+pub const NOTE_SEPARATOR: &str = duplicates::NOTE_SEPARATOR;
 
 /// How to build a bundle.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BundleOptions {
     /// Include kept videos (`--with-videos`).
     pub with_videos: bool,
@@ -83,6 +94,8 @@ pub struct BundleOptions {
     pub snapshot: bool,
     /// "Now", unix ms: the build time and the reference for URL expiry.
     pub now_ms: i64,
+    /// The desktop settings to carry, when found.
+    pub settings: Option<DesktopSettings>,
 }
 
 /// A built bundle.
@@ -351,21 +364,32 @@ impl<'a> Builder<'a> {
         let platform = repo_platform(m.platform);
         let repairs = &mut self.summary.repairs;
 
-        let posted_at = match classify_timestamp(p.timestamp.as_deref()) {
+        // The kept row's date, else a folded row's (the core's duplicate
+        // policy fills the survivor's gaps), else the shortcode's.
+        let valid = |row: &PostRow| match classify_timestamp(row.timestamp.as_deref()) {
             Timestamp::Valid(ms) => Some(ms),
-            _ if m.platform == Platform::Instagram => {
+            _ => None,
+        };
+        let posted_at = match valid(p).or_else(|| folded.iter().find_map(|row| valid(row))) {
+            Some(ms) => Some(ms),
+            None if m.platform == Platform::Instagram => {
                 let date = non_empty(&p.shortcode).and_then(ig::date_from_shortcode);
                 if date.is_some() {
                     repairs.ig_dates_from_shortcode += 1;
                 }
                 date
             }
-            _ => None,
+            None => None,
         };
-        let imported_at = epoch_to_ms(p.imported_at).unwrap_or_else(|| {
-            repairs.imported_at_missing += 1;
-            posted_at.unwrap_or(now)
-        });
+        // A merged post keeps the earliest import, as the core's merge does.
+        let imported_at = std::iter::once(p)
+            .chain(folded.iter().copied())
+            .filter_map(|row| epoch_to_ms(row.imported_at))
+            .min()
+            .unwrap_or_else(|| {
+                repairs.imported_at_missing += 1;
+                posted_at.unwrap_or(now)
+            });
         let media_type = non_empty(&p.media_type).map(str::to_owned);
 
         let mut post = NewPost::new(
@@ -400,31 +424,41 @@ impl<'a> Builder<'a> {
             .filter(|u| is_remote(u))
             .map(str::to_owned);
         post.cover_url_expires_at = post.cover_url.as_deref().and_then(cdn_url_expiry_ms);
-        post.ai = self.ai_layer(p);
+        // The kept row's analysis, else the first folded row's (the core's
+        // duplicate policy: an unanalyzed survivor takes the other's).
+        post.ai = match folded
+            .iter()
+            .find(|row| !has_analysis(p) && has_analysis(row))
+        {
+            Some(row) => {
+                self.summary.repairs.ai_from_duplicates += 1;
+                self.ai_layer(row)
+            }
+            None => self.ai_layer(p),
+        };
         post.web_url = non_empty(&p.web_url).map(str::to_owned);
         post.web_domain = non_empty(&p.web_domain).map(str::to_owned);
         post.web_final_url = non_empty(&p.web_final_url).map(str::to_owned);
 
-        // The user layer: the kept row's, plus the folded rows' (§4.2).
-        let mut notes: Vec<&str> = Vec::new();
-        let mut tags: Vec<String> = Vec::new();
-        let mut seen_tags: HashSet<String> = HashSet::new();
-        for row in std::iter::once(p).chain(folded.iter().copied()) {
-            if let Some(note) = non_empty(&row.user_note) {
-                notes.push(note);
-            }
-            for tag in json_string_array(row.user_tags.as_deref()) {
-                if seen_tags.insert(tag.to_lowercase()) {
-                    tags.push(tag);
-                }
-            }
+        // The user layer: the kept row's verbatim; with folded rows, every
+        // row's, joined and united by the core's duplicate policy (§4.2).
+        if folded.is_empty() {
+            post.user_note = p.user_note.clone().filter(|n| !n.is_empty());
+            let mut seen_tags: HashSet<String> = HashSet::new();
+            post.user_tags = json_string_array(p.user_tags.as_deref())
+                .into_iter()
+                .filter(|tag| seen_tags.insert(tag.to_lowercase()))
+                .collect();
+        } else {
+            let rows: Vec<&PostRow> = std::iter::once(p).chain(folded.iter().copied()).collect();
+            post.user_note =
+                duplicates::join_notes(rows.iter().filter_map(|row| row.user_note.as_deref()));
+            let tags: Vec<Vec<String>> = rows
+                .iter()
+                .map(|row| json_string_array(row.user_tags.as_deref()))
+                .collect();
+            post.user_tags = duplicates::union_tags(tags.iter().map(Vec::as_slice));
         }
-        post.user_note = match notes.as_slice() {
-            [] => p.user_note.clone().filter(|n| !n.is_empty()),
-            [one] => Some((*one).to_owned()),
-            many => Some(many.join(NOTE_SEPARATOR)),
-        };
-        post.user_tags = tags;
 
         // The cover: the desktop card's order (thumbnail, image, preview).
         let video_post = media_type.as_deref() == Some("video");
@@ -662,11 +696,21 @@ impl<'a> Builder<'a> {
                 None
             }
         });
+        // A manual edit is the user's own layer, as on the web: model
+        // `manual`, attributed to no provider and no output schema.
+        let manual = p.ai_model.as_deref().map(str::trim) == Some(DESKTOP_MANUAL_AI_MODEL);
+        if manual {
+            self.summary.repairs.manual_ai_edits += 1;
+        }
         Some(AiLayer {
             status,
-            provider: Some(DESKTOP_AI_PROVIDER.to_owned()),
-            model: p.ai_model.clone(),
-            schema_version: Some(DESKTOP_AI_SCHEMA),
+            provider: (!manual).then(|| DESKTOP_AI_PROVIDER.to_owned()),
+            model: if manual {
+                Some(MANUAL_AI_MODEL.to_owned())
+            } else {
+                p.ai_model.clone()
+            },
+            schema_version: (!manual).then_some(DESKTOP_AI_SCHEMA),
             description: p.ai_description.clone(),
             save_reason: p.ai_save_reason.clone(),
             language: p.ai_language.clone(),
@@ -822,6 +866,15 @@ impl<'a> Builder<'a> {
         })?;
         self.summary.rows.memberships = memberships;
         self.write_clusters(tx)?;
+        if let Some(settings) = &self.opts.settings {
+            for (key, value) in settings.rows() {
+                tx.execute(
+                    "INSERT INTO settings (key, value_json, updated_at) VALUES (?1, ?2, ?3)",
+                    params![key, value, now],
+                )?;
+                self.summary.settings.push(key.to_owned());
+            }
+        }
 
         for object in &upload {
             *self
@@ -1121,6 +1174,14 @@ fn archive_state(
     } else {
         "pending"
     }
+}
+
+/// Whether a desktop row holds an AI analysis, as the core's duplicate
+/// policy counts one: status `done`, a description or AI tags.
+fn has_analysis(row: &PostRow) -> bool {
+    row.ai_status.as_deref() == Some("done")
+        || non_empty(&row.ai_description).is_some()
+        || !json_string_array(row.ai_tags.as_deref()).is_empty()
 }
 
 /// `media_type` of a post that has none: from its slides.

@@ -58,6 +58,16 @@ pub fn prepare(db: &Path, work_dir: &Path) -> anyhow::Result<Source> {
             snapshot: false,
         });
     }
+    snapshot(db, work_dir)
+}
+
+/// A snapshot of `db` in `work_dir`, whatever files sit next to it: for a
+/// library another process holds open (`--allow-open`).
+///
+/// # Errors
+///
+/// As [`prepare`].
+pub fn snapshot(db: &Path, work_dir: &Path) -> anyhow::Result<Source> {
     let target = work_dir.join(SNAPSHOT_FILE);
     copy(db, &target)?;
     Ok(Source {

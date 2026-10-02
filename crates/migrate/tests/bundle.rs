@@ -92,6 +92,7 @@ impl Desktop {
                 with_videos,
                 snapshot: false,
                 now_ms: NOW,
+                settings: report.settings.clone(),
             },
         )
         .unwrap();
@@ -642,4 +643,261 @@ fn building_twice_gives_the_same_objects() {
         assert_eq!((&x.sha256, x.ext, x.bytes), (&y.sha256, y.ext, y.bytes));
     }
     assert_eq!(a.db_sha256, b.db_sha256, "a deterministic database");
+}
+
+/// A library with one case of every row of plan §4.2, each asserted under
+/// that row's name below.
+fn section_4_2_library() -> Desktop {
+    use shelfy_migrate::settings::fixture::{key, latin1, write};
+
+    let d = Desktop::new();
+    let c = &d.conn;
+    let shortcode = MediaPk::parse_decimal(PK).unwrap().to_shortcode();
+    // §4.2 "posts.id (IG)": the composite id, the bare pk and the shortcode
+    // of one post. The composite row has the files, the pk row the analysis,
+    // the shortcode row a user layer; they have folders and notes.
+    let cover = d.asset("thumbnails/instagram-a.jpg", &file(JPEG, 21));
+    c.execute(
+        "INSERT INTO posts (id, platform, shortcode, media_type, thumbnail_path, imported_at,
+           user_note, timestamp)
+         VALUES (?1, 'instagram', ?2, 'image', ?3, ?4, 'same note', '')",
+        params![format!("{PK}_7"), shortcode, cover, NOW_S],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO posts (id, platform, shortcode, media_type, imported_at, ai_status,
+           ai_description, ai_tags, ai_model, user_note, timestamp)
+         VALUES (?1, 'instagram', ?2, 'image', ?3, 'done', 'A chair', '[\"Chair\"]',
+           'qwen2.5vl', 'other note', '2023-05-01T08:00:00Z')",
+        params![PK, shortcode, NOW_S - 100],
+    )
+    .unwrap();
+    c.execute(
+        "INSERT INTO posts (id, platform, shortcode, media_type, imported_at, user_note,
+           user_tags)
+         VALUES (?1, 'instagram', ?1, 'image', ?2, 'same note', '[\"Mine\",\"mine\"]')",
+        params![shortcode, NOW_S],
+    )
+    .unwrap();
+    // §4.2 "post_tags": a manual tier and an untiered (NULL) row.
+    c.execute_batch(&format!(
+        "INSERT INTO post_tags (post_id, tag_norm, tag_form, tier) VALUES ('{PK}', 'chair', 'Chair', NULL);
+         INSERT INTO post_tags (post_id, tag_norm, tag_form, tier) VALUES ('{shortcode}', 'mine', 'Mine', 'manual');
+         INSERT INTO collections (id, name, color, platform, external_id, ig_name, created_at)
+           VALUES (1, 'Saved', '#AABBCC', 'instagram', '42', 'All posts', 1700000000);
+         INSERT INTO collections (id, name, color, created_at) VALUES (2, 'Mine', '#112233', 1700000000);
+         INSERT INTO post_collections (post_id, collection_id, added_at) VALUES ('{PK}_7', 1, 1700000000);
+         INSERT INTO post_collections (post_id, collection_id, added_at) VALUES ('{shortcode}', 2, 1700000000);"
+    ))
+    .unwrap();
+    // §4.2 "posts.id X / Pinterest", and undated posts.
+    c.execute_batch(
+        "INSERT INTO posts (id, platform, media_type, imported_at, timestamp)
+           VALUES ('1800000000000000005', 'twitter', 'text', 1700000000, 'not a date');
+         INSERT INTO posts (id, platform, media_type, imported_at, post_url, timestamp)
+           VALUES ('987654321', 'pinterest', 'image', 1700000000,
+                   'https://www.pinterest.com/pin/987654321/', NULL);",
+    )
+    .unwrap();
+    // §4.2 "web:<sha1>": http and https twins of one site.
+    for (url, note) in [
+        ("http://studio.example.test/work", "from http"),
+        ("https://studio.example.test/work", "from https"),
+    ] {
+        c.execute(
+            "INSERT INTO posts (id, platform, media_type, web_url, web_final_url, post_url,
+               imported_at, user_note, web_pages_json, web_captured_at)
+             VALUES (?1, 'web', 'website', ?2, ?2, ?2, 1700000000, ?3, '[]', 1700000000)",
+            params![legacy_post_id(url), url, note],
+        )
+        .unwrap();
+    }
+    // §4.2 "ai_*": a manual AI edit of the desktop.
+    c.execute(
+        "INSERT INTO posts (id, platform, media_type, imported_at, ai_status, ai_description,
+           ai_model)
+         VALUES ('1800000000000000006', 'twitter', 'text', 1700000000, 'done', 'Mine', 'manuale')",
+        [],
+    )
+    .unwrap();
+    // §4.2 "jobs, downloads": dropped.
+    c.execute_batch(&format!(
+        "INSERT INTO jobs (kind, key, post_id, status) VALUES ('download', 'a', '{PK}', 'done');
+         INSERT INTO downloads (post_id, asset_type, status) VALUES ('{PK}', 'image', 'done');"
+    ))
+    .unwrap();
+    // §4.2 "localStorage settings".
+    write(
+        &d.root,
+        &[
+            (key("file://", "app:language"), latin1("en")),
+            (
+                key("file://", "download:assetTypes"),
+                latin1(r#"{"thumbnail":true,"image":true,"video":false}"#),
+            ),
+        ],
+    );
+    d
+}
+
+#[test]
+fn every_section_4_2_row_maps_as_the_plan_says() {
+    let desktop = section_4_2_library();
+    let out = tempfile::tempdir().unwrap();
+    let (bundle, plan) = desktop.bundle(false, out.path());
+    let db = Connection::open(&bundle.db_path).unwrap();
+    let s = &bundle.summary;
+    let key = format!("ig_{PK}");
+
+    // posts.id (IG `<pk>_<owner>`, pk or shortcode) → ig_<pk>: one post; the
+    // row with archived files is kept, takes the pk row's analysis (it had
+    // none) and date, unites the folders and joins the notes, each once.
+    assert_eq!(plan.duplicates.instagram.groups, 1);
+    assert_eq!(plan.duplicates.instagram.rows_merged, 2);
+    let (native, note, tags, ai, cover): (String, String, String, String, Option<i64>) = db
+        .query_row(
+            "SELECT native_id, user_note, user_tags_json, ai_description, cover_object
+             FROM posts WHERE key = ?1",
+            [&key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        )
+        .unwrap();
+    assert_eq!(native, PK);
+    assert_eq!(note, "same note\n\nother note");
+    assert_eq!(tags, r#"["Mine"]"#);
+    assert_eq!(ai, "A chair");
+    assert!(cover.is_some(), "the kept row's file");
+    assert_eq!(s.repairs.ai_from_duplicates, 1);
+    assert_eq!(
+        one::<i64>(
+            &db,
+            &format!(
+                "SELECT count(*) FROM post_collections pc JOIN posts p ON p.id = pc.post_id
+                 WHERE p.key = '{key}'"
+            )
+        ),
+        2
+    );
+    // The earliest import of the group.
+    let (imported, posted): (i64, i64) = db
+        .query_row(
+            "SELECT imported_at, posted_at FROM posts WHERE key = ?1",
+            [&key],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(imported, (NOW_S - 100) * 1000);
+    assert_eq!(posted, 1_682_928_000_000);
+
+    // posts.id X / Pinterest → x_<id> / pin_<id>.
+    for key in ["x_1800000000000000005", "pin_987654321"] {
+        assert_eq!(
+            one::<i64>(
+                &db,
+                &format!("SELECT count(*) FROM posts WHERE key = '{key}'")
+            ),
+            1,
+            "{key}"
+        );
+    }
+
+    // web:<sha1> → web_<sha1> of the scheme-less URL: the twins are one post.
+    assert_eq!(plan.duplicates.web.groups, 1);
+    let web: Vec<String> = rows(&db, "SELECT key FROM posts WHERE platform = 'web'");
+    assert_eq!(web.len(), 1);
+    assert!(web[0].starts_with("web_") && web[0].len() == 24, "{web:?}");
+    assert_eq!(
+        one::<String>(&db, "SELECT user_note FROM posts WHERE platform = 'web'"),
+        "from http\n\nfrom https"
+    );
+
+    // timestamp (ISO, '', NULL, invalid) → posted_at ms or NULL; sort_ts
+    // falls back to imported_at.
+    let undated: Vec<String> = rows(
+        &db,
+        "SELECT key FROM posts WHERE posted_at IS NULL AND sort_ts = imported_at
+           AND key IN ('x_1800000000000000005', 'pin_987654321') ORDER BY key",
+    );
+    assert_eq!(undated, ["pin_987654321", "x_1800000000000000005"]);
+    assert_eq!(plan.posts.posted_at.invalid, 1);
+    assert!(plan.posts.posted_at.null >= 1);
+    assert!(plan.posts.posted_at.empty >= 1);
+
+    // thumb_blur → thumbhash: the server computes it from the cover.
+    assert_eq!(
+        one::<i64>(
+            &db,
+            "SELECT count(*) FROM posts WHERE thumbhash IS NOT NULL"
+        ),
+        0
+    );
+
+    // ai_* → ai_* (desktop-local, schema 1); a manual edit (`manuale`) →
+    // model `manual`, no provider, no schema version.
+    let analyzed: (String, String, i64) = db
+        .query_row(
+            "SELECT ai_model, ai_provider, ai_schema_version FROM posts WHERE key = ?1",
+            [&key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        analyzed,
+        ("qwen2.5vl".to_owned(), "desktop-local".to_owned(), 1)
+    );
+    let manual: (String, Option<String>, Option<i64>, String) = db
+        .query_row(
+            "SELECT ai_model, ai_provider, ai_schema_version, ai_status FROM posts
+             WHERE key = 'x_1800000000000000006'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(manual, ("manual".to_owned(), None, None, "done".to_owned()));
+    assert_eq!(s.repairs.manual_ai_edits, 1);
+
+    // post_tags: tier manual → source manual; NULL → source ai, tier NULL.
+    let tag_rows: Vec<String> = rows(
+        &db,
+        "SELECT tag_norm || ':' || source || ':' || coalesce(tier, '-') FROM post_tags ORDER BY 1",
+    );
+    assert_eq!(tag_rows, ["chair:ai:-", "mine:manual:-"]);
+
+    // collections (+ platform, external_id, ig_name) → source_name.
+    assert_eq!(
+        rows::<String>(
+            &db,
+            "SELECT name || '/' || coalesce(platform, '-') || '/' || coalesce(source_name, '-')
+             FROM collections ORDER BY id"
+        ),
+        ["Saved/instagram/All posts", "Mine/-/-"]
+    );
+
+    // jobs, downloads → dropped.
+    let dropped = |table: &str| {
+        plan.tables
+            .iter()
+            .find(|t| t.table == table)
+            .map(|t| t.outcomes.get("dropped").copied().unwrap_or(0))
+            .unwrap()
+    };
+    assert_eq!((dropped("jobs"), dropped("downloads")), (1, 1));
+
+    // localStorage settings → settings: the language and the asset types.
+    assert_eq!(
+        rows::<String>(
+            &db,
+            "SELECT key || '=' || value_json FROM settings ORDER BY key"
+        ),
+        [
+            r#"archiveAssetTypes={"thumbnail":true,"image":true,"video":false}"#,
+            r#"language="en""#
+        ]
+    );
+    assert_eq!(s.settings, ["language", "archiveAssetTypes"]);
+    assert_eq!(plan.settings.as_ref().unwrap().source, "found");
+    assert_eq!(plan.identity.ig_long_shortcodes, 0);
+
+    // Every row is accounted for, and the plan passes.
+    assert!(plan.verdict.pass, "{:?}", plan.errors);
 }

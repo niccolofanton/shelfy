@@ -179,6 +179,16 @@ pub fn plan_text(r: &PlanReport) -> String {
             ),
         );
     }
+    if r.identity.ig_long_shortcodes > 0 {
+        kv(
+            w,
+            "IG long codes",
+            &format!(
+                "{} private-style shortcodes decoded as pks (OI-9)",
+                r.identity.ig_long_shortcodes
+            ),
+        );
+    }
     if !r.identity.web_legacy_id_check.is_empty() {
         kv(
             w,
@@ -322,6 +332,92 @@ pub fn plan_text(r: &PlanReport) -> String {
                 or.ignored
             ),
         );
+    }
+
+    section(w, "Settings (localStorage)");
+    match &r.settings {
+        None => kv(w, "desktop", "not read: no media root"),
+        Some(s) => {
+            let language = s
+                .language
+                .map_or("not set (the web default applies)", |l| match l {
+                    shelfy_core::repo::settings::Language::It => "it",
+                    shelfy_core::repo::settings::Language::En => "en",
+                });
+            let types = s.archive_asset_types.map_or_else(
+                || "not set (all types)".to_owned(),
+                |t| {
+                    format!(
+                        "thumbnail {} · image {} · video {}",
+                        yes(t.thumbnail),
+                        yes(t.image),
+                        yes(t.video)
+                    )
+                },
+            );
+            kv(w, "localStorage", &s.source);
+            kv(w, "language", language);
+            kv(w, "asset types", &types);
+        }
+    }
+
+    section(w, "Server");
+    if let Some(open) = r.desktop_open {
+        kv(
+            w,
+            "desktop app",
+            if open {
+                "has the library open (read anyway: --allow-open)"
+            } else {
+                "not holding the library"
+            },
+        );
+    }
+    match &r.server {
+        None => kv(
+            w,
+            "web library",
+            "not checked: pass --server and sign in (shelfy-migrate login) for the quota check",
+        ),
+        Some(s) => {
+            kv(
+                w,
+                "web library",
+                &if s.library_empty {
+                    "empty: `run` replaces it".to_owned()
+                } else {
+                    format!("{} posts: `run --merge` merges into it", s.posts)
+                },
+            );
+            let quota = if s.quota_bytes <= 0 {
+                "unlimited".to_owned()
+            } else {
+                bytes(u64::try_from(s.quota_bytes).unwrap_or(0))
+            };
+            kv(
+                w,
+                "quota",
+                &format!(
+                    "{quota}, {} used · upload {} by default: {} · {} with --with-videos: {}",
+                    bytes(u64::try_from(s.used_bytes).unwrap_or(0)),
+                    bytes(s.upload_bytes),
+                    if s.fits { "fits" } else { "OVER QUOTA" },
+                    bytes(s.upload_bytes_with_videos),
+                    if s.fits_with_videos {
+                        "fits"
+                    } else {
+                        "OVER QUOTA"
+                    }
+                ),
+            );
+            if let Some(job) = s.active_job_id {
+                kv(
+                    w,
+                    "install",
+                    &format!("job {job} is already queued or running"),
+                );
+            }
+        }
     }
 
     if !r.warnings.is_empty() {

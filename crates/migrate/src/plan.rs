@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
 
 use shelfy_core::ids::{CanonicalId, Platform, ig, manual, pinterest, web, x};
+use shelfy_core::ingest::duplicates::{self, Layers};
 use shelfy_core::legacy::catalog::{self, Disposition, ValueType};
 use shelfy_core::legacy::convert::{
     self, EpochClass, JsonArrayClass, Timestamp, classify_epoch_seconds, classify_json_array,
@@ -285,6 +286,13 @@ impl<'a> Planner<'a> {
 
         // Identity.
         let (id, source) = self.identify(&p, platform);
+        if platform == Some(Platform::Instagram)
+            && p.shortcode
+                .as_deref()
+                .is_some_and(|sc| sc.chars().count() > 12)
+        {
+            self.identity.ig_long_shortcodes += 1;
+        }
 
         // Files of the row.
         let mut info = PostInfo {
@@ -517,12 +525,15 @@ impl<'a> Planner<'a> {
             if ids.len() < 2 {
                 continue;
             }
+            // The core's duplicate policy picks the kept row (§4.2); among
+            // equals the first wins, so the rows go in tie-break order.
             ids.sort_by(|a, b| {
                 let (pa, pb) = (&self.posts[a], &self.posts[b]);
-                survivor_rank(pa)
-                    .cmp(&survivor_rank(pb))
-                    .then_with(|| a.cmp(b))
+                tie_break(pa).cmp(&tie_break(pb)).then_with(|| a.cmp(b))
             });
+            let ranks: Vec<Layers> = ids.iter().map(|id| rank_layers(&self.posts[id])).collect();
+            let kept = duplicates::survivor(&ranks).unwrap_or(0);
+            ids[..=kept].rotate_right(1);
             let summary = match key.split('_').next() {
                 Some("ig") => &mut self.duplicates.instagram,
                 Some("web") => &mut self.duplicates.web,
@@ -1181,6 +1192,9 @@ impl<'a> Planner<'a> {
             tags: self.tags,
             web: self.web,
             files: self.files_report,
+            settings: self.opts.media_root.as_deref().map(crate::settings::read),
+            desktop_open: None,
+            server: None,
             errors,
             warnings,
             verdict,
@@ -1206,25 +1220,26 @@ impl<'a> Planner<'a> {
     }
 }
 
-/// Sort key of a duplicate group member: the first one is kept (plan §4.2:
-/// archived files, then AI, then the user layer; then the richest id form and
-/// the oldest import).
-fn survivor_rank(info: &PostInfo) -> impl Ord {
-    let has_files = info.archived_files > 0 || info.has_capture;
+/// What the core's duplicate policy ranks a member by (plan §4.2: archived
+/// files, a site capture counting as one, then AI, then the user layer).
+fn rank_layers(info: &PostInfo) -> Layers {
+    Layers {
+        archived_files: info.archived_files + u64::from(info.has_capture),
+        ai: info.has_ai,
+        user: info.has_user_layer,
+    }
+}
+
+/// The order of equally ranked members: the richest id form, then the
+/// oldest import (S1-3).
+fn tie_break(info: &PostInfo) -> impl Ord {
     let form = match info.source {
         "composite" => 0,
         "pk" => 1,
         "shortcode" => 2,
         _ => 0,
     };
-    (
-        std::cmp::Reverse(has_files),
-        std::cmp::Reverse(info.has_ai),
-        std::cmp::Reverse(info.has_user_layer),
-        std::cmp::Reverse(info.archived_files),
-        form,
-        info.imported_at.unwrap_or(i64::MAX),
-    )
+    (form, info.imported_at.unwrap_or(i64::MAX))
 }
 
 fn bump(map: &mut BTreeMap<String, u64>, key: &str) {

@@ -8,6 +8,8 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 use shelfy_core::legacy::{OpenMode, TableStatus};
 
+use crate::settings::DesktopSettings;
+
 /// Everything `plan` found. Nothing is written anywhere to produce it.
 #[derive(Debug, Clone, Serialize)]
 pub struct PlanReport {
@@ -23,9 +25,63 @@ pub struct PlanReport {
     pub tags: TagsReport,
     pub web: WebReport,
     pub files: FilesReport,
+    /// The desktop settings that move to the web (OI-10); `None` without a
+    /// media root.
+    pub settings: Option<DesktopSettings>,
+    /// Whether another process (the desktop app) had the library open, when
+    /// checked (`plan` refuses unless `--allow-open`).
+    pub desktop_open: Option<bool>,
+    /// The web library and its quota, when a server was given.
+    pub server: Option<ServerCheck>,
     pub errors: Vec<String>,
     pub warnings: Vec<String>,
     pub verdict: Verdict,
+}
+
+/// The web library and the quota against the upload (plan §4.1 step 3).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ServerCheck {
+    /// The web library has no posts or collections: a run replaces it;
+    /// otherwise a run needs `--merge`.
+    pub library_empty: bool,
+    pub posts: u64,
+    /// 0: unlimited.
+    pub quota_bytes: i64,
+    pub used_bytes: i64,
+    /// What a run uploads at most: the default files, then the videos too.
+    pub upload_bytes: u64,
+    pub upload_bytes_with_videos: u64,
+    /// Whether the use plus the upload stays within the quota.
+    pub fits: bool,
+    pub fits_with_videos: bool,
+    /// An install already queued or running.
+    pub active_job_id: Option<i64>,
+}
+
+impl ServerCheck {
+    /// The check of a library uploading `upload_bytes` (or, with videos,
+    /// `with_videos`) against `preflight`.
+    #[must_use]
+    pub fn new(preflight: &crate::client::Preflight, upload_bytes: u64, with_videos: u64) -> Self {
+        let fits = |bytes: u64| {
+            preflight.quota_bytes <= 0
+                || preflight
+                    .used_bytes
+                    .saturating_add(i64::try_from(bytes).unwrap_or(i64::MAX))
+                    <= preflight.quota_bytes
+        };
+        ServerCheck {
+            library_empty: preflight.library_empty,
+            posts: preflight.posts,
+            quota_bytes: preflight.quota_bytes,
+            used_bytes: preflight.used_bytes,
+            upload_bytes,
+            upload_bytes_with_videos: upload_bytes + with_videos,
+            fits: fits(upload_bytes),
+            fits_with_videos: fits(upload_bytes + with_videos),
+            active_job_id: preflight.active_job_id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -140,6 +196,10 @@ pub struct IdentityReport {
     /// Instagram rows keyed by pk (composite or bare): does `shortcode`
     /// decode to the same pk?
     pub ig_shortcode_check: ShortcodeCheck,
+    /// Instagram rows whose shortcode is longer than a public post's 11–12
+    /// characters (a private account's): their key is the decoded shortcode,
+    /// where the extension keeps an `igsc_` alias (OI-9).
+    pub ig_long_shortcodes: u64,
     /// Web rows: is the legacy `web:<sha1>` id reproduced by the desktop
     /// normalization of a stored URL? Validates the port of `normalizeWebUrl`.
     pub web_legacy_id_check: BTreeMap<String, u64>,
