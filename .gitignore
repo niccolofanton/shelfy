@@ -7,6 +7,9 @@ dist-electron/
 out/
 release/
 
+# Rust build output of the Cargo workspace (crates/)
+/target/
+
 # Bug-hunt session artifacts (workflow scripts + report, not app source)
 .bug-hunt.workflow.js
 .bug-fix.workflow.js

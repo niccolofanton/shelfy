@@ -1,0 +1,3 @@
+# Rust sources follow rustfmt's 4-space indent, overriding the root .editorconfig.
+[*.rs]
+indent_size = 4

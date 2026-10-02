@@ -1,0 +1,6 @@
+# Rust toolchain for the Cargo workspace (crates/). Local builds and CI both use it.
+# Bump it together with `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"
