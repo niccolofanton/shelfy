@@ -417,3 +417,73 @@ fn login_link_prints_a_one_time_link_on_stdout_only() {
     assert!(!missing.status.success());
     assert!(String::from_utf8_lossy(&missing.stderr).contains("no control database"));
 }
+
+#[test]
+fn login_link_mints_a_reauth_link_on_request() {
+    let (_dir, data) = data_dir();
+    stdout(&admin(
+        &data,
+        &["create-owner", "--email", "owner@example.test"],
+    ));
+
+    let output = admin(
+        &data,
+        &[
+            "login-link",
+            "--email",
+            "owner@example.test",
+            "--purpose",
+            "reauth",
+        ],
+    );
+    let text = stdout(&output);
+    assert!(output.stderr.is_empty(), "no logs on a clean run");
+    let mut lines = text.lines();
+    assert_eq!(
+        lines.next().unwrap(),
+        "one-time re-authentication link, valid 15 minutes; open it in the browser that is \
+         signed in (it is shown only now):"
+    );
+    let token = lines
+        .next()
+        .unwrap()
+        .strip_prefix("https://shelfy.example.test/login/reauth#")
+        .expect("a re-authentication page link, the token in the fragment")
+        .to_owned();
+    assert_eq!(token.len(), 43);
+    assert_eq!(lines.next(), None);
+
+    // Stored as a hash with its purpose, valid 15 minutes, audited.
+    let control = read_only(&data.control_db());
+    let (purpose, ttl): (String, i64) = control
+        .query_row(
+            "SELECT m.purpose, m.expires_at - a.at FROM magic_links m \
+             JOIN audit_log a ON a.action = 'magic_link.create' WHERE m.token_hash = ?1",
+            [hash_token(&token).as_slice()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((purpose.as_str(), ttl), ("reauth", 15 * 60_000));
+    let meta: String = control
+        .query_row(
+            "SELECT meta_json FROM audit_log WHERE action = 'magic_link.create'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(meta, r#"{"purpose":"reauth","via":"cli"}"#);
+
+    // Only the two purposes exist.
+    let refused = admin(
+        &data,
+        &[
+            "login-link",
+            "--email",
+            "owner@example.test",
+            "--purpose",
+            "verify",
+        ],
+    );
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+}

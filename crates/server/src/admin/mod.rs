@@ -5,8 +5,9 @@
 //!
 //! Output rules: results go to stdout, diagnostics to stderr, nothing to the
 //! logs. Secrets are never printed, with exceptions by design: `invite` and
-//! `login-link` print their one-time link, and `migrate-token` its API token,
-//! the only copy of the secret (the database keeps its SHA-256).
+//! `login-link` (`--purpose login|reauth`) print their one-time link, and
+//! `migrate-token` its API token, the only copy of the secret (the database
+//! keeps its SHA-256).
 //!
 //! Backups and restores (plan §3.5): `snapshot` copies the databases for
 //! restic, `verify` checks restored copies against the live data, `user
@@ -53,8 +54,9 @@ pub enum AdminCommand {
     /// Create a one-time invite link for a new member. Unused while the
     /// instance is owner-only (E4).
     Invite(invite::InviteArgs),
-    /// Print a one-time sign-in link (15 minutes) for an existing account:
-    /// the way in while email is not configured (E4).
+    /// Print a one-time link (15 minutes) for an existing account: a sign-in
+    /// link, the way in while email is not configured (E4), or with
+    /// `--purpose reauth` a re-authentication link.
     LoginLink(login_link::LoginLinkArgs),
     /// Copy the control database and the user libraries with SQLite's online
     /// backup, while the server runs.
