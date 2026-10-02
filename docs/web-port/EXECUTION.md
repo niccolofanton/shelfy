@@ -90,7 +90,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-13 | Owner passkeys, re-auth, login-link bootstrap, optional SMTP | running | `web/p1-13-passkeys` |
 | P1-03 | Library writes, folders, selector, stats, ETags | running | `web/p1-03-writes` |
 | P1-04 | Client seam: routes, SSE client, error boundary, error codes | running | `web/p1-04-client-seam` |
-| P1-10 | Merge rules in the core and golden parity | running | `web/p1-10-merge` |
+| P1-10 | Merge rules in the core and golden parity | done | `web/p1-10-merge` (ab6efbd, 2364d64) |
 | P1-15 | Metrics, log redaction, rate limits | running | `web/p1-15-observability` |
 | P1-16 | First osn PR, part 1: prepare (code only) | running | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` |
 | P1-22 | O2: R2 bucket and scoped token for backups | done | owner action O2 (osn `1ce0abe`) |
@@ -105,6 +105,19 @@ Work that a review or a later finding added to an integrated task.
 | F3 | The scheduler spends a try on `user_locked`: a lock longer than about 2–3 minutes fails that user's queued jobs (3 tries, 30 s then 60 s backoff). A locked user's tries should not count, or should wait for the unlock. | P1-12 report | moved into F4 (review finding M2) | |
 | F4 | Fix the P1-12 review findings. **High:** `restore-db` can be written to or corrupted through handles that reopen a locked library (H1); a backup job killed by a signal records success (H2). **Medium:** concurrent opens run a migration twice (M1); locked users' jobs fail during a restore (M2, = F3); a migration install writes into a locked library (M3); a full restore accepts a snapshot without a user's library (M4); rollback writes are never reconciled (M5, latent: record and document only). **Low:** L1–L7. | independent review of P1-12 | running | `web/f4-backup-fixes` |
 | F2 | Fix the 7 desktop e2e failures that predate the port: 6 in "Downloads – job list" (the spec expects `download-job` rows; the view now groups jobs per post) and 1 in "Browser – URL bar shows Twitter bookmarks URL after switching tab". CI does not run e2e, so nothing caught them. | T12 (reproduced on `7ba4ea2`) | todo | |
+
+### Carry-over notes
+
+Facts from integrated lanes that a later task must act on. The lead copies each one into that task's brief.
+
+| For | Note | From |
+|---|---|---|
+| P1-19 | `--merge` inserts new keys with `repo::posts::insert` and merges existing keys with `ingest::duplicates::merge_duplicate`, the "keep the row with archived files" policy. The plain ingest `upsert` never adds files to an existing post, as on the desktop. T9's `survivor_rank` and note/tag folding can switch to the core helpers. | P1-10 |
+| P3 | "Unanalyzed" means exactly `ai_status IS NULL`, so `pending` and `error` block AI writes at ingest. Revisit this if P3 marks new posts `pending` at ingest. | P1-10 |
+| P2 | Capture ingest feeds sanitizer output into `ingest::merge::upsert_batch` inside `UserDb::write`. Response mapping: inserted→inserted, changed→updated, merged→known. A merge that changes nothing writes nothing. | P1-10 |
+| P1-18 | The GHCR package starts private: load the image with `docker save`/`docker load` (G4), or have the owner make the package public. The `SHELFY_VERSION` tag carries a leading `v`. | P1-09 |
+| P1-21 | The CSP blocks the inline `<style>` in `src/views/Browser.tsx`, a desktop-only view. | P1-09 |
+| P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
 
 ### P2–P6
 
