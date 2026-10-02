@@ -41,6 +41,10 @@ These owner decisions override the plan where they conflict.
 | E8 | 2026-10-03 | The mobile UI is optimized, and UX/UI design experts review the whole app and improve it to a professional standard without redesigning it. | — |
 | E9 | 2026-10-03 | The owner's AI node may be woken when the tests need it, as Hermes does with `/wake`. | L15's "never wakes it" |
 
+| E10 | 2026-10-03 | The desktop app becomes a client of the server only, with no local-library mode, and replaces the current one. Publishing that release stays an owner step. | E7's open question |
+| E11 | 2026-10-03 | X1's full classification of the "References" folder (2,264 Instagram posts) runs after the rest of the work, one request at a time, at any hour: there are no other users. | — |
+| E12 | 2026-10-03 | X6's MCP server is local (stdio) for Claude Code and Claude Desktop, with a scoped Shelfy API token. | — |
+
 ### Lead decisions
 
 Changes to the plan that the lead made during execution, with the reason.
