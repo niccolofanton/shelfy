@@ -9,6 +9,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use super::DbError;
 use super::conn::{Pragmas, open_reader, open_writer};
+use super::lock::refuse_locked_library;
 use crate::generation::{Generation, GenerationCell};
 use crate::schema::{self, Kind, Upgrade};
 
@@ -61,8 +62,9 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Database {
-    /// Opens the writer, checks the file belongs to `kind`, upgrades its
-    /// schema ([`schema::upgrade`]), and opens the readers when they are eager.
+    /// Opens the writer, checks the file belongs to `kind` (and, for a
+    /// library, that it is not locked for maintenance), upgrades its schema
+    /// ([`schema::upgrade`]), and opens the readers when they are eager.
     /// Committed writes bump `generation`.
     pub(crate) fn open(
         path: &Path,
@@ -74,8 +76,7 @@ impl Database {
             config.max_readers > 0,
             "a database needs at least one reader"
         );
-        let mut writer = open_writer(path, &config.pragmas)?;
-        check_application_id(&writer, kind)?;
+        let mut writer = open_checked_writer(path, kind, &config.pragmas)?;
         let upgrade = schema::upgrade(&mut writer, kind)?;
         let db = Self {
             path: path.to_path_buf(),
@@ -175,7 +176,8 @@ impl Database {
     /// readers are closed and, when no reader is checked out and no write is
     /// running, the writer runs `PRAGMA optimize` and a TRUNCATE checkpoint and
     /// is closed. Anything busy is left alone and closed on drop instead. A later
-    /// call on this handle reopens what it needs.
+    /// call on this handle reopens what it needs, unless the library was locked
+    /// meanwhile.
     pub(crate) fn release(&self) {
         let readers_busy = {
             let mut state = lock(&self.readers);
@@ -214,8 +216,8 @@ impl Database {
     ) -> Result<&'a mut Connection, DbError> {
         if slot.is_none() {
             // Reopened after `release`; the schema was migrated at first open.
-            let conn = open_writer(&self.path, &self.config.pragmas)?;
-            check_application_id(&conn, self.kind)?;
+            // A library locked since then stays closed.
+            let conn = open_checked_writer(&self.path, self.kind, &self.config.pragmas)?;
             *slot = Some(conn);
         }
         Ok(slot.as_mut().expect("writer was just opened"))
@@ -262,6 +264,7 @@ impl Database {
     }
 
     fn open_new_reader(&self) -> Result<Connection, DbError> {
+        refuse_locked(&self.path, self.kind)?;
         // A read-only connection cannot create the WAL index, so the writer must
         // be open (`release` may have closed it). `try_lock` keeps a read issued
         // from inside a write closure from deadlocking on the writer's mutex.
@@ -345,6 +348,28 @@ fn checkpoint_truncate(conn: &Connection) -> rusqlite::Result<()> {
     // Returns (busy, log frames, checkpointed frames); a busy checkpoint is not
     // an error, the WAL is simply not truncated this time.
     conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+}
+
+/// Opens the writer of the `kind` database at `path` and checks the file
+/// belongs to `kind`. A library locked for maintenance (`super::lock`) is
+/// refused before anything is opened or created, and again once the writer
+/// holds SQLite's shared lock, which a restore's exclusive lock waits for:
+/// a lock taken in between is seen too.
+fn open_checked_writer(path: &Path, kind: Kind, pragmas: &Pragmas) -> Result<Connection, DbError> {
+    refuse_locked(path, kind)?;
+    let conn = open_writer(path, pragmas)?;
+    check_application_id(&conn, kind)?;
+    refuse_locked(path, kind)?;
+    Ok(conn)
+}
+
+/// [`DbError::Locked`] for a library locked for maintenance.
+fn refuse_locked(path: &Path, kind: Kind) -> Result<(), DbError> {
+    if kind == Kind::Library {
+        refuse_locked_library(path)
+    } else {
+        Ok(())
+    }
 }
 
 fn close_writer(conn: Connection) {

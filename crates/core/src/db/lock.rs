@@ -10,8 +10,20 @@
 //!   using the library and closes it;
 //! - [`UserDbCache::run_maintenance`](super::UserDbCache::run_maintenance)
 //!   releases the cached handles of locked users even when no request comes;
+//! - [`UserDb`](super::UserDb) refuses to open the library, and a handle
+//!   that was released refuses to reopen it, so a request or a job chunk
+//!   that took its handle before the lock cannot reach the library either
+//!   (a handle whose connections are still open keeps them until it is
+//!   released or dropped, which a restore waits for);
 //! - the server answers the user's requests with 423 `user_locked`, and the
-//!   upgrade sweep and `admin snapshot` leave the library alone.
+//!   upgrade sweep, `admin snapshot`, `admin verify` and the migration
+//!   install leave the library alone.
+//!
+//! An opener checks the marker before it opens the file and again once its
+//! connection holds SQLite's shared lock. A restore takes the file with an
+//! exclusive lock only after creating the marker, so an opener either sees
+//! the marker or holds the shared lock that keeps the restore waiting until
+//! the server lets go: no check-then-open window is left.
 //!
 //! The lock is a file next to the library rather than a row in the control
 //! database: it guards the library file, every opener (the API, jobs, the
@@ -29,6 +41,20 @@ use super::cache::validate_user_id;
 
 /// Name of the marker file inside `<users_dir>/<user_id>/`.
 pub const LOCK_FILE_NAME: &str = "LOCKED";
+
+/// Whether the library file at `library` (`<users_dir>/<user_id>/library.sqlite`)
+/// is locked: whether its directory holds the marker. One `stat`.
+///
+/// What every opener that does not go through the [`UserDbCache`](super::UserDbCache)
+/// checks: [`UserDb`](super::UserDb) itself, the migration install, the
+/// snapshot and the restore commands.
+///
+/// # Errors
+///
+/// The file system refused the check.
+pub fn is_library_file_locked(library: &Path) -> io::Result<bool> {
+    library.with_file_name(LOCK_FILE_NAME).try_exists()
+}
 
 /// Path of `user_id`'s lock marker under `users_dir`.
 ///
@@ -49,6 +75,16 @@ pub fn library_lock_path(users_dir: &Path, user_id: &str) -> Result<PathBuf, DbE
 pub fn is_library_locked(users_dir: &Path, user_id: &str) -> Result<bool, DbError> {
     let path = library_lock_path(users_dir, user_id)?;
     Ok(path.try_exists()?)
+}
+
+/// [`DbError::Locked`] when the library file at `library` is locked
+/// ([`is_library_file_locked`]).
+pub(crate) fn refuse_locked_library(library: &Path) -> Result<(), DbError> {
+    if is_library_file_locked(library)? {
+        Err(DbError::Locked)
+    } else {
+        Ok(())
+    }
 }
 
 /// Locks `user_id`'s library: creates its directory if needed (mode 0750)

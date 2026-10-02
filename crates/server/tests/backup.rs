@@ -216,9 +216,9 @@ fn snapshot_keeps_locked_copies_and_drops_deleted_users() {
     let out = data.root().join("backup-staging/db");
     snapshot(&data, &out, &all()).unwrap();
 
-    // Locked: skipped, previous copy kept, even when its library changes.
-    lock(&data, &owner, "test").unwrap();
+    // Locked: skipped, previous copy kept, even when its library changed.
     add_posts(&data, &owner, 3, 9);
+    lock(&data, &owner, "test").unwrap();
     let report = snapshot(&data, &out, &all()).unwrap();
     let owner_copy = format!("users/{owner}.sqlite");
     assert_eq!(status_of(&report, &owner_copy), CopyStatus::Locked);
@@ -541,6 +541,9 @@ fn restore_db_swaps_a_locked_library_and_keeps_the_old_one() {
     // Only a locked user's library is replaced.
     let err = restore_db(&data, &owner, &copy, Duration::ZERO).unwrap_err();
     assert!(err.to_string().contains("not locked"), "{err:#}");
+    // A handle opened before the lock: the server's, until it releases it.
+    let held = UserDb::open(&live, &UserDbConfig::default()).unwrap();
+    held.read(|_| Ok::<_, DbError>(())).unwrap();
     lock(&data, &owner, "restore").unwrap();
 
     // A damaged copy is refused before anything changes.
@@ -553,8 +556,6 @@ fn restore_db_swaps_a_locked_library_and_keeps_the_old_one() {
 
     // A process holding the library open is waited for (the server releases
     // it within its maintenance interval).
-    let held = UserDb::open(&live, &UserDbConfig::default()).unwrap();
-    held.read(|_| Ok::<_, DbError>(())).unwrap();
     let err = restore_db(&data, &owner, &copy, Duration::ZERO).unwrap_err();
     assert!(err.to_string().contains("still open"), "{err:#}");
     let holder = std::thread::spawn(move || {
@@ -579,16 +580,17 @@ fn restore_db_swaps_a_locked_library_and_keeps_the_old_one() {
         data.users_dir().join(&owner).join(LOCK_FILE_NAME).exists(),
         "still locked"
     );
-    // The restored library opens and upgrades like any other.
-    let db = UserDb::open(&live, &UserDbConfig::default()).unwrap();
-    let integrity: String = db
-        .read(|c| {
-            c.query_row("PRAGMA integrity_check", [], |r| r.get(0))
-                .map_err(DbError::from)
-        })
+    // The restored library is intact; the server cannot open it until the
+    // unlock.
+    let integrity: String = Connection::open(&live)
+        .unwrap()
+        .query_row("PRAGMA integrity_check", [], |r| r.get(0))
         .unwrap();
     assert_eq!(integrity, "ok");
-    drop(db);
+    assert!(matches!(
+        UserDb::open(&live, &UserDbConfig::default()),
+        Err(DbError::Locked)
+    ));
 
     let control = Connection::open(data.control_db()).unwrap();
     let meta: String = control

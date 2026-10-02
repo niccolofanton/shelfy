@@ -25,7 +25,9 @@
 //! after boot, one library at a time ([`UserDbCache::upgrade`]).
 //!
 //! **Locks** (plan §3.5). A library locked for maintenance
-//! ([`super::lock_library`]) is never opened through the cache.
+//! ([`super::lock_library`]) is never opened through the cache, nor by the
+//! sweep; [`UserDb`] itself refuses it too, so an evicted handle that a
+//! request still holds cannot reopen it.
 //!
 //! **Generations** ([`crate::generation`]). Every handle the cache opens on
 //! a user's library shares the user's [`Generation`] cell: a write through a
@@ -214,8 +216,11 @@ impl UserDbCache {
     /// version is read from the file header first, so a current library costs
     /// one small read; an older one is opened outside the cache (the sweep
     /// must not evict the handles of active users), upgraded and closed. A
-    /// request that opens the same library meanwhile is safe: migrations take
-    /// the write lock first, so the second opener finds nothing left to do.
+    /// request that opens the same library meanwhile is safe: the migration
+    /// reads the version again under the write lock
+    /// ([`crate::schema::upgrade`]), so the second opener finds nothing left
+    /// to do. A library locked after the check is still left alone: the open
+    /// refuses it.
     ///
     /// # Errors
     ///
@@ -232,16 +237,25 @@ impl UserDbCache {
             return Ok(LibraryUpgrade::Current);
         }
         let latest = Kind::Library.latest_version();
+        let open = || match UserDb::open(&path, &self.db_config) {
+            Ok(db) => Ok(Some(db)),
+            Err(DbError::Locked) => Ok(None),
+            Err(err) => Err(err),
+        };
         match header_version(&path)? {
             Some(found) if found == latest => return Ok(LibraryUpgrade::Current),
             Some(found) if found > latest => {
                 // Opening checks the compat floor of a newer file.
-                drop(UserDb::open(&path, &self.db_config)?);
-                return Ok(LibraryUpgrade::Ahead { found });
+                return Ok(match open()? {
+                    Some(_) => LibraryUpgrade::Ahead { found },
+                    None => LibraryUpgrade::Locked,
+                });
             }
             _ => {}
         }
-        let db = UserDb::open(&path, &self.db_config)?;
+        let Some(db) = open()? else {
+            return Ok(LibraryUpgrade::Locked);
+        };
         let upgrade = db.schema_upgrade();
         drop(db);
         Ok(match upgrade {

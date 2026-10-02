@@ -14,8 +14,8 @@
 //! blocking thread.
 //!
 //! Opening a database upgrades its schema ([`crate::schema::upgrade`]); a
-//! library can also be locked for maintenance ([`lock_library`]), which the
-//! [`UserDbCache`] enforces.
+//! library can also be locked for maintenance ([`lock_library`]), which
+//! [`UserDb`] and the [`UserDbCache`] enforce.
 
 mod cache;
 mod conn;
@@ -36,7 +36,8 @@ pub use cache::{
 };
 pub use conn::Pragmas;
 pub use lock::{
-    LOCK_FILE_NAME, is_library_locked, library_lock_path, lock_library, unlock_library,
+    LOCK_FILE_NAME, is_library_file_locked, is_library_locked, library_lock_path, lock_library,
+    unlock_library,
 };
 
 use crate::generation::GenerationCell;
@@ -196,11 +197,15 @@ impl UserDb {
     /// Opens (creating it if missing) and upgrades a library database
     /// ([`crate::schema::upgrade`]).
     ///
+    /// A library locked for maintenance ([`lock_library`]: its directory
+    /// holds the marker) is refused, and so is reopening it after
+    /// [`UserDb::release`] once it is locked.
+    ///
     /// # Errors
     ///
-    /// Fails when the file cannot be opened in WAL mode, belongs to another
-    /// application, comes from a release this build cannot run on, or a
-    /// migration fails.
+    /// [`DbError::Locked`] for a locked library. Fails when the file cannot
+    /// be opened in WAL mode, belongs to another application, comes from a
+    /// release this build cannot run on, or a migration fails.
     pub fn open(path: impl AsRef<Path>, config: &UserDbConfig) -> Result<Self, DbError> {
         Self::open_with_generation(path, config, GenerationCell::new())
     }
@@ -287,7 +292,8 @@ impl UserDb {
     }
 
     /// Closes every connection that is not in use, checkpointing the WAL first.
-    /// The handle stays valid: the next call reopens what it needs.
+    /// The handle stays valid: the next call reopens what it needs, or fails
+    /// with [`DbError::Locked`] if the library was locked meanwhile.
     pub fn release(&self) {
         self.0.release();
     }

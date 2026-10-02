@@ -557,6 +557,103 @@ fn a_locked_library_is_released_and_never_opened() {
     assert_eq!(n, 1);
 }
 
+/// Takes `path` the way `admin user restore-db` checks a library is unused:
+/// an exclusive lock, granted only while no other connection has it open.
+fn exclusive_probe(path: &std::path::Path) -> rusqlite::Result<Connection> {
+    let probe = Connection::open(path)?;
+    probe.busy_timeout(Duration::ZERO)?;
+    probe.pragma_update(None, "locking_mode", "EXCLUSIVE")?;
+    probe.query_row("SELECT count(*) FROM sqlite_schema", [], |_| Ok(()))?;
+    probe.execute_batch("BEGIN EXCLUSIVE; COMMIT;")?;
+    Ok(probe)
+}
+
+#[test]
+fn a_released_handle_cannot_reopen_a_locked_library() {
+    // Review of P1-12, H1: a request or a job chunk that took its handle
+    // before `admin user lock` kept it after the server released it, and its
+    // next call reopened the library by path, so it wrote into a library
+    // being restored.
+    let dir = tempfile::tempdir().unwrap();
+    let users = dir.path().join("users");
+    let cache = cache(&dir, 64, Duration::from_secs(600));
+    let held = cache.get("userA").unwrap();
+    held.write(|tx| repo::posts::insert(tx, &bare_post("ig_1", Platform::Instagram, NOW), NOW))
+        .unwrap();
+    held.read(|_| Ok::<_, DbError>(())).unwrap();
+
+    lock_library(&users, "userA", "restore").unwrap();
+    cache.run_maintenance();
+    assert_eq!(held.open_connections(), (false, 0), "released");
+    // Nothing holds the file: a restore may take it now.
+    let library = users.join("userA").join("library.sqlite");
+    drop(exclusive_probe(&library).unwrap());
+
+    // The held handle stays closed.
+    let err = held
+        .write(|tx| repo::posts::insert(tx, &bare_post("ig_2", Platform::Instagram, NOW), NOW))
+        .unwrap_err();
+    assert!(matches!(err, RepoError::Db(DbError::Locked)), "{err}");
+    let err = held
+        .read(|c| {
+            c.query_row("SELECT count(*) FROM posts", [], |r| r.get::<_, i64>(0))
+                .map_err(DbError::from)
+        })
+        .unwrap_err();
+    assert!(err.is_locked(), "{err}");
+    assert!(held.checkpoint().unwrap_err().is_locked());
+    assert_eq!(held.open_connections(), (false, 0), "nothing reopened");
+    drop(exclusive_probe(&library).unwrap());
+
+    // Opening the library anew is refused too, and a locked library that
+    // does not exist yet is not created.
+    let err = UserDb::open(&library, &UserDbConfig::default())
+        .err()
+        .unwrap();
+    assert!(matches!(err, DbError::Locked), "{err}");
+    lock_library(&users, "userB", "").unwrap();
+    let missing = users.join("userB").join("library.sqlite");
+    assert!(matches!(
+        UserDb::open(&missing, &UserDbConfig::default()),
+        Err(DbError::Locked)
+    ));
+    assert!(!missing.exists());
+
+    // Unlocked, the same handle works again, on the same data.
+    unlock_library(&users, "userA").unwrap();
+    let n: i64 = held
+        .read(|c| {
+            c.query_row("SELECT count(*) FROM posts", [], |r| r.get(0))
+                .map_err(DbError::from)
+        })
+        .unwrap();
+    assert_eq!(n, 1);
+}
+
+#[test]
+fn a_lock_taken_while_a_handle_is_open_takes_effect_at_its_release() {
+    // A handle whose writer is still open keeps the file, so a restore waits
+    // for it; once it is released, the lock holds.
+    let dir = tempfile::tempdir().unwrap();
+    let users = dir.path().join("users");
+    let cache = cache(&dir, 64, Duration::from_secs(600));
+    let held = cache.get("userA").unwrap();
+    lock_library(&users, "userA", "restore").unwrap();
+    let library = users.join("userA").join("library.sqlite");
+    let busy = exclusive_probe(&library).unwrap_err();
+    assert_eq!(
+        busy.sqlite_error_code(),
+        Some(ErrorCode::DatabaseBusy),
+        "the open writer keeps a restore out: {busy}"
+    );
+    held.release();
+    drop(exclusive_probe(&library).unwrap());
+    assert!(
+        held.write(|tx| repo::posts::insert(tx, &bare_post("ig_1", Platform::Instagram, NOW), NOW))
+            .is_err()
+    );
+}
+
 #[test]
 fn library_ids_lists_the_users_with_a_library() {
     let dir = tempfile::tempdir().unwrap();
