@@ -202,20 +202,29 @@ The gate needs **a desktop library and a `search-eval` report measured on those 
 | `SHELFY_SEARCH_EVAL_BASELINE` | the desktop report; default `scripts/search-eval/last-report.json` |
 | `SHELFY_SEARCH_EVAL_REPORT` | optional: write a JSON report (aggregates only) |
 
-**The §2.14 gate.** Run from the main checkout, where both files of the baseline pair live:
+**Frozen pairs.** Both pairs are kept outside the repo, in the lane data directory `../shelfy-web-local/data/t4/` (relative to the main checkout). They are the owner's data: read them only, and never commit them.
+
+| Directory | Library | Desktop report | Expected result |
+|---|---|---|---|
+| `search-eval-2026-05-31/` | the baseline library: a copy of `scripts/search-eval/.scratch/shelfy.sqlite` | `last-report.json` | pass, 0.653 / 0.861 |
+| `search-eval-2026-10-02/` | the reference snapshot: a copy of `ref/shelfy.sqlite` | the desktop harness re-run on it | nDCG@10 0.752 against 0.791: fails by 0.019 |
+
+The copies matter: a `pnpm run eval:search` run overwrites `.scratch/shelfy.sqlite` and `last-report.json` in the main checkout with the live library.
+
+**The §2.14 gate**, from the main checkout. The paths must be absolute, because cargo runs the test from `crates/core`:
 
 ```sh
-SHELFY_SEARCH_EVAL_DB="$PWD/scripts/search-eval/.scratch/shelfy.sqlite" \
-CARGO_TARGET_DIR="$PWD/target" \
-cargo test --release -p shelfy-core --test search_eval -- --nocapture
+PAIR="$PWD/../shelfy-web-local/data/t4/search-eval-2026-05-31"
+SHELFY_SEARCH_EVAL_DB="$PAIR/shelfy.sqlite" SHELFY_SEARCH_EVAL_BASELINE="$PAIR/last-report.json" \
+  cargo test --release -p shelfy-core --test search_eval -- --nocapture
 ```
 
-**Freeze the baseline pair first.** `pnpm run eval:search` overwrites both files from the live library. Copy `scripts/search-eval/.scratch/shelfy.sqlite` and `last-report.json` to `../shelfy-web-local/ref/search-eval-2026-05-31/`, then point the two variables there.
-
 **Any other library, for example the current one:**
-1. Run the desktop harness on it, so the report and the rows match. `pnpm run eval:search` reads the live library and writes both `.scratch/shelfy.sqlite` and `last-report.json`. A copy elsewhere needs `HOME` pointed at a directory that holds `Library/Application Support/Shelfy/shelfy.sqlite`, because the harness reads only that path.
+1. Run the desktop harness on it, so the report and the rows match. `pnpm run eval:search` reads the live library and writes both `scripts/search-eval/.scratch/shelfy.sqlite` and `last-report.json`. A copy elsewhere needs `HOME` pointed at a directory that holds `Library/Application Support/Shelfy/shelfy.sqlite`, because the harness reads only that path.
    - `better-sqlite3` must be built for Electron. The main checkout's build is; a fresh worktree's is not.
-2. Run the command above on the same `.scratch/shelfy.sqlite`.
+2. Run the gate with `SHELFY_SEARCH_EVAL_DB="$PWD/scripts/search-eval/.scratch/shelfy.sqlite"` and the default baseline.
+
+The test opens the library the way `core::legacy` does: immutable when there is no `-wal` file, so it leaves no side files.
 
 **Output.**
 - The run prints the per-case table, the group means, the hybrid probe and the latency.
@@ -230,8 +239,8 @@ cargo test --release -p shelfy-core --test search_eval -- --nocapture
 - **T11.** Call `posts::list` and `posts::count` inside one `UserDb::read`, so the statistics and the ranking see one snapshot.
   - A relevance page now runs these short counts before the ranked query: 1, plus up to 2 per term, plus 1 per boost term.
 - **P1-05, the gate in CI.** CI can run the skip path, the drift check against `cases.ts` and the metric unit tests. It cannot run the gate itself: the gate needs the owner's library, and lane rule 9 keeps that library off CI.
-  - Either the gate stays a manual lead/owner step with the frozen pair, or CI gets a synthetic library and a desktop report made from it.
-- **P1-05, refreshing the baseline.** If `last-report.json` is refreshed from today's library, the gate fails by 0.019 nDCG@10 (`fluidi`) until infix matching lands. Decide on the trigram index, or keep the frozen 2026-05-31 pair as the gate's reference.
+  - Either the gate stays a manual lead/owner step on the frozen pair in `../shelfy-web-local/data/t4/`, or CI gets a synthetic library and a desktop report made from it.
+- **P1-05, refreshing the baseline.** If `last-report.json` is refreshed from today's library, the gate fails by 0.019 nDCG@10 (`fluidi`) until infix matching lands. The frozen 2026-10-02 pair reproduces this. Decide on the trigram index, or keep the frozen 2026-05-31 pair as the gate's reference.
 - **P3.** Re-run SPIKE-5 once posts carry AI fields, to tune `BM25_WEIGHTS` and the tag boost. Port the tag-only ranking (`searchPostsByTags`) with the AI views. The oracle reads the desktop library's AI fields, so an AI layer made only by the web app needs a new gold source.
 
 ## Decisions
