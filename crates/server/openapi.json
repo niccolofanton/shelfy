@@ -10,6 +10,90 @@
     "version": "1"
   },
   "paths": {
+    "/api/v1/auth/device/approve": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Approves a device sign-in for the signed-in account: the device that\nshows this code gets a `migrate` token for this account's library, valid\n7 days.",
+        "description": "Needs a sign-in or a re-authentication from the last 5 minutes (403\n`reauth_required` otherwise). 400 `invalid_device_code` for a code that\nis unknown, expired, used or approved by another account; approving a\ncode again is a no-op. Limit: 10 tries per 10 minutes per account (429).",
+        "operationId": "approveDeviceSignIn",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceApproval"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Approved: the device's next poll gets its token."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/device/poll": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Asks whether a device sign-in was approved.",
+        "description": "`pending`: wait `interval` seconds and poll again. `slow_down`: the poll\ncame too soon; wait the new `interval`. `approved`: the `migrate` token,\ndelivered once; the codes stop working. 400 `invalid_device_code` for a\ndevice code that is unknown, expired or used: start again. No cookie and\nno CSRF headers are needed.",
+        "operationId": "pollDeviceSignIn",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DevicePollRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Where the sign-in stands.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DevicePoll"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [{}]
+      }
+    },
+    "/api/v1/auth/device/start": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Starts signing a device in: the migration CLI's `login`.",
+        "description": "Show the user `userCode` and `verificationUri` (or open\n`verificationUriComplete`), then poll `POST /auth/device/poll` with\n`deviceCode` every `interval` seconds until it is approved, for at most\n`expiresIn` seconds. Limit: 10 requests per minute per client, shared\nwith the sign-in routes. No cookie and no CSRF headers are needed.",
+        "operationId": "startDeviceSignIn",
+        "responses": {
+          "200": {
+            "description": "The codes of a new device sign-in.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceAuthorization"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [{}]
+      }
+    },
     "/api/v1/auth/logout": {
       "post": {
         "tags": ["auth"],
@@ -804,7 +888,7 @@
     "/api/v1/me": {
       "get": {
         "tags": ["account"],
-        "summary": "Who is signed in. 401 `unauthorized` without a session: the SPA shows\nits sign-in page.",
+        "summary": "Who is signed in, what the account can do, and what it accepted. 401\n`unauthorized` without a session: the SPA shows its sign-in page.",
         "operationId": "getMe",
         "responses": {
           "200": {
@@ -813,6 +897,38 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/consent": {
+      "post": {
+        "tags": ["account"],
+        "summary": "Records that the user accepted the disclaimer and the privacy notice of\nthese versions, now. Accepting again (a new version) replaces both, with\nthe new time. 422 for a malformed version.",
+        "operationId": "acceptConsent",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The consent, as recorded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Consent"
                 }
               }
             }
@@ -920,6 +1036,220 @@
         "responses": {
           "204": {
             "description": "Removed."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/sessions": {
+      "get": {
+        "tags": ["account"],
+        "summary": "The account's signed-in sessions, the current one flagged.",
+        "operationId": "listSessions",
+        "responses": {
+          "200": {
+            "description": "The sessions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionList"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["account"],
+        "summary": "Signs out every session of the account but this one.",
+        "operationId": "endOtherSessions",
+        "responses": {
+          "204": {
+            "description": "Every other session is signed out."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/sessions/{id}": {
+      "delete": {
+        "tags": ["account"],
+        "summary": "Signs out one of the account's sessions: it stops working at once.\nSigning out the current one is a sign-out, and clears the cookie. Another\naccount's session is a 404, like a missing one.",
+        "operationId": "endSession",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The session's id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Signed out; for the current session, the cookie is cleared."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/settings": {
+      "get": {
+        "tags": ["account"],
+        "summary": "The account's settings.",
+        "operationId": "getSettings",
+        "responses": {
+          "200": {
+            "description": "The settings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "put": {
+        "tags": ["account"],
+        "summary": "Changes some of the account's settings; answers all of them. A setting\nthat already has the value is not written again.",
+        "operationId": "updateSettings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The settings after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/tokens": {
+      "get": {
+        "tags": ["account"],
+        "summary": "The account's working API tokens (not revoked, not expired), with their\nlast use.",
+        "operationId": "listApiTokens",
+        "responses": {
+          "200": {
+            "description": "The tokens.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiTokenList"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "post": {
+        "tags": ["account"],
+        "summary": "Creates an API token for the extension or the iOS Shortcut; the answer\nis the only time its value is shown.",
+        "description": "Needs a sign-in or a re-authentication from the last 5 minutes (403\n`reauth_required` otherwise). 422 for the kind `migrate` (the migration\nCLI signs in with the device flow), for scopes that are not the kind's,\nor for a label over 64 characters; 409 `conflict` when the account holds\n50 working tokens already.",
+        "operationId": "createApiToken",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new token, with its value.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedApiToken"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/tokens/{id}": {
+      "delete": {
+        "tags": ["account"],
+        "summary": "Revokes one of the account's tokens: it stops working at once. Another\naccount's token, or one that no longer works, is a 404.",
+        "operationId": "revokeApiToken",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The token's id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/usage": {
+      "get": {
+        "tags": ["account"],
+        "summary": "The storage the account uses and its quota, as last counted. When it was\nnever counted, the count starts now (`usage.recompute`).",
+        "operationId": "getUsage",
+        "responses": {
+          "200": {
+            "description": "The storage used and the quota.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Usage"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -1716,7 +2046,7 @@
       "post": {
         "tags": ["library"],
         "summary": "Which of these posts, named by the ids a platform's pages show, are\nalready saved (desktop `savedByKeys`): the \"already saved\" badges of the\nselection overlay. An Instagram id matches by the media pk it stands for\nor by the post's stored shortcode.",
-        "description": "Signed-in sessions only for now; the extension's `lookup` token joins in\nP1-17.",
+        "description": "A signed-in session, or an API token with the `lookup` scope (the\nextension's).",
         "operationId": "lookupPosts",
         "requestBody": {
           "content": {
@@ -1742,7 +2072,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["lookup"]
+          }
+        ]
       }
     },
     "/api/v1/posts/{key}": {
@@ -2484,6 +2822,104 @@
         },
         "additionalProperties": false
       },
+      "ApiToken": {
+        "type": "object",
+        "description": "An API token of the account. Its value is never shown again.",
+        "required": ["id", "kind", "label", "scopes", "createdAt", "lastUsedAt", "expiresAt"],
+        "properties": {
+          "createdAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time, unix ms."
+          },
+          "expiresAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "When it stops working, unix ms; `null` until revoked."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id (ULID), for `DELETE /me/tokens/{id}`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TokenKind",
+            "description": "Who holds it."
+          },
+          "label": {
+            "type": ["string", "null"],
+            "description": "The user's name for it."
+          },
+          "lastUsedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Last request it authenticated, unix ms (recorded at most once a\nminute)."
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TokenScope"
+            },
+            "description": "What it may do."
+          }
+        }
+      },
+      "ApiTokenList": {
+        "type": "object",
+        "description": "The account's working API tokens.",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApiToken"
+            },
+            "description": "Newest first."
+          }
+        }
+      },
+      "ApiTokenRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/me/tokens`.",
+        "required": ["kind"],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TokenKind",
+            "description": "Who will hold it: `extension` or `shortcut`."
+          },
+          "label": {
+            "type": "string",
+            "description": "A name for the list, up to 64 characters; trimmed, and blank is none."
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TokenScope"
+            },
+            "description": "What it may do: some of the kind's scopes; all of them when left out."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ArchiveAssetTypes": {
+        "type": "object",
+        "description": "Which assets of a post are archived: the desktop's \"asset types to\ndownload\".",
+        "required": ["thumbnail", "image", "video"],
+        "properties": {
+          "image": {
+            "type": "boolean",
+            "description": "Image slides."
+          },
+          "thumbnail": {
+            "type": "boolean",
+            "description": "Covers and video posters."
+          },
+          "video": {
+            "type": "boolean",
+            "description": "Videos."
+          }
+        },
+        "additionalProperties": false
+      },
       "ArchiveCounts": {
         "type": "object",
         "description": "Archive work left for the workers (P1-19, P2), by class (OI-6, OI-7).",
@@ -2698,6 +3134,49 @@
           }
         },
         "additionalProperties": false
+      },
+      "Capabilities": {
+        "type": "object",
+        "description": "What the account can do on this server (plan §2.19). A capability turns\non with the phase that brings it; until then it is `false`.",
+        "required": [
+          "admin",
+          "passkeys",
+          "emailLink",
+          "extension",
+          "ai.tasks",
+          "capture",
+          "video.onDemand"
+        ],
+        "properties": {
+          "admin": {
+            "type": "boolean",
+            "description": "The owner's administration (`/api/v1/admin`)."
+          },
+          "ai.tasks": {
+            "type": "boolean",
+            "description": "AI analysis and its tasks (P3)."
+          },
+          "capture": {
+            "type": "boolean",
+            "description": "Website capture (P4)."
+          },
+          "emailLink": {
+            "type": "boolean",
+            "description": "\"Email me a link\" works: email is configured. Without it, sign-in and\nre-authentication links come from the operator (`admin login-link`)."
+          },
+          "extension": {
+            "type": "boolean",
+            "description": "The browser extension can pair and capture (P2)."
+          },
+          "passkeys": {
+            "type": "boolean",
+            "description": "Passkeys work on this server: sign-in, re-authentication and\nregistration (`GET /auth/methods` says the same before sign-in)."
+          },
+          "video.onDemand": {
+            "type": "boolean",
+            "description": "Videos fetched on demand (P4)."
+          }
+        }
       },
       "ChangeReason": {
         "type": "string",
@@ -2920,6 +3399,201 @@
         },
         "additionalProperties": false
       },
+      "Consent": {
+        "type": "object",
+        "description": "What the user accepted; `null` until accepted.",
+        "required": [
+          "disclaimerVersion",
+          "disclaimerAcceptedAt",
+          "privacyVersion",
+          "privacyAcceptedAt"
+        ],
+        "properties": {
+          "disclaimerAcceptedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "When the disclaimer was accepted, unix ms."
+          },
+          "disclaimerVersion": {
+            "type": ["string", "null"],
+            "description": "The disclaimer's version."
+          },
+          "privacyAcceptedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "When the privacy notice was accepted, unix ms."
+          },
+          "privacyVersion": {
+            "type": ["string", "null"],
+            "description": "The privacy notice's version."
+          }
+        }
+      },
+      "ConsentRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/me/consent`.",
+        "required": ["disclaimerVersion", "privacyVersion"],
+        "properties": {
+          "disclaimerVersion": {
+            "type": "string",
+            "description": "The version of the disclaimer the app showed (`2026-10`): 1–32\ncharacters among `A–Z`, `a–z`, `0–9`, `.`, `_` and `-`."
+          },
+          "privacyVersion": {
+            "type": "string",
+            "description": "The version of the privacy notice the app showed (`1`), alike."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreatedApiToken": {
+        "type": "object",
+        "description": "A new API token.",
+        "required": ["token", "apiToken"],
+        "properties": {
+          "apiToken": {
+            "$ref": "#/components/schemas/ApiToken",
+            "description": "The token as the list shows it."
+          },
+          "token": {
+            "type": "string",
+            "description": "The value (`shx_…`), for `Authorization: Bearer`. Shown only now:\nthe server keeps its hash."
+          }
+        }
+      },
+      "DeviceApproval": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/auth/device/approve`.",
+        "required": ["userCode"],
+        "properties": {
+          "userCode": {
+            "type": "string",
+            "description": "The code the CLI shows (`BCDF-GHJK`)."
+          }
+        }
+      },
+      "DeviceAuthorization": {
+        "type": "object",
+        "description": "What `POST /auth/device/start` answers: RFC 8628's device authorization\nresponse, in camelCase.",
+        "required": [
+          "deviceCode",
+          "userCode",
+          "verificationUri",
+          "verificationUriComplete",
+          "expiresIn",
+          "interval"
+        ],
+        "properties": {
+          "deviceCode": {
+            "type": "string",
+            "description": "The CLI's secret: it polls with it. Never show or log it."
+          },
+          "expiresIn": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds both codes stay valid.",
+            "minimum": 0
+          },
+          "interval": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds to wait between polls.",
+            "minimum": 0
+          },
+          "userCode": {
+            "type": "string",
+            "description": "What the user approves: 8 letters as `XXXX-XXXX`; case, dashes and\nspaces do not matter."
+          },
+          "verificationUri": {
+            "type": "string",
+            "description": "The page that approves it: `<public url>/device`."
+          },
+          "verificationUriComplete": {
+            "type": "string",
+            "description": "The same page with the code filled in: `<public url>/device#XXXX-XXXX`."
+          }
+        }
+      },
+      "DevicePoll": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Not approved yet: poll again in `interval` seconds.",
+            "required": ["interval", "status"],
+            "properties": {
+              "interval": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Seconds to wait before the next poll.",
+                "minimum": 0
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pending"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Polled sooner than the interval allows: wait `interval` seconds from\nnow on (it grew by 5).",
+            "required": ["interval", "status"],
+            "properties": {
+              "interval": {
+                "type": "integer",
+                "format": "int64",
+                "description": "Seconds to wait before the next poll.",
+                "minimum": 0
+              },
+              "status": {
+                "type": "string",
+                "enum": ["slow_down"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Approved: the token, valid 7 days, delivered once. Keep it in a file\nonly its owner can read.",
+            "required": ["token", "tokenId", "scopes", "expiresAt", "status"],
+            "properties": {
+              "expiresAt": {
+                "type": "integer",
+                "format": "int64",
+                "description": "When it stops working, unix ms."
+              },
+              "scopes": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TokenScope"
+                },
+                "description": "What it may do: `[\"migrate\"]`."
+              },
+              "status": {
+                "type": "string",
+                "enum": ["approved"]
+              },
+              "token": {
+                "type": "string",
+                "description": "The `migrate` token (`shx_…`), for `Authorization: Bearer`."
+              },
+              "tokenId": {
+                "type": "string",
+                "description": "Its id, as the account's token list names it."
+              }
+            }
+          }
+        ],
+        "description": "What a poll finds, by `status`."
+      },
+      "DevicePollRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/auth/device/poll`.",
+        "required": ["deviceCode"],
+        "properties": {
+          "deviceCode": {
+            "type": "string",
+            "description": "The `deviceCode` of `POST /auth/device/start`."
+          }
+        }
+      },
       "ErrorCode": {
         "type": "string",
         "description": "Stable, machine-readable error codes. Each one has a fixed HTTP status.\n\nNew codes may be added within `/api/v1`; existing ones never change meaning.",
@@ -2929,6 +3603,7 @@
           "invalid_link",
           "challenge_expired",
           "passkey_invalid",
+          "invalid_device_code",
           "unauthorized",
           "forbidden",
           "csrf_failed",
@@ -3431,6 +4106,11 @@
           }
         }
       },
+      "Language": {
+        "type": "string",
+        "description": "A language of the app's interface.",
+        "enum": ["it", "en"]
+      },
       "LookupMatch": {
         "type": "object",
         "description": "A saved post found by `POST /posts/lookup`.",
@@ -3546,8 +4226,16 @@
       "Me": {
         "type": "object",
         "description": "The signed-in user.",
-        "required": ["id", "email", "role", "createdAt"],
+        "required": ["id", "email", "role", "createdAt", "capabilities", "consent"],
         "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/Capabilities",
+            "description": "What the account can do on this server: the web app shows what it\ncan use and hides the rest."
+          },
+          "consent": {
+            "$ref": "#/components/schemas/Consent",
+            "description": "The disclaimer and privacy notice the user accepted."
+          },
           "createdAt": {
             "type": "integer",
             "format": "int64",
@@ -5128,6 +5816,91 @@
         ],
         "description": "Every event of `GET /api/v1/events`: `event` is the SSE event name and\n`data` the JSON of its `data:` line. A type for clients; no response sends\nthis object as such."
       },
+      "Session": {
+        "type": "object",
+        "description": "A signed-in session of the account.",
+        "required": ["id", "current", "createdAt", "lastSeenAt", "expiresAt", "userAgent"],
+        "properties": {
+          "createdAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sign-in time, unix ms."
+          },
+          "current": {
+            "type": "boolean",
+            "description": "Whether this is the session of the request."
+          },
+          "expiresAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it ends unless used again, unix ms: 30 days after its last use,\nand never more than 90 days after sign-in."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id, for `DELETE /me/sessions/{id}`: 32 hex digits, derived from\nthe session; it is not the cookie."
+          },
+          "lastSeenAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last use, unix ms (recorded at most hourly)."
+          },
+          "userAgent": {
+            "type": ["string", "null"],
+            "description": "The browser's `User-Agent` at sign-in, cut to 256 bytes."
+          }
+        }
+      },
+      "SessionList": {
+        "type": "object",
+        "description": "The account's sessions.",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Session"
+            },
+            "description": "The current session first, then the most recently used."
+          }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "description": "The account's settings, defaults filled in.",
+        "required": ["language", "archiveAssetTypes"],
+        "properties": {
+          "archiveAssetTypes": {
+            "$ref": "#/components/schemas/ArchiveAssetTypes",
+            "description": "The asset types to archive; all of them by default."
+          },
+          "language": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Language",
+                "description": "The interface language; `null` until chosen, when the app follows\nthe browser's."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SettingsUpdate": {
+        "type": "object",
+        "description": "Body of `PUT /api/v1/me/settings`: the settings to change; the others\nkeep their values. Other keys are refused (422).",
+        "properties": {
+          "archiveAssetTypes": {
+            "$ref": "#/components/schemas/ArchiveAssetTypes",
+            "description": "The asset types to archive, all three."
+          },
+          "language": {
+            "$ref": "#/components/schemas/Language",
+            "description": "The interface language."
+          }
+        },
+        "additionalProperties": false
+      },
       "SlideKind": {
         "type": "string",
         "description": "Kind of slide (`post_media.kind`).",
@@ -5227,6 +6000,16 @@
         "description": "Origin of a tag.",
         "enum": ["ai", "manual"]
       },
+      "TokenKind": {
+        "type": "string",
+        "description": "Who holds a token.",
+        "enum": ["extension", "shortcut", "migrate"]
+      },
+      "TokenScope": {
+        "type": "string",
+        "description": "What a token may do (§2.9).",
+        "enum": ["ingest", "tasks", "uploads", "lookup", "links:create", "migrate"]
+      },
       "UploadCreated": {
         "type": "object",
         "description": "An upload, as `POST /uploads` answers it.",
@@ -5247,6 +6030,38 @@
             "format": "int64",
             "description": "Bytes received so far (0).",
             "minimum": 0
+          }
+        }
+      },
+      "Usage": {
+        "type": "object",
+        "description": "The account's storage.",
+        "required": ["usedBytes", "mediaBytes", "dbBytes", "quotaBytes", "updatedAt"],
+        "properties": {
+          "dbBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The library database, in bytes."
+          },
+          "mediaBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The stored media (masters and kept videos), in bytes."
+          },
+          "quotaBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The quota in bytes; 0 means unlimited (the owner)."
+          },
+          "updatedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "When the use was counted, unix ms; `null` until the first count."
+          },
+          "usedBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Media plus database, in bytes."
           }
         }
       },
@@ -5404,11 +6219,11 @@
     },
     {
       "name": "auth",
-      "description": "Sign-in with passkeys and links, re-authentication, sessions and sign-out."
+      "description": "Sign-in with passkeys and links, re-authentication, sessions and sign-out, and the migration CLI's device sign-in."
     },
     {
       "name": "account",
-      "description": "The signed-in user and their passkeys."
+      "description": "The signed-in user: profile and capabilities, settings, consent, storage use, sessions, passkeys and API tokens."
     },
     {
       "name": "library",

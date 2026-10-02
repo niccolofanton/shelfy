@@ -220,6 +220,12 @@ async fn api_tokens_never_call_the_new_routes() {
             } else {
                 request
             };
+            // Since P1-17 the lookup takes a `lookup` token (TOKEN_ROUTES).
+            if request.uri() == "/api/v1/posts/lookup" {
+                let response = send(&app, bearer(request, &token)).await;
+                assert_eq!(response.status(), StatusCode::OK, "{route}");
+                continue;
+            }
             let refused = problem(
                 send(&app, bearer(request, &token)).await,
                 StatusCode::UNAUTHORIZED,

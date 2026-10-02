@@ -2,9 +2,11 @@
 //! (T9).
 //!
 //! The migration CLI authenticates with a bearer token (§2.11). Its own
-//! device-code `login` arrives with P1-17 and P1-19; until then the operator
-//! mints the token here and hands it to `shelfy-migrate run --token` (or
-//! `SHELFY_MIGRATE_TOKEN`). The token:
+//! sign-in is the device flow (P1-17's `POST /auth/device/*`, which P1-19's
+//! `shelfy-migrate login` drives); the operator can still mint the token
+//! here and hand it to `shelfy-migrate run --token` (or
+//! `SHELFY_MIGRATE_TOKEN`). Both mint with [`crate::auth::api_tokens::mint`].
+//! The token:
 //!
 //! - has the `migrate` scope only: the migration routes accept it, every
 //!   other route refuses it;
@@ -17,22 +19,19 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Args;
-use serde_json::json;
 use shelfy_core::repo::RepoError;
 
 use super::open_existing_control;
-use crate::auth::bearer::{Scope, TOKEN_PREFIX};
-use crate::auth::millis;
+use crate::auth::api_tokens::{self, MIGRATE_LABEL, Mint, Via};
+use crate::auth::bearer::Scope;
 use crate::config::DataDir;
-use crate::control::api_tokens::{self, NewApiToken, TokenKind};
-use crate::control::audit::{self, Entry};
+use crate::control::api_tokens::TokenKind;
 use crate::control::users::{self, Status};
-use crate::ids::{new_ulid, now_ms};
+use crate::ids::now_ms;
 use crate::telemetry::redact::Redacted;
-use crate::tokens::{SecretToken, hash_token};
 
 /// How long a migration token works (§2.11: 7 days).
-pub const MIGRATE_TOKEN_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
+pub use crate::auth::api_tokens::MIGRATE_TOKEN_TTL;
 
 /// Arguments of `admin migrate-token`.
 #[derive(Debug, Args)]
@@ -93,11 +92,7 @@ pub fn create_migrate_token(
     })?;
     let control = open_existing_control(data)?;
     let now = now_ms();
-    let token = format!("{TOKEN_PREFIX}{}", SecretToken::generate().expose());
-    let token_hash = hash_token(&token);
-    let id = new_ulid();
-    let expires_at = now.saturating_add(millis(ttl));
-    control
+    let minted = control
         .write(|tx| {
             let Some(user) = users::find_by_email(tx, &email)? else {
                 return Err(RepoError::NotFound);
@@ -105,25 +100,16 @@ pub fn create_migrate_token(
             if user.status != Status::Active {
                 return Err(RepoError::Conflict("status"));
             }
-            let new = NewApiToken {
-                id: &id,
+            let mint = Mint {
                 user_id: &user.id,
                 kind: TokenKind::Migrate,
-                token_hash: &token_hash,
-                label: Some("shelfy-migrate"),
-                scopes: Scope::Migrate.as_str(),
-                expires_at: Some(expires_at),
+                scopes: &[Scope::Migrate],
+                label: Some(MIGRATE_LABEL),
+                ttl: Some(ttl),
+                via: Via::Cli,
+                actor: None,
             };
-            api_tokens::insert(tx, &new, now)?;
-            let meta = json!({ "via": "cli", "kind": TokenKind::Migrate.as_str() });
-            let entry = Entry {
-                action: audit::API_TOKEN_CREATE,
-                actor_user_id: None,
-                target: Some(&user.id),
-                meta: Some(&meta),
-            };
-            audit::record(tx, &entry, now)?;
-            Ok(())
+            api_tokens::mint(tx, &mint, now)
         })
         .map_err(|err| match err {
             RepoError::NotFound => anyhow::anyhow!("no account uses this email"),
@@ -132,8 +118,8 @@ pub fn create_migrate_token(
         })
         .context("cannot create the migration token")?;
     Ok(MigrateToken {
-        id,
-        token: Redacted(token),
-        expires_at,
+        id: minted.row.id,
+        token: minted.token,
+        expires_at: minted.row.expires_at.unwrap_or(now),
     })
 }

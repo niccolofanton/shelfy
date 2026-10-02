@@ -34,22 +34,27 @@
 //! | [`access`] | the access policy and the gate |
 //! | [`cookie`] | the session cookie |
 //! | [`session`] | sessions: resolution, [`SessionUser`], [`RecentAuth`], creation and sign-out |
+//! | [`session_list`] | the account's sessions: the list, and signing other sessions out |
 //! | [`magic_link`] | sign-in and re-authentication links: email requests, minting, redemption |
 //! | [`passkeys`] | passkeys: registration, username-less sign-in, re-authentication |
 //! | [`reauth`] | re-authentication: the session's `reauth_at`, links with purpose `reauth` |
 //! | [`csrf`] | the Origin / `Sec-Fetch-Site` / `X-Shelfy-Client` guard |
-//! | [`rate_limit`] | limits on sign-in requests |
-//! | [`bearer`] | API tokens: verification and [`bearer::TokenUser`]; P1-17 mints them |
+//! | [`rate_limit`] | limits on sign-in requests and on device approvals |
+//! | [`bearer`] | API tokens: verification, scopes, last use, and [`bearer::TokenUser`] |
+//! | [`api_tokens`] | API tokens: minting, the scopes of each kind |
+//! | [`device`] | the device flow of the migration CLI (RFC 8628) |
 //! | [`openapi`] | the security schemes of the OpenAPI document |
 //!
 //! **Seams.**
 //!
-//! - Sensitive routes (P1-17: token creation, device-code approval; account
-//!   reset and deletion) take [`RecentAuth`]; without a recent proof they
-//!   answer 403 `reauth_required`, and the SPA re-authenticates and retries.
-//! - API tokens (P1-17): [`bearer`] verifies `api_tokens`; P1-17 adds minting,
-//!   revocation and `last_used_at`. A route opens to tokens in
-//!   [`crate::routes::TOKEN_ROUTES`].
+//! - Sensitive routes (token creation and device-code approval since P1-17;
+//!   account reset and deletion) take [`RecentAuth`]; without a recent proof
+//!   they answer 403 `reauth_required`, and the SPA re-authenticates and
+//!   retries.
+//! - API tokens: [`bearer`] verifies them and [`api_tokens`] mints them. A
+//!   route opens to tokens in [`crate::routes::TOKEN_ROUTES`]. The extension's
+//!   pairing code (P2) mints through [`api_tokens::mint`] with kind
+//!   `extension`.
 //! - OpenAPI: the document's default security is the session
 //!   ([`openapi::SecuritySchemes`]); a public route also declares
 //!   `security(())` and a token route `security(("bearer" = ["<scope>"]))` in
@@ -57,15 +62,18 @@
 //!   access policy agree.
 
 pub mod access;
+pub mod api_tokens;
 pub mod bearer;
 pub mod cookie;
 pub mod csrf;
+pub mod device;
 pub mod magic_link;
 pub mod openapi;
 pub mod passkeys;
 pub mod rate_limit;
 pub mod reauth;
 pub mod session;
+pub mod session_list;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -78,6 +86,7 @@ use utoipa::ToSchema;
 
 pub use session::{RecentAuth, SessionUser};
 
+use device::DeviceFlows;
 use passkeys::Passkeys;
 use rate_limit::{RateLimit, RateLimiter};
 use session::CachedSession;
@@ -127,6 +136,17 @@ pub struct AuthConfig {
     pub address_limit: RateLimit,
     /// Sign-in emails being sent at once; requests beyond it are dropped.
     pub mail_concurrency: usize,
+    /// An API token's last use (`last_used_at`) is written at most this
+    /// often.
+    pub token_touch_every: Duration,
+    /// How long a device code and its user code stay valid (10 minutes,
+    /// P1-17 assumption).
+    pub device_code_ttl: Duration,
+    /// How often the migration CLI polls a device code (RFC 8628: 5 s).
+    pub device_poll_interval: Duration,
+    /// Device approvals per user: user codes are short, so their guesses
+    /// are counted (10 per 10 minutes).
+    pub user_code_limit: RateLimit,
 }
 
 impl Default for AuthConfig {
@@ -149,6 +169,13 @@ impl Default for AuthConfig {
                 window: HOUR,
             },
             mail_concurrency: 4,
+            token_touch_every: MINUTE,
+            device_code_ttl: 10 * MINUTE,
+            device_poll_interval: Duration::from_secs(5),
+            user_code_limit: RateLimit {
+                max: 10,
+                window: 10 * MINUTE,
+            },
         }
     }
 }
@@ -171,6 +198,8 @@ pub struct AuthState {
     address_limiter: RateLimiter,
     mail_slots: Arc<Semaphore>,
     passkeys: Passkeys,
+    devices: DeviceFlows,
+    user_code_limiter: RateLimiter,
 }
 
 impl AuthState {
@@ -191,6 +220,8 @@ impl AuthState {
             address_limiter: RateLimiter::new(config.address_limit),
             mail_slots: Arc::new(Semaphore::new(config.mail_concurrency.max(1))),
             passkeys: Passkeys::new(public_url, config.passkey_ceremony_ttl),
+            devices: DeviceFlows::new(config.device_code_ttl, config.device_poll_interval),
+            user_code_limiter: RateLimiter::new(config.user_code_limit),
             sessions,
             misses,
             revocations: AtomicU64::new(0),
@@ -208,6 +239,12 @@ impl AuthState {
     #[must_use]
     pub fn passkeys(&self) -> &Passkeys {
         &self.passkeys
+    }
+
+    /// The device flows in progress (the migration CLI's sign-in).
+    #[must_use]
+    pub fn devices(&self) -> &DeviceFlows {
+        &self.devices
     }
 
     /// Drops the cached lookup of one session, after it changed (sign-out,
@@ -288,6 +325,10 @@ impl AuthState {
 
     pub(crate) fn address_limiter(&self) -> &RateLimiter {
         &self.address_limiter
+    }
+
+    pub(crate) fn user_code_limiter(&self) -> &RateLimiter {
+        &self.user_code_limiter
     }
 
     pub(crate) fn mail_slots(&self) -> &Arc<Semaphore> {

@@ -472,13 +472,14 @@ pub struct LookupResult {
 /// selection overlay. An Instagram id matches by the media pk it stands for
 /// or by the post's stored shortcode.
 ///
-/// Signed-in sessions only for now; the extension's `lookup` token joins in
-/// P1-17.
+/// A signed-in session, or an API token with the `lookup` scope (the
+/// extension's).
 #[utoipa::path(
     post,
     path = "/api/v1/posts/lookup",
     tag = "library",
     operation_id = "lookupPosts",
+    security(("session" = []), ("bearer" = ["lookup"])),
     request_body = LookupRequest,
     responses(
         (status = OK, description = "The saved posts found.", body = LookupResult),

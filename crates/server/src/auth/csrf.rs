@@ -26,10 +26,17 @@
 //! preflight. That is how the extension, the iOS Shortcut and the migration
 //! CLI (bearer tokens) call the API.
 //!
+//! Nor are the routes of [`crate::routes::CSRF_EXEMPT_ROUTES`]: the device
+//! flow's `start` and `poll`, which the migration CLI calls before it has a
+//! token. They read no cookie and act for nobody until a signed-in user
+//! approves the code on `POST /auth/device/approve`, which is checked like
+//! any other request. The route is the matched template, so no other path
+//! can borrow the exemption.
+//!
 //! The SPA therefore sends `X-Shelfy-Client: web` on every unsafe request
 //! (`fetch`, including `keepalive`; `navigator.sendBeacon` cannot set it).
 
-use axum::extract::{Request, State};
+use axum::extract::{MatchedPath, Request, State};
 use axum::http::{HeaderMap, HeaderName, Method, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse as _, Response};
@@ -115,8 +122,25 @@ pub fn check(method: &Method, headers: &HeaderMap, public_origin: &str) -> Resul
     Ok(())
 }
 
-/// Middleware: answers 403 `csrf_failed` when [`check`] fails.
+/// Whether `method path` (a route template) reads no cookie and is called
+/// by programs: [`crate::routes::CSRF_EXEMPT_ROUTES`].
+#[must_use]
+pub fn is_exempt(method: &Method, path: &str) -> bool {
+    crate::routes::CSRF_EXEMPT_ROUTES
+        .iter()
+        .any(|(m, p)| m == method && *p == path)
+}
+
+/// Middleware: answers 403 `csrf_failed` when [`check`] fails, except on
+/// the exempt routes ([`is_exempt`]).
 pub async fn protect(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let exempt = request
+        .extensions()
+        .get::<MatchedPath>()
+        .is_some_and(|path| is_exempt(request.method(), path.as_str()));
+    if exempt {
+        return next.run(request).await;
+    }
     let public_origin = state.config().public_url.as_str();
     match check(request.method(), request.headers(), public_origin) {
         Ok(()) => next.run(request).await,
@@ -248,5 +272,14 @@ mod tests {
             ("sec-fetch-site", "cross-site"),
         ]);
         assert_eq!(check(&Method::POST, &token, PUBLIC), Ok(()));
+    }
+
+    #[test]
+    fn only_the_device_flow_of_the_cli_is_exempt() {
+        assert!(is_exempt(&Method::POST, "/api/v1/auth/device/start"));
+        assert!(is_exempt(&Method::POST, "/api/v1/auth/device/poll"));
+        assert!(!is_exempt(&Method::POST, "/api/v1/auth/device/approve"));
+        assert!(!is_exempt(&Method::GET, "/api/v1/auth/device/poll"));
+        assert!(!is_exempt(&Method::POST, "/api/v1/auth/logout"));
     }
 }

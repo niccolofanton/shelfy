@@ -240,7 +240,7 @@ pub(crate) fn signed_in(
 }
 
 /// Clears the session cookie.
-fn cleared(mut response: Response) -> Response {
+pub(crate) fn cleared(mut response: Response) -> Response {
     response
         .headers_mut()
         .append(header::SET_COOKIE, cookie::clear_session());

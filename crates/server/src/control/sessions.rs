@@ -176,6 +176,72 @@ pub fn delete_for_user(conn: &Connection, user_id: &str) -> Result<usize> {
     Ok(conn.execute("DELETE FROM sessions WHERE user_id = ?1", [user_id])?)
 }
 
+/// One session of a user, for the account's session list (P1-17).
+#[derive(Clone, PartialEq, Eq)]
+pub struct SessionRow {
+    /// SHA-256 of the cookie value: the row's key.
+    pub id_hash: TokenHash,
+    /// Sign-in time, unix ms.
+    pub created_at: i64,
+    /// Absolute expiry, unix ms.
+    pub expires_at: i64,
+    /// Last use, unix ms.
+    pub last_seen_at: i64,
+    /// The browser's `User-Agent` at sign-in, truncated.
+    pub user_agent: Option<String>,
+}
+
+impl std::fmt::Debug for SessionRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SessionRow")
+            .field("created_at", &self.created_at)
+            .field("expires_at", &self.expires_at)
+            .field("last_seen_at", &self.last_seen_at)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Every stored session of `user_id`, usable or not, most recently used
+/// first.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn list_for_user(conn: &Connection, user_id: &str) -> Result<Vec<SessionRow>> {
+    let mut statement = conn.prepare_cached(
+        "SELECT id_hash, created_at, expires_at, last_seen_at, user_agent FROM sessions \
+         WHERE user_id = ?1 ORDER BY last_seen_at DESC, created_at DESC",
+    )?;
+    let rows = statement
+        .query_map([user_id], |row| {
+            let id_hash: Vec<u8> = row.get(0)?;
+            Ok(SessionRow {
+                // Keys are SHA-256 digests; anything else never matches a cookie.
+                id_hash: id_hash.try_into().unwrap_or([0; 32]),
+                created_at: row.get(1)?,
+                expires_at: row.get(2)?,
+                last_seen_at: row.get(3)?,
+                user_agent: row.get(4)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// Deletes session `id_hash` if it belongs to `user_id`; returns whether it
+/// did.
+///
+/// # Errors
+///
+/// The delete failed.
+pub fn delete_of_user(conn: &Connection, user_id: &str, id_hash: &TokenHash) -> Result<bool> {
+    let deleted = conn.execute(
+        "DELETE FROM sessions WHERE id_hash = ?1 AND user_id = ?2",
+        params![id_hash.as_slice(), user_id],
+    )?;
+    Ok(deleted > 0)
+}
+
 /// Deletes the sessions that expired by `now`, absolutely or after `idle_ms`
 /// without use; returns how many.
 ///
@@ -330,6 +396,60 @@ mod tests {
         assert!(
             db.read(|conn| find(conn, &hashes[3])).unwrap().is_some(),
             "other users keep their sessions"
+        );
+    }
+
+    #[test]
+    fn a_user_lists_and_deletes_their_own_sessions() {
+        let (db, owner, member) = control_with_users();
+        let hashes: Vec<TokenHash> = (0..3).map(|_| SecretToken::generate().hash()).collect();
+        db.write(|tx| {
+            for (hash, user, at, agent) in [
+                (&hashes[0], &owner, NOW, Some("Firefox")),
+                (&hashes[1], &owner, NOW + 5, None),
+                (&hashes[2], &member, NOW, None),
+            ] {
+                let session = NewSession {
+                    id_hash: hash,
+                    user_id: user,
+                    expires_at: at + 90 * DAY,
+                    user_agent: agent,
+                };
+                insert(tx, &session, at)?;
+            }
+            Ok::<_, RepoError>(())
+        })
+        .unwrap();
+        let rows = db.read(|conn| list_for_user(conn, &owner)).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id_hash, hashes[1], "most recently used first");
+        assert_eq!(rows[1].user_agent.as_deref(), Some("Firefox"));
+        assert_eq!(
+            (rows[1].created_at, rows[1].last_seen_at, rows[1].expires_at),
+            (NOW, NOW, NOW + 90 * DAY)
+        );
+        assert!(!format!("{:?}", rows[0]).contains("id_hash"));
+
+        assert!(
+            !db.write(|tx| delete_of_user(tx, &owner, &hashes[2]))
+                .unwrap(),
+            "another user's session"
+        );
+        assert!(
+            db.write(|tx| delete_of_user(tx, &owner, &hashes[0]))
+                .unwrap()
+        );
+        assert!(
+            !db.write(|tx| delete_of_user(tx, &owner, &hashes[0]))
+                .unwrap()
+        );
+        assert_eq!(
+            db.read(|conn| list_for_user(conn, &owner)).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            db.read(|conn| list_for_user(conn, &member)).unwrap().len(),
+            1
         );
     }
 

@@ -22,7 +22,8 @@
 //!
 //! On a session route the gate resolves the session cookie and inserts
 //! [`CurrentUser`] and [`SessionUser`](super::SessionUser); on a token route
-//! it verifies the token and its scope and inserts
+//! it verifies the token and its scope, records the token's use
+//! ([`bearer::record_use`]) and inserts
 //! [`TokenPrincipal`](super::bearer::TokenPrincipal) and [`CurrentUser`]. It
 //! answers 401 (403 for a token without the scope) before the handler runs.
 //! Once it knows the user, it answers 423 `user_locked` while the user's
@@ -238,6 +239,7 @@ async fn admit(state: &AppState, access: Access, request: &mut Request) -> Resul
             if request.headers().contains_key(header::AUTHORIZATION) {
                 match bearer::verify(state, request.headers()).await {
                     Ok(Some(token)) if token.has(scope) => {
+                        bearer::record_use(state, &token).await;
                         token.attach(request.extensions_mut());
                         Ok(())
                     }

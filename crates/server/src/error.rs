@@ -43,6 +43,9 @@ pub enum ErrorCode {
     /// 400: the passkey's answer failed verification, or names no passkey
     /// of the account.
     PasskeyInvalid,
+    /// 400: the device code or user code of a device sign-in (the migration
+    /// CLI's `login`) is unknown, already used or expired; start again.
+    InvalidDeviceCode,
     /// 401: the request needs an authenticated session or token.
     Unauthorized,
     /// 403: the caller may not perform this action.
@@ -97,7 +100,8 @@ impl ErrorCode {
             | Self::InvalidCursor
             | Self::InvalidLink
             | Self::ChallengeExpired
-            | Self::PasskeyInvalid => StatusCode::BAD_REQUEST,
+            | Self::PasskeyInvalid
+            | Self::InvalidDeviceCode => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden | Self::CsrfFailed | Self::ReauthRequired | Self::QuotaExceeded => {
                 StatusCode::FORBIDDEN
@@ -152,6 +156,7 @@ impl ErrorCode {
             Self::InvalidLink => "invalid_link",
             Self::ChallengeExpired => "challenge_expired",
             Self::PasskeyInvalid => "passkey_invalid",
+            Self::InvalidDeviceCode => "invalid_device_code",
             Self::Unauthorized => "unauthorized",
             Self::Forbidden => "forbidden",
             Self::CsrfFailed => "csrf_failed",
@@ -496,6 +501,7 @@ mod tests {
             ErrorCode::InvalidLink,
             ErrorCode::ChallengeExpired,
             ErrorCode::PasskeyInvalid,
+            ErrorCode::InvalidDeviceCode,
             ErrorCode::Unauthorized,
             ErrorCode::Forbidden,
             ErrorCode::CsrfFailed,

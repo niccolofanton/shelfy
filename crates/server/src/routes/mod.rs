@@ -6,7 +6,7 @@
 //!
 //! | Group | Limits | Routes |
 //! |---|---|---|
-//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03); passkeys and re-authentication (P1-13) |
+//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03); passkeys and re-authentication (P1-13); the account, its sessions and tokens, and the device flow (P1-17) |
 //! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
 //! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
 //! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, [`uploads`]) |
@@ -44,6 +44,11 @@
 //! (re-authentication of the session), over [`crate::auth::passkeys`] and
 //! [`crate::auth::reauth`].
 //!
+//! The account routes (P1-17): [`me`] (profile and capabilities, settings,
+//! consent, usage, sessions, API tokens) and [`device`] (the migration CLI's
+//! sign-in, over [`crate::auth::device`]). `POST /posts/lookup` also takes a
+//! `lookup` token ([`TOKEN_ROUTES`]).
+//!
 //! The committed copy of the document, `crates/server/openapi.json`, is what
 //! the TypeScript client is generated from (T11). After changing a route,
 //! regenerate it with
@@ -54,6 +59,7 @@
 pub mod auth;
 pub mod client_errors;
 pub mod collections;
+pub mod device;
 pub mod docs;
 pub mod events;
 pub mod health;
@@ -141,8 +147,11 @@ const PROBLEM_RESPONSE: &str = "Problem";
         (name = "platform", description = "Health, the API description, the realtime stream, \
                                            notifications, client error reports and the version."),
         (name = "auth", description = "Sign-in with passkeys and links, re-authentication, \
-                                       sessions and sign-out."),
-        (name = "account", description = "The signed-in user and their passkeys."),
+                                       sessions and sign-out, and the migration CLI's device \
+                                       sign-in."),
+        (name = "account", description = "The signed-in user: profile and capabilities, \
+                                          settings, consent, storage use, sessions, passkeys and \
+                                          API tokens."),
         (name = "library", description = "The signed-in user's posts, stats and collections, \
                                           and their edits."),
         (name = "search", description = "Ranked search over the signed-in user's library."),
@@ -170,14 +179,27 @@ pub const PUBLIC_ROUTES: &[(Method, &str)] = &[
     (Method::POST, "/api/v1/auth/passkeys/login/start"),
     (Method::POST, "/api/v1/auth/passkeys/login/finish"),
     (Method::POST, "/api/v1/auth/logout"),
+    (Method::POST, "/api/v1/auth/device/start"),
+    (Method::POST, "/api/v1/auth/device/poll"),
+];
+
+/// Public routes that programs call without a cookie, and that read none:
+/// the CSRF guard lets them through without `Origin` and `X-Shelfy-Client`
+/// ([`crate::auth::csrf`]). The migration CLI signs in with them before it
+/// has a token. Each must also be in [`PUBLIC_ROUTES`].
+pub const CSRF_EXEMPT_ROUTES: &[(Method, &str)] = &[
+    (Method::POST, "/api/v1/auth/device/start"),
+    (Method::POST, "/api/v1/auth/device/poll"),
 ];
 
 /// Routes that take a scoped API token: method, route template, the scope,
 /// and whether a signed-in session works too. Such a route also declares
 /// `security(("bearer" = ["<scope>"]))` in its `#[utoipa::path]`, plus
 /// `("session" = [])` when sessions work too. The migration routes (T9)
-/// take the CLI's `migrate` token only; the extension routes join in P2.
+/// take the CLI's `migrate` token only; `POST /posts/lookup` takes a `lookup`
+/// token or a session (P1-17); the extension routes join in P2.
 pub const TOKEN_ROUTES: &[(Method, &str, Scope, bool)] = &[
+    (Method::POST, "/api/v1/posts/lookup", Scope::Lookup, true),
     (Method::POST, "/api/v1/uploads", Scope::Migrate, false),
     (Method::HEAD, "/api/v1/uploads/{id}", Scope::Migrate, false),
     (Method::PATCH, "/api/v1/uploads/{id}", Scope::Migrate, false),
@@ -260,6 +282,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(passkeys::router())
         .merge(reauth::router())
         .merge(me::router())
+        .merge(device::router())
         .merge(jobs::router());
     // Streams end when the shutdown token fires instead of on a timer.
     let streams = OpenApiRouter::default().routes(routes!(events::stream_events));

@@ -15,8 +15,9 @@ pub const MAGIC_LINK_CREATE: &str = "magic_link.create";
 /// A user signed in: a session was created. `meta`: `method` (`magic_link`
 /// or `passkey`) and `rotated`.
 pub const SESSION_CREATE: &str = "session.create";
-/// Sessions ended. `meta`: `scope` (`current` for a sign-out, `all` for a
-/// sign-out everywhere) and `count`.
+/// Sessions ended. `meta`: `scope` and `count`. `scope` is `current` (a
+/// sign-out), `all` (a sign-out everywhere), `remote` (another session
+/// signed out from the session list) or `others` (every other session).
 pub const SESSION_DELETE: &str = "session.delete";
 /// A signed-in user proved who they are again (re-authentication). `meta`:
 /// `method` (`passkey` or `magic_link`).
@@ -28,8 +29,19 @@ pub const PASSKEY_DELETE: &str = "passkey.delete";
 /// A passkey signed with a counter that did not grow: the authenticator may
 /// have been cloned, and the sign-in was refused. `meta`: `id`.
 pub const PASSKEY_CLONE_SUSPECTED: &str = "passkey.clone_suspected";
-/// An API token was minted. `meta`: `via` (`cli`) and `kind` (`migrate`).
+/// An API token was minted. `meta`: `id` (the token's id), `kind`
+/// (`extension`, `shortcut` or `migrate`) and `via`: `cli` (`admin
+/// migrate-token`), `account` (`POST /me/tokens`) or `device` (the device
+/// flow, whose approver is the actor).
 pub const API_TOKEN_CREATE: &str = "api_token.create";
+/// An API token was revoked from the account. `meta`: `id` and `kind`.
+pub const API_TOKEN_REVOKE: &str = "api_token.revoke";
+/// A signed-in user approved a device code (the migration CLI's sign-in).
+/// `meta`: `scope` (what the device gets: `migrate`).
+pub const DEVICE_APPROVE: &str = "device.approve";
+/// A user accepted the disclaimer and the privacy notice. `meta`:
+/// `disclaimerVersion` and `privacyVersion`.
+pub const CONSENT_ACCEPT: &str = "consent.accept";
 /// A user's library was locked for maintenance (`admin user lock`).
 pub const USER_LOCK: &str = "user.lock";
 /// A user's library was unlocked (`admin user unlock`).

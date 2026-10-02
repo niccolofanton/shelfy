@@ -1,14 +1,19 @@
 //! `api_tokens` (plan §2.6, §2.11): scoped bearer tokens for the extension,
 //! the iOS Shortcut and the migration CLI.
 //!
-//! The bearer extractor ([`crate::auth::bearer`]) looks tokens up with
-//! [`find_active`]. T9 adds [`insert`] for `admin migrate-token` and the
-//! expiry (control schema v2): a token whose `expires_at` has passed is
-//! refused like a revoked one. P1-17 adds listing, `last_used_at`, revocation
-//! and the device-code flow, and may change how `scopes` is stored; today it
-//! is a space-separated list of scope names (`ingest lookup`).
+//! A row keeps the SHA-256 of the whole value (`shx_…`), never the value.
+//! `scopes` is a space-separated list of scope names (`ingest lookup`).
+//! A token works until it is revoked (`revoked_at`) or expires (`expires_at`,
+//! control schema v2; `NULL` for tokens that last until revoked).
+//!
+//! - The bearer check ([`crate::auth::bearer`]) finds tokens with
+//!   [`find_active`] and records their use with [`touch`] (`last_used_at`,
+//!   at most once a minute per token).
+//! - Minting ([`crate::auth::api_tokens::mint`]) inserts with [`insert`].
+//! - The account lists its tokens with [`list_active`] and revokes one with
+//!   [`revoke`].
 
-use rusqlite::{Connection, OptionalExtension as _, params};
+use rusqlite::{Connection, OptionalExtension as _, Row, params};
 use shelfy_core::repo::{RepoError, Result};
 
 use super::conflict_on_unique;
@@ -34,6 +39,14 @@ impl TokenKind {
             Self::Shortcut => "shortcut",
             Self::Migrate => "migrate",
         }
+    }
+
+    /// The kind stored as `value`.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        [Self::Extension, Self::Shortcut, Self::Migrate]
+            .into_iter()
+            .find(|kind| kind.as_str() == value)
     }
 }
 
@@ -68,6 +81,27 @@ pub struct ApiToken {
     /// Space-separated scope names.
     pub scopes: String,
     /// Expiry, unix ms; `None` when the token does not expire.
+    pub expires_at: Option<i64>,
+    /// Last request it authenticated, unix ms.
+    pub last_used_at: Option<i64>,
+}
+
+/// A token as the account's list shows it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TokenRow {
+    /// Token id (ULID).
+    pub id: String,
+    /// Who holds it.
+    pub kind: TokenKind,
+    /// The user's name for it.
+    pub label: Option<String>,
+    /// Space-separated scope names.
+    pub scopes: String,
+    /// Creation time, unix ms.
+    pub created_at: i64,
+    /// Last request it authenticated, unix ms.
+    pub last_used_at: Option<i64>,
+    /// Expiry, unix ms; `None` when it lasts until revoked.
     pub expires_at: Option<i64>,
 }
 
@@ -108,8 +142,8 @@ pub fn find_active(
     now: i64,
 ) -> Result<Option<ApiToken>> {
     conn.query_row(
-        "SELECT t.id, t.user_id, t.kind, t.scopes, t.expires_at FROM api_tokens t \
-         JOIN users u ON u.id = t.user_id \
+        "SELECT t.id, t.user_id, t.kind, t.scopes, t.expires_at, t.last_used_at \
+         FROM api_tokens t JOIN users u ON u.id = t.user_id \
          WHERE t.token_hash = ?1 AND t.revoked_at IS NULL \
            AND (t.expires_at IS NULL OR t.expires_at > ?2) AND u.status = 'active'",
         params![token_hash.as_slice(), now],
@@ -120,8 +154,93 @@ pub fn find_active(
                 kind: row.get(2)?,
                 scopes: row.get(3)?,
                 expires_at: row.get(4)?,
+                last_used_at: row.get(5)?,
             })
         },
+    )
+    .optional()
+    .map_err(RepoError::from)
+}
+
+/// Records a use of token `id` at `now`. A late, out-of-order use never
+/// moves `last_used_at` back.
+///
+/// # Errors
+///
+/// The update failed.
+pub fn touch(conn: &Connection, id: &str, now: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE api_tokens SET last_used_at = ?2 WHERE id = ?1 \
+         AND (last_used_at IS NULL OR last_used_at < ?2)",
+        params![id, now],
+    )?;
+    Ok(())
+}
+
+const ROW_COLUMNS: &str = "id, kind, label, scopes, created_at, last_used_at, expires_at";
+
+/// The condition of a token that still works at `?2`, for `user_id` = `?1`.
+const ACTIVE: &str =
+    "user_id = ?1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?2)";
+
+fn from_row(row: &Row<'_>) -> rusqlite::Result<TokenRow> {
+    let kind: String = row.get(1)?;
+    Ok(TokenRow {
+        id: row.get(0)?,
+        // The schema's CHECK constraint admits only known kinds.
+        kind: TokenKind::parse(&kind).unwrap_or(TokenKind::Extension),
+        label: row.get(2)?,
+        scopes: row.get(3)?,
+        created_at: row.get(4)?,
+        last_used_at: row.get(5)?,
+        expires_at: row.get(6)?,
+    })
+}
+
+/// The tokens of `user_id` that work at `now`, newest first.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn list_active(conn: &Connection, user_id: &str, now: i64) -> Result<Vec<TokenRow>> {
+    let mut statement = conn.prepare_cached(&format!(
+        "SELECT {ROW_COLUMNS} FROM api_tokens WHERE {ACTIVE} ORDER BY created_at DESC, id DESC"
+    ))?;
+    let rows = statement
+        .query_map(params![user_id, now], from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// How many tokens of `user_id` work at `now`.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn count_active(conn: &Connection, user_id: &str, now: i64) -> Result<u64> {
+    let count: i64 = conn.query_row(
+        &format!("SELECT count(*) FROM api_tokens WHERE {ACTIVE}"),
+        params![user_id, now],
+        |row| row.get(0),
+    )?;
+    Ok(u64::try_from(count).unwrap_or(0))
+}
+
+/// Revokes token `id` of `user_id` at `now`; returns it, or `None` when
+/// `user_id` has no working token with this id (another user's token is
+/// left alone, like a missing one).
+///
+/// # Errors
+///
+/// The update failed.
+pub fn revoke(conn: &Connection, user_id: &str, id: &str, now: i64) -> Result<Option<TokenRow>> {
+    conn.query_row(
+        &format!(
+            "UPDATE api_tokens SET revoked_at = ?2 WHERE id = ?3 AND {ACTIVE} \
+             RETURNING {ROW_COLUMNS}"
+        ),
+        params![user_id, now, id],
+        from_row,
     )
     .optional()
     .map_err(RepoError::from)
@@ -165,6 +284,7 @@ mod tests {
         assert_eq!(found.user_id, owner);
         assert_eq!(found.scopes, "ingest lookup");
         assert_eq!(found.expires_at, None);
+        assert_eq!(found.last_used_at, None);
         for token in ["shx_revoked", "shx_member", "shx_unknown"] {
             assert_eq!(
                 db.read(|conn| find_active(conn, &hash_token(token), NOW))
@@ -197,5 +317,83 @@ mod tests {
 
         let again = db.write(|tx| insert(tx, &token, NOW)).unwrap_err();
         assert!(matches!(again, RepoError::Conflict("token")), "{again}");
+    }
+
+    fn token<'a>(id: &'a str, user: &'a str, hash: &'a TokenHash) -> NewApiToken<'a> {
+        NewApiToken {
+            id,
+            user_id: user,
+            kind: TokenKind::Shortcut,
+            token_hash: hash,
+            label: None,
+            scopes: "links:create",
+            expires_at: None,
+        }
+    }
+
+    #[test]
+    fn the_account_lists_and_revokes_its_working_tokens() {
+        let (db, owner, member) = control_with_users();
+        let hashes: Vec<TokenHash> = (0..4).map(|i| hash_token(&format!("shx_{i}"))).collect();
+        db.write(|tx| {
+            insert(tx, &token("A", &owner, &hashes[0]), NOW)?;
+            let expiring = NewApiToken {
+                expires_at: Some(NOW + 10),
+                kind: TokenKind::Migrate,
+                scopes: "migrate",
+                ..token("B", &owner, &hashes[1])
+            };
+            insert(tx, &expiring, NOW + 1)?;
+            insert(tx, &token("C", &owner, &hashes[2]), NOW + 2)?;
+            insert(tx, &token("D", &member, &hashes[3]), NOW)
+        })
+        .unwrap();
+        let ids = |at: i64| -> Vec<String> {
+            db.read(|conn| list_active(conn, &owner, at))
+                .unwrap()
+                .into_iter()
+                .map(|row| row.id)
+                .collect()
+        };
+        assert_eq!(ids(NOW + 5), ["C", "B", "A"], "newest first, own tokens");
+        assert_eq!(ids(NOW + 10), ["C", "A"], "expired tokens are gone");
+        assert_eq!(
+            db.read(|conn| count_active(conn, &owner, NOW + 5)).unwrap(),
+            3
+        );
+
+        // Revoking: own working tokens only.
+        let revoked = db.write(|tx| revoke(tx, &owner, "C", NOW + 6)).unwrap();
+        assert_eq!(
+            revoked.map(|row| (row.id, row.kind)),
+            Some(("C".to_owned(), TokenKind::Shortcut))
+        );
+        assert_eq!(
+            db.write(|tx| revoke(tx, &owner, "C", NOW + 7)).unwrap(),
+            None
+        );
+        assert_eq!(
+            db.write(|tx| revoke(tx, &owner, "D", NOW + 7)).unwrap(),
+            None
+        );
+        assert_eq!(
+            db.write(|tx| revoke(tx, &owner, "B", NOW + 20)).unwrap(),
+            None,
+            "expired"
+        );
+        assert_eq!(ids(NOW + 7), ["B", "A"]);
+        assert!(
+            db.read(|conn| find_active(conn, &hashes[2], NOW + 7))
+                .unwrap()
+                .is_none()
+        );
+
+        // Uses move forward only.
+        db.write(|tx| touch(tx, "A", NOW + 50)).unwrap();
+        db.write(|tx| touch(tx, "A", NOW + 40)).unwrap();
+        let row = db.read(|conn| list_active(conn, &owner, NOW + 60)).unwrap();
+        assert_eq!(row[0].last_used_at, Some(NOW + 50));
+        assert_eq!(row[0].created_at, NOW);
+        assert_eq!(row[0].label, None);
     }
 }
