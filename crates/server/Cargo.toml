@@ -7,5 +7,43 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+anyhow.workspace = true
+axum.workspace = true
+base64.workspace = true
+clap = { workspace = true, features = ["env"] }
+getrandom.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+# `backup`: the SQLite online backup API behind `admin snapshot`.
+rusqlite = { workspace = true, features = ["backup"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+shelfy-core = { path = "../core" }
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tower.workspace = true
+tower-http = { workspace = true, features = [
+  "catch-panic",
+  "compression-br",
+  "compression-gzip",
+  "limit",
+  "timeout",
+] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+jsonschema.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+tower = { workspace = true, features = ["util"] }
+
 [lints]
 workspace = true

@@ -21,7 +21,14 @@ publish = false
 [workspace.dependencies]
 # Shared by the workspace crates; a crate opts in with `<name>.workspace = true`.
 anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["macros"] }
+base64 = { version = "0.22.1", default-features = false, features = ["std"] }
 clap = { version = "4.6.7", features = ["derive"] }
+getrandom = "0.4.3"
+http-body-util = "0.1.5"
+jsonschema = { version = "0.58.4", default-features = false }
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 moka = { version = "0.12.16", features = ["sync"] }
 proptest = "1.11.0"
 regex = "1.13.1"
@@ -31,9 +38,18 @@ rusqlite_migration = "2.6.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha1 = "0.11.0"
+sha2 = "0.11.0"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = "0.7.19"
+tower = "0.5.3"
+tower-http = "0.7.1"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 url = "2.5.8"
+utoipa = "6.0.0"
+utoipa-axum = "0.3.0"
 
 [workspace.lints.rust]
 # Unsafe code is opt-in per item (`#[allow(unsafe_code)]`) and needs a `// SAFETY:` comment.
