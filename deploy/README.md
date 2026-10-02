@@ -18,6 +18,7 @@ needs it; the last column says when.
 | `osn/shelfy/alerting/shelfy-backups.yaml` | Stale-backup rules (db > 3 h, media > 36 h, drill > 35 days, restic maintenance > 8 days) and a missing-metric rule; the osn role `shelfy` installs them only while `shelfy_backups_enabled` is true | P1-16; on in P1-23 |
 | `osn/shelfy/backup/` | The four backup jobs of §3.5 as scripts and systemd units for the osn role `shelfy`: hourly database snapshot and restic backup, daily media backup, weekly retention, prune and check, monthly restore drill, each writing textfile metrics. See [Backups and restores](#backups-and-restores) | P1-12; installed by P1-16, enabled after O2 in P1-23 |
 | `rehearse-backups.sh` | Local rehearsal of the backups and of both restore runbooks on synthetic data, with restic in a container and a local repository | P1-12 |
+| `test-backup-jobs.sh` | Checks of the backup jobs' shared helpers that need no restic: the result of a job stopped by a signal, the textfile directory's mode, the restic env file's mode, restic's errors in the log. Runs in `debian:bookworm-slim` | F4 |
 | `compose.test.yml` | Test stack (§3.8): `shelfy-api` from a local image with its own data (a named volume, or a host path), production's user, read-only root, limits and healthcheck, API on `127.0.0.1:8081`. Optional `mail` profile with mailpit (E4). The mock AI provider, the fixture CDN and Smokescreen allowing only the fixture subnet join in P2–P4; P1-21 runs the web e2e suite on it | P1-09 |
 | `restart-check.sh` | Restarts `shelfy-api` in the test stack and fails unless `/health` answers 200 within 3 s (§6.2) | P1-09 |
 | Dockerfile for `shelfy-capture` | `node:24-bookworm-slim`, pinned `playwright-core` with `chromium-headless-shell`, Debian `ffmpeg`, Noto and Liberation fonts (§2.18) | P4 |
@@ -108,7 +109,7 @@ names and labels: change them together.
 | `shelfy_sse_connections` | gauge | — | Open realtime streams (`GET /api/v1/events`) |
 | `shelfy_jobs` | gauge | `kind`, `state` | Jobs the scheduler holds: `ready` (due, paused queues included), `delayed`, `running` |
 | `shelfy_job_oldest_queued_seconds` | gauge | `kind` | How long the oldest due job of an unpaused queue has waited; 0 when none |
-| `shelfy_job_duration_seconds` | histogram | `kind`, `outcome` | Each ended attempt: `succeeded`, `failed` (for good), `retried`, `requeued`, `interrupted` (shutdown), `cancelled`, `lease_expired` |
+| `shelfy_job_duration_seconds` | histogram | `kind`, `outcome` | Each ended attempt: `succeeded`, `failed` (for good), `retried`, `requeued` (again later without using a try, also while the user's library is locked), `interrupted` (shutdown), `cancelled`, `lease_expired` |
 | `shelfy_disk_bytes` | gauge | `area` | Bytes of the files under `control`, `users`, `cache`, `work`, `backup_staging` and `other` (the rest of the data directory) |
 | `shelfy_open_user_dbs` | gauge | — | Libraries open in the handle cache (at most 64) |
 | `shelfy_sqlite_busy_total` | counter | — | SQLite calls that gave up on a lock after `busy_timeout` (5 s) |
@@ -199,6 +200,19 @@ cosign verify ghcr.io/niccolofanton/shelfy-api@sha256:<digest> \
 The GHCR package starts private. Until it is public or the VPS has a pull token, the image goes
 to the VPS with `docker save` and `docker load` under the same tag (P1 assumption G4).
 
+**Rollbacks and schema versions** (plan §3.8). A rollback deploys the previous tag. Databases
+only migrate forward: the control database at boot, each library when it is first opened or by
+the sweep after boot. Migrations follow expand/contract, so an older build runs on a newer
+library as is, and records that it opened it in the library's `meta` table, under
+`schema.older_build`. Rolling forward again does not re-run the newer migrations, so the rows
+written during the rollback miss whatever those migrations derive from the user's rows. **Rule:**
+a migration that adds such derived data ships an idempotent re-derivation that the builds from
+that migration on run when they open a library whose record names an older build. The first is
+library v2's `posts_infix` (P1-05), re-derived by `search::index::rebuild_infix`. Nothing runs
+the re-derivations from the record yet: after a rollback across library v2, run
+`rebuild_infix` on the libraries that record an older build. The details are in
+`crates/core/src/schema/mod.rs`.
+
 ## Synthetic libraries and the latency bench
 
 `admin synth` fills one user's empty library with synthetic posts and media, for benchmarks and
@@ -255,24 +269,41 @@ priority inside the API container.
 | `shelfy-restic-maintenance` | Sundays 04:30 | `forget` (db: 48 hourly, 14 daily, 8 weekly, 6 monthly; media: 7 daily, 8 weekly, 6 monthly), `prune`, `check --read-data-subset=5%` | `shelfy_restic_check_last_success` |
 | `shelfy-restore-drill` | the 1st of the month, 05:30 | restores the control database and one random library from the latest db snapshot, then `admin verify --max-drift 10` | `shelfy_restore_drill_last_success` |
 
-Each metric is 1 when the job's last run succeeded and 0 when it failed;
-`…_timestamp_seconds` is the time of the last success, kept across failures, which is what the
-"backups stale" alert of §3.6 watches (db over 3 h, media over 36 h, drill over 35 days). The
-first backup creates the repository.
+Each metric is 1 when the job's last run succeeded and 0 when it failed, also when a signal
+stopped it (systemd's `TimeoutStartSec`, a stop, a reboot); `…_timestamp_seconds` is the time
+of the last success, kept across failures, which is what the "backups stale" alerts of §3.6
+watch (db over 3 h, media over 36 h, drill over 35 days, restic maintenance over 8 days). The
+first backup creates the repository. A job refuses to run restic unless `restic.env` has mode
+0600 (or 0400), and logs restic's message when it cannot open the repository; restic never
+prints the password or the keys. The jobs create the textfile directory with mode 0755, which
+node-exporter can read under the units' `UMask=0077`.
+
+**Missing metrics.** A stale rule compares `time()` with a `…_timestamp_seconds` series, so it
+stays silent when the series is missing: a job that never ran, a textfile directory that
+node-exporter cannot read. `osn/shelfy/alerting/shelfy-backups.yaml` (P1-16) therefore also has
+`shelfy_backup_metrics_missing`, an `absent(…)` rule over the db, media and drill time stamps.
+The weekly restic maintenance is not in it, since its metric only appears after the first
+Sunday; an unreadable directory hides it along with the three others, which the rule does see.
 
 The operator commands behind them:
 
 | Command | What it does |
 | --- | --- |
-| `admin snapshot [--out DIR] [--changed] [--user ID]…` | Copies the control database and the libraries with SQLite's online backup API (default `DIR`: `backup-staging/db`). With `--changed`, a library is copied only if its files changed since its copy was taken. Locked libraries keep their previous copy; copies of deleted users are removed |
-| `admin verify DIR [--user ID]… [--max-drift PERCENT]` | Checks the copies in `DIR`: `PRAGMA integrity_check`, foreign keys, the schema version, row counts against the live databases (default: equal; volatile tables such as sessions are only reported) and every media reference against the live store. Exit status 1 on any problem |
-| `admin user lock ID [--reason TEXT]` | Locks a user's library: their requests answer 423 `user_locked`, and the server releases the library |
+| `admin snapshot [--out DIR] [--changed] [--user ID]…` | Copies the control database and the libraries with SQLite's online backup API (default `DIR`: `backup-staging/db`). With `--changed`, a library is copied only if its files changed since its copy was taken. Locked libraries keep their previous copy. Without `--user`, the copies of deleted accounts (gone from the control database, or being deleted) are removed, while an account whose library is missing from the data directory keeps its last copy and fails the run |
+| `admin verify DIR [--user ID]… [--max-drift PERCENT]` | Checks the copies in `DIR`: `PRAGMA integrity_check`, foreign keys, the schema version, row counts against the live databases and every media reference against the live store. Row counts must be equal by default; with `--max-drift`, they may differ by that share of the larger count, and by at least 5 rows. Volatile tables such as sessions are only reported, and the live library of a locked user is not opened. Without `--user`, the set must be complete: the control database has users, each with a library copy. Exit status 1 on any problem |
+| `admin user lock ID [--reason TEXT]` | Locks a user's library: their requests answer 423 `user_locked`, their jobs wait without using a try, and the server releases the library and cannot open it again until the unlock |
 | `admin user unlock ID` | Unlocks it |
-| `admin user restore-db ID FILE [--wait-secs N]` | Replaces a locked user's library with `FILE` after checking it, keeping the current one as `users/ID/library.pre-restore-<time>.sqlite`. Waits up to N seconds (default 120) for the server to release the library |
-| `admin install-snapshots DIR [--force]` | Full restore, with the server stopped: checks every copy in `DIR`, installs them as the live databases, then runs `verify`. `--force` replaces existing data, keeping each replaced database next to it |
+| `admin user restore-db ID FILE [--wait-secs N]` | Replaces a locked user's library with `FILE` after checking it, keeping a copy of the current one as `users/ID/library.pre-restore-<time>.sqlite`. Waits up to N seconds (default 120) for the server to release the library, then copies the restored pages into the live file under an exclusive lock: the file is never renamed over, so no connection can pair it with another file's log. Stray `-wal`, `-shm` or `-journal` files of a missing or unreadable library are moved aside with it. Prints the result before it writes the audit row |
+| `admin install-snapshots DIR [--force]` | Full restore, with the server stopped. Checks every copy in `DIR` and that the set is complete (the control database has users, each with a library copy), stages every copy next to its target, takes every live database, then installs them and runs `verify`. A failed check, a full disk while staging or a running server installs nothing. `--force` replaces existing data, keeping a copy of each replaced database next to it |
 
-**Restore one user to a point in time.** Snapshot paths are the host paths; restore inside the
-data directory so the API container sees the file.
+`restic` below is restic as the jobs run it: the pinned image with `/etc/shelfy/restic.env`
+(`run_restic` in `lib.sh`). Snapshot paths are the host paths.
+
+**Restore one user to a point in time.** Pick the snapshot with `restic snapshots --host shelfy
+--tag db`, and restore inside the data directory so the API container sees the file. While the
+user is locked, their requests answer 423, their jobs wait (one attempt a minute, which uses no
+try), and neither the server nor an operator command opens the library, not even a request or a
+job that took it before the lock.
 
 ```sh
 shelfy-server admin user lock "$USER_ID"
@@ -282,17 +313,38 @@ shelfy-server admin user restore-db "$USER_ID" "/data/shelfy/backup-staging/rest
 shelfy-server admin user unlock "$USER_ID"
 ```
 
-**Restore the whole host.** After `just bootstrap`, with `shelfy-api` stopped:
+If `restore-db` printed "restored user …" and then failed on the audit row, the library is
+restored: do not run it again.
+
+**Restore the whole host.** After `just bootstrap`, stop the backup timers
+(`systemctl stop 'shelfy-*.timer'`) and keep `shelfy-api` stopped. Restore pinned snapshots,
+never `latest`: once the new host runs, its own first backups (of an empty host) become the
+latest ones. Take the last db snapshot before the loss, and the last media snapshot before it:
 
 ```sh
-restic restore latest:/data/shelfy/users --tag media --target /data/shelfy/users
-restic restore latest:/data/shelfy/backup-staging/db --tag db --target /data/shelfy/restore/db
-shelfy-server admin install-snapshots /data/shelfy/restore/db
+restic snapshots --host shelfy --tag db      # pick DB_SNAPSHOT
+restic snapshots --host shelfy --tag media   # pick MEDIA_SNAPSHOT, taken before DB_SNAPSHOT
+restic restore "$MEDIA_SNAPSHOT:/data/shelfy/users" --target /data/shelfy/users
+restic restore "$DB_SNAPSHOT:/data/shelfy/backup-staging/db" --target /data/shelfy/restore/db
 ```
 
-Then `just deploy` and `just check`. Objects that a restored library references but the store
-lost are listed by `verify` and re-archived later (P2–P4).
+The operator commands run in a one-off container of the stopped service, on its volume and as its
+user (the image's entrypoint is `shelfy-server`), from the osn stack directory:
+
+```sh
+docker compose run --rm --no-deps shelfy-api admin install-snapshots /data/shelfy/restore/db
+```
+
+`install-snapshots` refuses a control database without users (the backup of an empty host) and a
+set that lacks an account's library, and then installs nothing. Then `just deploy`, `just check`,
+and start the timers again (`systemctl start 'shelfy-*.timer'`). Objects that a restored library
+references but the store lost are listed by `verify` and re-archived later (P2–P4).
 
 **Rehearsal.** `deploy/rehearse-backups.sh [WORK_DIR] [PORT]` runs all of this locally on a
 synthetic library, with restic in a container and a repository in `WORK_DIR`, and fails unless
-every metric reports success.
+every metric reports success. `deploy/test-backup-jobs.sh` checks what the jobs record when they
+fail or are stopped; run it on Linux, as the VPS does:
+
+```sh
+docker run --rm -v "$PWD:/w:ro" -w /w debian:bookworm-slim deploy/test-backup-jobs.sh
+```

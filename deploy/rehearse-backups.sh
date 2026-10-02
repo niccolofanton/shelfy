@@ -12,10 +12,11 @@
 #    so the snapshots copy databases the server holds open;
 # 3. runs the four jobs of deploy/osn/shelfy/backup/ (db twice, to show
 #    `--changed`), with their textfile metrics in WORK_DIR/textfile;
-# 4. restores one user to a point in time (lock, 423, restic restore,
-#    restore-db, unlock);
+# 4. restores one user to a point in time (lock, 423, restic restore of a
+#    pinned snapshot, restore-db, unlock);
 # 5. restores the whole host into a new data directory (restic restore of both
-#    sets, install-snapshots, a server on it);
+#    sets, pinned by snapshot id as the runbook says, install-snapshots, a
+#    server on it);
 # 6. fails unless every backup metric reports success.
 #
 # WORK_DIR (default ../shelfy-web-local/data/p1-12/rehearsal, next to the
@@ -143,20 +144,32 @@ step "shelfy-restore-drill.sh"
 # shellcheck source=osn/shelfy/backup/lib.sh
 . "$backup/lib.sh"
 
+# snapshot_id TAG: the newest snapshot with TAG, as an operator picks it from
+# `restic snapshots`: the runbooks restore pinned snapshots, never `latest`.
+snapshot_id() {
+  run_restic snapshots --host "$SHELFY_RESTIC_HOST" --tag "$1" --latest 1 --json |
+    sed -n 's/.*"short_id":"\([0-9a-f]*\)".*/\1/p' | tail -n 1
+}
+
 step "restore one user to a point in time"
 library=$data/users/$owner/library.sqlite
 sqlite3 "$library" "PRAGMA foreign_keys = ON;
   DELETE FROM posts WHERE id IN (SELECT id FROM posts ORDER BY id LIMIT 100);"
-echo "a mistake deleted 100 posts: $(posts_total "$cookie") posts through the API" >&2
+# Read from the file: the API's cached counts do not see another process's
+# writes (crates/core/src/generation.rs).
+echo "a mistake deleted 100 posts: $(sqlite3 "$library" "SELECT count(*) FROM posts") posts left" >&2
 "$bin" admin --data-dir "$data" user lock "$owner" --reason rehearsal
 locked=$(posts_total "$cookie")
 echo "while locked, the API answers: $locked" >&2
 [ "$locked" = "HTTP 423" ] || fail "a locked user got $locked"
 restore_dir=$data/backup-staging/restore-one
 mkdir -p "$restore_dir"
+db_snapshot=$(snapshot_id db)
+[ -n "$db_snapshot" ] || fail "no db snapshot"
+echo "restoring the owner's library from db snapshot $db_snapshot" >&2
 RESTIC_MOUNTS=(--volume "$restore_dir:$restore_dir")
-run_restic restore "latest:$SHELFY_STAGING_DIR/db/users" --host "$SHELFY_RESTIC_HOST" \
-  --tag db --target "$restore_dir" --include "/$owner.sqlite"
+run_restic restore "$db_snapshot:$SHELFY_STAGING_DIR/db/users" --target "$restore_dir" \
+  --include "/$owner.sqlite"
 "$bin" admin --data-dir "$data" user restore-db "$owner" "$restore_dir/$owner.sqlite"
 "$bin" admin --data-dir "$data" user unlock "$owner"
 after=$(posts_total "$cookie")
@@ -168,11 +181,12 @@ step "restore the whole host into a new data directory"
 stop_server
 host=$work/restored-host
 mkdir -p "$host/users" "$work/restored-db"
+media_snapshot=$(snapshot_id media)
+[ -n "$media_snapshot" ] || fail "no media snapshot"
+echo "restoring media snapshot $media_snapshot and db snapshot $db_snapshot" >&2
 RESTIC_MOUNTS=(--volume "$host/users:$host/users" --volume "$work/restored-db:$work/restored-db")
-run_restic restore "latest:$data/users" --host "$SHELFY_RESTIC_HOST" --tag media \
-  --target "$host/users"
-run_restic restore "latest:$SHELFY_STAGING_DIR/db" --host "$SHELFY_RESTIC_HOST" --tag db \
-  --target "$work/restored-db"
+run_restic restore "$media_snapshot:$data/users" --target "$host/users"
+run_restic restore "$db_snapshot:$SHELFY_STAGING_DIR/db" --target "$work/restored-db"
 "$bin" admin --data-dir "$host" install-snapshots "$work/restored-db"
 start_server "$host"
 cookie=$(sign_in "$host")
