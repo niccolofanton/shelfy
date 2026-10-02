@@ -100,7 +100,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-17 | Account API, API tokens, device-code flow | done | `web/p1-17-account` (47bbab0…64b9241) |
 | P1-02 | Responsive shell and a minimal web app manifest | running (Sonnet) | `web/p1-02-responsive` |
 | P1-18 | First osn PR, part 2: apply stage 1 (services) | done on 2026-10-02 at 23:20: [osn PR #29](https://github.com/niccolofanton/osn/pull/29) merged, `server-v0.1.0-rc.1` (fa3b286) deployed. `shelfy-api` is healthy and `refs` answers through the edge, behind Access. The edge subnet is `10.91.0.0/24` and equals `SHELFY_TRUSTED_PROXIES`. `up{job="shelfy"}` is 1. A restart is healthy within 1 s. Owner created, and the owner signed in through Access and a sign-in link. Hermes is unchanged: same start time, 0 restarts, 2 GiB / 2 CPU, node status online. Backups are still off. | osn `main` fa2066e |
-| P1-19 | Migration tool and install job complete | running | `web/p1-19-migration` |
+| P1-19 | Migration tool and install job complete | done | `web/p1-19-migration` (517c139…668dfc7) |
 | P1-20 | Sign-in, re-auth, device approval, Settings | running | `web/p1-20-auth-ui` |
 | P1-16 | First osn PR, part 1: prepare (code only) | done; draft [osn PR #29](https://github.com/niccolofanton/osn/pull/29) | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` (967c83a…b5b94af) |
 | P1-22 | O2: R2 bucket and scoped token for backups | done | owner action O2 (osn `1ce0abe`) |
@@ -159,6 +159,9 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P1-14 | The count pill and `includeTotal` share one cache entry. There is no facet-values endpoint for category, contentType or aiStatus; assume it waits for P3. | P1-05 |
 | P1-26 | `just shelfy-admin bench --user <owner id> [--requests 1000] [--strict]` reads only and prints aggregates, with rate limits off; run it at a quiet time. The first request after the deploy pays the library v2 migration (the trigram infix index), about 0.4 s for 6k posts. | P1-05 |
 | P5 | Opening a library whose schema is newer than the build writes `meta['schema.older_build']` (F4 M5), but nothing reads it yet. After a rollback across library v2, run `search::index::rebuild_infix` by hand. Wire the re-derivation before the first migration that adds derived data. A restore now keeps a full backup-API copy of the old library, so it needs about one extra library of free disk. | F4 |
+| P1-25 | Build or download `shelfy-migrate` from the same release as the deployed server: the server installs only bundles at its own library schema, which is now v2. Sequence: quit the desktop app; `login <url> --header @access.headers` (a 0600 file with the Access service-token headers from P1-23); `plan --redact`; `run --work-dir …`. If interrupted, re-run the same command. Uploads run at about 10 objects/s under the per-user limit, so about 9 minutes for the reference library; the install took 150 s locally. Expected reconciliation: see the P1-19 report in this file's history. Delete the headers file and the token afterwards. | P1-19 |
+| P2 | 220 Instagram covers that are still valid will expire before the archive drain exists. The archive drain and `refresh_media` are P2 (OI-7). | P1-19 |
+| P5 | With many users migrating, uploads may need their own rate budget, or tus creation-with-upload so that each object takes one request. | P1-19 |
 | P1-21 | The CSP blocks the inline `<style>` in `src/views/Browser.tsx`, a desktop-only view. | P1-09 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
 
