@@ -1,5 +1,7 @@
 //! The command line: `shelfy-server serve` runs the API, `shelfy-server admin
-//! …` runs an operator command against the same data directory.
+//! …` runs an operator command against the same data directory, and
+//! `shelfy-server healthcheck` probes a running server (the container's
+//! healthcheck).
 
 use std::process::ExitCode;
 
@@ -7,6 +9,7 @@ use clap::{Parser, Subcommand};
 
 use crate::admin::AdminArgs;
 use crate::config::ServeArgs;
+use crate::healthcheck::HealthcheckArgs;
 
 const AFTER_HELP: &str = "Every option can also be set with the environment variable shown next \
                           to it. RUST_LOG sets the log filter (default: info).";
@@ -27,6 +30,9 @@ pub enum Command {
     Serve(ServeArgs),
     /// Operator commands. Their output goes to stdout, never to the logs.
     Admin(AdminArgs),
+    /// Exit 0 only when the server on SHELFY_LISTEN_ADDR answers `GET
+    /// /health` with 200 and `"status": "ok"`.
+    Healthcheck(HealthcheckArgs),
 }
 
 /// Parses the command line and runs the command; the process exit code.
@@ -36,6 +42,7 @@ pub fn main() -> ExitCode {
     let result = match cli.command {
         Command::Serve(args) => crate::serve::run(args),
         Command::Admin(args) => crate::admin::run(args),
+        Command::Healthcheck(args) => crate::healthcheck::run(&args),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -129,6 +136,24 @@ mod tests {
         let err =
             serve(&["--dev-mailbox", "--public-url", "https://refs.example.test"]).unwrap_err();
         assert!(err.contains("SHELFY_DEV_MAILBOX"), "{err}");
+    }
+
+    #[test]
+    fn healthcheck_probes_the_serve_listener() {
+        let parse = |args: &[&str]| {
+            let argv = ["shelfy-server", "healthcheck"].iter().chain(args);
+            match Cli::try_parse_from(argv).map(|cli| cli.command) {
+                Ok(Command::Healthcheck(args)) => Ok(args),
+                Ok(_) => unreachable!("parsed healthcheck"),
+                Err(err) => Err(err.to_string()),
+            }
+        };
+        let args = parse(&["--listen", "0.0.0.0:18189"]).unwrap();
+        assert_eq!(args.listen, "0.0.0.0:18189".parse::<SocketAddr>().unwrap());
+        assert_eq!(args.timeout_secs, crate::healthcheck::DEFAULT_TIMEOUT_SECS);
+        assert_eq!(parse(&["--timeout", "2"]).unwrap().timeout_secs, 2);
+        assert!(parse(&["--timeout", "0"]).is_err());
+        assert!(parse(&["--listen", "localhost"]).is_err());
     }
 
     #[test]

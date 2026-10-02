@@ -14,9 +14,10 @@
 //!
 //! | Module | Contents |
 //! |---|---|
-//! | [`cli`] | the command line: `serve` and `admin` |
+//! | [`cli`] | the command line: `serve`, `admin` and `healthcheck` |
 //! | [`config`] | environment configuration, validated once at start |
 //! | [`serve`] | the tokio runtime, the two listeners, graceful shutdown |
+//! | [`healthcheck`] | `shelfy-server healthcheck`, the container's probe of `/health` |
 //! | [`app`] | the middleware stack around the routes |
 //! | [`routes`] | the router composition and the OpenAPI document |
 //! | [`limits`] | per-route body limits and handler timeouts |
@@ -50,6 +51,7 @@ pub mod current_user;
 pub mod error;
 pub mod events;
 pub mod extract;
+pub mod healthcheck;
 pub mod ids;
 pub mod jobs;
 pub mod limits;
