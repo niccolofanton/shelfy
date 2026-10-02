@@ -47,7 +47,8 @@ validated at start: a bad one stops the process with a message.
 Empty values count as unset, so a compose file may pass `SHELFY_SMTP_HOST=` when email is off.
 Later tasks add the master key, the capture and egress endpoints and the media budgets (§3.2,
 §3.4). The operator commands (`shelfy-server admin create-owner | invite | login-link |
-snapshot`) use `SHELFY_DATA_DIR` too and print their results on stdout, never to the logs.
+snapshot | migrate-token`) use `SHELFY_DATA_DIR` too and print their results on stdout, never
+to the logs.
 
 To sign in, create the owner once, then mint a one-time link (valid 15 minutes):
 
@@ -71,3 +72,23 @@ curl -i -X POST "$SHELFY_PUBLIC_URL/api/v1/auth/magic-links/redeem" \
 
 Every route needs a signed-in session unless it is listed as public (or open to API tokens) in
 `crates/server/src/routes/mod.rs`.
+
+## Moving a desktop library
+
+`shelfy-migrate run` uploads a desktop library to the server (plan §4.1) and installs it into
+an empty web library. Until its own device-code sign-in arrives (P1-17, P1-19), it takes an API
+token with the `migrate` scope, valid 7 days, that the operator mints:
+
+```sh
+shelfy-server admin migrate-token --email you@example.com > migrate-token   # keep it private
+shelfy-migrate plan --db "<userData>/shelfy.sqlite" --redact                  # dry run first
+shelfy-migrate run --db "<userData>/shelfy.sqlite" --server "$SHELFY_PUBLIC_URL" \
+  --token-file migrate-token --work-dir <scratch dir>
+```
+
+`<userData>` is the desktop app's data directory (`~/Library/Application Support/Shelfy` on
+macOS); `--media-root` points at it when the library file was copied elsewhere. The desktop data
+is only read. With Shelfy open, `run` reads a snapshot. Kept videos stay behind unless
+`--with-videos` is given. An interrupted run continues where it stopped when run again with the
+same `--work-dir`. The run ends with a reconciliation of desktop, bundle and installed counts;
+the server keeps the previous web library next to the new one as `library.prev-<id>.sqlite`.
