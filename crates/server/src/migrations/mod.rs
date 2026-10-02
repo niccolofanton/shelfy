@@ -24,8 +24,10 @@
 //!    in the new library's `meta`.
 //! 5. **installing**: the new library replaces the empty live one atomically
 //!    ([`swap`]); the previous one is kept next to it. Open tabs get
-//!    `posts.changed` (reason `import`) and `stats.changed`, and a
-//!    `migration.installed` notification joins the user's activity.
+//!    `posts.changed` (reason `import`) and `stats.changed`, a
+//!    `migration.installed` notification joins the user's activity, and a
+//!    `usage.recompute` job counts the storage again
+//!    ([`crate::jobs::usage`]).
 //!
 //! Then the consumed uploads and the work directory are removed. A failed
 //! install leaves the live library untouched and keeps the uploads, so the

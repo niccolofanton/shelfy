@@ -53,6 +53,7 @@
 //! | `scheduler` | the dispatcher, the supervisors, the watchdog, the nightly schedule, the sweeper |
 //! | `queues` | the in-memory queues: turn order, limits, pauses |
 //! | [`kinds`] | the job-kind registry of the server |
+//! | [`usage`] | `usage.recompute`: a user's storage (P1-17) |
 //! | [`idempotency`] | the `Idempotency-Key` middleware of job-creating routes |
 //! | `registry`, `context`, `clock` | [`Registry`], [`KindSpec`], [`Worker`]; [`JobContext`], [`JobError`]; [`Clock`] |
 //!
@@ -66,6 +67,7 @@ pub mod kinds;
 mod queues;
 mod registry;
 mod scheduler;
+pub mod usage;
 
 use std::sync::Arc;
 use std::time::Duration;

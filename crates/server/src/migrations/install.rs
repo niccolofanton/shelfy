@@ -32,6 +32,7 @@ use crate::control::uploads::{self, Upload, UploadPurpose};
 use crate::error::{ApiError, ErrorCode};
 use crate::events::{self, model::ChangeReason};
 use crate::ids::now_ms;
+use crate::jobs::usage;
 use crate::routes::uploads::remove_files;
 use crate::state::{AppState, blocking};
 
@@ -308,6 +309,10 @@ async fn install_bundle(
     state.events().stats_changed(&user_id);
     if let Err(err) = events::notify(state, &user_id, notification(&report)).await {
         tracing::warn!(migration = %id, error = %err, "cannot store the migration notification");
+    }
+    // The storage the new library uses (`GET /me/usage`) is counted again.
+    if let Err(err) = usage::enqueue(state.jobs(), &user_id).await {
+        tracing::warn!(migration = %id, error = %err, "cannot enqueue the usage count");
     }
 
     // The uploads are consumed.

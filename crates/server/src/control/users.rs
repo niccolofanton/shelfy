@@ -1,5 +1,9 @@
 //! `users`: the accounts (plan §2.6). E4 keeps the instance owner-only: one
 //! `owner`, created by `admin create-owner`.
+//!
+//! Besides the account itself: what the user accepted ([`Consent`], `POST
+//! /me/consent`) and their storage ([`Usage`], counted by the
+//! `usage.recompute` job, read by `GET /me/usage`).
 
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 use shelfy_core::repo::{RepoError, Result};
@@ -174,6 +178,126 @@ pub fn find_by_email(conn: &Connection, email: &str) -> Result<Option<User>> {
     .map_err(RepoError::from)
 }
 
+/// What a user accepted (plan §2.11, §7.2): the versions of the disclaimer
+/// and of the privacy notice, and when. `None` until accepted.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Consent {
+    /// The disclaimer's version.
+    pub disclaimer_version: Option<String>,
+    /// When the disclaimer was accepted, unix ms.
+    pub disclaimer_accepted_at: Option<i64>,
+    /// The privacy notice's version.
+    pub privacy_version: Option<String>,
+    /// When the privacy notice was accepted, unix ms.
+    pub privacy_accepted_at: Option<i64>,
+}
+
+/// The consent of `user_id`; `None` when there is no such user.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn consent(conn: &Connection, user_id: &str) -> Result<Option<Consent>> {
+    conn.query_row(
+        "SELECT disclaimer_version, disclaimer_accepted_at, privacy_version, \
+         privacy_accepted_at FROM users WHERE id = ?1",
+        [user_id],
+        |row| {
+            Ok(Consent {
+                disclaimer_version: row.get(0)?,
+                disclaimer_accepted_at: row.get(1)?,
+                privacy_version: row.get(2)?,
+                privacy_accepted_at: row.get(3)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(RepoError::from)
+}
+
+/// Records that `user_id` accepted the disclaimer `disclaimer_version` and
+/// the privacy notice `privacy_version` at `now`. Returns whether the user
+/// exists.
+///
+/// # Errors
+///
+/// The update failed.
+pub fn set_consent(
+    conn: &Connection,
+    user_id: &str,
+    disclaimer_version: &str,
+    privacy_version: &str,
+    now: i64,
+) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE users SET disclaimer_version = ?2, disclaimer_accepted_at = ?4, \
+         privacy_version = ?3, privacy_accepted_at = ?4 WHERE id = ?1",
+        params![user_id, disclaimer_version, privacy_version, now],
+    )?;
+    Ok(changed > 0)
+}
+
+/// A user's storage (plan §2.13): the quota, and the use as the
+/// `usage.recompute` job last counted it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Usage {
+    /// The quota in bytes; 0 means unlimited (the owner).
+    pub quota_bytes: i64,
+    /// Media plus database, in bytes.
+    pub used_bytes: i64,
+    /// The stored media objects, in bytes.
+    pub media_bytes: i64,
+    /// The library database file, in bytes.
+    pub db_bytes: i64,
+    /// When the use was counted, unix ms; `None` if it never was.
+    pub updated_at: Option<i64>,
+}
+
+/// The storage of `user_id`; `None` when there is no such user.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn usage(conn: &Connection, user_id: &str) -> Result<Option<Usage>> {
+    conn.query_row(
+        "SELECT quota_bytes, usage_bytes, usage_media_bytes, usage_db_bytes, usage_updated_at \
+         FROM users WHERE id = ?1",
+        [user_id],
+        |row| {
+            Ok(Usage {
+                quota_bytes: row.get(0)?,
+                used_bytes: row.get(1)?,
+                media_bytes: row.get(2)?,
+                db_bytes: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(RepoError::from)
+}
+
+/// Records the use of `user_id` counted at `now`: `media_bytes` of media
+/// and a `db_bytes` database. Returns whether the user exists.
+///
+/// # Errors
+///
+/// The update failed.
+pub fn set_usage(
+    conn: &Connection,
+    user_id: &str,
+    media_bytes: i64,
+    db_bytes: i64,
+    now: i64,
+) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE users SET usage_bytes = ?2 + ?3, usage_media_bytes = ?2, usage_db_bytes = ?3, \
+         usage_updated_at = ?4 WHERE id = ?1",
+        params![user_id, media_bytes, db_bytes, now],
+    )?;
+    Ok(changed > 0)
+}
+
 /// Trims and lowercases an email address and checks its shape: one `@`, a
 /// local part of 1–64 and a dotted domain, at most 254 characters, no
 /// whitespace or control characters. Deliverability is not checked.
@@ -214,6 +338,54 @@ pub fn normalize_email(raw: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::testing::{NOW, control_with_users};
+
+    #[test]
+    fn consent_is_recorded_per_user() {
+        let (db, owner, member) = control_with_users();
+        let read = |id: &str| db.read(|conn| consent(conn, id)).unwrap();
+        assert_eq!(read(&owner), Some(Consent::default()));
+        assert!(
+            db.write(|tx| set_consent(tx, &owner, "2026-10", "1", NOW))
+                .unwrap()
+        );
+        assert_eq!(
+            read(&owner),
+            Some(Consent {
+                disclaimer_version: Some("2026-10".into()),
+                disclaimer_accepted_at: Some(NOW),
+                privacy_version: Some("1".into()),
+                privacy_accepted_at: Some(NOW),
+            })
+        );
+        assert_eq!(read(&member), Some(Consent::default()));
+        assert_eq!(read("01NOBODY000000000000000000"), None);
+        assert!(
+            !db.write(|tx| set_consent(tx, "01NOBODY000000000000000000", "a", "b", NOW))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn usage_is_media_plus_database() {
+        let (db, owner, _member) = control_with_users();
+        let read = || db.read(|conn| usage(conn, &owner)).unwrap().unwrap();
+        assert_eq!(read(), Usage::default(), "never counted, unlimited quota");
+        assert!(
+            db.write(|tx| set_usage(tx, &owner, 7_000, 300, NOW))
+                .unwrap()
+        );
+        assert_eq!(
+            read(),
+            Usage {
+                quota_bytes: 0,
+                used_bytes: 7_300,
+                media_bytes: 7_000,
+                db_bytes: 300,
+                updated_at: Some(NOW),
+            }
+        );
+    }
 
     #[test]
     fn emails_are_trimmed_and_lowercased() {
