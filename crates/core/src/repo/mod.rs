@@ -16,6 +16,7 @@
 
 pub mod collections;
 pub mod media;
+pub mod notifications;
 pub mod posts;
 pub mod stats;
 mod tags;
