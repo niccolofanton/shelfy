@@ -32,7 +32,7 @@ These owner decisions override the plan where they conflict.
 | E2 | 2026-10-02 | The lead may deploy, restart and reconfigure on the osn VPS without asking. The one hard constraint: Hermes, the AI agent, must keep working. Restarting it is fine. | Appendix B sign-offs |
 | E3 | 2026-10-02 | The extension is tested as an unpacked build. No Chrome Web Store submission for now. | SPIKE-7; the store steps in P2 and P5 |
 | E4 | 2026-10-02 | Owner-only until further notice: no invites and no closed beta. The owner account is created with the admin CLI; its email lives in the osn secrets, not in this repo. | P2 closed beta; P5 invites |
-| E5 | 2026-10-02 | The web app is served at `refs.niccolofanton.dev`. The lead sets up the DNS record, the tunnel route, Access and the edge nginx route on Cloudflare and the VPS. | `shelfy.niccolofanton.dev` throughout the plan |
+| E5 | 2026-10-02 | The web app is served at `refs.niccolofanton.dev`. Done on 2026-10-02 (osn `ebd2de8`): the CNAME, an owner-only Access app, the tunnel ingress and the edge block to `shelfy-api:8080` are live, so the host answers 502 until the service is deployed. The lead sets up the DNS record, the tunnel route, Access and the edge nginx route on Cloudflare and the VPS. | `shelfy.niccolofanton.dev` throughout the plan |
 
 ## Status
 
@@ -74,6 +74,6 @@ Each phase is broken down into tasks when the previous one is close to done.
 | # | Action | Needed by | Status |
 |---|---|---|---|
 | O1 | Load the unpacked extension and run the SPIKE-3 comparison on your own accounts: steps in [spikes/03-extension-capture.md](spikes/03-extension-capture.md) §5 | P2 | ready |
-| O2 | Appendix B prerequisites: DNS Edit on the OpenTofu token; R2 bucket `osn-backups` with a scoped token | first osn PR (P1) | pending |
+| O2 | Appendix B prerequisite: R2 bucket `osn-backups` with a scoped token for restic. DNS Edit is no longer needed: OpenTofu manages DNS records with the existing DNS-scoped token (osn `ebd2de8`) | backups (P1-23) | pending |
 | O3 | Optional: fix Homebrew permissions so local tools such as mailpit can be installed | T10 | optional |
 | O4 | Confirm Bot Fight Mode is off for `niccolofanton.dev` (Security → Bots). Our tokens cannot read zone settings, and with it on, the extension, Shortcut and CLI calls could be challenged | before P2 removes Access | pending |
