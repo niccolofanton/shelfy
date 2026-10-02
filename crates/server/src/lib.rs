@@ -10,7 +10,42 @@
 //! The binary (`main.rs`) stays a thin entry point: the logic lives in this
 //! library so tests can drive it in-process.
 //!
-//! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.2 and §2.4.
+//! # Layout
+//!
+//! | Module | Contents |
+//! |---|---|
+//! | [`cli`] | the command line: `serve` and `admin` |
+//! | [`config`] | environment configuration, validated once at start |
+//! | [`serve`] | the tokio runtime, the two listeners, graceful shutdown |
+//! | [`app`] | the middleware stack around the routes |
+//! | [`routes`] | the router composition and the OpenAPI document |
+//! | [`limits`] | per-route body limits and handler timeouts |
+//! | [`error`] | `application/problem+json` errors with stable codes |
+//! | [`extract`] | request extractors whose rejections are problems |
+//! | [`state`] | the shared state: databases, config, shutdown token |
+//! | [`telemetry`] | JSON logs, redaction, request ids, Prometheus metrics |
+//! | [`control`] | queries on the control database |
+//! | [`admin`] | the operator commands |
+//! | [`jobs`], [`events`] | seams for the scheduler (P1-07) and SSE (P1-01) |
+//!
+//! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.2–§2.4 and §3.
+
+pub mod admin;
+pub mod app;
+pub mod cli;
+pub mod config;
+pub mod control;
+pub mod error;
+pub mod events;
+pub mod extract;
+pub mod ids;
+pub mod jobs;
+pub mod limits;
+pub mod routes;
+pub mod serve;
+pub mod state;
+pub mod telemetry;
+pub mod tokens;
 
 /// Version of this build (the workspace version).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -1,0 +1,200 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Shelfy API",
+    "description": "HTTP API of Shelfy Web. JSON in camelCase, timestamps in unix milliseconds. Errors are `application/problem+json` documents whose `code` is stable; clients map it to their own messages.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "version": "1"
+  },
+  "paths": {
+    "/api/v1/openapi.json": {
+      "get": {
+        "tags": ["platform"],
+        "summary": "The OpenAPI document of this API.",
+        "operationId": "getOpenApi",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI 3.1 description of this API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["platform"],
+        "summary": "Liveness and readiness of the server.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "The server is up and its database answers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A check failed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CheckStatus": {
+        "type": "string",
+        "description": "Result of one check.",
+        "enum": ["ok", "fail"]
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "Stable, machine-readable error codes. Each one has a fixed HTTP status.\n\nNew codes may be added within `/api/v1`; existing ones never change meaning.",
+        "enum": [
+          "bad_request",
+          "invalid_cursor",
+          "unauthorized",
+          "forbidden",
+          "quota_exceeded",
+          "not_found",
+          "method_not_allowed",
+          "conflict",
+          "payload_too_large",
+          "unsupported_media_type",
+          "validation_failed",
+          "provider_key_invalid",
+          "capture_blocked",
+          "extension_outdated",
+          "rate_limited",
+          "internal",
+          "unavailable",
+          "timeout"
+        ]
+      },
+      "FieldError": {
+        "type": "object",
+        "description": "One field that failed validation.",
+        "required": ["field", "reason"],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The field, as named in the request (camelCase)."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the value was refused, for developers."
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "description": "Health of the process.",
+        "required": ["status", "version", "checks"],
+        "properties": {
+          "checks": {
+            "$ref": "#/components/schemas/HealthChecks",
+            "description": "The individual checks."
+          },
+          "status": {
+            "$ref": "#/components/schemas/CheckStatus",
+            "description": "`ok` when every check passed."
+          },
+          "version": {
+            "type": "string",
+            "description": "Version of the server build."
+          }
+        }
+      },
+      "HealthChecks": {
+        "type": "object",
+        "description": "The checks behind the overall `status`.",
+        "required": ["controlDb"],
+        "properties": {
+          "controlDb": {
+            "$ref": "#/components/schemas/CheckStatus",
+            "description": "The control database answers a query within 2 s."
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "description": "An error body: RFC 9457 problem details plus the stable `code`.",
+        "required": ["type", "title", "status", "code"],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode",
+            "description": "What went wrong. Clients map it to their own message."
+          },
+          "detail": {
+            "type": "string",
+            "description": "Developer-facing detail. Never UI prose, user content or secrets."
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "description": "The fields that failed validation (`validation_failed`)."
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The HTTP status of the response.",
+            "minimum": 0
+          },
+          "title": {
+            "type": "string",
+            "description": "The reason phrase of `status`. Not meant for display."
+          },
+          "type": {
+            "type": "string",
+            "description": "Always `about:blank`: `code` carries the problem type."
+          }
+        }
+      }
+    },
+    "responses": {
+      "Problem": {
+        "description": "An error, as RFC 9457 problem details with a stable `code`.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "platform",
+      "description": "Health and the API description."
+    }
+  ]
+}
