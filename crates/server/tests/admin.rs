@@ -1,5 +1,6 @@
 //! The admin commands, in-process and through the binary: `create-owner`,
-//! `invite` and `snapshot` round trips on temporary data directories.
+//! `invite`, `login-link` and `snapshot` round trips on temporary data
+//! directories.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -329,4 +330,78 @@ fn the_binary_prints_results_on_stdout_only() {
     assert!(!failed.status.success());
     assert!(failed.stdout.is_empty());
     assert!(String::from_utf8_lossy(&failed.stderr).contains("single owner"));
+}
+
+#[test]
+fn login_link_prints_a_one_time_link_on_stdout_only() {
+    let (_dir, data) = data_dir();
+    stdout(&admin(
+        &data,
+        &["create-owner", "--email", "owner@example.test"],
+    ));
+
+    let output = admin(&data, &["login-link", "--email", "Owner@Example.TEST"]);
+    let text = stdout(&output);
+    assert!(output.stderr.is_empty(), "no logs on a clean run");
+    let mut lines = text.lines();
+    assert_eq!(
+        lines.next().unwrap(),
+        "one-time sign-in link, valid 15 minutes (it is shown only now):"
+    );
+    let token = lines
+        .next()
+        .unwrap()
+        .strip_prefix("https://shelfy.example.test/api/v1/auth/magic/")
+        .expect("a sign-in link on the public origin")
+        .to_owned();
+    assert_eq!(token.len(), 43);
+    assert_eq!(lines.next(), None);
+    assert!(!text.contains("owner@"), "the email is not printed back");
+
+    // Stored as a hash, valid 15 minutes, audited without the token.
+    let control = read_only(&data.control_db());
+    let (purpose, ttl, used): (String, i64, Option<i64>) = control
+        .query_row(
+            "SELECT m.purpose, m.expires_at - a.at, m.used_at FROM magic_links m \
+             JOIN audit_log a ON a.action = 'magic_link.create' WHERE m.token_hash = ?1",
+            [hash_token(&token).as_slice()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(purpose, "login");
+    assert_eq!(ttl, 15 * 60_000);
+    assert_eq!(used, None);
+    let meta: String = control
+        .query_row(
+            "SELECT meta_json FROM audit_log WHERE action = 'magic_link.create'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(meta, r#"{"purpose":"login","via":"cli"}"#);
+
+    // The email defaults to SHELFY_OWNER_EMAIL, as for create-owner.
+    let output = Command::new(env!("CARGO_BIN_EXE_shelfy-server"))
+        .args(["admin", "login-link"])
+        .env("SHELFY_DATA_DIR", data.root())
+        .env("SHELFY_PUBLIC_URL", "http://localhost:18090")
+        .env("SHELFY_OWNER_EMAIL", "owner@example.test")
+        .env_remove("RUST_LOG")
+        .output()
+        .unwrap();
+    let url = stdout(&output).lines().nth(1).unwrap().to_owned();
+    assert!(
+        url.starts_with("http://localhost:18090/api/v1/auth/magic/"),
+        "{url}"
+    );
+
+    // Failures: the reason on stderr, nothing on stdout.
+    let unknown = admin(&data, &["login-link", "--email", "nobody@example.test"]);
+    assert!(!unknown.status.success());
+    assert!(unknown.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("no account uses this email"));
+    let (_other, empty) = data_dir();
+    let missing = admin(&empty, &["login-link", "--email", "owner@example.test"]);
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("no control database"));
 }

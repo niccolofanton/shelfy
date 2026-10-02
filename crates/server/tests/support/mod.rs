@@ -3,6 +3,7 @@
 
 #![allow(dead_code)] // each test binary uses a different subset
 
+pub mod auth;
 pub mod library;
 
 use axum::Router;
