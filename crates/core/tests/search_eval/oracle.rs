@@ -3,7 +3,7 @@
 //! desktop library, never through the code under test.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OpenFlags};
 
@@ -15,12 +15,23 @@ pub struct Oracle {
 }
 
 impl Oracle {
-    /// Opens `path` read-only (never creating it, never writing to it).
+    /// Opens `path` read-only, never creating or writing it. As `core::legacy`
+    /// does, a library with no `-wal` or `-journal` file is opened immutable:
+    /// a plain read-only open of a closed WAL library leaves new `-wal` and
+    /// `-shm` files next to it.
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
-        let conn = Connection::open_with_flags(
-            path,
-            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?;
+        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let sidecar = |suffix: &str| {
+            let mut name = path.as_os_str().to_owned();
+            name.push(suffix);
+            PathBuf::from(name).exists()
+        };
+        let conn = match immutable_uri(path) {
+            Some(uri) if !sidecar("-wal") && !sidecar("-journal") => {
+                Connection::open_with_flags(uri, flags | OpenFlags::SQLITE_OPEN_URI)?
+            }
+            _ => Connection::open_with_flags(path, flags)?,
+        };
         conn.execute_batch("PRAGMA query_only = ON;")?;
         let global_tag_count = conn
             .prepare("SELECT tag_norm AS t, COUNT(*) c FROM post_tags GROUP BY tag_norm")?
@@ -101,4 +112,25 @@ impl Oracle {
         pick.sort_by(|a, b| score(b).total_cmp(&score(a)));
         Ok(pick.into_iter().take(top).map(|r| r.0).collect())
     }
+}
+
+/// `file://<absolute path>?immutable=1`, percent-encoded; `None` for a path
+/// that is not valid UTF-8.
+fn immutable_uri(path: &Path) -> Option<String> {
+    let absolute = std::path::absolute(path).ok()?;
+    let mut text = absolute.to_str()?.replace('\\', "/");
+    if !text.starts_with('/') {
+        // A Windows drive path: file:///C:/…
+        text.insert(0, '/');
+    }
+    let mut uri = String::from("file://");
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'-' | b'.' | b'_' | b'~' | b':') {
+            uri.push(char::from(byte));
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri.push_str("?immutable=1");
+    Some(uri)
 }
