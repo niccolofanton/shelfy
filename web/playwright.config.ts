@@ -16,6 +16,14 @@ const port = Number(process.env.SHELFY_WEB_E2E_PORT || 18184);
 const origin = `http://127.0.0.1:${port}`;
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 
+// P1-02's responsive-shell breakpoint (plan §2.17 "under 900px"): the two
+// required viewports, shared so every mobile-behavior spec agrees on one
+// size instead of inlining the numbers. The single `chromium` project below
+// stays at its (≥900px) Desktop Chrome default for the rest of the suite;
+// specs opt into these per test/describe-block with `test.use({ viewport })`.
+export const MOBILE_VIEWPORT = { width: 375, height: 812 };
+export const TABLET_VIEWPORT = { width: 768, height: 1024 };
+
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
