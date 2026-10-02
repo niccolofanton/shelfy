@@ -15,6 +15,9 @@
 //!
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.4.
 
+pub mod ids;
+pub mod legacy;
+
 #[cfg(test)]
 mod tests {
     /// Smoke test: the crate builds and its test harness runs.
