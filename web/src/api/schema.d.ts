@@ -212,6 +212,70 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/migrations': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Starts installing an uploaded bundle (plan §4.1 step 5).
+     * @description Answers 202 with the install, polled at `Location`. 422 when the upload
+     *     is not a complete bundle database of this user; 409 when the web library
+     *     is not empty (merging arrives with P1-19) or another install runs.
+     */
+    post: operations['startMigration'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/migrations/missing-objects': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Which objects of a bundle the server lacks, so the CLI uploads only those.
+     * @description 422 for more than 500 objects, a malformed hash or a type outside the
+     *     store's allowlist.
+     */
+    post: operations['findMissingObjects'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/migrations/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * The state of an install, and its report once it succeeded. The install
+     *     runs in this server process: after a restart its id is unknown (404),
+     *     while the report stays in the installed library.
+     */
+    get: operations['getMigration'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/notifications': {
     parameters: {
       query?: never;
@@ -347,6 +411,59 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/uploads': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Creates an upload (tus creation).
+     * @description Answers 201 with `Location: /api/v1/uploads/{id}`. 412 without
+     *     `Tus-Resumable: 1.0.0`; 400 without a valid `Upload-Length`; 422 for bad
+     *     metadata; 413 when the length is over the purpose's limit (300 MiB for an
+     *     object, 4 GiB for a database); 409 with too many unfinished uploads.
+     */
+    post: operations['createUpload'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/uploads/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    /**
+     * Where an upload stands, so a client can resume it (tus core).
+     * @description 200 with `Upload-Offset` and `Upload-Length`; no body, errors included:
+     *     412 without `Tus-Resumable: 1.0.0`, 404 for an unknown, expired or
+     *     another user's upload.
+     */
+    head: operations['getUploadOffset'];
+    /**
+     * Appends bytes to an upload at its offset (tus core).
+     * @description The body (`application/offset+octet-stream`, at most 16 MiB) goes at
+     *     `Upload-Offset`, which must be the upload's current offset (409
+     *     otherwise, with the current `Upload-Offset`). Bytes that arrive before a
+     *     connection breaks are kept. When the last byte arrives the server checks
+     *     the declared SHA-256 and type: a mismatch deletes the upload (422).
+     */
+    patch: operations['appendUpload'];
+    trace?: never;
+  };
   '/api/v1/version': {
     parameters: {
       query?: never;
@@ -385,6 +502,44 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /** @description Archive work left for the workers (P1-19, P2), by class (OI-6, OI-7). */
+    ArchiveCounts: {
+      /** @description Posts by `archive_state`. */
+      byState: {
+        [key: string]: number;
+      };
+      /**
+       * Format: int64
+       * @description Instagram covers whose URL has expired: extension `refresh_media`
+       *     tasks.
+       */
+      igCoverExpired: number;
+      /**
+       * Format: int64
+       * @description Instagram covers whose URL has no expiry.
+       */
+      igCoverNoExpiry: number;
+      /**
+       * Format: int64
+       * @description Instagram covers to archive whose signed URL is still valid: archive
+       *     them first, before they expire.
+       */
+      igCoverValid: number;
+      /**
+       * Format: int64
+       * @description Image slides without a stored image.
+       */
+      imageSlidesPending: number;
+      /** Format: int64 */
+      otherCover: number;
+      /** Format: int64 */
+      pinterestCover: number;
+      /**
+       * Format: int64
+       * @description X covers to archive (they do not expire).
+       */
+      xCover: number;
+    };
     /**
      * @description Archive progress of a post's media (plan §2.13).
      * @enum {string}
@@ -560,6 +715,50 @@ export interface components {
       /** @description Version of the server build; a change means a new deploy. */
       version: string;
     };
+    /** @description Rows of the installed library. */
+    InstalledCounts: {
+      /** Format: int64 */
+      collections: number;
+      /** Format: int64 */
+      mediaObjects: number;
+      /** Format: int64 */
+      memberships: number;
+      /** Format: int64 */
+      postEntities: number;
+      /** Format: int64 */
+      postTags: number;
+      /** @description Posts by platform. */
+      posts: {
+        [key: string]: number;
+      };
+      /** Format: int64 */
+      slides: number;
+      /** Format: int64 */
+      tagAliases: number;
+      /** Format: int64 */
+      tagClusters: number;
+      /** Format: int64 */
+      webCaptureAssets: number;
+      /** Format: int64 */
+      webCaptures: number;
+    };
+    /** @description The objects the install stored. */
+    InstalledObjects: {
+      /**
+       * Format: int64
+       * @description Already in the store (an earlier install, or another post's file).
+       */
+      alreadyStored: number;
+      /** Format: int64 */
+      bytes: number;
+      /**
+       * Format: int64
+       * @description Moved into the store from uploads.
+       */
+      fromUploads: number;
+      /** Format: int64 */
+      total: number;
+    };
     /**
      * @description State of a job (plan §2.6 `jobs.state`).
      * @enum {string}
@@ -675,6 +874,83 @@ export interface components {
      * @enum {string}
      */
     MediaType: 'image' | 'images' | 'carousel' | 'video' | 'text' | 'website' | 'file';
+    /** @description An install of a migration bundle. */
+    Migration: {
+      /**
+       * Format: int64
+       * @description When it started, unix ms.
+       */
+      createdAt: number;
+      /** @description Why it failed. */
+      error?: components['schemas']['MigrationFailure'];
+      /**
+       * Format: int64
+       * @description When it ended, unix ms.
+       */
+      finishedAt?: number;
+      /** @description Install id (ULID). */
+      id: string;
+      /**
+       * Format: double
+       * @description Progress of the stage, 0 to 1.
+       */
+      progress: number;
+      /** @description The reconciliation report, once installed. */
+      report?: components['schemas']['MigrationReport'];
+      stage: components['schemas']['MigrationStage'];
+      state: components['schemas']['MigrationState'];
+    };
+    /** @description Why an install failed. */
+    MigrationFailure: {
+      /** @description A stable error code (`validation_failed`, `conflict`, `internal`…). */
+      code: components['schemas']['ErrorCode'];
+      /** @description Developer-facing detail; never content. */
+      detail?: string;
+    };
+    /** @description The reconciliation report of an install (plan §4.3): counts only. */
+    MigrationReport: {
+      archive: components['schemas']['ArchiveCounts'];
+      /**
+       * @description What `shelfy-migrate` counted in the desktop library and wrote to the
+       *     bundle, as it sent it.
+       */
+      bundle: Record<string, never>;
+      /**
+       * Format: int64
+       * @description How long the install took, ms.
+       */
+      durationMs: number;
+      installed: components['schemas']['InstalledCounts'];
+      objects: components['schemas']['InstalledObjects'];
+      renditions: components['schemas']['RenditionCounts'];
+    };
+    /**
+     * @description What the install is doing.
+     * @enum {string}
+     */
+    MigrationStage:
+      | 'queued'
+      | 'validating'
+      | 'objects'
+      | 'index'
+      | 'report'
+      | 'installing'
+      | 'done';
+    /**
+     * @description The install's state.
+     * @enum {string}
+     */
+    MigrationState: 'running' | 'succeeded' | 'failed';
+    /** @description Answer of `POST /migrations/missing-objects`. */
+    MissingObjects: {
+      /** @description The hashes the server does not have, in request order. */
+      missing: string[];
+    };
+    /** @description Body of `POST /migrations/missing-objects`. */
+    MissingObjectsRequest: {
+      /** @description The bundle's objects, at most 500 per request. */
+      objects: components['schemas']['ObjectRef'][];
+    };
     /**
      * @description A notification: an item of `GET /notifications` and the payload of the
      *     `notification` event. It carries codes, not text: the client writes the
@@ -718,6 +994,18 @@ export interface components {
        * @description Unread notifications, over all pages.
        */
       unreadCount: number;
+    };
+    /** @description An object of a bundle. */
+    ObjectRef: {
+      /**
+       * Format: int64
+       * @description Size in bytes.
+       */
+      bytes: number;
+      /** @description Extension of its type in the store's allowlist (`jpg`, `webp`, `mp4`…). */
+      ext: string;
+      /** @description SHA-256 of the content, lowercase hex. */
+      sha256: string;
     };
     /**
      * @description Source platform of a post.
@@ -996,6 +1284,36 @@ export interface components {
       /** @description The link's token: what follows `#` in its URL. */
       token: string;
     };
+    /** @description The `g480` renditions and ThumbHashes of the install. */
+    RenditionCounts: {
+      /**
+       * Format: int64
+       * @description Already rendered in the store.
+       */
+      existing: number;
+      /**
+       * Format: int64
+       * @description Images the pipeline could not decode.
+       */
+      failed: number;
+      /**
+       * Format: int64
+       * @description Types the pipeline does not decode (AVIF, videos, PDF).
+       */
+      notRenderable: number;
+      /** Format: int64 */
+      rendered: number;
+      /**
+       * Format: int64
+       * @description Posts whose ThumbHash was set.
+       */
+      thumbhashes: number;
+      /**
+       * Format: int64
+       * @description Objects the grid shows: covers, slides 1–3, site heroes.
+       */
+      wanted: number;
+    };
     /**
      * @description `resync`: events were lost. Reload every view (posts, stats, jobs,
      *     notifications), then carry on with the stream.
@@ -1074,6 +1392,16 @@ export interface components {
      * @enum {string}
      */
     SlideKind: 'image' | 'video' | 'file' | 'page';
+    /** @description Body of `POST /migrations`. */
+    StartMigration: {
+      /** @description The complete upload (purpose `migration-db`) of the bundle's database. */
+      dbUploadId: string;
+      /**
+       * @description Merge into a library that is not empty. Not supported yet: such a
+       *     library answers 409 either way.
+       */
+      merge?: boolean;
+    };
     /** @description Library counters. Trashed posts count only in `trashed`. */
     Stats: {
       /** @description Posts per media type; types without posts are absent. */
@@ -1125,6 +1453,21 @@ export interface components {
      * @enum {string}
      */
     TagSource: 'ai' | 'manual';
+    /** @description An upload, as `POST /uploads` answers it. */
+    UploadCreated: {
+      /** @description Upload id (ULID); the upload's URL is `/api/v1/uploads/{id}`. */
+      id: string;
+      /**
+       * Format: int64
+       * @description Declared length in bytes.
+       */
+      length: number;
+      /**
+       * Format: int64
+       * @description Bytes received so far (0).
+       */
+      offset: number;
+    };
     /**
      * @description What a user may do on the instance.
      * @enum {string}
@@ -1419,6 +1762,82 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['Me'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  startMigration: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StartMigration'];
+      };
+    };
+    responses: {
+      /** @description The install started. */
+      202: {
+        headers: {
+          /** @description `/api/v1/migrations/{id}`. */
+          Location?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Migration'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  findMissingObjects: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['MissingObjectsRequest'];
+      };
+    };
+    responses: {
+      /** @description The objects to upload. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['MissingObjects'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getMigration: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Install id. */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The install. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Migration'];
         };
       };
       default: components['responses']['Problem'];
@@ -1757,6 +2176,109 @@ export interface operations {
         headers: {
           /** @description The same ETag. */
           ETag?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  createUpload: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description `1.0.0`. */
+        'Tus-Resumable': string;
+        /** @description Length of the whole upload, in bytes. */
+        'Upload-Length': number;
+        /**
+         * @description Comma-separated `key base64(value)` pairs: `purpose`
+         *     (`migration-object` or `migration-db`), `sha256` (lowercase hex) and,
+         *     for an object, `ext`.
+         */
+        'Upload-Metadata': string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The upload exists; send its bytes with PATCH. */
+      201: {
+        headers: {
+          /** @description `/api/v1/uploads/{id}`. */
+          Location?: string;
+          /** @description `1.0.0`. */
+          'Tus-Resumable'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['UploadCreated'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getUploadOffset: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description `1.0.0`. */
+        'Tus-Resumable': string;
+      };
+      path: {
+        /** @description Upload id. */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Where the upload stands; no body. */
+      200: {
+        headers: {
+          /** @description `1.0.0`. */
+          'Tus-Resumable'?: string;
+          /** @description Declared length. */
+          'Upload-Length'?: number;
+          /** @description Bytes received: continue from here. */
+          'Upload-Offset'?: number;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  appendUpload: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description `1.0.0`. */
+        'Tus-Resumable': string;
+        /** @description Where the body goes: the upload's current offset. */
+        'Upload-Offset': number;
+      };
+      path: {
+        /** @description Upload id. */
+        id: string;
+      };
+      cookie?: never;
+    };
+    /** @description The next bytes of the upload. */
+    requestBody: {
+      content: {
+        'application/offset+octet-stream': number[];
+      };
+    };
+    responses: {
+      /** @description The bytes are stored. */
+      204: {
+        headers: {
+          /** @description `1.0.0`. */
+          'Tus-Resumable'?: string;
+          /** @description The new offset. */
+          'Upload-Offset'?: number;
           [name: string]: unknown;
         };
         content?: never;
