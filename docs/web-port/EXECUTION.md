@@ -61,6 +61,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | L13 | 2026-10-03 | P4-07 owns quotas and reservations. P2-10's archive drain reserves through it and leaves an item `link_only` when refused, so P2-10 needs P4-07. | P2-10 without quotas | The archive is the largest writer of media. |
 | L14 | 2026-10-03 | P4-09 (Jobs view) owns the jobs seam, hook and `jobs` messages, and lands before P2-08 (Activity center), which reuses them. | P2-08 and P4-09 in parallel | Both read jobs; parallel lanes would write two seams. |
 | L15 | 2026-10-03 | The owner's AI node is P3's test target and the owner's default provider: an OpenAI-compatible endpoint (`ornith-1.5-35b-a3b`) and a whisper.cpp server on the owner's PC, reached over Tailscale from the VPS and the Mac. The server defines it from env (osn SOPS), never shows its key, and allowlists exactly that host and port; user-entered base URLs keep the strict SSRF rules. Shelfy uses it gently (1–2 requests at a time, a breaker) because Hermes shares it, and never wakes it. | §2.15 BYOK only; SPIKE-6 on cloud providers | Owner decision, 2026-10-03: "use my custom AI endpoint on the remote node for all the tests and pre-configure it". Cloud keys become optional. |
+| L16 | 2026-10-03 | The node also serves `qwen3.8-27b` (vision, 262,144-token context). The operator provider routes vision tasks to it and text tasks to `ornith-1.5-35b-a3b`, so cataloging does not wait for cloud keys (P3 Q1). | P3's default "text only until O6" | `GET /v1/models` on the node lists both models. |
 | L4 | 2026-10-02 | P1-04 creates `web/playwright.config.ts` for its deep-link smoke test; P1-02 extends it. | P1-02 owns the file "if T12 left none" | T12 left none, and P1-04 runs before P1-02 because both edit `src/App.tsx`. |
 
 ## Status
@@ -201,7 +202,7 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 | Lane | What | Status | Branch |
 |---|---|---|---|
 | P2 plan | Break P2 down into tasks: [phases/P2.md](phases/P2.md), 19 lane tasks in 5 waves | done | `web/p2-plan` |
-| P3 plan | Break P3 down into tasks: `phases/P3.md` | running (Opus) | `web/p3-plan` |
+| P3 plan | Break P3 down into tasks: [phases/P3.md](phases/P3.md), 31 tasks in 7 waves, with the node as the operator provider (L15, L16) | done | `web/p3-plan` |
 | P4 plan | Break P4 down into tasks: [phases/P4.md](phases/P4.md), 28 lane tasks in 5 waves (P4-01 folded into P2-04, L11) | done | `web/p4-plan` |
 | SPIKE-9 | On-demand video and link hydration from the VPS (E1): IG video URL lifetime, anonymous routes and yt-dlp, hydration endpoints | running (Opus) | `web/spike9-video` |
 | SPIKE-4, SPIKE-11 | Chromium sandbox and Smokescreen egress with the SSRF probes, then the capture v2 cost in a 1.5 GiB / 1.5 CPU container, on the VPS (E1) | running (Opus) | `web/spike4-11-capture` |
@@ -222,8 +223,24 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 | P4-07 | Quotas, usage accounting, limits | running (Opus) | `web/p4-07-quotas` |
 | P4-08 | Web tus uploads: sessions, `uploads` scope, purposes | running (Opus) | `web/p4-08-uploads` |
 | P4-09 | Jobs view (replaces Downloads on the web) | running (Sonnet) | `web/p4-09-jobs-view` |
+| P3-01 | Provider adapters (OpenAI-compatible, Anthropic, whisper.cpp) and the stub provider | running (Opus) | `web/p3-01-providers` |
+| P3-03 | `shared/ai`: prompts and schemas v2, the desktop on them, the catalog core | running (Opus) | `web/p3-03-shared-ai` |
+| P3-08 | The AI seam on the desktop | running (Sonnet) | `web/p3-08-ai-seam` |
 
-Held back: P4-02 and P4-03 wait for the SPIKE-4/11 note; P2-08 waits for P4-09 (L14); P4-05, P4-10, P4-11 and P4-12 start as slots free up.
+Held back: P4-02 and P4-03 wait for the SPIKE-4/11 note; P2-08 waits for P4-09 (L14); P4-05, P4-10, P4-11, P4-12 and P3-02, P3-04–P3-07 start as slots free up.
+
+### Owner additions (2026-10-03)
+
+Tasks the owner added on 2026-10-03, in the order they run. X1 can start before its "Needs" for its first step.
+
+| # | What | Needs | Status |
+|---|---|---|---|
+| X1 | **AI benchmark and the full run.** (1) Draw 40 random Instagram posts from the owner's library (seeded) and extract their images and video keyframes, outside the repo (`../shelfy-web-local/ref/bench40/`). (2) Claude agents classify and tag each post as well as possible, against the catalog schema; a final pass makes the vocabulary consistent. This is the gold. (3) Run the same posts through Shelfy's harness on the owner's node; improve the harness (prompts, schemas, media selection, pipeline) until the node's results are close to the gold. (4) When it is mature, classify every post in the owner's Instagram "refs" folder on the live host. | (1)–(2) none; (3) P3-01, P3-03, P3-09; (4) P3-13 and a deploy | todo |
+| X2 | **Mock account (E6):** an admin command for test accounts, then about 500 of the owner's posts migrated into it on the live host. | — | todo |
+| X3 | **Every web feature tested end to end** on the mock account, against the feature index (`docs/web-port/features/`). | X2, P2–P4 | todo |
+| X4 | **UX/UI review (E8):** design experts audit the web app, desktop and mobile, then lanes apply the improvements without a redesign; the mobile UI is optimized. | P1-06, P1-08, P1-14 | todo |
+| X5 | **The desktop app as a client of the server (E7):** sign-in, the server's library, the in-app browser sync and downloads through the API, a local AI model; every feature tested with the mock account. Replaces the plan's P6; broken down after P4's wave 2. | P2-03, P2-09, P3-09 | todo |
+| X6 | **An MCP server for Shelfy:** tools to search, read and save posts, folders and tags through the API with a scoped token. | P1-17; at the end of the queue | todo |
 
 ## Spike outcomes
 
