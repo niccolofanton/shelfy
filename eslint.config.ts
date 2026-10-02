@@ -40,6 +40,8 @@ export default tseslint.config(
       'test-results/**',
       'bin/**',
       'build/ms-playwright/**',
+      // Cargo build output when CARGO_TARGET_DIR is not set (includes `cargo doc` JS).
+      'target/**',
       '**/*.workflow.js',
       '.audit-*',
       '.vlm/**',
