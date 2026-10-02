@@ -7,17 +7,31 @@
 //! | Group | Limits | Routes |
 //! |---|---|---|
 //! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI; the read API (T11), account, library |
-//! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
+//! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (T11 stub, P1-01), `POST /api/v1/search/chat` (P3) |
 //! | ingest, uploads, STT | [`RouteLimits::INGEST`], [`RouteLimits::UPLOAD_CHUNK`], [`RouteLimits::STT`] | added with their routes (P2, T9, P3) |
+//!
+//! The read API (T11): [`posts`] (`GET /posts`, `GET /posts/{key}`),
+//! [`search`], [`stats`] and [`collections`], all behind
+//! [`CurrentUser`](crate::current_user::CurrentUser) and conditional
+//! ([`crate::conditional`]); their JSON shapes are in [`model`] and the shared
+//! paging in [`listing`]. [`events`] is the SSE stub.
 //!
 //! The committed copy of the document, `crates/server/openapi.json`, is what
 //! the TypeScript client is generated from (T11). After changing a route,
 //! regenerate it with
-//! `UPDATE_OPENAPI=1 cargo test -p shelfy-server --test openapi`;
-//! that test fails while the committed copy is stale.
+//! `UPDATE_OPENAPI=1 cargo test -p shelfy-server --test openapi`, then the
+//! client with `pnpm exec tsx scripts/api-client/generate.ts`; both checks
+//! fail while a committed copy is stale.
 
+pub mod collections;
 pub mod docs;
+pub mod events;
 pub mod health;
+pub mod listing;
+pub mod model;
+pub mod posts;
+pub mod search;
+pub mod stats;
 
 use utoipa::OpenApi;
 use utoipa::openapi::path::Operation;
@@ -48,8 +62,24 @@ const PROBLEM_RESPONSE: &str = "Problem";
                        milliseconds. Errors are `application/problem+json` documents whose \
                        `code` is stable; clients map it to their own messages."
     ),
-    components(schemas(Problem, ErrorCode, FieldError)),
-    tags((name = "platform", description = "Health and the API description."))
+    // Responses register their schemas; types used only by parameters (the
+    // filter enums) and event payloads are listed here.
+    components(schemas(
+        Problem,
+        ErrorCode,
+        FieldError,
+        events::HelloEvent,
+        listing::MatchMode,
+        listing::PostSort,
+        listing::YesNo,
+        posts::PostSource,
+        search::SearchScope,
+    )),
+    tags(
+        (name = "platform", description = "Health, the API description and the realtime stream."),
+        (name = "library", description = "The signed-in user's posts, stats and collections."),
+        (name = "search", description = "Ranked search over the signed-in user's library."),
+    )
 )]
 pub struct ApiDoc;
 
@@ -58,9 +88,14 @@ pub struct ApiDoc;
 pub fn router() -> OpenApiRouter<AppState> {
     let standard = OpenApiRouter::default()
         .routes(routes!(health::health))
-        .routes(routes!(docs::openapi_json));
+        .routes(routes!(docs::openapi_json))
+        .routes(routes!(posts::list_posts))
+        .routes(routes!(posts::get_post))
+        .routes(routes!(search::search))
+        .routes(routes!(stats::get_stats))
+        .routes(routes!(collections::list_collections));
     // Streams end when the shutdown token fires instead of on a timer.
-    let streams = OpenApiRouter::default();
+    let streams = OpenApiRouter::default().routes(routes!(events::stream_events));
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .merge(RouteLimits::STANDARD.apply(standard))
         .merge(RouteLimits::STREAM.apply(streams))

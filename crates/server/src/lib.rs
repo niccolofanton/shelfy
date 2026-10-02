@@ -22,6 +22,8 @@
 //! | [`limits`] | per-route body limits and handler timeouts |
 //! | [`error`] | `application/problem+json` errors with stable codes |
 //! | [`extract`] | request extractors whose rejections are problems |
+//! | [`current_user`] | the signed-in user of a request: the seam to authentication (T10) |
+//! | [`conditional`] | ETags from the library generation, `304 Not Modified` |
 //! | [`state`] | the shared state: databases, config, shutdown token |
 //! | [`telemetry`] | JSON logs, redaction, request ids, Prometheus metrics |
 //! | [`control`] | queries on the control database |
@@ -33,8 +35,10 @@
 pub mod admin;
 pub mod app;
 pub mod cli;
+pub mod conditional;
 pub mod config;
 pub mod control;
+pub mod current_user;
 pub mod error;
 pub mod events;
 pub mod extract;

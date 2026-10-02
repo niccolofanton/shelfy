@@ -10,6 +10,101 @@
     "version": "1"
   },
   "paths": {
+    "/api/v1/collections": {
+      "get": {
+        "tags": ["library"],
+        "summary": "Every collection, in manual order, then creation order.",
+        "operationId": "listCollections",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The collections.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`private, no-cache`."
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Weak ETag of this library state."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged since the ETag in `If-None-Match`; no body.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The same ETag."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "tags": ["platform"],
+        "summary": "The realtime stream of the signed-in user.",
+        "description": "A `text/event-stream`: the `hello` event (data: `HelloEvent`), then a\ncomment line every 20 s. The stream ends when the server shuts down;\nreconnect with backoff.",
+        "operationId": "streamEvents",
+        "responses": {
+          "200": {
+            "description": "Server-sent events: `hello` first, then a heartbeat comment every 20 s.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`no-store`."
+              },
+              "X-Accel-Buffering": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`no`: proxies must not buffer the stream."
+              }
+            },
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/openapi.json": {
       "get": {
         "tags": ["platform"],
@@ -23,6 +118,541 @@
                 "schema": {
                   "type": "object"
                 }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/posts": {
+      "get": {
+        "tags": ["library"],
+        "summary": "One page of the library (or of the trash), newest first by default.",
+        "description": "Browsing orders page by keyset; relevance pages within the first 1,000\nresults. The response is conditional: send the `ETag` back in\n`If-None-Match` and an unchanged page answers 304.",
+        "operationId": "listPosts",
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "query",
+            "description": "Only posts of this platform.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Platform"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Only websites (`web`) or only everything else (`social`).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PostSource"
+            }
+          },
+          {
+            "name": "collection",
+            "in": "query",
+            "description": "Only posts in this collection (its `id`).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "mediaType",
+            "in": "query",
+            "description": "Only posts of these kinds. Repeatable: any of them.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/MediaType"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "stored",
+            "in": "query",
+            "description": "Only posts with (`yes`) or without (`no`) a stored object.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/YesNo"
+            }
+          },
+          {
+            "name": "aiTagged",
+            "in": "query",
+            "description": "Only posts with (`yes`) or without (`no`) AI tags; manual tags do not\ncount.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/YesNo"
+            }
+          },
+          {
+            "name": "aiStatus",
+            "in": "query",
+            "description": "Only posts with this AI status.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "description": "Only posts with this tag (the gallery's tag chip; always a filter).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "description": "Tags of the AI views, combined by `tagMode`. Repeatable. With `q` in\n`or` mode they widen the search: a post with one of the tags or a text\nmatch is listed, and its tags add to its score.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "tagMode",
+            "in": "query",
+            "description": "How `tags` combine. Default `or`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MatchMode"
+            }
+          },
+          {
+            "name": "entity",
+            "in": "query",
+            "description": "Only posts with this AI entity.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Only posts with this AI category.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "contentType",
+            "in": "query",
+            "description": "Only posts with this AI content type.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Free-text search over tags, keywords, entities, description, note,\ncaption, author and page text (plan §2.14). At most 500 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "concept",
+            "in": "query",
+            "description": "Suggested concepts: more search terms, combined with `q` by\n`conceptMode`. Repeatable.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "conceptMode",
+            "in": "query",
+            "description": "How `q` and the concepts combine. Default `or`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MatchMode"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Order. Default `relevance` with search text (`q` or `concept`),\n`newest` without.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PostSort"
+            }
+          },
+          {
+            "name": "trash",
+            "in": "query",
+            "description": "List the trash instead of the library (`true` or `1`).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1–200 (larger values are clamped). Default 60.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`nextCursor` of the previous page, with the same filters and sort.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "includeTotal",
+            "in": "query",
+            "description": "Add `total`, the number of matching posts, to the response.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of posts.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`private, no-cache`."
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Weak ETag of this page of this library state."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostPage"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The page is unchanged since the ETag in `If-None-Match`; no body.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The same ETag."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/posts/{key}": {
+      "get": {
+        "tags": ["library"],
+        "summary": "One post with everything about it, trashed or not.",
+        "operationId": "getPost",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "The post's key, for example `ig_3141592653589793238`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The post.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`private, no-cache`."
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Weak ETag of this post in this library state."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostDetail"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The post is unchanged since the ETag in `If-None-Match`; no body.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The same ETag."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/search": {
+      "get": {
+        "tags": ["search"],
+        "summary": "Search the library: ranked by relevance when there is text, with the total.\nWithout text, tags or concepts the answer is empty.",
+        "operationId": "search",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Free text, matched against tags, keywords, entities, description, note,\ncaption, author and page text (plan §2.14). At most 500 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "description": "Tags, combined by `tagMode`. Repeatable. With `q` in `or` mode, a post\nwith one of the tags or a text match is a result, and its tags add to\nits score; in `and` mode every tag is required.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "tagMode",
+            "in": "query",
+            "description": "How `tags` combine. Default `or`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MatchMode"
+            }
+          },
+          {
+            "name": "concept",
+            "in": "query",
+            "description": "Suggested concepts: more search terms, combined with `q` by\n`conceptMode`. Repeatable.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "conceptMode",
+            "in": "query",
+            "description": "How `q` and the concepts combine. Default `or`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MatchMode"
+            }
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "description": "`all` (default), `sites` or `social`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SearchScope"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1–200 (larger values are clamped). Default 60.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`nextCursor` of the previous page, with the same criteria.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of results, best match first.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`private, no-cache`."
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Weak ETag of this page of this library state."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchPage"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The page is unchanged since the ETag in `If-None-Match`; no body.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The same ETag."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "tags": ["library"],
+        "summary": "The library counters.",
+        "operationId": "getStats",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The counters.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`private, no-cache`."
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Weak ETag of this library state."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stats"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged since the ETag in `If-None-Match`; no body.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The same ETag."
               }
             }
           },
@@ -67,10 +697,94 @@
   },
   "components": {
     "schemas": {
+      "ArchiveState": {
+        "type": "string",
+        "description": "Archive progress of a post's media (plan §2.13).",
+        "enum": ["pending", "partial", "done", "failed", "client", "link_only"]
+      },
       "CheckStatus": {
         "type": "string",
         "description": "Result of one check.",
         "enum": ["ok", "fail"]
+      },
+      "Collection": {
+        "type": "object",
+        "description": "A collection (\"source\" in the UI): a manual one, or a saved folder or board\nlinked to a platform.",
+        "required": [
+          "id",
+          "name",
+          "color",
+          "platform",
+          "externalId",
+          "sourceName",
+          "position",
+          "createdAt",
+          "count"
+        ],
+        "properties": {
+          "color": {
+            "type": "string",
+            "description": "Hex color, `#rrggbb` or `#rgb`."
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts in the collection, trash excluded.",
+            "minimum": 0
+          },
+          "createdAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Creation time."
+          },
+          "externalId": {
+            "type": ["string", "null"],
+            "description": "Folder or board id on that platform."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Id, the value of the `collection` filter."
+          },
+          "name": {
+            "type": "string",
+            "description": "Name."
+          },
+          "platform": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Platform",
+                "description": "Platform of a linked folder or board; `null` for a manual collection."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Manual order, when set."
+          },
+          "sourceName": {
+            "type": ["string", "null"],
+            "description": "Name of the folder or board when it was linked."
+          }
+        }
+      },
+      "CollectionList": {
+        "type": "object",
+        "description": "Every collection, in manual order, then creation order.",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Collection"
+            },
+            "description": "The collections."
+          }
+        }
       },
       "ErrorCode": {
         "type": "string",
@@ -141,6 +855,574 @@
           }
         }
       },
+      "HelloEvent": {
+        "type": "object",
+        "description": "The `data` of the `hello` event, the first event of every stream.",
+        "required": ["version", "heartbeatMs"],
+        "properties": {
+          "heartbeatMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds between two heartbeat comments. A stream silent for much\nlonger is dead: reconnect.",
+            "minimum": 0
+          },
+          "version": {
+            "type": "string",
+            "description": "Version of the server build; a change means a new deploy."
+          }
+        }
+      },
+      "MatchMode": {
+        "type": "string",
+        "description": "How several values of a list filter combine.",
+        "enum": ["or", "and"]
+      },
+      "MediaObject": {
+        "type": "object",
+        "description": "A stored object (plan §2.13). Its URLs are same-origin and immutable.",
+        "required": ["url", "g480Url", "sha256", "mime", "bytes", "width", "height", "durationMs"],
+        "properties": {
+          "bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Size in bytes."
+          },
+          "durationMs": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Duration of a video, when known."
+          },
+          "g480Url": {
+            "type": ["string", "null"],
+            "description": "The 480 px WebP rendition, `/media/<sha256>.g480.webp`; `null` when it\ndoes not exist."
+          },
+          "height": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Pixel height, when known."
+          },
+          "mime": {
+            "type": "string",
+            "description": "MIME type."
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Lowercase hex SHA-256 of the bytes."
+          },
+          "url": {
+            "type": "string",
+            "description": "The stored bytes: `/media/<sha256>.<ext>`."
+          },
+          "width": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Pixel width, when known."
+          }
+        }
+      },
+      "MediaType": {
+        "type": "string",
+        "description": "Kind of post (`posts.media_type`).",
+        "enum": ["image", "images", "carousel", "video", "text", "website", "file"]
+      },
+      "Platform": {
+        "type": "string",
+        "description": "Source platform of a post.",
+        "enum": ["instagram", "twitter", "pinterest", "web", "manual"]
+      },
+      "PlatformCounts": {
+        "type": "object",
+        "description": "Posts per platform, every platform present.",
+        "required": ["instagram", "twitter", "pinterest", "web", "manual"],
+        "properties": {
+          "instagram": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Instagram.",
+            "minimum": 0
+          },
+          "manual": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Manual bookmarks.",
+            "minimum": 0
+          },
+          "pinterest": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pinterest.",
+            "minimum": 0
+          },
+          "twitter": {
+            "type": "integer",
+            "format": "int64",
+            "description": "X.",
+            "minimum": 0
+          },
+          "web": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Websites.",
+            "minimum": 0
+          }
+        }
+      },
+      "Post": {
+        "type": "object",
+        "description": "A post as the gallery shows it; `PostDetail` adds the heavy fields.",
+        "required": [
+          "key",
+          "platform",
+          "shortcode",
+          "postUrl",
+          "profileUrl",
+          "authorUsername",
+          "authorName",
+          "caption",
+          "mediaType",
+          "mediaCount",
+          "postedAt",
+          "importedAt",
+          "sortTs",
+          "cover",
+          "coverUrl",
+          "thumbhash",
+          "archiveState",
+          "aiStatus",
+          "aiDescription",
+          "aiCategory",
+          "aiContentType",
+          "aiLanguage",
+          "aiSaveReason",
+          "aiTags",
+          "aiAnalyzedAt",
+          "userNote",
+          "userTags",
+          "webUrl",
+          "webDomain",
+          "webFinalUrl",
+          "updatedAt",
+          "deletedAt",
+          "media",
+          "collectionIds",
+          "webCapture"
+        ],
+        "properties": {
+          "aiAnalyzedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "When the AI analysis finished."
+          },
+          "aiCategory": {
+            "type": ["string", "null"],
+            "description": "AI category."
+          },
+          "aiContentType": {
+            "type": ["string", "null"],
+            "description": "AI content type."
+          },
+          "aiDescription": {
+            "type": ["string", "null"],
+            "description": "AI description."
+          },
+          "aiLanguage": {
+            "type": ["string", "null"],
+            "description": "AI-detected language."
+          },
+          "aiSaveReason": {
+            "type": ["string", "null"],
+            "description": "AI guess of why the post was saved."
+          },
+          "aiStatus": {
+            "type": ["string", "null"],
+            "description": "AI lifecycle status; `null` when never analyzed."
+          },
+          "aiTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "AI tags, as produced (display forms)."
+          },
+          "archiveState": {
+            "$ref": "#/components/schemas/ArchiveState",
+            "description": "Archive progress."
+          },
+          "authorName": {
+            "type": ["string", "null"],
+            "description": "Author display name (for websites: the title)."
+          },
+          "authorUsername": {
+            "type": ["string", "null"],
+            "description": "Author handle (for websites: the domain)."
+          },
+          "caption": {
+            "type": ["string", "null"],
+            "description": "Caption."
+          },
+          "collectionIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "Collections the post belongs to."
+          },
+          "cover": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaObject",
+                "description": "The stored cover."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coverUrl": {
+            "type": ["string", "null"],
+            "description": "Remote cover URL; it may have expired."
+          },
+          "deletedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "When the post went to the trash; `null` outside the trash."
+          },
+          "importedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When the post entered the library."
+          },
+          "key": {
+            "type": "string",
+            "description": "Public id (plan §2.8), for example `ig_3141592653589793238`."
+          },
+          "media": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PostMedia"
+            },
+            "description": "Slides, in order."
+          },
+          "mediaCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of slides."
+          },
+          "mediaType": {
+            "$ref": "#/components/schemas/MediaType",
+            "description": "Kind of post."
+          },
+          "platform": {
+            "$ref": "#/components/schemas/Platform",
+            "description": "Source platform."
+          },
+          "postUrl": {
+            "type": ["string", "null"],
+            "description": "Link to the original post (for websites: the final URL)."
+          },
+          "postedAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Publication time, when known."
+          },
+          "profileUrl": {
+            "type": ["string", "null"],
+            "description": "Link to the author's profile."
+          },
+          "shortcode": {
+            "type": ["string", "null"],
+            "description": "Instagram shortcode."
+          },
+          "sortTs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sort key of the newest/oldest orders: `postedAt`, else `importedAt`."
+          },
+          "thumbhash": {
+            "type": ["string", "null"],
+            "description": "ThumbHash placeholder of the cover (≤ 25 bytes), standard base64."
+          },
+          "updatedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Last change of the post."
+          },
+          "userNote": {
+            "type": ["string", "null"],
+            "description": "The user's note."
+          },
+          "userTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The user's tags (display forms)."
+          },
+          "webCapture": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WebCapture",
+                "description": "The current capture of a website."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "webDomain": {
+            "type": ["string", "null"],
+            "description": "Website domain."
+          },
+          "webFinalUrl": {
+            "type": ["string", "null"],
+            "description": "Website URL after redirects."
+          },
+          "webUrl": {
+            "type": ["string", "null"],
+            "description": "Website URL as saved."
+          }
+        }
+      },
+      "PostDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Post",
+            "description": "The gallery fields."
+          },
+          {
+            "type": "object",
+            "required": [
+              "nativeId",
+              "coverUrlExpiresAt",
+              "aiAttempts",
+              "aiNextAt",
+              "aiError",
+              "aiProvider",
+              "aiModel",
+              "aiSchemaVersion",
+              "aiEntities",
+              "aiKeywords",
+              "aiWeb",
+              "tags",
+              "entities"
+            ],
+            "properties": {
+              "aiAttempts": {
+                "type": "integer",
+                "format": "int64",
+                "description": "AI attempts so far."
+              },
+              "aiEntities": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "AI entities, as produced."
+              },
+              "aiError": {
+                "type": ["string", "null"],
+                "description": "Code of the last AI error."
+              },
+              "aiKeywords": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "AI keywords."
+              },
+              "aiModel": {
+                "type": ["string", "null"],
+                "description": "Model of the AI analysis."
+              },
+              "aiNextAt": {
+                "type": ["integer", "null"],
+                "format": "int64",
+                "description": "Next AI attempt, when backed off."
+              },
+              "aiProvider": {
+                "type": ["string", "null"],
+                "description": "Provider of the AI analysis."
+              },
+              "aiSchemaVersion": {
+                "type": ["integer", "null"],
+                "format": "int64",
+                "description": "Version of the AI output schema."
+              },
+              "aiWeb": {
+                "description": "AI design catalog of a website, as produced."
+              },
+              "coverUrlExpiresAt": {
+                "type": ["integer", "null"],
+                "format": "int64",
+                "description": "When `coverUrl` expires, if known."
+              },
+              "entities": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PostEntity"
+                },
+                "description": "Entity rows."
+              },
+              "nativeId": {
+                "type": "string",
+                "description": "Platform-native id."
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/PostTag"
+                },
+                "description": "Tag rows, AI and manual."
+              }
+            }
+          }
+        ],
+        "description": "Everything about one post: the gallery fields plus the AI bookkeeping and\nthe tag and entity rows."
+      },
+      "PostEntity": {
+        "type": "object",
+        "description": "An AI entity of a post.",
+        "required": ["entity", "norm"],
+        "properties": {
+          "entity": {
+            "type": "string",
+            "description": "Display form."
+          },
+          "norm": {
+            "type": "string",
+            "description": "Normalized form, the matching key of the `entity` filter."
+          }
+        }
+      },
+      "PostMedia": {
+        "type": "object",
+        "description": "One slide of a post.",
+        "required": [
+          "position",
+          "kind",
+          "sourceUrl",
+          "width",
+          "height",
+          "durationMs",
+          "label",
+          "object",
+          "videoObject"
+        ],
+        "properties": {
+          "durationMs": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Video duration, when known."
+          },
+          "height": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Pixel height, when known."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/SlideKind",
+            "description": "What the slide is."
+          },
+          "label": {
+            "type": ["string", "null"],
+            "description": "Caption of the slide (file name, page title)."
+          },
+          "object": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaObject",
+                "description": "The stored image, or the poster of a video."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "position": {
+            "type": "integer",
+            "format": "int64",
+            "description": "0-based order."
+          },
+          "sourceUrl": {
+            "type": ["string", "null"],
+            "description": "Remote URL of the slide; it may have expired."
+          },
+          "videoObject": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaObject",
+                "description": "The kept (\"offline\") video."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "width": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Pixel width, when known."
+          }
+        }
+      },
+      "PostPage": {
+        "type": "object",
+        "description": "One page of `GET /api/v1/posts`.",
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Post"
+            },
+            "description": "The posts of this page."
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Pass it as `cursor` to get the next page; `null` on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts matching the filters, over all pages. Sent only with\n`includeTotal=true`.",
+            "minimum": 0
+          }
+        }
+      },
+      "PostSort": {
+        "type": "string",
+        "description": "Order of a list of posts.",
+        "enum": ["newest", "oldest", "relevance"]
+      },
+      "PostSource": {
+        "type": "string",
+        "description": "Websites or social posts.",
+        "enum": ["web", "social"]
+      },
+      "PostTag": {
+        "type": "object",
+        "description": "A tag of a post, after alias resolution. An AI tag and a manual tag with\nthe same name are two entries.",
+        "required": ["tag", "norm", "source", "tier"],
+        "properties": {
+          "norm": {
+            "type": "string",
+            "description": "Normalized form, the matching key of the `tag` and `tags` filters."
+          },
+          "source": {
+            "$ref": "#/components/schemas/TagSource",
+            "description": "AI or manual."
+          },
+          "tag": {
+            "type": "string",
+            "description": "Display form."
+          },
+          "tier": {
+            "type": ["string", "null"],
+            "description": "`general` or `specific`, for AI tags with a tier."
+          }
+        }
+      },
       "Problem": {
         "type": "object",
         "description": "An error body: RFC 9457 problem details plus the stable `code`.",
@@ -176,6 +1458,209 @@
             "description": "Always `about:blank`: `code` carries the problem type."
           }
         }
+      },
+      "SearchPage": {
+        "type": "object",
+        "description": "One page of `GET /api/v1/search`.",
+        "required": ["items", "nextCursor", "total"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Post"
+            },
+            "description": "The results of this page, best match first."
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Pass it as `cursor` to get the next page; `null` on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts matching the search, over all pages (not capped by the 1,000\nresults that relevance paging reaches).",
+            "minimum": 0
+          }
+        }
+      },
+      "SearchScope": {
+        "type": "string",
+        "description": "Which posts a search covers.",
+        "enum": ["all", "sites", "social"]
+      },
+      "SlideKind": {
+        "type": "string",
+        "description": "Kind of slide (`post_media.kind`).",
+        "enum": ["image", "video", "file", "page"]
+      },
+      "Stats": {
+        "type": "object",
+        "description": "Library counters. Trashed posts count only in `trashed`.",
+        "required": ["total", "byPlatform", "byMediaType", "stored", "storedByKind", "trashed"],
+        "properties": {
+          "byMediaType": {
+            "type": "object",
+            "description": "Posts per media type; types without posts are absent.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "byPlatform": {
+            "$ref": "#/components/schemas/PlatformCounts",
+            "description": "Posts per platform."
+          },
+          "stored": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts with at least one stored object (the `stored=yes` filter).",
+            "minimum": 0
+          },
+          "storedByKind": {
+            "$ref": "#/components/schemas/StoredByKind",
+            "description": "Posts per kind of stored object."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts in the library.",
+            "minimum": 0
+          },
+          "trashed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts in the trash.",
+            "minimum": 0
+          }
+        }
+      },
+      "StoredByKind": {
+        "type": "object",
+        "description": "Posts with a stored object of each kind.",
+        "required": ["covers", "images", "videos"],
+        "properties": {
+          "covers": {
+            "type": "integer",
+            "format": "int64",
+            "description": "A stored cover.",
+            "minimum": 0
+          },
+          "images": {
+            "type": "integer",
+            "format": "int64",
+            "description": "At least one stored image slide.",
+            "minimum": 0
+          },
+          "videos": {
+            "type": "integer",
+            "format": "int64",
+            "description": "At least one kept video.",
+            "minimum": 0
+          }
+        }
+      },
+      "TagSource": {
+        "type": "string",
+        "description": "Origin of a tag.",
+        "enum": ["ai", "manual"]
+      },
+      "WebCapture": {
+        "type": "object",
+        "description": "The current capture of a website, without its page texts.",
+        "required": [
+          "id",
+          "capturedAt",
+          "requestedUrl",
+          "finalUrl",
+          "status",
+          "partial",
+          "title",
+          "palette",
+          "fonts",
+          "tech",
+          "awards",
+          "meta",
+          "hero",
+          "favicon"
+        ],
+        "properties": {
+          "awards": {
+            "description": "Awards, as captured."
+          },
+          "capturedAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was captured."
+          },
+          "favicon": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaObject",
+                "description": "Favicon."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "finalUrl": {
+            "type": ["string", "null"],
+            "description": "URL after redirects."
+          },
+          "fonts": {
+            "description": "Fonts, as captured."
+          },
+          "hero": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MediaObject",
+                "description": "Hero screenshot."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Capture id."
+          },
+          "meta": {
+            "description": "Page metadata, as captured."
+          },
+          "palette": {
+            "description": "Color palette, as captured."
+          },
+          "partial": {
+            "type": "boolean",
+            "description": "Whether some pages failed."
+          },
+          "requestedUrl": {
+            "type": ["string", "null"],
+            "description": "URL the capture started from."
+          },
+          "status": {
+            "type": "string",
+            "description": "Capture status."
+          },
+          "tech": {
+            "description": "Detected technologies, as captured."
+          },
+          "title": {
+            "type": ["string", "null"],
+            "description": "Page title."
+          }
+        }
+      },
+      "YesNo": {
+        "type": "string",
+        "description": "A yes/no filter value.",
+        "enum": ["yes", "no"]
       }
     },
     "responses": {
@@ -194,7 +1679,15 @@
   "tags": [
     {
       "name": "platform",
-      "description": "Health and the API description."
+      "description": "Health, the API description and the realtime stream."
+    },
+    {
+      "name": "library",
+      "description": "The signed-in user's posts, stats and collections."
+    },
+    {
+      "name": "search",
+      "description": "Ranked search over the signed-in user's library."
     }
   ]
 }

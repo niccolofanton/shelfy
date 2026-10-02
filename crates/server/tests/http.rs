@@ -151,7 +151,7 @@ async fn health_fails_while_the_database_does_not_answer() {
 #[tokio::test]
 async fn unknown_routes_answer_a_not_found_problem() {
     let t = TestState::new();
-    for uri in ["/nope", "/api/v1/nope", "/api/v1/posts/ig_1?cursor=x"] {
+    for uri in ["/nope", "/api/v1/nope", "/api/v1/nope/ig_1?cursor=x"] {
         let response = send(&t.app(), get_req(uri)).await;
         let problem = problem(response, StatusCode::NOT_FOUND).await;
         assert_eq!(problem.code, ErrorCode::NotFound);
