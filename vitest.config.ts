@@ -12,6 +12,7 @@ export default defineConfig({
     include: ['tests/**/*.{test,spec}.{js,jsx,ts,tsx}', 'extension/tests/**/*.test.ts'],
     exclude: ['**/node_modules/**', 'dist/**', 'release/**', '.claude/**', 'e2e/**'],
     environmentMatchGlobs: [
+      ['tests/api/**', 'jsdom'],
       ['tests/components/**', 'jsdom'],
       ['tests/hooks/**', 'jsdom'],
       ['tests/views/**', 'jsdom'],
