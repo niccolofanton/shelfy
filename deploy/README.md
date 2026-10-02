@@ -248,12 +248,14 @@ shelfy-migrate run --db "<userData>/shelfy.sqlite" --server "$SHELFY_PUBLIC_URL"
   --header @access.headers --work-dir <scratch dir>    # add --merge if the web library has posts
 ```
 
-`access.headers` holds two lines, `CF-Access-Client-Id: …` and `CF-Access-Client-Secret: …`.
-`<userData>` is the desktop app's data directory (`~/Library/Application Support/Shelfy` on
-macOS); `--media-root` points at it when the library file was copied elsewhere. The desktop data
-is only read; `--allow-open` reads a snapshot while the app runs. Kept videos stay behind unless
-`--with-videos` is given. An interrupted run, even a killed one, continues where it stopped when
-run again with the same `--work-dir`. The server installs the bundle as a `migrate` job (2
+`access.headers` (mode 0600) holds two lines, `CF-Access-Client-Id: …` and
+`CF-Access-Client-Secret: …`. `<userData>` is the desktop app's data directory
+(`~/Library/Application Support/Shelfy` on macOS); `--media-root` points at it when the library
+file was copied elsewhere. The desktop data is only read; `--allow-open` reads a snapshot while
+the app runs. Kept videos stay behind unless `--with-videos` is given. The per-user rate limit
+(20 requests a second) paces the upload at about 10 objects a second; the CLI waits out each
+429. An interrupted run, even a killed one, continues where it stopped when run again with the
+same `--work-dir`. The server installs the bundle as a `migrate` job (2
 tries, a 60-minute lease; `job.updated` on the web app): it replaces an empty web library
 atomically, or merges into one with posts (`--merge`, the duplicate policy of plan §4.2). The run
 ends with a reconciliation of desktop, bundle and installed counts, also stored as a
