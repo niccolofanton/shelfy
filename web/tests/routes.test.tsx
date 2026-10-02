@@ -55,6 +55,30 @@ describe('route table', () => {
     expect(parseRoute('/c/7/')).toEqual({ name: 'collection', collectionId: 7 });
   });
 
+  it('reads /share and its three fields, present or not', () => {
+    expect(parseRoute('/share')).toEqual({ name: 'share', url: null, text: null, title: null });
+    expect(parseRoute('/share', '?url=https://x.example/a')).toEqual({
+      name: 'share',
+      url: 'https://x.example/a',
+      text: null,
+      title: null,
+    });
+    expect(parseRoute('/share', '?text=Check+this+out%3A+https%3A%2F%2Fx.example%2Fa')).toEqual({
+      name: 'share',
+      url: null,
+      text: 'Check this out: https://x.example/a',
+      title: null,
+    });
+  });
+
+  it('rebuilds a /share address from its parsed fields only', () => {
+    expect(pathOf({ name: 'share', url: null, text: null, title: null })).toBe('/share');
+    expect(pathOf({ name: 'share', url: 'https://x.example/a', text: null, title: null })).toBe(
+      '/share?url=https%3A%2F%2Fx.example%2Fa',
+    );
+    expect(patternOf(parseRoute('/share', '?url=https://x.example/a'))).toBe('/share');
+  });
+
   it('has nothing at other addresses or with invalid parameters', () => {
     for (const path of [
       '/nope',
@@ -66,6 +90,7 @@ describe('route table', () => {
       '/settings/Bad%20Section',
       '/trash/old',
       '/login/elsewhere',
+      '/share/extra',
     ]) {
       expect(parseRoute(path), path).toEqual({ name: 'notFound' });
     }
@@ -103,11 +128,26 @@ describe('after sign-in', () => {
     }
   });
 
+  it("keeps a /share target's query, rebuilt from its three fields", () => {
+    expect(safeNext('/share')).toBe('/share');
+    expect(safeNext('/share?url=https%3A%2F%2Fx.example%2Fa')).toBe(
+      '/share?url=https%3A%2F%2Fx.example%2Fa',
+    );
+    // A fragment never survives (same rule as every other target).
+    expect(safeNext('/share?url=https://x.example/a#ignored')).toBe(
+      '/share?url=https%3A%2F%2Fx.example%2Fa',
+    );
+  });
+
   it('remembers the page asked for on the sign-in page', () => {
     expect(loginPath('/c/3')).toBe('/login?next=%2Fc%2F3');
     expect(loginPath('/')).toBe('/login');
     expect(loginPath('/nowhere')).toBe('/login');
     expect(loginPath(null)).toBe('/login');
+    // A signed-out share (P2-07 acceptance 3) waits with its link intact.
+    expect(loginPath('/share?url=https://x.example/a')).toBe(
+      `/login?next=${encodeURIComponent('/share?url=https%3A%2F%2Fx.example%2Fa')}`,
+    );
   });
 });
 

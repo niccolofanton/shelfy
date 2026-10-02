@@ -13,12 +13,14 @@
 // | `/login`               | sign-in; `?error=invalid_link`, `?next=<path>`   |
 // | `/login/magic#<token>` | what a sign-in link opens                        |
 // | `/login/reauth#<token>`| what a re-authentication link opens              |
+// | `/share`                | Android's share target, the bookmarklet, the iOS|
+// |                         | Shortcut; `?url=`, `?text=`, `?title=` (P2-07)  |
 //
 // A link's token stays in the fragment, so it never reaches a server or its
 // logs (EXECUTION.md L1); the app takes it out of the address at once.
 //
 // The first five are AppRoutes (src/api/navigation.tsx), which App renders. The
-// last four are web-only pages that Root shows around App. Anything else is
+// rest are web-only pages that Root shows around App. Anything else is
 // `notFound`. Adding a route is one PATHS entry, one row of APP_ROUTES (or a
 // line in parseRoute) and its case in pathOf.
 import React, { useCallback, useMemo, useRef } from 'react';
@@ -41,6 +43,7 @@ export const PATHS = {
   login: '/login',
   magic: '/login/magic',
   reauth: '/login/reauth',
+  share: '/share',
 } as const;
 
 export const LOGIN_PATH = PATHS.login;
@@ -48,12 +51,23 @@ export const LOGIN_PATH = PATHS.login;
 // The pattern reported for an address that matches no route.
 const NOT_FOUND_PATTERN = '/*';
 
+// `url`, `text` and `title` are the Web Share Target API's own field names
+// (plan §2.17 Android), parsed here like `login`'s `next` so that
+// `web/src/share/SharePage.tsx` never re-reads the address itself.
+export type ShareRoute = {
+  name: 'share';
+  url: string | null;
+  text: string | null;
+  title: string | null;
+};
+
 export type WebRoute =
   | CurrentRoute
   | { name: 'device' }
   | { name: 'login'; error: string | null; next: string | null }
   | { name: 'magic' }
-  | { name: 'reauth' };
+  | { name: 'reauth' }
+  | ShareRoute;
 
 type Params = Record<string, string>;
 
@@ -117,11 +131,23 @@ export function parseRoute(pathname: string, search = ''): WebRoute {
     const query = new URLSearchParams(search);
     return { name: 'login', error: query.get('error'), next: safeNext(query.get('next')) };
   }
+  if (matchPattern(PATHS.share, pathname)) {
+    const query = new URLSearchParams(search);
+    return {
+      name: 'share',
+      url: query.get('url'),
+      text: query.get('text'),
+      title: query.get('title'),
+    };
+  }
   return parseAppRoute(pathname);
 }
 
-// The address of a route.
-export function pathOf(route: AppRoute | { name: 'device' }): string {
+// The address of a route. Takes every WebRoute that `safeNext` allows through
+// as a sign-in destination (AppRoutes, `device`, `share`) — not `login`,
+// `magic` or `reauth`, which only ever ends there, so `navigate()` never
+// targets them and callers keep using the narrower AppRoute type.
+export function pathOf(route: AppRoute | { name: 'device' } | ShareRoute): string {
   switch (route.name) {
     case 'library':
       return '/';
@@ -135,6 +161,17 @@ export function pathOf(route: AppRoute | { name: 'device' }): string {
       return `/settings/${encodeURIComponent(route.section)}`;
     case 'device':
       return PATHS.device;
+    case 'share': {
+      // Rebuilt from the parsed fields, never the raw address (safeNext's
+      // rule): a next= target can only ever carry what parseRoute itself
+      // would have accepted.
+      const params = new URLSearchParams();
+      if (route.url) params.set('url', route.url);
+      if (route.text) params.set('text', route.text);
+      if (route.title) params.set('title', route.title);
+      const query = params.toString();
+      return query ? `${PATHS.share}?${query}` : PATHS.share;
+    }
   }
 }
 
@@ -150,6 +187,7 @@ export function patternOf(route: WebRoute): string {
     case 'login':
     case 'magic':
     case 'reauth':
+    case 'share':
       return PATHS[route.name];
     case 'settings':
       return PATHS.settings;
@@ -160,10 +198,19 @@ export function patternOf(route: WebRoute): string {
 
 // Where to go after signing in, from `?next=`: only a page of this app, and
 // rebuilt from its route, so the value is never echoed into the address.
+// `/share`'s content lives entirely in its query (`url`, `text`, `title`), so
+// unlike every other target this one does read it — but, same as the rest,
+// only the three parsed fields come back out (pathOf's `share` case), never
+// the raw string.
 export function safeNext(next: string | null | undefined): string | null {
   if (!next || !next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\'))
     return null;
-  const route = parseRoute(next.split(/[?#]/)[0]);
+  const hashIndex = next.indexOf('#');
+  const withoutHash = hashIndex === -1 ? next : next.slice(0, hashIndex);
+  const queryIndex = withoutHash.indexOf('?');
+  const pathname = queryIndex === -1 ? withoutHash : withoutHash.slice(0, queryIndex);
+  const search = queryIndex === -1 ? '' : withoutHash.slice(queryIndex);
+  const route = parseRoute(pathname, search);
   if (
     route.name === 'notFound' ||
     route.name === 'login' ||

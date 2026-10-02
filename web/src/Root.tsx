@@ -12,6 +12,7 @@ import LoginScreen from './auth/LoginScreen';
 import MagicLinkScreen from './auth/MagicLinkScreen';
 import { ReauthHost } from './auth/ReauthDialog';
 import ReauthLinkScreen from './auth/ReauthLinkScreen';
+import SharePage from './share/SharePage';
 import {
   WebNavigation,
   loginPath,
@@ -111,9 +112,14 @@ export default function Root({
     if (session.state === 'signedIn' && route.name === 'login') {
       navigate(route.next ?? '/', { replace: true });
     } else if (session.state === 'signedOut' && route.name !== 'login') {
-      navigate(loginPath(path), { replace: true });
+      // `path` alone drops the query string; `/share`'s whole content lives
+      // in it (`?url=…`), so a signed-out share waits behind `/login?next=`
+      // with it still attached (loginPath → safeNext reads it back out and
+      // rebuilds it from the three fields it allows, same as every other
+      // next= target).
+      navigate(loginPath(search ? `${path}?${search}` : path), { replace: true });
     }
-  }, [navigate, onLinkPage, path, route, session.state]);
+  }, [navigate, onLinkPage, path, route, search, session.state]);
 
   // A sign-in link redeemed: on to the library, as a new session.
   const handleLinkSignedIn = useCallback(() => {
@@ -160,6 +166,8 @@ export default function Root({
     <>
       {route.name === 'device' ? (
         <DevicePage key={deviceCode ?? ''} auth={auth} initialCode={deviceCode} />
+      ) : route.name === 'share' ? (
+        <SharePage client={client} url={route.url} text={route.text} title={route.title} />
       ) : (
         <ShelfyProvider client={client}>
           <WebNavigation>

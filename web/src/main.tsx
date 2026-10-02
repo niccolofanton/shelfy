@@ -1,8 +1,9 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { buildTime } from 'virtual:build-time';
+import { registerSW } from 'virtual:pwa-register';
 import '@ui/index.css';
-import { I18nProvider } from '@ui/i18n';
+import { I18nProvider, getInitialLang, translate } from '@ui/i18n';
 import ErrorBoundary from '@ui/components/ErrorBoundary';
 import Root from './Root';
 import { createAuthApi, type Me } from './api/auth';
@@ -39,3 +40,13 @@ createRoot(container).render(
     </ErrorBoundary>
   </I18nProvider>,
 );
+
+// The service worker (plan §2.17 PWA; P2-07): `registerType: 'prompt'`
+// (web/vite.config.ts) means a waiting new version never takes over on its
+// own — this is the one place that asks. `registerSW` itself no-ops where
+// `serviceWorker` is unsupported.
+const updateSW = registerSW({
+  onNeedRefresh() {
+    if (window.confirm(translate(getInitialLang(), 'share.updatePrompt'))) void updateSW(true);
+  },
+});
