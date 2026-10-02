@@ -2,11 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0f0f0f" />
     <meta name="referrer" content="no-referrer" />
-    <link rel="icon" href="data:," />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <!-- Minimal web app manifest (web port plan §2.17; assumption G7): no
+         service worker yet, the PWA itself is a P2 deliverable. SPIKE-8 (P1-24)
+         needs the iOS home-screen app meta tags below regardless. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Shelfy" />
     <title>Shelfy</title>
   </head>
   <body>
