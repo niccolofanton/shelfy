@@ -35,10 +35,19 @@ pub enum ErrorCode {
     BadRequest,
     /// 400: the pagination cursor was not produced by this query.
     InvalidCursor,
+    /// 400: the sign-in link is unknown, already used or expired.
+    InvalidLink,
     /// 401: the request needs an authenticated session or token.
     Unauthorized,
     /// 403: the caller may not perform this action.
     Forbidden,
+    /// 403: a state-changing request with a session cookie failed the CSRF
+    /// check: it needs `X-Shelfy-Client: web` and an `Origin` equal to the
+    /// public URL.
+    CsrfFailed,
+    /// 403: the action needs a sign-in from the last 5 minutes;
+    /// re-authenticate, then retry.
+    ReauthRequired,
     /// 403: the user's storage quota is used up.
     QuotaExceeded,
     /// 404: no such resource for this user.
@@ -75,9 +84,11 @@ impl ErrorCode {
     #[must_use]
     pub const fn status(self) -> StatusCode {
         match self {
-            Self::BadRequest | Self::InvalidCursor => StatusCode::BAD_REQUEST,
+            Self::BadRequest | Self::InvalidCursor | Self::InvalidLink => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
-            Self::Forbidden | Self::QuotaExceeded => StatusCode::FORBIDDEN,
+            Self::Forbidden | Self::CsrfFailed | Self::ReauthRequired | Self::QuotaExceeded => {
+                StatusCode::FORBIDDEN
+            }
             Self::NotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
             Self::Conflict => StatusCode::CONFLICT,
@@ -123,8 +134,11 @@ impl ErrorCode {
         match self {
             Self::BadRequest => "bad_request",
             Self::InvalidCursor => "invalid_cursor",
+            Self::InvalidLink => "invalid_link",
             Self::Unauthorized => "unauthorized",
             Self::Forbidden => "forbidden",
+            Self::CsrfFailed => "csrf_failed",
+            Self::ReauthRequired => "reauth_required",
             Self::QuotaExceeded => "quota_exceeded",
             Self::NotFound => "not_found",
             Self::MethodNotAllowed => "method_not_allowed",
@@ -445,8 +459,11 @@ mod tests {
         let codes = [
             ErrorCode::BadRequest,
             ErrorCode::InvalidCursor,
+            ErrorCode::InvalidLink,
             ErrorCode::Unauthorized,
             ErrorCode::Forbidden,
+            ErrorCode::CsrfFailed,
+            ErrorCode::ReauthRequired,
             ErrorCode::QuotaExceeded,
             ErrorCode::NotFound,
             ErrorCode::MethodNotAllowed,

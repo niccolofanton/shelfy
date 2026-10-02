@@ -22,9 +22,11 @@
 //! | [`limits`] | per-route body limits and handler timeouts |
 //! | [`error`] | `application/problem+json` errors with stable codes |
 //! | [`extract`] | request extractors whose rejections are problems |
-//! | [`current_user`] | the signed-in user of a request: the seam to authentication (T10) |
+//! | [`current_user`] | the signed-in user of a request: the seam to authentication |
 //! | [`conditional`] | ETags from the library generation, `304 Not Modified` |
-//! | [`state`] | the shared state: databases, config, shutdown token |
+//! | [`state`] | the shared state: databases, config, auth, mailer, shutdown token |
+//! | [`auth`] | sign-in links, sessions, the CSRF guard, the authentication layer |
+//! | [`mail`] | outgoing email: SMTP, the dev mailbox, or off |
 //! | [`telemetry`] | JSON logs, redaction, request ids, Prometheus metrics |
 //! | [`control`] | queries on the control database |
 //! | [`admin`] | the operator commands |
@@ -34,6 +36,7 @@
 
 pub mod admin;
 pub mod app;
+pub mod auth;
 pub mod cli;
 pub mod conditional;
 pub mod config;
@@ -45,6 +48,7 @@ pub mod extract;
 pub mod ids;
 pub mod jobs;
 pub mod limits;
+pub mod mail;
 pub mod routes;
 pub mod serve;
 pub mod state;

@@ -9,12 +9,20 @@
 //! 3. [`problem_fallback`](crate::error::problem_fallback): error responses
 //!    from any layer become problems;
 //! 4. panic catching: a panicking handler answers 500 `internal`;
-//! 5. the route group's body limit and time limit ([`crate::limits`]);
-//! 6. the handler.
+//! 5. the CSRF and Origin guard ([`auth::csrf`]): a state-changing request
+//!    with the session cookie must come from the public origin, or it
+//!    answers 403 `csrf_failed`;
+//! 6. authentication ([`auth::session::authenticate`]): a valid session
+//!    cookie puts the user in the request extensions
+//!    ([`CurrentUser`](crate::current_user::CurrentUser),
+//!    [`auth::SessionUser`]) and in the request span;
+//! 7. the route group's body limit and time limit ([`crate::limits`]);
+//! 8. the handler. Protected handlers take the user as an extractor, which
+//!    answers 401 when authentication found none.
 //!
 //! The stack is applied after routing, so the route template is known to the
-//! logs and metrics. Rate limits (P1-15), authentication (T10), CSRF (T10)
-//! and the security headers (P1-09) join here.
+//! logs and metrics. Rate limits (P1-15) and the security headers (P1-09)
+//! join here.
 
 use axum::Router;
 use axum::middleware;
@@ -24,6 +32,7 @@ use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{NotForContentType, Predicate as _, SizeAbove};
 use utoipa_axum::router::OpenApiRouter;
 
+use crate::auth;
 use crate::error::{self, ApiError};
 use crate::routes;
 use crate::state::AppState;
@@ -56,7 +65,15 @@ pub fn build(state: AppState, routes: OpenApiRouter<AppState>) -> Router {
                 .layer(middleware::from_fn(telemetry::http::observe))
                 .layer(compression)
                 .layer(middleware::from_fn(error::problem_fallback))
-                .layer(CatchPanicLayer::custom(error::panic_response)),
+                .layer(CatchPanicLayer::custom(error::panic_response))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    auth::csrf::protect,
+                ))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    auth::session::authenticate,
+                )),
         )
         .with_state(state)
 }

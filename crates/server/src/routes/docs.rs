@@ -15,6 +15,7 @@ static DOCUMENT: LazyLock<Bytes> = LazyLock::new(|| Bytes::from(super::openapi_j
     path = "/api/v1/openapi.json",
     tag = "platform",
     operation_id = "getOpenApi",
+    security(()),
     responses(
         (
             status = OK,

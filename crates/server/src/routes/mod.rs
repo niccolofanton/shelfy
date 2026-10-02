@@ -6,7 +6,7 @@
 //!
 //! | Group | Limits | Routes |
 //! |---|---|---|
-//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI; the read API (T11), account, library |
+//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library |
 //! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (T11 stub, P1-01), `POST /api/v1/search/chat` (P3) |
 //! | ingest, uploads, STT | [`RouteLimits::INGEST`], [`RouteLimits::UPLOAD_CHUNK`], [`RouteLimits::STT`] | added with their routes (P2, T9, P3) |
 //!
@@ -23,11 +23,13 @@
 //! client with `pnpm exec tsx scripts/api-client/generate.ts`; both checks
 //! fail while a committed copy is stale.
 
+pub mod auth;
 pub mod collections;
 pub mod docs;
 pub mod events;
 pub mod health;
 pub mod listing;
+pub mod me;
 pub mod model;
 pub mod posts;
 pub mod search;
@@ -41,6 +43,7 @@ use utoipa::openapi::{
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use crate::auth::openapi::SecuritySchemes;
 use crate::error::{ErrorCode, FieldError, PROBLEM_JSON, Problem};
 use crate::limits::RouteLimits;
 use crate::state::AppState;
@@ -75,8 +78,11 @@ const PROBLEM_RESPONSE: &str = "Problem";
         posts::PostSource,
         search::SearchScope,
     )),
+    modifiers(&SecuritySchemes),
     tags(
         (name = "platform", description = "Health, the API description and the realtime stream."),
+        (name = "auth", description = "Sign-in links, sessions and sign-out."),
+        (name = "account", description = "The signed-in user."),
         (name = "library", description = "The signed-in user's posts, stats and collections."),
         (name = "search", description = "Ranked search over the signed-in user's library."),
     )
@@ -93,7 +99,9 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(posts::get_post))
         .routes(routes!(search::search))
         .routes(routes!(stats::get_stats))
-        .routes(routes!(collections::list_collections));
+        .routes(routes!(collections::list_collections))
+        .merge(auth::router())
+        .merge(me::router());
     // Streams end when the shutdown token fires instead of on a timer.
     let streams = OpenApiRouter::default().routes(routes!(events::stream_events));
     OpenApiRouter::with_openapi(ApiDoc::openapi())

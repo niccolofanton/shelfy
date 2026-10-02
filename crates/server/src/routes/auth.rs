@@ -1,0 +1,306 @@
+//! `/api/v1/auth/*`: sign-in methods, sign-in links and sign-out (plan §2.9
+//! Auth, §2.11). The machinery lives in [`crate::auth`].
+//!
+//! | Route | Auth | Answer |
+//! |---|---|---|
+//! | `GET /auth/methods` | none | `{emailLink, passkeys}` |
+//! | `POST /auth/magic-links` `{email}` | none | always 202 (rate-limited: 429) |
+//! | `GET /auth/magic/{token}` | none | 303 to `/` with the session cookie, or to `/login?error=invalid_link` |
+//! | `POST /auth/magic-links/redeem` `{token}` | none | 204 with the session cookie, or 400 `invalid_link` |
+//! | `POST /auth/logout` | cookie, if any | 204, cookie cleared |
+//! | `POST /auth/logout-all` | session | 204, every session of the user ended |
+
+use axum::extract::State;
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::response::{IntoResponse as _, Redirect, Response};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
+
+use crate::auth::magic_link::{self, Redeemed};
+use crate::auth::rate_limit::{self, RateLimiter};
+use crate::auth::{AuthMethods, cookie, session};
+use crate::control::users;
+use crate::current_user::CurrentUser;
+use crate::error::{ApiError, ErrorCode};
+use crate::extract::{Json, Path};
+use crate::ids::now_ms;
+use crate::state::AppState;
+
+/// Where a browser lands after an unusable link; the SPA shows the code.
+pub const INVALID_LINK_REDIRECT: &str = "/login?error=invalid_link";
+
+/// The routes of this module.
+#[must_use]
+pub fn router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::new()
+        .routes(routes!(methods))
+        .routes(routes!(request_magic_link))
+        .routes(routes!(open_magic_link))
+        .routes(routes!(redeem_magic_link))
+        .routes(routes!(logout))
+        .routes(routes!(logout_all))
+}
+
+/// How a user can sign in on this instance.
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/methods",
+    tag = "auth",
+    operation_id = "getAuthMethods",
+    security(()),
+    responses(
+        (status = OK, description = "The sign-in methods this instance offers.", body = AuthMethods),
+    )
+)]
+pub async fn methods(State(state): State<AppState>) -> Response {
+    let methods = AuthMethods {
+        email_link: state.mailer().is_enabled(),
+        passkeys: false,
+    };
+    no_store(Json(methods).into_response())
+}
+
+/// Body of `POST /api/v1/auth/magic-links`.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct MagicLinkRequest {
+    /// The account's email address.
+    pub email: String,
+}
+
+/// Emails a sign-in link to the address, if it belongs to an account.
+///
+/// The answer is 202 whether or not the account exists, and whether or not
+/// email is configured (see `GET /auth/methods`). Limits: 10 requests per
+/// minute per client and 3 per hour per address (429 `rate_limited` with
+/// `Retry-After`). A malformed address answers 422 `validation_failed`.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/magic-links",
+    tag = "auth",
+    operation_id = "requestMagicLink",
+    security(()),
+    request_body = MagicLinkRequest,
+    responses(
+        (status = ACCEPTED, description = "Accepted. If the address has an account, a link valid for 15 minutes is on its way."),
+    )
+)]
+pub async fn request_magic_link(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<MagicLinkRequest>,
+) -> Result<Response, ApiError> {
+    let now = now_ms();
+    hit(
+        state.auth().ip_limiter(),
+        &rate_limit::ip_key(&headers),
+        now,
+    )?;
+    let email = users::normalize_email(&request.email)?;
+    hit(
+        state.auth().address_limiter(),
+        &rate_limit::key("email", &email),
+        now,
+    )?;
+    magic_link::send_in_background(&state, email);
+    Ok(no_store(StatusCode::ACCEPTED.into_response()))
+}
+
+/// Opens a sign-in link: the URL in the email, or printed by
+/// `shelfy-server admin login-link`.
+///
+/// A usable link starts a session (replacing the one the browser held) and
+/// redirects to `/`; any other link redirects to `/login?error=invalid_link`.
+/// The link works once. `HEAD` never uses it up.
+#[utoipa::path(
+    get,
+    path = "/api/v1/auth/magic/{token}",
+    tag = "auth",
+    operation_id = "openMagicLink",
+    security(()),
+    params(("token" = String, Path, description = "The link's token.")),
+    responses(
+        (
+            status = SEE_OTHER,
+            description = "To `/`, signed in (the response sets the session cookie), or to `/login?error=invalid_link`.",
+            headers(("Location" = String, description = "`/` or `/login?error=invalid_link`."))
+        ),
+    )
+)]
+pub async fn open_magic_link(
+    State(state): State<AppState>,
+    method: Method,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Result<Response, ApiError> {
+    // Link checkers probe with HEAD: answer without using the link up.
+    if method == Method::HEAD {
+        return Ok(link_page(StatusCode::NO_CONTENT.into_response()));
+    }
+    hit(
+        state.auth().ip_limiter(),
+        &rate_limit::ip_key(&headers),
+        now_ms(),
+    )?;
+    let redeemed = magic_link::redeem(
+        &state,
+        &token,
+        cookie::session_token(&headers),
+        user_agent(&headers),
+    )
+    .await?;
+    let response = match redeemed {
+        Some(redeemed) => signed_in(&state, Redirect::to("/").into_response(), &redeemed),
+        None => Redirect::to(INVALID_LINK_REDIRECT).into_response(),
+    };
+    Ok(link_page(response))
+}
+
+/// Body of `POST /api/v1/auth/magic-links/redeem`.
+#[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RedeemRequest {
+    /// The link's token: the last path segment of its URL.
+    pub token: String,
+}
+
+/// Redeems a sign-in link's token from a page (the token stays out of URLs
+/// and server logs).
+///
+/// A usable link starts a session (replacing the one the browser held);
+/// otherwise 400 `invalid_link`. The link works once.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/magic-links/redeem",
+    tag = "auth",
+    operation_id = "redeemMagicLink",
+    security(()),
+    request_body = RedeemRequest,
+    responses(
+        (status = NO_CONTENT, description = "Signed in: the response sets the session cookie."),
+    )
+)]
+pub async fn redeem_magic_link(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<RedeemRequest>,
+) -> Result<Response, ApiError> {
+    hit(
+        state.auth().ip_limiter(),
+        &rate_limit::ip_key(&headers),
+        now_ms(),
+    )?;
+    let redeemed = magic_link::redeem(
+        &state,
+        &request.token,
+        cookie::session_token(&headers),
+        user_agent(&headers),
+    )
+    .await?;
+    let Some(redeemed) = redeemed else {
+        return Err(ApiError::new(ErrorCode::InvalidLink));
+    };
+    Ok(signed_in(
+        &state,
+        StatusCode::NO_CONTENT.into_response(),
+        &redeemed,
+    ))
+}
+
+/// Signs out: ends the session of the request's cookie, if any, and clears
+/// the cookie. Answers 204 even without a session.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/logout",
+    tag = "auth",
+    operation_id = "logout",
+    security(()),
+    responses(
+        (status = NO_CONTENT, description = "Signed out; the session cookie is cleared."),
+    )
+)]
+pub async fn logout(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if let Some(token) = cookie::session_token(&headers)
+        && let Some(user_id) = session::end_session(&state, token).await?
+    {
+        tracing::Span::current().record("user_id", user_id.as_str());
+    }
+    Ok(cleared(StatusCode::NO_CONTENT.into_response()))
+}
+
+/// Signs out everywhere: ends every session of the signed-in user, this one
+/// included, and clears the cookie.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/logout-all",
+    tag = "auth",
+    operation_id = "logoutAll",
+    responses(
+        (status = NO_CONTENT, description = "Every session of the user ended; the session cookie is cleared."),
+    )
+)]
+pub async fn logout_all(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<Response, ApiError> {
+    session::end_all_sessions(&state, user.id()).await?;
+    Ok(cleared(StatusCode::NO_CONTENT.into_response()))
+}
+
+/// Counts a hit on `limiter`, or refuses with 429 `rate_limited`.
+fn hit(limiter: &RateLimiter, key: &rate_limit::Key, now: i64) -> Result<(), ApiError> {
+    limiter
+        .hit(key, now)
+        .map_err(|seconds| ApiError::new(ErrorCode::RateLimited).with_retry_after(seconds))
+}
+
+/// The `User-Agent`, for the session list.
+fn user_agent(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned)
+}
+
+/// Adds `Cache-Control: no-store`.
+pub(crate) fn no_store(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
+/// A response to a link URL: never cached, and the URL (which carries the
+/// token) is never sent on as a referrer.
+fn link_page(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    no_store(response)
+}
+
+/// Sets the cookie of the session `redeemed` started, and names the user in
+/// the request span.
+fn signed_in(state: &AppState, mut response: Response, redeemed: &Redeemed) -> Response {
+    tracing::Span::current().record("user_id", redeemed.user_id.as_str());
+    let lifetime = state.auth().config().session_lifetime;
+    response.headers_mut().append(
+        header::SET_COOKIE,
+        cookie::set_session(&redeemed.token, lifetime),
+    );
+    no_store(response)
+}
+
+/// Clears the session cookie.
+fn cleared(mut response: Response) -> Response {
+    response
+        .headers_mut()
+        .append(header::SET_COOKIE, cookie::clear_session());
+    no_store(response)
+}

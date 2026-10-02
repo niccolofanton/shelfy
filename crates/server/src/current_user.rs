@@ -13,10 +13,10 @@
 //! Request extensions are server-side only: a client cannot set one through a
 //! header, so the extractor trusts what it finds.
 //!
-//! **Until T10 lands, nothing in this crate inserts a [`CurrentUser`]**: every
-//! route behind it answers 401 in production. The integration tests insert one
-//! with a layer of their own (`tests/support/library.rs`), which is not part of
-//! this crate and so never part of a build.
+//! The authentication layer ([`crate::auth::session::authenticate`]) inserts
+//! one for a valid session cookie. The read-API tests also insert one with a
+//! layer of their own (`tests/support/library.rs`), which stands in for a
+//! signed-in session and is not part of a build.
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;

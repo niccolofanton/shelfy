@@ -53,6 +53,7 @@ pub struct HealthChecks {
     path = "/health",
     tag = "platform",
     operation_id = "getHealth",
+    security(()),
     responses(
         (status = OK, description = "The server is up and its database answers.", body = Health),
         (status = SERVICE_UNAVAILABLE, description = "A check failed.", body = Health),

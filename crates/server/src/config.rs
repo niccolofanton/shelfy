@@ -10,13 +10,18 @@
 //! | `SHELFY_DATA_DIR` | `/data/shelfy` | data directory (§2.5) |
 //! | `SHELFY_LISTEN_ADDR` | `0.0.0.0:8080` | API listener, reached through the edge proxy |
 //! | `SHELFY_METRICS_ADDR` | `0.0.0.0:9464` | Prometheus listener, internal network only |
-//! | `SHELFY_PUBLIC_URL` | `http://localhost:8080` | public origin of the web app, for links the server hands out |
+//! | `SHELFY_PUBLIC_URL` | `http://localhost:8080` | public origin of the web app: links the server hands out, the CSRF `Origin` check |
 //! | `SHELFY_LOG_FORMAT` | `json` | `json` (one object per line) or `text` |
 //! | `RUST_LOG` | `info` | log filter (`tracing` env-filter syntax) |
-//! | `SHELFY_OWNER_EMAIL` | none | default `--email` of `admin create-owner` |
+//! | `SHELFY_OWNER_EMAIL` | none | default `--email` of `admin create-owner` and `admin login-link` |
+//! | `SHELFY_SMTP_HOST` | none | SMTP relay (`host[:port]`) for sign-in emails; email is off without it |
+//! | `SHELFY_SMTP_TLS` | `starttls` | `starttls`, `tls` (implicit) or `none` (local catcher, no credentials) |
+//! | `SHELFY_SMTP_USER`, `SHELFY_SMTP_PASSWORD` | none | SMTP credentials, set together |
+//! | `SHELFY_SMTP_FROM` | none | sender, required with SMTP |
+//! | `SHELFY_DEV_MAILBOX` | `false` | write emails to `<data>/dev-mailbox/*.eml` instead (local runs, tests) |
 //!
-//! Later tasks add their variables here (SMTP, master key, capture and egress
-//! endpoints, media budgets); none of them is read yet.
+//! [`crate::mail`] validates the email settings. Later tasks add their
+//! variables here (master key, capture and egress endpoints, media budgets).
 
 use std::fmt;
 use std::io;
@@ -27,6 +32,9 @@ use std::time::Duration;
 use clap::{Args, ValueEnum};
 use shelfy_core::db::{ControlDbConfig, LIBRARY_FILE_NAME, UserDbCacheConfig, UserDbConfig};
 use url::Url;
+
+use crate::auth::AuthConfig;
+use crate::mail::{MailArgs, MailConfig};
 
 /// Default of `SHELFY_DATA_DIR`.
 pub const DEFAULT_DATA_DIR: &str = "/data/shelfy";
@@ -64,7 +72,9 @@ pub struct DataDirArg {
 pub struct PublicUrlArg {
     /// Public origin of the web app, without a path (for example
     /// `https://refs.niccolofanton.dev`). Links the server hands out start
-    /// with it; later it also drives the CSRF Origin check and the passkey RP ID.
+    /// with it, and the CSRF check requires it as the `Origin` of every
+    /// state-changing cookie request; later it is the passkey RP ID too. Use
+    /// https unless the host is localhost: the session cookie is `Secure`.
     #[arg(
         long = "public-url",
         env = "SHELFY_PUBLIC_URL",
@@ -111,6 +121,9 @@ pub struct ServeArgs {
         default_value_t = LogFormat::Json
     )]
     pub log_format: LogFormat,
+
+    #[command(flatten)]
+    pub mail: MailArgs,
 }
 
 /// Format of the logs on stdout (plan §3.7).
@@ -144,6 +157,10 @@ pub struct Config {
     pub user_db: UserDbConfig,
     /// Limits of the open-user-database cache (plan §2.3: 64, 10 min idle).
     pub user_db_cache: UserDbCacheConfig,
+    /// Outgoing email (SMTP, the dev mailbox, or off).
+    pub mail: MailConfig,
+    /// Session lifetimes and sign-in limits (plan §2.11).
+    pub auth: AuthConfig,
 }
 
 impl Config {
@@ -157,11 +174,13 @@ impl Config {
         if overlaps(args.listen, args.metrics_listen) {
             return Err(ConfigError::SameListener(args.listen, args.metrics_listen));
         }
+        let mail = MailConfig::from_args(args.mail, &data_dir).map_err(ConfigError::Mail)?;
         Ok(Self {
             listen: args.listen,
             metrics_listen: args.metrics_listen,
             public_url: args.public.public_url,
             log_format: args.log_format,
+            mail,
             ..Self::with_data_dir(data_dir)
         })
     }
@@ -179,6 +198,8 @@ impl Config {
             control_db: ControlDbConfig::default(),
             user_db: UserDbConfig::default(),
             user_db_cache: UserDbCacheConfig::default(),
+            mail: MailConfig::Disabled,
+            auth: AuthConfig::default(),
         }
     }
 }
@@ -202,6 +223,9 @@ pub enum ConfigError {
         "SHELFY_LISTEN_ADDR ({0}) and SHELFY_METRICS_ADDR ({1}) must use different ports: metrics stay off the public listener"
     )]
     SameListener(SocketAddr, SocketAddr),
+    /// The email settings are inconsistent.
+    #[error("{0}")]
+    Mail(String),
 }
 
 /// The public origin of the web app: `http(s)://host[:port]`, no trailing slash.

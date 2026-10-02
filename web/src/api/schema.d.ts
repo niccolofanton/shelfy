@@ -7,6 +7,131 @@
 // Regenerate with `pnpm exec tsx scripts/api-client/generate.ts`.
 
 export interface paths {
+  '/api/v1/auth/logout': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Signs out: ends the session of the request's cookie, if any, and clears
+     *     the cookie. Answers 204 even without a session.
+     */
+    post: operations['logout'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/logout-all': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Signs out everywhere: ends every session of the signed-in user, this one
+     *     included, and clears the cookie.
+     */
+    post: operations['logoutAll'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/magic-links': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Emails a sign-in link to the address, if it belongs to an account.
+     * @description The answer is 202 whether or not the account exists, and whether or not
+     *     email is configured (see `GET /auth/methods`). Limits: 10 requests per
+     *     minute per client and 3 per hour per address (429 `rate_limited` with
+     *     `Retry-After`). A malformed address answers 422 `validation_failed`.
+     */
+    post: operations['requestMagicLink'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/magic-links/redeem': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Redeems a sign-in link's token from a page (the token stays out of URLs
+     *     and server logs).
+     * @description A usable link starts a session (replacing the one the browser held);
+     *     otherwise 400 `invalid_link`. The link works once.
+     */
+    post: operations['redeemMagicLink'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/magic/{token}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Opens a sign-in link: the URL in the email, or printed by
+     *     `shelfy-server admin login-link`.
+     * @description A usable link starts a session (replacing the one the browser held) and
+     *     redirects to `/`; any other link redirects to `/login?error=invalid_link`.
+     *     The link works once. `HEAD` never uses it up.
+     */
+    get: operations['openMagicLink'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/methods': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** How a user can sign in on this instance. */
+    get: operations['getAuthMethods'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/collections': {
     parameters: {
       query?: never;
@@ -38,6 +163,26 @@ export interface paths {
      *     reconnect with backoff.
      */
     get: operations['streamEvents'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Who is signed in. 401 `unauthorized` without a session: the SPA shows
+     *     its sign-in page.
+     */
+    get: operations['getMe'];
     put?: never;
     post?: never;
     delete?: never;
@@ -166,6 +311,20 @@ export interface components {
      */
     ArchiveState: 'pending' | 'partial' | 'done' | 'failed' | 'client' | 'link_only';
     /**
+     * @description How a user can sign in on this instance; the sign-in page reads it before
+     *     anyone is signed in.
+     */
+    AuthMethods: {
+      /**
+       * @description "Email me a link" works: an email transport is configured (E4: SMTP
+       *     is optional). Without it, the operator mints links with
+       *     `shelfy-server admin login-link`.
+       */
+      emailLink: boolean;
+      /** @description Passkey sign-in (P1-13). Always false for now. */
+      passkeys: boolean;
+    };
+    /**
      * @description Result of one check.
      * @enum {string}
      */
@@ -219,8 +378,11 @@ export interface components {
     ErrorCode:
       | 'bad_request'
       | 'invalid_cursor'
+      | 'invalid_link'
       | 'unauthorized'
       | 'forbidden'
+      | 'csrf_failed'
+      | 'reauth_required'
       | 'quota_exceeded'
       | 'not_found'
       | 'method_not_allowed'
@@ -267,11 +429,30 @@ export interface components {
       /** @description Version of the server build; a change means a new deploy. */
       version: string;
     };
+    /** @description Body of `POST /api/v1/auth/magic-links`. */
+    MagicLinkRequest: {
+      /** @description The account's email address. */
+      email: string;
+    };
     /**
      * @description How several values of a list filter combine.
      * @enum {string}
      */
     MatchMode: 'or' | 'and';
+    /** @description The signed-in user. */
+    Me: {
+      /**
+       * Format: int64
+       * @description Account creation time, unix ms.
+       */
+      createdAt: number;
+      /** @description Sign-in email address. */
+      email: string;
+      /** @description User id (ULID). */
+      id: string;
+      /** @description Role. */
+      role: components['schemas']['UserRole'];
+    };
     /** @description A stored object (plan §2.13). Its URLs are same-origin and immutable. */
     MediaObject: {
       /**
@@ -573,6 +754,11 @@ export interface components {
       /** @description Always `about:blank`: `code` carries the problem type. */
       type: string;
     };
+    /** @description Body of `POST /api/v1/auth/magic-links/redeem`. */
+    RedeemRequest: {
+      /** @description The link's token: the last path segment of its URL. */
+      token: string;
+    };
     /** @description One page of `GET /api/v1/search`. */
     SearchPage: {
       /** @description The results of this page, best match first. */
@@ -645,6 +831,11 @@ export interface components {
      * @enum {string}
      */
     TagSource: 'ai' | 'manual';
+    /**
+     * @description What a user may do on the instance.
+     * @enum {string}
+     */
+    UserRole: 'owner' | 'member';
     /** @description The current capture of a website, without its page texts. */
     WebCapture: {
       /** @description Awards, as captured. */
@@ -704,6 +895,135 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  logout: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Signed out; the session cookie is cleared. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  logoutAll: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Every session of the user ended; the session cookie is cleared. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  requestMagicLink: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['MagicLinkRequest'];
+      };
+    };
+    responses: {
+      /** @description Accepted. If the address has an account, a link valid for 15 minutes is on its way. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  redeemMagicLink: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RedeemRequest'];
+      };
+    };
+    responses: {
+      /** @description Signed in: the response sets the session cookie. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  openMagicLink: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The link's token. */
+        token: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description To `/`, signed in (the response sets the session cookie), or to `/login?error=invalid_link`. */
+      303: {
+        headers: {
+          /** @description `/` or `/login?error=invalid_link`. */
+          Location?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getAuthMethods: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The sign-in methods this instance offers. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthMethods'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   listCollections: {
     parameters: {
       query?: never;
@@ -764,6 +1084,27 @@ export interface operations {
         };
         content: {
           'text/event-stream': string;
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getMe: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The signed-in user. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Me'];
         };
       };
       default: components['responses']['Problem'];

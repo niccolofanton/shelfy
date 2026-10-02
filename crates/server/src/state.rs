@@ -1,5 +1,5 @@
-//! The state shared by every request: the databases, the configuration and
-//! the shutdown token.
+//! The state shared by every request: the databases, the configuration,
+//! authentication, the mailer and the shutdown token.
 
 use std::sync::Arc;
 
@@ -7,8 +7,10 @@ use anyhow::Context as _;
 use shelfy_core::db::{ControlDb, UserDb, UserDbCache};
 use tokio_util::sync::CancellationToken;
 
+use crate::auth::{self, AuthState};
 use crate::config::Config;
 use crate::error::ApiError;
+use crate::mail::Mailer;
 
 /// Cheap to clone: everything lives behind one `Arc`.
 #[derive(Clone)]
@@ -20,18 +22,20 @@ struct Inner {
     config: Config,
     control: Arc<ControlDb>,
     user_dbs: Arc<UserDbCache>,
+    auth: AuthState,
+    mailer: Mailer,
     shutdown: CancellationToken,
 }
 
 impl AppState {
-    /// Creates the data directory layout and opens (creating and migrating)
-    /// the control database. Blocking: call it from `spawn_blocking` inside
-    /// the runtime.
+    /// Creates the data directory layout, opens (creating and migrating) the
+    /// control database and sets up the mailer. Blocking: call it from
+    /// `spawn_blocking` inside the runtime.
     ///
     /// # Errors
     ///
-    /// The directories cannot be created or the control database cannot be
-    /// opened.
+    /// The directories cannot be created, the control database cannot be
+    /// opened, or the mail transport cannot be set up.
     pub fn open(config: Config) -> anyhow::Result<Self> {
         let data = &config.data_dir;
         data.create_layout()
@@ -44,11 +48,22 @@ impl AppState {
             &config.user_db_cache,
             config.user_db.clone(),
         );
+        let mailer = Mailer::new(&config.mail).context("cannot set up email")?;
+        tracing::info!(transport = mailer.kind().as_str(), "email transport");
+        if !auth::cookie::secure_cookies_work(config.public_url.as_str()) {
+            tracing::warn!(
+                public_url = %config.public_url,
+                "browsers drop the Secure session cookie on this origin: use https or localhost"
+            );
+        }
+        let auth = AuthState::new(config.auth.clone());
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
                 control: Arc::new(control),
                 user_dbs: Arc::new(user_dbs),
+                auth,
+                mailer,
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -70,6 +85,18 @@ impl AppState {
     #[must_use]
     pub fn user_dbs(&self) -> &Arc<UserDbCache> {
         &self.inner.user_dbs
+    }
+
+    /// Sessions, sign-in limits and the email slots.
+    #[must_use]
+    pub fn auth(&self) -> &AuthState {
+        &self.inner.auth
+    }
+
+    /// The outgoing-email transport.
+    #[must_use]
+    pub fn mailer(&self) -> &Mailer {
+        &self.inner.mailer
     }
 
     /// Cancelled when the server starts shutting down. Long-running work (job

@@ -10,6 +10,150 @@
     "version": "1"
   },
   "paths": {
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Signs out: ends the session of the request's cookie, if any, and clears\nthe cookie. Answers 204 even without a session.",
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "Signed out; the session cookie is cleared."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [{}]
+      }
+    },
+    "/api/v1/auth/logout-all": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Signs out everywhere: ends every session of the signed-in user, this one\nincluded, and clears the cookie.",
+        "operationId": "logoutAll",
+        "responses": {
+          "204": {
+            "description": "Every session of the user ended; the session cookie is cleared."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/magic-links": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Emails a sign-in link to the address, if it belongs to an account.",
+        "description": "The answer is 202 whether or not the account exists, and whether or not\nemail is configured (see `GET /auth/methods`). Limits: 10 requests per\nminute per client and 3 per hour per address (429 `rate_limited` with\n`Retry-After`). A malformed address answers 422 `validation_failed`.",
+        "operationId": "requestMagicLink",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MagicLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted. If the address has an account, a link valid for 15 minutes is on its way."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [{}]
+      }
+    },
+    "/api/v1/auth/magic-links/redeem": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Redeems a sign-in link's token from a page (the token stays out of URLs\nand server logs).",
+        "description": "A usable link starts a session (replacing the one the browser held);\notherwise 400 `invalid_link`. The link works once.",
+        "operationId": "redeemMagicLink",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RedeemRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Signed in: the response sets the session cookie."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [{}]
+      }
+    },
+    "/api/v1/auth/magic/{token}": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "Opens a sign-in link: the URL in the email, or printed by\n`shelfy-server admin login-link`.",
+        "description": "A usable link starts a session (replacing the one the browser held) and\nredirects to `/`; any other link redirects to `/login?error=invalid_link`.\nThe link works once. `HEAD` never uses it up.",
+        "operationId": "openMagicLink",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "The link's token.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "To `/`, signed in (the response sets the session cookie), or to `/login?error=invalid_link`.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`/` or `/login?error=invalid_link`."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [{}]
+      }
+    },
+    "/api/v1/auth/methods": {
+      "get": {
+        "tags": ["auth"],
+        "summary": "How a user can sign in on this instance.",
+        "operationId": "getAuthMethods",
+        "responses": {
+          "200": {
+            "description": "The sign-in methods this instance offers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthMethods"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [{}]
+      }
+    },
     "/api/v1/collections": {
       "get": {
         "tags": ["library"],
@@ -105,6 +249,28 @@
         }
       }
     },
+    "/api/v1/me": {
+      "get": {
+        "tags": ["account"],
+        "summary": "Who is signed in. 401 `unauthorized` without a session: the SPA shows\nits sign-in page.",
+        "operationId": "getMe",
+        "responses": {
+          "200": {
+            "description": "The signed-in user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/openapi.json": {
       "get": {
         "tags": ["platform"],
@@ -124,7 +290,8 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [{}]
       }
     },
     "/api/v1/posts": {
@@ -691,7 +858,8 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [{}]
       }
     }
   },
@@ -701,6 +869,21 @@
         "type": "string",
         "description": "Archive progress of a post's media (plan §2.13).",
         "enum": ["pending", "partial", "done", "failed", "client", "link_only"]
+      },
+      "AuthMethods": {
+        "type": "object",
+        "description": "How a user can sign in on this instance; the sign-in page reads it before\nanyone is signed in.",
+        "required": ["emailLink", "passkeys"],
+        "properties": {
+          "emailLink": {
+            "type": "boolean",
+            "description": "\"Email me a link\" works: an email transport is configured (E4: SMTP\nis optional). Without it, the operator mints links with\n`shelfy-server admin login-link`."
+          },
+          "passkeys": {
+            "type": "boolean",
+            "description": "Passkey sign-in (P1-13). Always false for now."
+          }
+        }
       },
       "CheckStatus": {
         "type": "string",
@@ -792,8 +975,11 @@
         "enum": [
           "bad_request",
           "invalid_cursor",
+          "invalid_link",
           "unauthorized",
           "forbidden",
+          "csrf_failed",
+          "reauth_required",
           "quota_exceeded",
           "not_found",
           "method_not_allowed",
@@ -872,10 +1058,45 @@
           }
         }
       },
+      "MagicLinkRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/auth/magic-links`.",
+        "required": ["email"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "The account's email address."
+          }
+        }
+      },
       "MatchMode": {
         "type": "string",
         "description": "How several values of a list filter combine.",
         "enum": ["or", "and"]
+      },
+      "Me": {
+        "type": "object",
+        "description": "The signed-in user.",
+        "required": ["id", "email", "role", "createdAt"],
+        "properties": {
+          "createdAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Account creation time, unix ms."
+          },
+          "email": {
+            "type": "string",
+            "description": "Sign-in email address."
+          },
+          "id": {
+            "type": "string",
+            "description": "User id (ULID)."
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole",
+            "description": "Role."
+          }
+        }
       },
       "MediaObject": {
         "type": "object",
@@ -1459,6 +1680,17 @@
           }
         }
       },
+      "RedeemRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/auth/magic-links/redeem`.",
+        "required": ["token"],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The link's token: the last path segment of its URL."
+          }
+        }
+      },
       "SearchPage": {
         "type": "object",
         "description": "One page of `GET /api/v1/search`.",
@@ -1568,6 +1800,11 @@
         "description": "Origin of a tag.",
         "enum": ["ai", "manual"]
       },
+      "UserRole": {
+        "type": "string",
+        "description": "What a user may do on the instance.",
+        "enum": ["owner", "member"]
+      },
       "WebCapture": {
         "type": "object",
         "description": "The current capture of a website, without its page texts.",
@@ -1674,12 +1911,39 @@
           }
         }
       }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "shx_",
+        "description": "A scoped API token (`shx_…`) of the extension, the iOS Shortcut or the migration CLI. Tokens cannot call routes that only accept the session."
+      },
+      "session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-shelfy_session",
+        "description": "The web app's session, set by signing in. Requests that change state (POST, PUT, PATCH, DELETE) with this cookie must also send `X-Shelfy-Client: web` and an `Origin` equal to the public URL; otherwise they fail with 403 `csrf_failed`. A request with an `Authorization` header is never authenticated by this cookie."
+      }
     }
   },
+  "security": [
+    {
+      "session": []
+    }
+  ],
   "tags": [
     {
       "name": "platform",
       "description": "Health, the API description and the realtime stream."
+    },
+    {
+      "name": "auth",
+      "description": "Sign-in links, sessions and sign-out."
+    },
+    {
+      "name": "account",
+      "description": "The signed-in user."
     },
     {
       "name": "library",

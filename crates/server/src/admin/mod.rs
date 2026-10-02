@@ -5,14 +5,14 @@
 //!
 //! Output rules: results go to stdout, diagnostics to stderr, nothing to the
 //! logs. Secrets are never printed, with one exception by design: `invite`
-//! prints its one-time link, the only copy of the token (the database keeps
-//! its SHA-256).
+//! and `login-link` print their one-time link, the only copy of the token
+//! (the database keeps its SHA-256).
 //!
 //! This file is the command dispatch: a new command adds its module and one
-//! line here (P1-05 `synth`/`bench`, P1-12 `verify`/`user`/`install-snapshots`,
-//! P1-13 `login-link`).
+//! line here (P1-05 `synth`/`bench`, P1-12 `verify`/`user`/`install-snapshots`).
 
 pub mod invite;
+pub mod login_link;
 pub mod owner;
 pub mod snapshot;
 
@@ -44,6 +44,9 @@ pub enum AdminCommand {
     /// Create a one-time invite link for a new member. Unused while the
     /// instance is owner-only (E4).
     Invite(invite::InviteArgs),
+    /// Print a one-time sign-in link (15 minutes) for an existing account:
+    /// the way in while email is not configured (E4).
+    LoginLink(login_link::LoginLinkArgs),
     /// Copy the control database and the user libraries with SQLite's online
     /// backup, while the server runs.
     Snapshot(snapshot::SnapshotArgs),
@@ -61,6 +64,7 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
     match args.command {
         AdminCommand::CreateOwner(args) => owner::run(&data, &args, &mut out),
         AdminCommand::Invite(args) => invite::run(&data, &args, &mut out),
+        AdminCommand::LoginLink(args) => login_link::run(&data, &args, &mut out),
         AdminCommand::Snapshot(args) => snapshot::run(&data, &args, &mut out),
     }?;
     out.flush()?;

@@ -1,9 +1,10 @@
 //! `admin create-owner`: creates the instance owner (E4: the only account).
 //!
 //! The owner gets role `owner`, an unlimited quota and an empty library. The
-//! command prints no invite or link: signing in comes with T10 (magic link)
-//! and P1-13 (`admin login-link`, passkeys). Running it again with the same
-//! email changes nothing, so deploy scripts can call it unconditionally.
+//! command prints no invite or link: the owner signs in with a link from
+//! `admin login-link` or, when email is configured, from the sign-in page.
+//! Running it again with the same email changes nothing, so deploy scripts
+//! can call it unconditionally.
 
 use std::io::Write;
 
