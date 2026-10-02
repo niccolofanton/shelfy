@@ -1,7 +1,7 @@
 //! Sign-in in the JSON logs: the request span names the signed-in user, and
 //! no session token, link token, email address, passkey credential id,
-//! public key, challenge or ceremony id is ever written, at any level
-//! (plan §3.7).
+//! public key, challenge, ceremony id, API token, device code or user code
+//! is ever written, at any level (plan §3.7).
 //!
 //! Its own test binary: it installs the global log subscriber, at every
 //! level, so the work on the blocking pool is captured too.
@@ -10,9 +10,10 @@ mod support;
 
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode};
+use axum::http::{Request, StatusCode, header};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
@@ -293,5 +294,163 @@ async fn passkey_ceremonies_never_log_credentials_challenges_or_ceremonies() {
     assert_eq!(
         find(&refused_id, "passkey refused")["reason"],
         "challenge_mismatch"
+    );
+}
+
+/// A `POST` with a JSON body and no cookie or CSRF headers, as a CLI sends it.
+fn cli_post(uri: &str, body: &Value) -> Request<Body> {
+    Request::post(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// `request` with `Authorization: Bearer token`.
+fn bearer(mut request: Request<Body>, token: &str) -> Request<Body> {
+    request.headers_mut().insert(
+        header::AUTHORIZATION,
+        format!("Bearer {token}").parse().unwrap(),
+    );
+    request
+}
+
+#[tokio::test]
+async fn the_account_and_the_device_flow_never_log_tokens_or_codes() {
+    let capture = capture();
+    let t = TestState::with_config(|config: &mut Config| {
+        config.mail = MailConfig::dev_mailbox(&config.data_dir);
+        config.auth.device_poll_interval = Duration::ZERO;
+    });
+    let app = t.app();
+    let owner_id = owner(&t);
+    let cookie = sign_in(&app, &t).await;
+    let mut secrets: Vec<String> = vec![OWNER_EMAIL.to_owned(), cookie.clone()];
+
+    // The device flow, with a wrong guess first.
+    let response = send(&app, cli_post("/api/v1/auth/device/start", &json!({}))).await;
+    let started = body_json(response).await;
+    let device_code = started["deviceCode"].as_str().unwrap().to_owned();
+    let user_code = started["userCode"].as_str().unwrap().to_owned();
+    secrets.extend([
+        device_code.clone(),
+        user_code.clone(),
+        user_code.replace('-', ""),
+    ]);
+    let poll = || {
+        cli_post(
+            "/api/v1/auth/device/poll",
+            &json!({ "deviceCode": device_code }),
+        )
+    };
+    assert_eq!(send(&app, poll()).await.status(), StatusCode::OK);
+    let approve = |code: &str| {
+        spa(
+            &t,
+            post_body("/api/v1/auth/device/approve", &json!({ "userCode": code })),
+            &cookie,
+        )
+    };
+    let wrong = if user_code == "BCDF-GHJK" {
+        "BCDF-GHJL"
+    } else {
+        "BCDF-GHJK"
+    };
+    assert_eq!(
+        send(&app, approve(wrong)).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    let response = send(&app, approve(&user_code.to_ascii_lowercase())).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let approve_id = request_id(&response);
+    let response = send(&app, poll()).await;
+    let migrate = body_json(response).await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    secrets.push(migrate.clone());
+    let missing = cli_post(
+        "/api/v1/migrations/missing-objects",
+        &json!({ "objects": [] }),
+    );
+    assert_eq!(
+        send(&app, bearer(missing, &migrate)).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        send(&app, poll()).await.status(),
+        StatusCode::BAD_REQUEST,
+        "a replay"
+    );
+
+    // An account token: created, used, refused, revoked.
+    let request = spa(
+        &t,
+        post_body(
+            "/api/v1/me/tokens",
+            &json!({ "kind": "extension", "label": "Chrome" }),
+        ),
+        &cookie,
+    );
+    let created = body_json(send(&app, request).await).await;
+    let token = created["token"].as_str().unwrap().to_owned();
+    secrets.push(token.clone());
+    let lookup = cli_post(
+        "/api/v1/posts/lookup",
+        &json!({ "platform": "instagram", "keys": ["1"] }),
+    );
+    assert_eq!(
+        send(&app, bearer(lookup, &token)).await.status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        send(&app, bearer(get("/api/v1/me"), &token)).await.status(),
+        StatusCode::UNAUTHORIZED
+    );
+    let id = created["apiToken"]["id"].as_str().unwrap();
+    let revoke = Request::delete(format!("/api/v1/me/tokens/{id}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        send(&app, spa(&t, revoke, &cookie)).await.status(),
+        StatusCode::NO_CONTENT
+    );
+
+    // Consent, settings, sessions.
+    let consent = json!({ "disclaimerVersion": "2026-10", "privacyVersion": "1" });
+    let request = spa(&t, post_body("/api/v1/me/consent", &consent), &cookie);
+    assert_eq!(send(&app, request).await.status(), StatusCode::OK);
+    let response = send(&app, with_session(get("/api/v1/me/sessions"), &cookie)).await;
+    let sessions = body_json(response).await;
+    assert_eq!(sessions["items"].as_array().unwrap().len(), 1);
+
+    let text = capture.text();
+    for secret in &secrets {
+        assert!(
+            !text.contains(secret.as_str()),
+            "{secret} leaked into the logs"
+        );
+    }
+    // Tokens are 43 characters after `shx_`: the bare secret never shows
+    // either.
+    for token in [&migrate, &token] {
+        assert!(!text.contains(&token[4..]), "a token leaked into the logs");
+    }
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let approval = lines
+        .iter()
+        .find(|line| {
+            line["span"]["request_id"] == approve_id.as_str() && line["message"] == "request"
+        })
+        .expect("the approval's request line");
+    assert_eq!(approval["span"]["user_id"], owner_id.as_str());
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["message"] == "device signed in"
+                && line["user_id"] == owner_id.as_str()),
+        "the delivery names the account"
     );
 }

@@ -6,6 +6,10 @@
 //! its `Passkey`), the user's label, the creation time and the last use.
 //! None of it is a secret, but credential ids and public keys never reach
 //! the logs, and the label is user content.
+//!
+//! The row id names a passkey in the API and in the audit log. Since control
+//! schema v3 the column is `AUTOINCREMENT`: a deleted passkey's id is never
+//! given to a new one (F5).
 
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 use shelfy_core::repo::{RepoError, Result};
@@ -259,5 +263,23 @@ mod tests {
         assert!(db.write(|tx| delete(tx, &owner, id)).unwrap());
         assert!(!db.write(|tx| delete(tx, &owner, id)).unwrap(), "gone");
         assert!(db.read(|conn| list(conn, &owner)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_deleted_passkeys_id_is_never_reused() {
+        // F5: the audit log names passkeys by id.
+        let (db, owner, _member) = control_with_users();
+        let first = db
+            .write(|tx| insert(tx, &new(&owner, b"cred-1", None), NOW))
+            .unwrap();
+        let newest = db
+            .write(|tx| insert(tx, &new(&owner, b"cred-2", None), NOW))
+            .unwrap();
+        assert!(db.write(|tx| delete(tx, &owner, newest)).unwrap());
+        let next = db
+            .write(|tx| insert(tx, &new(&owner, b"cred-3", None), NOW))
+            .unwrap();
+        assert!(next > newest, "{next} reuses a deleted id");
+        assert!(newest > first);
     }
 }
