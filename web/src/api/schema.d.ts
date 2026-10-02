@@ -192,6 +192,83 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/jobs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The user's jobs, newest first. */
+    get: operations['listJobs'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/jobs/summary': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Every queue of the user, with its jobs counted by state. */
+    get: operations['getJobsSummary'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/jobs/{id}/cancel': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Cancels a queued or running job: it never runs, or its worker is told
+     *     to stop. Cancelling a cancelled job changes nothing; a job that already
+     *     succeeded or failed answers 409 `conflict`.
+     */
+    post: operations['cancelJob'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/jobs/{id}/retry': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Queues a failed or cancelled job again, with every try available and its
+     *     error cleared. Any other state answers 409 `conflict`, as does a job
+     *     whose duplicate is already queued or running.
+     * @description Send an `Idempotency-Key` to make a repeated click retry once.
+     */
+    post: operations['retryJob'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/me': {
     parameters: {
       query?: never;
@@ -368,6 +445,77 @@ export interface paths {
     get: operations['getPost'];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/queues/{kind}/cancel-all': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Cancels every queued and running job of a queue. */
+    post: operations['cancelQueue'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/queues/{kind}/clear-finished': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Deletes the finished (succeeded, failed and cancelled) jobs of a queue. */
+    post: operations['clearFinishedJobs'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/queues/{kind}/pause': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Pauses a queue: its queued jobs wait until it is resumed. Running jobs
+     *     go on; a long one (a drain) stops at its next step and waits too.
+     */
+    post: operations['pauseQueue'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/queues/{kind}/resume': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Resumes a paused queue. */
+    post: operations['resumeQueue'];
     delete?: never;
     options?: never;
     head?: never;
@@ -759,6 +907,69 @@ export interface components {
       /** Format: int64 */
       total: number;
     };
+    /** @description A background job. */
+    Job: {
+      /**
+       * Format: int32
+       * @description Tries that ended without success.
+       */
+      attempts: number;
+      /**
+       * Format: int64
+       * @description Creation time.
+       */
+      createdAt: number;
+      /**
+       * @description Why the job failed (`failed`), or why its last try failed before a
+       *     retry. A stable code (`lease_expired`, `unavailable`, …), never prose.
+       */
+      errorCode: string | null;
+      /**
+       * Format: int64
+       * @description When the job finished (succeeded, failed or cancelled).
+       */
+      finishedAt: number | null;
+      /**
+       * Format: int64
+       * @description Job id.
+       */
+      id: number;
+      /** @description Kind (`archive.drain`, `migrate`, …). */
+      kind: string;
+      /**
+       * Format: int32
+       * @description Tries allowed before the job fails for good.
+       */
+      maxAttempts: number;
+      /** @description The post the job works on, if one. */
+      postKey: string | null;
+      /**
+       * Format: double
+       * @description Progress from 0 to 1, when known.
+       */
+      progress: number | null;
+      /**
+       * Format: int64
+       * @description Not before this time (a delayed job, or the backoff before a retry).
+       */
+      runAt: number;
+      /** @description Current stage, a code, when the job has stages. */
+      stage: string | null;
+      /** @description State. */
+      state: components['schemas']['JobState'];
+      /**
+       * Format: int64
+       * @description Last change.
+       */
+      updatedAt: number;
+    };
+    /** @description One page of jobs, newest first. */
+    JobPage: {
+      /** @description The jobs of this page. */
+      items: components['schemas']['Job'][];
+      /** @description Pass it as `cursor` to get the next page; `null` on the last page. */
+      nextCursor: string | null;
+    };
     /**
      * @description State of a job (plan §2.6 `jobs.state`).
      * @enum {string}
@@ -786,6 +997,14 @@ export interface components {
       stage: string | null;
       /** @description State. */
       state: components['schemas']['JobState'];
+    };
+    /**
+     * @description Every queue of the user: each kind this server runs, and any other kind
+     *     the user has jobs of.
+     */
+    JobsSummary: {
+      /** @description The queues, by kind. */
+      queues: components['schemas']['QueueSummary'][];
     };
     /** @description Body of `POST /api/v1/auth/magic-links`. */
     MagicLinkRequest: {
@@ -1279,6 +1498,49 @@ export interface components {
       /** @description Always `about:blank`: `code` carries the problem type. */
       type: string;
     };
+    /** @description The outcome of an action on a queue. */
+    QueueResult: {
+      /**
+       * Format: int64
+       * @description What the action changed: 1 when pause or resume changed the queue
+       *     (0 when it already was so), the jobs cancelled, or the jobs deleted.
+       */
+      affected: number;
+      /** @description The queue after the action. */
+      queue: components['schemas']['QueueSummary'];
+    };
+    /** @description One queue: a kind of job of the user. */
+    QueueSummary: {
+      /**
+       * Format: int64
+       * @description Jobs cancelled.
+       */
+      cancelled: number;
+      /**
+       * Format: int64
+       * @description Jobs failed for good.
+       */
+      failed: number;
+      /** @description The kind. */
+      kind: string;
+      /** @description Whether the user paused it: its queued jobs wait. */
+      paused: boolean;
+      /**
+       * Format: int64
+       * @description Jobs waiting to run.
+       */
+      queued: number;
+      /**
+       * Format: int64
+       * @description Jobs running.
+       */
+      running: number;
+      /**
+       * Format: int64
+       * @description Jobs finished.
+       */
+      succeeded: number;
+    };
     /** @description Body of `POST /api/v1/auth/magic-links/redeem`. */
     RedeemRequest: {
       /** @description The link's token: what follows `#` in its URL. */
@@ -1746,6 +2008,117 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  listJobs: {
+    parameters: {
+      query?: {
+        /** @description Only jobs of these kinds. Repeatable: any of them. */
+        kind?: string[];
+        /** @description Only jobs in these states. Repeatable: any of them. */
+        state?: components['schemas']['JobState'][];
+        /** @description Page size, 1–200 (larger values are clamped). Default 60. */
+        limit?: number;
+        /** @description `nextCursor` of the previous page. */
+        cursor?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description One page of jobs. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['JobPage'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getJobsSummary: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The queues. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['JobsSummary'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  cancelJob: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The job's id. */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The job, cancelled. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Job'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  retryJob: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+      };
+      path: {
+        /** @description The job's id. */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The job, queued again; or, for a repeated `Idempotency-Key`, the first response. */
+      200: {
+        headers: {
+          /** @description `true` on a replayed response. */
+          'Idempotent-Replayed'?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Job'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   getMe: {
     parameters: {
       query?: never;
@@ -2072,6 +2445,102 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  cancelQueue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The kind of job. */
+        kind: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The queue; `affected` counts the jobs cancelled. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['QueueResult'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  clearFinishedJobs: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The kind of job. */
+        kind: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The queue; `affected` counts the jobs deleted. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['QueueResult'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  pauseQueue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The kind of job, for example `archive.drain`. */
+        kind: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The queue, paused. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['QueueResult'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  resumeQueue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The kind of job. */
+        kind: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The queue, running again. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['QueueResult'];
+        };
       };
       default: components['responses']['Problem'];
     };
