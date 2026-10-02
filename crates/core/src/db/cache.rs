@@ -296,6 +296,15 @@ impl UserDbCache {
         self.cache.entry_count()
     }
 
+    /// Number of open databases, exact: the cache's pending work runs first,
+    /// evictions (which checkpoint and close) included. Blocking. The server
+    /// samples it for `shelfy_open_user_dbs`.
+    #[must_use]
+    pub fn open_count(&self) -> u64 {
+        self.cache.run_pending_tasks();
+        self.cache.entry_count()
+    }
+
     /// Whether no database is cached (approximate, like [`UserDbCache::len`]).
     #[must_use]
     pub fn is_empty(&self) -> bool {

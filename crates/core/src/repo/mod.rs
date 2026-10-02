@@ -57,7 +57,7 @@ pub enum RepoError {
 
 impl From<rusqlite::Error> for RepoError {
     fn from(e: rusqlite::Error) -> Self {
-        Self::Db(DbError::Sqlite(e))
+        Self::Db(DbError::from(e))
     }
 }
 

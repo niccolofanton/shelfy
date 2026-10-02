@@ -24,6 +24,7 @@ mod pool;
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use rusqlite::{Connection, Transaction};
@@ -45,9 +46,10 @@ use pool::{Database, PoolConfig};
 /// Errors from opening or using a database.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
-    /// SQLite reported an error.
+    /// SQLite reported an error. Build it with `DbError::from`, which counts
+    /// the lock failures ([`sqlite_busy_total`]).
     #[error(transparent)]
-    Sqlite(#[from] rusqlite::Error),
+    Sqlite(rusqlite::Error),
     /// A schema migration failed, or the file is newer than this build.
     #[error(transparent)]
     Migration(#[from] rusqlite_migration::Error),
@@ -105,6 +107,36 @@ impl DbError {
             _ => false,
         }
     }
+}
+
+impl From<rusqlite::Error> for DbError {
+    fn from(err: rusqlite::Error) -> Self {
+        if is_lock_failure(&err) {
+            SQLITE_BUSY.fetch_add(1, Ordering::Relaxed);
+        }
+        Self::Sqlite(err)
+    }
+}
+
+/// Whether SQLite gave up on a lock: `SQLITE_BUSY` or `SQLITE_LOCKED`.
+fn is_lock_failure(err: &rusqlite::Error) -> bool {
+    matches!(
+        err.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    )
+}
+
+/// See [`sqlite_busy_total`].
+static SQLITE_BUSY: AtomicU64 = AtomicU64::new(0);
+
+/// SQLite calls of this process that gave up on a lock, on any database:
+/// `SQLITE_BUSY` (another connection held the lock for the whole
+/// `busy_timeout`, 5 s) or `SQLITE_LOCKED`. Every such error passes through
+/// `DbError::from` (a [`crate::repo::RepoError`] too), which counts it. The
+/// server exports the count as `shelfy_sqlite_busy_total` (plan §3.6).
+#[must_use]
+pub fn sqlite_busy_total() -> u64 {
+    SQLITE_BUSY.load(Ordering::Relaxed)
 }
 
 /// Settings of a [`UserDb`] (plan §2.3: up to 2 readers, closed after 60 s idle).
@@ -344,5 +376,57 @@ impl ControlDb {
     #[must_use]
     pub fn open_connections(&self) -> (bool, usize) {
         self.0.open_connections()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repo::RepoError;
+
+    #[test]
+    fn lock_failures_are_counted_on_their_way_to_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.sqlite");
+        let config = UserDbConfig {
+            pragmas: Pragmas {
+                busy_timeout: Duration::from_millis(20),
+                ..Pragmas::default()
+            },
+            ..UserDbConfig::default()
+        };
+        let db = UserDb::open(&path, &config).unwrap();
+        // Another connection holds the write lock.
+        let other = Connection::open(&path).unwrap();
+        other.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+        // Tests running beside this one may count too: the counter only grows.
+        let before = sqlite_busy_total();
+        let err = db
+            .write(|tx| tx.execute_batch("SELECT 1").map_err(DbError::from))
+            .unwrap_err();
+        let DbError::Sqlite(busy) = &err else {
+            panic!("{err}")
+        };
+        assert!(is_lock_failure(busy), "{err}");
+        let after_write = sqlite_busy_total();
+        assert!(after_write > before, "{before} -> {after_write}");
+
+        // A repository error passes through the same conversion.
+        let nested = other.execute_batch("BEGIN IMMEDIATE").unwrap_err();
+        let syntax = other.execute_batch("NOT SQL").unwrap_err();
+        assert!(!is_lock_failure(&nested), "a nested BEGIN is a misuse");
+        assert!(!is_lock_failure(&syntax));
+        let blocked = Connection::open(&path).unwrap();
+        blocked.busy_timeout(Duration::from_millis(20)).unwrap();
+        let locked = blocked.execute_batch("BEGIN IMMEDIATE").unwrap_err();
+        assert!(is_lock_failure(&locked), "{locked}");
+        let repo = RepoError::from(locked);
+        assert!(matches!(repo, RepoError::Db(DbError::Sqlite(_))));
+        assert!(sqlite_busy_total() > after_write);
+
+        other.execute_batch("ROLLBACK").unwrap();
+        db.write(|tx| tx.execute_batch("SELECT 1").map_err(DbError::from))
+            .unwrap();
     }
 }
