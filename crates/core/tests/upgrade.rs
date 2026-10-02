@@ -10,14 +10,16 @@
 mod support;
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use rusqlite::Connection;
 use shelfy_core::db::{
     ControlDb, ControlDbConfig, DbError, LibraryUpgrade, UserDb, UserDbCache, UserDbCacheConfig,
     UserDbConfig, lock_library,
 };
-use shelfy_core::schema::{self, Kind, Upgrade};
+use shelfy_core::schema::{self, Kind, OLDER_BUILD_META_KEY, OlderBuild, Upgrade};
 use support::fixture_path;
 
 const USER: &str = "01J9Z3B8K4QW6TFX0V7G2N5RCA";
@@ -357,5 +359,229 @@ fn a_newer_control_database_boots_unless_its_compat_floor_refuses_this_build() {
             }
         ),
         "{err}"
+    );
+}
+
+/// Runs `openers` at once on the database at `path` while another connection
+/// holds its write lock, so every opener reads the old version before any of
+/// them can migrate; then lets them go. Returns what each opener reported.
+fn race<T: Send + 'static>(path: &Path, openers: Vec<Box<dyn FnOnce() -> T + Send>>) -> Vec<T> {
+    let holder = Connection::open(path).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let start = Arc::new(Barrier::new(openers.len() + 1));
+    let threads: Vec<_> = openers
+        .into_iter()
+        .map(|opener| {
+            let start = Arc::clone(&start);
+            thread::spawn(move || {
+                start.wait();
+                opener()
+            })
+        })
+        .collect();
+    start.wait();
+    thread::sleep(Duration::from_millis(500));
+    holder.execute_batch("COMMIT").unwrap();
+    threads.into_iter().map(|t| t.join().unwrap()).collect()
+}
+
+#[test]
+fn concurrent_openers_of_an_old_control_database_migrate_it_once() {
+    // Review of P1-12, M1: both openers read `user_version` before taking
+    // the write lock, so the second applied migration v2 again and failed
+    // with "duplicate column name: expires_at".
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("control.sqlite");
+    assert!(fixture_file(&path, Kind::Control, 1));
+    let wal: String = Connection::open(&path)
+        .unwrap()
+        .pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))
+        .unwrap();
+    assert_eq!(wal, "wal");
+
+    let opener = |path: std::path::PathBuf| -> Box<dyn FnOnce() -> Result<Upgrade, String> + Send> {
+        Box::new(move || {
+            ControlDb::open(&path, &ControlDbConfig::default())
+                .map(|db| db.schema_upgrade())
+                .map_err(|err| err.to_string())
+        })
+    };
+    let mut outcomes = race(&path, vec![opener(path.clone()), opener(path.clone())]);
+    outcomes.sort_by_key(|o| format!("{o:?}"));
+    let latest = Kind::Control.latest_version();
+    assert_eq!(
+        outcomes,
+        [
+            Ok(Upgrade::Current),
+            Ok(Upgrade::Upgraded {
+                from: 1,
+                to: latest
+            })
+        ],
+        "one opener migrates, the other finds nothing left to do"
+    );
+    let conn = Connection::open(&path).unwrap();
+    assert_eq!(schema::version(&conn).unwrap(), latest);
+    let columns: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM pragma_table_info('api_tokens') WHERE name = 'expires_at'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(columns, 1);
+}
+
+#[test]
+fn the_sweep_and_a_first_request_migrate_a_library_once() {
+    // Review of P1-12, M1: the sweep (outside the cache) and a first request
+    // (through it) on a library that was never migrated: the second one
+    // failed with "table posts already exists".
+    let dir = tempfile::tempdir().unwrap();
+    let users = dir.path().join("users");
+    let path = users.join(USER).join("library.sqlite");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // A WAL-mode file at v0: an open interrupted before its first migration.
+    let wal: String = Connection::open(&path)
+        .unwrap()
+        .pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get(0))
+        .unwrap();
+    assert_eq!(wal, "wal");
+
+    let cache = Arc::new(cache(&users));
+    let sweep: Box<dyn FnOnce() -> Result<String, String> + Send> = {
+        let cache = Arc::clone(&cache);
+        Box::new(move || {
+            cache
+                .upgrade(USER)
+                .map(|u| format!("{u:?}"))
+                .map_err(|e| e.to_string())
+        })
+    };
+    let request: Box<dyn FnOnce() -> Result<String, String> + Send> = {
+        let cache = Arc::clone(&cache);
+        Box::new(move || {
+            cache
+                .get(USER)
+                .map(|db| format!("{:?}", db.schema_upgrade()))
+                .map_err(|e| e.to_string())
+        })
+    };
+    let outcomes = race(&path, vec![sweep, request]);
+    let latest = Kind::Library.latest_version();
+    let upgraded = format!("Upgraded {{ from: 0, to: {latest} }}");
+    assert!(
+        outcomes.iter().all(Result::is_ok),
+        "neither opener fails: {outcomes:?}"
+    );
+    let migrated = outcomes
+        .iter()
+        .filter(|o| o.as_deref() == Ok(upgraded.as_str()))
+        .count();
+    assert_eq!(migrated, 1, "exactly one opener migrates: {outcomes:?}");
+    assert!(
+        outcomes.iter().any(|o| o.as_deref() == Ok("Current")),
+        "{outcomes:?}"
+    );
+
+    // The request's handle serves the migrated library.
+    let n: i64 = cache
+        .get(USER)
+        .unwrap()
+        .read(|c| {
+            c.query_row("SELECT count(*) FROM posts", [], |r| r.get(0))
+                .map_err(DbError::from)
+        })
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+fn older_build_record(path: &Path) -> Option<OlderBuild> {
+    schema::older_build(&Connection::open(path).unwrap()).unwrap()
+}
+
+#[test]
+fn opening_a_newer_library_records_that_an_older_build_wrote_to_it() {
+    // Review of P1-12, M5: a rolled-back build writes rows that the newer
+    // release's derived data does not cover, and nothing recorded it.
+    let dir = tempfile::tempdir().unwrap();
+    let users = dir.path().join("users");
+    let path = users.join(USER).join("library.sqlite");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    drop(UserDb::open(&path, &UserDbConfig::default()).unwrap());
+    let latest = Kind::Library.latest_version();
+    assert_eq!(
+        older_build_record(&path),
+        None,
+        "a current library records nothing"
+    );
+
+    let newer = make_newer(&path, Kind::Library, None);
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let db = UserDb::open(&path, &UserDbConfig::default()).unwrap();
+    assert_eq!(db.schema_upgrade(), Upgrade::Ahead { found: newer });
+    drop(db);
+    let record = older_build_record(&path).expect("recorded at open");
+    assert_eq!(record.build_version, latest);
+    assert!(i128::from(record.since) >= i128::try_from(before).unwrap());
+
+    // Opening it again keeps the first record; so does the sweep.
+    drop(UserDb::open(&path, &UserDbConfig::default()).unwrap());
+    assert_eq!(
+        cache(&users).upgrade(USER).unwrap(),
+        LibraryUpgrade::Ahead { found: newer }
+    );
+    assert_eq!(older_build_record(&path), Some(record));
+
+    // A build between this one and the file opened it first: the record
+    // goes down to this build's version and keeps the first time.
+    let set = |value: &str| {
+        Connection::open(&path)
+            .unwrap()
+            .execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+                [OLDER_BUILD_META_KEY, value],
+            )
+            .unwrap();
+    };
+    set(&format!(
+        r#"{{"buildVersion":{},"since":1000}}"#,
+        latest + 1
+    ));
+    drop(UserDb::open(&path, &UserDbConfig::default()).unwrap());
+    assert_eq!(
+        older_build_record(&path),
+        Some(OlderBuild {
+            build_version: latest,
+            since: 1000
+        })
+    );
+    // An older build on record stays.
+    set(r#"{"buildVersion":0,"since":5}"#);
+    drop(UserDb::open(&path, &UserDbConfig::default()).unwrap());
+    assert_eq!(
+        older_build_record(&path),
+        Some(OlderBuild {
+            build_version: 0,
+            since: 5
+        })
+    );
+
+    // The sweep records it for a library nobody opened since the rollback.
+    let other = "01J9Z3B8K4QW6TFX0V7G2N5RCB";
+    let other_path = users.join(other).join("library.sqlite");
+    std::fs::create_dir_all(other_path.parent().unwrap()).unwrap();
+    drop(UserDb::open(&other_path, &UserDbConfig::default()).unwrap());
+    make_newer(&other_path, Kind::Library, None);
+    assert!(matches!(
+        cache(&users).upgrade(other).unwrap(),
+        LibraryUpgrade::Ahead { .. }
+    ));
+    assert_eq!(
+        older_build_record(&other_path).map(|r| r.build_version),
+        Some(latest)
     );
 }
