@@ -7,14 +7,14 @@ Live status of [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). The plan is the
 - **Integration branch:** `web/foundations`, branched from `dev`. Every task lands on it as a fast-forward and is pushed; CI must be green.
 - **Lanes:** one task per lane. A lane is a Claude Code subagent in its own git worktree, on branch `web/<task>-<slug>`, started from the tip of `web/foundations`.
 - **Lead:** one session plans the waves, reviews each lane (diff, checks, and an independent reviewer for substantive tasks), integrates it and updates this file.
-- **Concurrency:** at most 2 lanes at once, because of the local disk budget.
+- **Concurrency:** at most 3 lanes at once, and only while 8 GB of local disk stay free: a Rust lane with its own target dir takes about 6 GB.
 
 ## Lane rules
 
 1. Read the plan sections your task cites before writing code. The plan is the spec.
 2. Branch from the integration tip: `git switch -c web/<task>-<slug> web/foundations`.
 3. Run `pnpm install --frozen-lockfile` once; it installs the git hooks and lets you run the desktop checks.
-4. Rust uses the toolchain pinned in `rust-toolchain.toml`. Keep the preset `CARGO_TARGET_DIR`; cargo may wait on its build lock.
+4. Rust uses the toolchain pinned in `rust-toolchain.toml`. Run cargo with `CARGO_TARGET_DIR="$PWD/target"`: with a shared target dir, lanes overwrite each other's test binaries.
 5. Scope is additive (D25): the desktop app (`electron/`, `src/`, root build config) stays untouched unless the task says otherwise. Do not change the root `package.json` or `pnpm-lock.yaml` unless the task needs a dependency, and say so.
 6. Commits: Conventional Commits in English, header ≤ 100 characters, no `Co-Authored-By` trailer. Stage explicit paths, never `git add -A`, never `--no-verify`, never `git stash` (the stash is shared across worktrees). Do not push or merge.
 7. Before finishing, rebase on `web/foundations` if it moved, re-run the checks, and leave the worktree clean.
@@ -50,12 +50,16 @@ These owner decisions override the plan where they conflict.
 | T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | running | `web/t8-media` |
 | T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | todo | |
 | T10 | Owner auth v0: magic link, sessions, CSRF | T7 | running | `web/t10-auth` |
-| T11 | Read API and generated TS client | T4, T7 | running | `web/t11-read-api` |
+| T11 | Read API and generated TS client | T4, T7 | done | `web/t11-read-api` (fc1c3b7…9b0f643) |
 | T12 | SPA slice behind `ShelfyClient` | T10, T11 | todo | |
 
 ### P1 — Library on the web
 
-27 tasks in 13 waves: [phases/P1.md](phases/P1.md). Starts when the P0 tasks it needs are integrated.
+27 tasks in 13 waves: [phases/P1.md](phases/P1.md). A task starts as soon as the tasks it needs are integrated.
+
+| Task | What | Status | Branch |
+|---|---|---|---|
+| P1-01 | Realtime: SSE bus, notifications, client errors, version | running | `web/p1-01-realtime` |
 
 ### P2–P6
 
