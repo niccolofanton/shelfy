@@ -4,9 +4,9 @@
 //!   a `request` span carrying its id, method and route template; the
 //!   response is logged with status and latency ([`http`]). URLs, query
 //!   strings, headers and bodies are never logged; values that must not leak
-//!   travel in [`redact::Redacted`]. Libraries that log secrets at debug or
-//!   trace level ([`SECRET_TARGETS`]) are held at WARN, whatever `RUST_LOG`
-//!   says.
+//!   travel in [`redact::Redacted`], and free text from clients is scrubbed
+//!   by [`redact::ClientText`]. Libraries that log secrets at debug or trace
+//!   level ([`SECRET_TARGETS`]) are held at WARN, whatever `RUST_LOG` says.
 //! - **Metrics:** Prometheus text on a separate listener ([`metrics`]), with
 //!   no per-user labels.
 

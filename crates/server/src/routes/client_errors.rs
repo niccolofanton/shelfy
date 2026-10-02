@@ -4,9 +4,11 @@
 //! A report becomes one `warn` log line, in the request's span (request id,
 //! user). It has technical fields only: unknown fields are refused, so a
 //! report cannot carry a post, a caption or a note, and `route` is the route
-//! pattern, never the URL with its query string. Free text is clipped before
-//! it reaches the log. The body is capped at the default 64 KiB; the per-user
-//! rate limit comes with P1-15.
+//! pattern, never the URL with its query string. Free text is scrubbed
+//! ([`ClientText`]: URLs other than the web app's assets, email addresses,
+//! query strings and tokens go) and clipped before it reaches the log. The
+//! body is capped at the default 64 KiB, and a user may send 10 reports a
+//! minute ([`crate::rate_limit`]).
 //!
 //! Like every unsafe request, a report passes the CSRF guard
 //! ([`crate::auth::csrf`]): the web app sends it with `fetch` (`keepalive:
@@ -20,6 +22,7 @@ use utoipa::ToSchema;
 use crate::current_user::CurrentUser;
 use crate::error::ApiError;
 use crate::extract::Json;
+use crate::telemetry::redact::ClientText;
 
 /// Characters of `message` kept in the log.
 pub const MESSAGE_CHARS: usize = 1_000;
@@ -128,18 +131,28 @@ pub async fn report_client_error(
     Json(report): Json<ClientErrorReport>,
 ) -> Result<StatusCode, ApiError> {
     report.validate()?;
+    let name = report.name.as_deref().map(scrubbed);
+    let message = scrubbed(&report.message);
+    let stack = report.stack.as_deref().map(scrubbed);
+    let component_stack = report.component_stack.as_deref().map(scrubbed);
     tracing::warn!(
         view = %report.view,
-        error_name = report.name.as_deref().map(|n| clip(n, NAME_CHARS)),
-        error_message = clip(&report.message, MESSAGE_CHARS),
-        stack = report.stack.as_deref().map(|s| clip(s, STACK_CHARS)),
-        component_stack = report.component_stack.as_deref().map(|s| clip(s, STACK_CHARS)),
+        error_name = name.as_deref().map(|n| clip(n, NAME_CHARS)),
+        error_message = clip(&message, MESSAGE_CHARS),
+        stack = stack.as_deref().map(|s| clip(s, STACK_CHARS)),
+        component_stack = component_stack.as_deref().map(|s| clip(s, STACK_CHARS)),
         client_route = report.route.as_deref(),
         client_version = report.client_version.as_deref(),
         occurred_at = report.occurred_at,
         "client error"
     );
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Free text as it may be logged ([`ClientText`]): scrubbed first, so the
+/// clip never leaves part of a URL or a token behind.
+fn scrubbed(text: &str) -> String {
+    ClientText(text).scrubbed()
 }
 
 /// The first `max` characters of `text`.

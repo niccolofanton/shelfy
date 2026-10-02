@@ -21,6 +21,8 @@ moka.workspace = true
 # Enables `vendored` for webauthn-rs's OpenSSL (see the workspace manifest); the tests' software
 # authenticator signs with it.
 openssl.workspace = true
+# Scrubbing the free text of client error reports before it is logged.
+regex.workspace = true
 # `backup`: the SQLite online backup API behind `admin snapshot`.
 rusqlite = { workspace = true, features = ["backup"] }
 serde.workspace = true

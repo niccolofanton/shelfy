@@ -2413,6 +2413,7 @@ dependencies = [
  "moka",
  "openssl",
  "proptest",
+ "regex",
  "rusqlite",
  "serde",
  "serde_html_form",
