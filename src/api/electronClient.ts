@@ -106,6 +106,11 @@ export function createElectronClient(
             platform: typeof payload.platform === 'string' ? payload.platform : undefined,
           });
         });
+      } else if (type === 'stats.changed') {
+        // No IPC channel carries the counters: like the app before the seam,
+        // every interceptor:newPosts may have moved them (plan App. A:
+        // interceptor:newPosts → posts.changed + stats.changed).
+        off = api.onNewPosts?.(() => emit({ type: 'stats.changed' }));
       } else if (type === 'post.stored' || type === 'post.analyzed') {
         // Only a finished job changes what a post shows; progress ticks don't.
         const subscribe = type === 'post.stored' ? api.onDownloadProgress : api.onAnalyzeProgress;
@@ -118,6 +123,11 @@ export function createElectronClient(
       return () => {
         if (typeof off === 'function') off();
       };
+    },
+
+    // The desktop has no crash endpoint: the report goes to the console.
+    reportError({ view, error, componentStack }): void {
+      console.error(`[ErrorBoundary] ${view}:`, error, componentStack ?? '');
     },
   };
 }

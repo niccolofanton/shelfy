@@ -37,11 +37,21 @@ export function isApiError(err: unknown, code?: ApiError['code']): err is ApiErr
 
 type UnsafeMethod = 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
+export interface SendOptions {
+  // Let the request outlive the page (fetch `keepalive`): crash reports.
+  keepalive?: boolean;
+}
+
 export interface Http {
   // GET `path` (with `query`) and parse the JSON answer.
   get<T>(path: string, query?: URLSearchParams, signal?: AbortSignal): Promise<T>;
   // A state-changing request with an optional JSON body; resolves on 2xx.
-  send(method: UnsafeMethod, path: string, body?: unknown): Promise<Response>;
+  send(
+    method: UnsafeMethod,
+    path: string,
+    body?: unknown,
+    options?: SendOptions,
+  ): Promise<Response>;
   // Called whenever the server answers 401: the session is gone. Returns the
   // unsubscribe function.
   onUnauthorized(listener: () => void): () => void;
@@ -57,6 +67,7 @@ function codeOfStatus(status: number): ErrorCode {
   if (status === 401) return 'unauthorized';
   if (status === 403) return 'forbidden';
   if (status === 404) return 'not_found';
+  if (status === 423) return 'user_locked';
   if (status === 429) return 'rate_limited';
   return status >= 500 ? 'unavailable' : 'bad_request';
 }
@@ -85,7 +96,12 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
   async function request(
     method: 'GET' | UnsafeMethod,
     path: string,
-    init: { query?: URLSearchParams; body?: unknown; signal?: AbortSignal } = {},
+    init: {
+      query?: URLSearchParams;
+      body?: unknown;
+      signal?: AbortSignal;
+      keepalive?: boolean;
+    } = {},
   ): Promise<Response> {
     const qs = init.query?.toString();
     const headers: Record<string, string> = { Accept: 'application/json' };
@@ -99,6 +115,7 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
         body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
         credentials: 'same-origin',
         signal: init.signal,
+        ...(init.keepalive ? { keepalive: true } : {}),
       });
     } catch (err) {
       if (init.signal?.aborted) throw err;
@@ -114,7 +131,8 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
       const res = await request('GET', path, { query, signal });
       return (await res.json()) as T;
     },
-    send: (method, path, body) => request(method, path, { body }),
+    send: (method, path, body, options) =>
+      request(method, path, { body, keepalive: options?.keepalive }),
     onUnauthorized(listener) {
       unauthorized.add(listener);
       return () => {

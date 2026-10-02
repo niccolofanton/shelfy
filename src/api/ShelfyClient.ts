@@ -82,11 +82,35 @@ export interface PostPage {
   nextCursor: string | null;
 }
 
+// What changed posts, when the backend says (the web API's reasons).
+export type PostsChangeReason =
+  | 'ingest'
+  | 'archive'
+  | 'ai'
+  | 'edit'
+  | 'delete'
+  | 'capture'
+  | 'import';
+
 // Live changes to the library, pushed by the backend.
 export type ShelfyEvent =
-  // Posts were added or changed (sync, capture, import…). `count` and
-  // `platform` describe a batch of new posts when the backend knows them.
-  | { type: 'posts.changed'; count?: number; platform?: string }
+  // Posts were added, changed or removed (sync, capture, import, edits…).
+  // `count` and `platform` describe a batch of new posts when the backend
+  // knows them (the desktop); `keys` names the changed posts when they are
+  // few (the web: at most 200, null for more) and `reason` says what changed.
+  | {
+      type: 'posts.changed';
+      count?: number;
+      platform?: string;
+      keys?: string[] | null;
+      reason?: PostsChangeReason;
+    }
+  // The library's counters changed: reload the stats.
+  | { type: 'stats.changed' }
+  // Live changes were lost (the web stream fell behind, or the server
+  // restarted): reload everything on screen. The desktop's IPC loses nothing
+  // and never sends it.
+  | { type: 'resync' }
   // A post's media finished landing (stored / downloaded).
   | { type: 'post.stored'; postId: string | null }
   // A post's AI analysis finished.
@@ -107,6 +131,16 @@ export interface MediaUrls {
   isStored(src: string | null | undefined): boolean;
 }
 
+// An error that a view's error boundary caught (src/components/ErrorBoundary.tsx).
+export interface ViewErrorReport {
+  // The view whose boundary caught it: 'gallery', 'postModal', 'settings'…
+  view: string;
+  // What was thrown.
+  error: unknown;
+  // React's component stack, when known.
+  componentStack?: string | null;
+}
+
 export interface ShelfyClient {
   readonly capabilities: ShelfyCapabilities;
   readonly media: MediaUrls;
@@ -124,4 +158,9 @@ export interface ShelfyClient {
 
   // Subscribes to one kind of live event; returns the unsubscribe function.
   on<T extends ShelfyEventType>(type: T, listener: (event: ShelfyEventOf<T>) => void): () => void;
+
+  // Reports an error an error boundary caught. The web client sends it to the
+  // server (throttled, technical fields only); the desktop logs it. Never
+  // throws.
+  reportError(report: ViewErrorReport): void;
 }

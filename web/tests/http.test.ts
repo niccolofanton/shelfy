@@ -56,10 +56,11 @@ describe('http', () => {
   it('maps an answer that is not a problem by its status', async () => {
     const page = (status: number) => new Response('<html>proxy page</html>', { status });
     const fetch = vi.fn();
-    for (const status of [502, 401, 403, 404, 429, 400]) fetch.mockResolvedValueOnce(page(status));
+    const statuses = [502, 401, 403, 404, 423, 429, 400];
+    for (const status of statuses) fetch.mockResolvedValueOnce(page(status));
     const http = createHttp({ fetch });
     const codes = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < statuses.length; i++) {
       codes.push(await http.get('/api/v1/stats').catch((e: ApiError) => e.code));
     }
     expect(codes).toEqual([
@@ -67,9 +68,19 @@ describe('http', () => {
       'unauthorized',
       'forbidden',
       'not_found',
+      'user_locked',
       'rate_limited',
       'bad_request',
     ]);
+  });
+
+  it('sends a request that outlives the page when asked', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const http = createHttp({ fetch });
+    await http.send('POST', '/api/v1/client-errors', { view: 'gallery' }, { keepalive: true });
+    await http.send('POST', '/api/v1/auth/logout');
+    expect(fetch.mock.calls[0][1].keepalive).toBe(true);
+    expect('keepalive' in fetch.mock.calls[1][1]).toBe(false);
   });
 
   it('reports a request that got no answer as a network error', async () => {

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, startTransition } from 'react
 import { useT } from '../i18n';
 import { toApiFilters } from '../lib/postFilters';
 import { useShelfy } from '../api/ShelfyProvider';
+import { errorMessageKey } from '../api/errors';
 
 // UI-side filter bag accepted by the Gallery surfaces. Mirrors the fields
 // toApiFilters reads; pagination `limit` is the only window control here.
@@ -262,7 +263,14 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
       } catch (err) {
         if (thisRequest.signal.aborted) return;
         console.error('[usePosts] fetch error:', err);
-        if (!isLive) setError((err instanceof Error ? err.message : null) ?? t('loadPosts'));
+        // A web API failure says what went wrong with its problem code; the
+        // desktop's IPC errors have no code and keep their message.
+        const codeKey = errorMessageKey(err);
+        if (!isLive) {
+          setError(
+            codeKey ? t(codeKey) : ((err instanceof Error ? err.message : null) ?? t('loadPosts')),
+          );
+        }
       } finally {
         if (!thisRequest.signal.aborted) {
           setBusy(false);
@@ -288,11 +296,13 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
   }, [active]);
 
   // -----------------------------------------------------------------------
-  // Keep the grid live while background work runs. Three client events feed it
-  // (on the desktop: interceptor:newPosts, download:progress, analyze:progress):
-  //   • posts.changed — scraping / sync / web placeholders insert rows
+  // Keep the grid live while background work runs. Four client events feed it
+  // (on the desktop: interceptor:newPosts, download:progress, analyze:progress;
+  // on the web: the SSE stream's posts.changed and resync):
+  //   • posts.changed — scraping / sync / web placeholders / edits change rows
   //   • post.stored   — a post's media landed (local asset path written)
   //   • post.analyzed — a completed analysis wrote ai_tags / ai_status
+  //   • resync        — live events were lost: the list may be stale
   // so the gallery reflects new media and tags as they land, not only at the end.
   //
   // Finished jobs carry the post id, so when the active filters can't change
@@ -347,6 +357,7 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
     };
 
     const offNew = client.on('posts.changed', () => schedule());
+    const offResync = client.on('resync', () => schedule());
     // Only finished jobs change what listPosts returns (the client drops the
     // mid-progress ticks, which would just thrash the grid).
     const offDownload = client.on('post.stored', (job) => {
@@ -390,6 +401,7 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
       if (quietTimer) clearTimeout(quietTimer);
       if (maxTimer) clearTimeout(maxTimer);
       offNew();
+      offResync();
       offDownload();
       offAnalyze();
     };

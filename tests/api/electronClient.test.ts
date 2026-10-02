@@ -95,6 +95,38 @@ describe('electronClient — events', () => {
     off();
     expect(unsubscribe).toHaveBeenCalled();
   });
+
+  it('reports moved counters on every new-posts push, as the app assumed before', () => {
+    const unsubscribe = vi.fn();
+    vi.mocked(window.electronAPI.onNewPosts).mockReturnValue(unsubscribe);
+    const listener = vi.fn();
+    const off = createElectronClient().on('stats.changed', listener);
+    const cb = vi.mocked(window.electronAPI.onNewPosts).mock.calls[0][0];
+
+    cb({ count: 2, platform: 'instagram' });
+    cb({ reason: 'thumb-blur' });
+
+    expect(listener.mock.calls).toEqual([[{ type: 'stats.changed' }], [{ type: 'stats.changed' }]]);
+    off();
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it('never resyncs: the IPC loses no event', () => {
+    const client = createElectronClient();
+    const off = client.on('resync', vi.fn());
+    expect(window.electronAPI.onNewPosts).not.toHaveBeenCalled();
+    expect(window.electronAPI.onDownloadProgress).not.toHaveBeenCalled();
+    expect(window.electronAPI.onAnalyzeProgress).not.toHaveBeenCalled();
+    expect(() => off()).not.toThrow();
+  });
+
+  it('logs the reports of the error boundaries', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const crash = new TypeError('boom');
+    createElectronClient().reportError({ view: 'gallery', error: crash, componentStack: 'at X' });
+    expect(error).toHaveBeenCalledWith('[ErrorBoundary] gallery:', crash, 'at X');
+    error.mockRestore();
+  });
 });
 
 describe('electronClient — capabilities and media', () => {

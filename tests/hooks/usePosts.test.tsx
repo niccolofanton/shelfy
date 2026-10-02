@@ -634,6 +634,7 @@ describe('usePosts — cursor paging through a ShelfyClient', () => {
       listCollections: vi.fn().mockResolvedValue([]),
       openExternal: vi.fn(),
       on: vi.fn(() => () => {}),
+      reportError: vi.fn(),
     };
   }
   const ids = (prefix: string, n: number): Shelfy.Post[] =>
@@ -726,5 +727,79 @@ describe('usePosts — cursor paging through a ShelfyClient', () => {
     rerender({ ...defaultFilters, platform: 'twitter', limit: 50 });
     await waitFor(() => expect(result.current.posts).toHaveLength(3));
     expect(firstSignal?.aborted).toBe(true);
+  });
+});
+
+// ─── 12. The web stream's events and errors ───────────────────────────────────
+
+describe('usePosts — web stream and API errors', () => {
+  // A client that keeps its subscribers, so a test can push events.
+  function liveClient() {
+    const listeners = new Map<string, ((event: unknown) => void)[]>();
+    const client: ShelfyClient & { listPosts: Mock } = {
+      capabilities: desktopCapabilities('darwin'),
+      media: { file: (r) => r ?? null, tile: (r) => r ?? null, isStored: () => false },
+      listPosts: vi.fn().mockResolvedValue({ posts: [], total: 0, nextCursor: null }),
+      getPostsByIds: vi.fn().mockResolvedValue([]),
+      getStats: vi.fn(),
+      listCollections: vi.fn().mockResolvedValue([]),
+      openExternal: vi.fn(),
+      on: vi.fn((type: string, listener: (event: unknown) => void) => {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+        return () => {};
+      }) as ShelfyClient['on'],
+      reportError: vi.fn(),
+    };
+    const emit = (type: string, event: unknown = { type }) =>
+      (listeners.get(type) ?? []).forEach((listener) => listener(event));
+    return { client, emit };
+  }
+  const wrapperOf = (client: ShelfyClient) =>
+    function Provider({ children }: { children: React.ReactNode }) {
+      return <ShelfyProvider client={client}>{children}</ShelfyProvider>;
+    };
+
+  it('reloads after a resync, through the coalesced reload', async () => {
+    vi.useFakeTimers();
+    const { client, emit } = liveClient();
+    renderHook(() => usePosts(defaultFilters), { wrapper: wrapperOf(client) });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const callsBefore = client.listPosts.mock.calls.length;
+
+    act(() => emit('resync'));
+    act(() => {
+      vi.advanceTimersByTime(399);
+    });
+    expect(client.listPosts.mock.calls.length).toBe(callsBefore);
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+    });
+    expect(client.listPosts.mock.calls.length).toBe(callsBefore + 1);
+
+    vi.runAllTimers();
+    vi.useRealTimers();
+  });
+
+  it("shows an API failure's message from its problem code", async () => {
+    const { client } = liveClient();
+    client.listPosts.mockRejectedValue(
+      Object.assign(new Error('unavailable: database busy'), { code: 'unavailable' }),
+    );
+    const { result } = renderHook(() => usePosts(defaultFilters), { wrapper: wrapperOf(client) });
+    await waitFor(() =>
+      expect(result.current.error).toBe('Il server è occupato. Riprova tra poco.'),
+    );
+  });
+
+  it('keeps the message of an error with no known code', async () => {
+    const { client } = liveClient();
+    client.listPosts.mockRejectedValue(
+      Object.assign(new Error('SQLITE_BUSY: locked'), { code: 'SQLITE_BUSY' }),
+    );
+    const { result } = renderHook(() => usePosts(defaultFilters), { wrapper: wrapperOf(client) });
+    await waitFor(() => expect(result.current.error).toBe('SQLITE_BUSY: locked'));
   });
 });

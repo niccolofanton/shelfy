@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { EventStream } from '../src/api/events';
 import type { Http } from '../src/api/http';
 import { ApiError } from '../src/api/http';
 import { WEB_CAPABILITIES, createHttpClient, openExternalUrl } from '../src/api/httpClient';
@@ -170,5 +171,99 @@ describe('httpClient — capabilities, links and events', () => {
     expect(vi.mocked(open).mock.calls).toEqual([
       ['https://www.instagram.com/p/C0ffee/', '_blank', 'noopener,noreferrer'],
     ]);
+  });
+});
+
+describe('httpClient — live events and error reports', () => {
+  // An EventStream the test drives by event name.
+  function fakeStream() {
+    const listeners = new Map<string, ((data: unknown) => void)[]>();
+    const events: EventStream = {
+      state: 'open',
+      lastEventId: null,
+      on(name, listener) {
+        const entry = listener as (data: unknown) => void;
+        listeners.set(name, [...(listeners.get(name) ?? []), entry]);
+        return () =>
+          listeners.set(
+            name,
+            (listeners.get(name) ?? []).filter((l) => l !== entry),
+          );
+      },
+    };
+    const push = (name: string, data: unknown) =>
+      (listeners.get(name) ?? []).forEach((listener) => listener(data));
+    return { events, push, count: (name: string) => (listeners.get(name) ?? []).length };
+  }
+
+  it('hands the stream events to the UI in the seam terms', () => {
+    const { http } = fakeHttp({});
+    const { events, push, count } = fakeStream();
+    const client = createHttpClient(http, { events });
+    const changed = vi.fn();
+    const stats = vi.fn();
+    const resync = vi.fn();
+    const offChanged = client.on('posts.changed', changed);
+    client.on('stats.changed', stats);
+    client.on('resync', resync);
+
+    push('posts.changed', { keys: ['ig_1'], reason: 'edit' });
+    push('posts.changed', { keys: null, reason: 'ingest' });
+    push('stats.changed', {});
+    push('resync', { reason: 'expired' });
+
+    expect(changed.mock.calls).toEqual([
+      [{ type: 'posts.changed', keys: ['ig_1'], reason: 'edit' }],
+      [{ type: 'posts.changed', keys: null, reason: 'ingest' }],
+    ]);
+    expect(stats.mock.calls).toEqual([[{ type: 'stats.changed' }]]);
+    expect(resync.mock.calls).toEqual([[{ type: 'resync' }]]);
+    offChanged();
+    expect(count('posts.changed')).toBe(0);
+  });
+
+  it('subscribes to nothing for events the server does not send yet', () => {
+    const { http } = fakeHttp({});
+    const { events, count } = fakeStream();
+    const client = createHttpClient(http, { events });
+    expect(typeof client.on('post.stored', vi.fn())).toBe('function');
+    expect(typeof client.on('post.analyzed', vi.fn())).toBe('function');
+    expect(['job.updated', 'posts.changed', 'notification'].map(count)).toEqual([0, 0, 0]);
+  });
+
+  it('checks the session when the stream cannot connect', async () => {
+    const refuse: (() => void)[] = [];
+    class Refused {
+      onopen: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      constructor() {
+        refuse.push(() => this.onerror?.(new Event('error')));
+      }
+      addEventListener(): void {}
+      close(): void {}
+    }
+    vi.stubGlobal('EventSource', Refused);
+    try {
+      const { http, calls } = fakeHttp({});
+      const off = createHttpClient(http).on('posts.changed', vi.fn());
+      refuse[0]();
+      off();
+      await Promise.resolve();
+      expect(calls.map((c) => c.path)).toEqual(['/api/v1/me']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('passes error reports on, and takes its capabilities from the caller', () => {
+    const { http } = fakeHttp({});
+    const reportError = vi.fn();
+    const capabilities = { ...WEB_CAPABILITIES, libraryEdit: true };
+    const client = createHttpClient(http, { reportError, capabilities });
+    const report = { view: 'gallery', error: new Error('boom') };
+    client.reportError(report);
+    expect(reportError).toHaveBeenCalledWith(report);
+    expect(client.capabilities.libraryEdit).toBe(true);
+    expect(() => createHttpClient(http).reportError(report)).not.toThrow();
   });
 });

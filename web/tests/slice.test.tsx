@@ -75,6 +75,7 @@ function webClient(): MockClient {
     listCollections: vi.fn().mockResolvedValue(FOLDERS),
     openExternal: vi.fn(),
     on: vi.fn(() => () => {}),
+    reportError: vi.fn(),
   };
 }
 

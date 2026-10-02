@@ -1,12 +1,15 @@
 // The web ShelfyClient: the HTTP API of shelfy-server (`/api/v1`), typed by
-// the generated OpenAPI types (./schema.d.ts).
+// the generated OpenAPI types (./schema.d.ts), and its realtime stream.
 import type {
   PageRequest,
   PostPage,
   PostQuery,
   ShelfyCapabilities,
   ShelfyClient,
+  ShelfyEvent,
+  ViewErrorReport,
 } from '@ui/api/ShelfyClient';
+import { createEventStream, type EventStream } from './events';
 import { isApiError, type Http } from './http';
 import {
   MAX_PAGE_SIZE,
@@ -24,8 +27,9 @@ type Schemas = components['schemas'];
 // What the web app can do so far: browse and read. Each capability turns on
 // with the task that brings its API (libraryEdit: P1-06, bulkActions: P1-14,
 // settings: P1-20, ai: P3…); the desktop-only ones (window chrome, local
-// files, in-app browsers, live page fallback) stay off. P1-20 reads them from
-// `GET /me` instead.
+// files, in-app browsers, live page fallback) stay off. Until P1-20 they are
+// this static set; then the client is made with the `capabilities` of
+// `GET /me` (HttpClientOptions).
 export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
   windowControls: false,
   trafficLights: false,
@@ -54,9 +58,28 @@ export function openExternalUrl(url: string, open: typeof window.open = window.o
   open.call(window, url, '_blank', 'noopener,noreferrer');
 }
 
-export function createHttpClient(http: Http): ShelfyClient {
+export interface HttpClientOptions {
+  // What this client can do. Default: WEB_CAPABILITIES.
+  capabilities?: ShelfyCapabilities;
+  // The realtime stream. Default: `/api/v1/events`, whose failed connections
+  // check the session (`GET /me`), so an expired one signs the app out.
+  events?: EventStream;
+  // Where error-boundary reports go (./clientErrors.ts). Default: dropped.
+  reportError?: (report: ViewErrorReport) => void;
+}
+
+export function createHttpClient(http: Http, options: HttpClientOptions = {}): ShelfyClient {
+  const events =
+    options.events ??
+    createEventStream({
+      // A 401 here reaches Http's unauthorized listeners; any other failure
+      // is the stream's to retry.
+      onConnectFailed: () => void http.get('/api/v1/me').catch(() => {}),
+    });
+  const reportError = options.reportError ?? (() => {});
+
   return {
-    capabilities: WEB_CAPABILITIES,
+    capabilities: options.capabilities ?? WEB_CAPABILITIES,
     media: webMedia,
 
     // One window of `limit` posts: as many API pages as it takes (at most 200
@@ -113,7 +136,25 @@ export function createHttpClient(http: Http): ShelfyClient {
 
     openExternal: (url) => openExternalUrl(url),
 
-    // Live updates arrive with the SSE client (P1-04); until then nothing is pushed.
-    on: () => () => {},
+    // The stream's events, in the seam's terms. `post.stored` and
+    // `post.analyzed` have no source yet: archive and AI jobs (P2–P4) report
+    // through `job.updated`, and their changes already come as `posts.changed`.
+    on(type, listener) {
+      const emit = listener as (event: ShelfyEvent) => void;
+      switch (type) {
+        case 'posts.changed':
+          return events.on('posts.changed', ({ keys, reason }) =>
+            emit({ type: 'posts.changed', keys, reason }),
+          );
+        case 'stats.changed':
+          return events.on('stats.changed', () => emit({ type: 'stats.changed' }));
+        case 'resync':
+          return events.on('resync', () => emit({ type: 'resync' }));
+        default:
+          return () => {};
+      }
+    },
+
+    reportError,
   };
 }
