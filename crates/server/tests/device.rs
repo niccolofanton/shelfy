@@ -435,12 +435,17 @@ fn from_peer(mut request: Request<Body>, peer: &str) -> Request<Body> {
 }
 
 #[tokio::test]
-async fn starting_shares_the_sign_in_limit_and_polling_does_not() {
+async fn polls_skip_the_sign_in_limit_and_are_paced_per_device_code() {
     let t = TestState::with_config(|config: &mut Config| {
         config.auth.device_poll_interval = Duration::ZERO;
     });
     let app = t.app();
     let start_from = |peer: &str| from_peer(cli_post("/api/v1/auth/device/start", None), peer);
+    let poll_from = |device_code: &Value, peer: &str| {
+        let body = json!({ "deviceCode": device_code });
+        from_peer(cli_post("/api/v1/auth/device/poll", Some(&body)), peer)
+    };
+    // Starting counts like every sign-in request: 10 a minute per client.
     let mut device_code = Value::Null;
     for _ in 0..10 {
         let response = send(&app, start_from("198.51.100.7")).await;
@@ -450,19 +455,30 @@ async fn starting_shares_the_sign_in_limit_and_polling_does_not() {
     let response = send(&app, start_from("198.51.100.7")).await;
     assert!(response.headers().contains_key(header::RETRY_AFTER));
     problem(response, StatusCode::TOO_MANY_REQUESTS).await;
-    assert_eq!(
-        send(&app, start_from("198.51.100.8")).await.status(),
-        StatusCode::OK
-    );
-    // The device code is the poll's protection: polls are not counted.
-    for _ in 0..20 {
-        let body = json!({ "deviceCode": device_code });
-        let request = from_peer(
-            cli_post("/api/v1/auth/device/poll", Some(&body)),
-            "198.51.100.7",
-        );
-        assert_eq!(send(&app, request).await.status(), StatusCode::OK);
+    let other = json(send(&app, start_from("198.51.100.8")).await).await["deviceCode"].clone();
+
+    // Polls are not counted: the client is over the sign-in limit, and its
+    // CLI still polls. A device code takes 20 polls a minute.
+    for i in 0..20 {
+        let response = send(&app, poll_from(&device_code, "198.51.100.7")).await;
+        assert_eq!(response.status(), StatusCode::OK, "poll {i}");
     }
+    let response = send(&app, poll_from(&device_code, "198.51.100.7")).await;
+    let wait: u64 = response.headers()[header::RETRY_AFTER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!((1..=60).contains(&wait), "{wait}");
+    let refused = problem(response, StatusCode::TOO_MANY_REQUESTS).await;
+    assert_eq!(refused.code, ErrorCode::RateLimited);
+    assert_eq!(
+        refused.detail.as_deref(),
+        Some("too many polls of this device code")
+    );
+    // Another device code, from the same client, has its own pace.
+    let response = send(&app, poll_from(&other, "198.51.100.7")).await;
+    assert_eq!(json(response).await["status"], "pending");
 }
 
 #[tokio::test]

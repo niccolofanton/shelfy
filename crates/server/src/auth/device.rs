@@ -29,7 +29,12 @@
 //!
 //! **Pacing.** A poll that comes sooner than the interval (with 20 % leeway)
 //! answers `slow_down`, and the interval grows by 5 seconds (RFC 8628 §3.5)
-//! up to [`MAX_INTERVAL`].
+//! up to [`MAX_INTERVAL`]. A device code takes at most
+//! [`MAX_POLLS_PER_MINUTE`] polls a minute, `slow_down` answers included;
+//! past that, polls answer 429 until the minute is over. That bound is per
+//! device code because the poll is not counted by the sign-in limit per
+//! client address ([`crate::rate_limit::UNCOUNTED_SIGN_IN_ROUTES`]): the
+//! CLI and the browser that approves its code usually share an address.
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -66,6 +71,12 @@ pub const SLOW_DOWN_STEP: Duration = Duration::from_secs(5);
 pub const MAX_INTERVAL: Duration = Duration::from_secs(60);
 /// The scope a device gets.
 pub const DEVICE_SCOPE: Scope = Scope::Migrate;
+/// Most polls of one device code in a minute. A CLI that keeps to the
+/// interval polls 12 times a minute at most.
+pub const MAX_POLLS_PER_MINUTE: u32 = 20;
+
+/// The window of [`MAX_POLLS_PER_MINUTE`], unix ms.
+const POLL_WINDOW_MS: i64 = 60_000;
 
 /// Domain separation of the user-code digests.
 const USER_CODE_PREFIX: &[u8] = b"shelfy.device.user-code\0";
@@ -92,6 +103,9 @@ struct Flow {
     expires_at: i64,
     interval_ms: i64,
     last_poll_at: Option<i64>,
+    /// The start of the current minute of polls, unix ms, and its polls.
+    window_start: i64,
+    window_polls: u32,
     state: FlowState,
 }
 
@@ -134,6 +148,12 @@ pub enum Polled {
     /// Approved: mint the token, then [`DeviceFlows::delivered`], or
     /// [`DeviceFlows::release`] when minting failed.
     Approved(Delivery),
+    /// Polled [`MAX_POLLS_PER_MINUTE`] times this minute already: refused
+    /// for `retry_after`.
+    Limited {
+        /// The wait until the minute is over.
+        retry_after: Duration,
+    },
     /// Unknown, expired, or delivered already.
     Invalid,
 }
@@ -207,6 +227,8 @@ impl DeviceFlows {
             expires_at: now.saturating_add(millis(self.ttl)),
             interval_ms: millis(self.interval),
             last_poll_at: None,
+            window_start: now,
+            window_polls: 0,
             state: FlowState::Pending,
         };
         let device = device_code.hash();
@@ -237,6 +259,16 @@ impl DeviceFlows {
             self.forget(&device, &user_code);
             return Polled::Invalid;
         }
+        if now.saturating_sub(flow.window_start) >= POLL_WINDOW_MS {
+            flow.window_start = now;
+            flow.window_polls = 0;
+        }
+        if flow.window_polls >= MAX_POLLS_PER_MINUTE {
+            return Polled::Limited {
+                retry_after: duration(flow.window_start.saturating_add(POLL_WINDOW_MS) - now),
+            };
+        }
+        flow.window_polls += 1;
         let too_soon = flow.last_poll_at.is_some_and(|last| {
             now.saturating_sub(last).saturating_mul(5) < flow.interval_ms.saturating_mul(4)
         });
@@ -416,6 +448,11 @@ pub enum PollOutcome {
         /// The wait before the next poll, which grew.
         interval: Duration,
     },
+    /// Polled too often this minute.
+    Limited {
+        /// The wait until polls are answered again.
+        retry_after: Duration,
+    },
     /// The token, minted for the approver.
     Approved(Minted),
 }
@@ -450,6 +487,7 @@ pub async fn poll(state: &AppState, device_code: &str) -> Result<PollOutcome, Ap
         Polled::Invalid => return Err(invalid()),
         Polled::Pending { interval } => return Ok(PollOutcome::Pending { interval }),
         Polled::SlowDown { interval } => return Ok(PollOutcome::SlowDown { interval }),
+        Polled::Limited { retry_after } => return Ok(PollOutcome::Limited { retry_after }),
         Polled::Approved(delivery) => delivery,
     };
     let user_id = delivery.user_id.clone();
@@ -692,8 +730,9 @@ mod tests {
                 interval: Duration::from_secs(10)
             }
         );
+        // Ten more back to back: 15, 20 … 60 seconds, then no further.
         let mut at = T0 + 17 * SECOND;
-        for _ in 0..20 {
+        for _ in 0..10 {
             at += 1;
             let _ = flows.poll(&device, at);
         }
@@ -703,6 +742,36 @@ mod tests {
                 interval: MAX_INTERVAL
             }
         );
+    }
+
+    #[test]
+    fn a_device_code_takes_at_most_20_polls_a_minute() {
+        let flows = flows();
+        let device = flows.start(T0).device_code.expose().to_owned();
+        let other = flows.start(T0).device_code.expose().to_owned();
+        for i in 0..20 {
+            let polled = flows.poll(&device, T0 + i);
+            assert!(
+                matches!(polled, Polled::Pending { .. } | Polled::SlowDown { .. }),
+                "poll {i}: {polled:?}"
+            );
+        }
+        assert_eq!(
+            flows.poll(&device, T0 + 30 * SECOND),
+            Polled::Limited {
+                retry_after: Duration::from_secs(30)
+            }
+        );
+        // Other device codes have their own minute.
+        assert!(matches!(
+            flows.poll(&other, T0 + 30 * SECOND),
+            Polled::Pending { .. }
+        ));
+        // A new minute, new polls.
+        assert!(!matches!(
+            flows.poll(&device, T0 + 60 * SECOND),
+            Polled::Limited { .. }
+        ));
     }
 
     #[test]

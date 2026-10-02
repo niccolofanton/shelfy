@@ -4,14 +4,19 @@
 //!
 //! | Route | Access | Answer |
 //! |---|---|---|
-//! | `POST /auth/device/start` | public; no CSRF headers needed | the device code, the user code and the approval page (rate-limited: 429) |
-//! | `POST /auth/device/poll` `{deviceCode}` | public; no CSRF headers needed | `pending`, `slow_down`, or `approved` with a `migrate` token; 400 `invalid_device_code` |
+//! | `POST /auth/device/start` | public; no CSRF headers needed | the device code, the user code and the approval page (the sign-in limit per client: 429) |
+//! | `POST /auth/device/poll` `{deviceCode}` | public; no CSRF headers needed | `pending`, `slow_down`, or `approved` with a `migrate` token; 400 `invalid_device_code`; 429 past 20 polls a minute of one device code |
 //! | `POST /auth/device/approve` `{userCode}` | session, signed in or re-authenticated in the last 5 minutes | 204; 400 `invalid_device_code`; 429 past 10 tries in 10 minutes |
 //!
 //! The CLI calls `start` and `poll` without a cookie, an `Origin` or
 //! `X-Shelfy-Client`: they are the routes of
 //! [`super::CSRF_EXEMPT_ROUTES`]. `approve` comes from the web app's
 //! `/device` page, and passes the CSRF guard like every cookie request.
+//!
+//! `start` and `approve` count against the sign-in limit per client address
+//! like every `/api/v1/auth/*` route ([`crate::rate_limit::by_client`]);
+//! `poll` does not, and is paced per device code instead
+//! ([`crate::rate_limit::UNCOUNTED_SIGN_IN_ROUTES`]).
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -21,14 +26,12 @@ use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
-use super::auth::{hit, no_store};
+use super::auth::no_store;
+use crate::auth::RecentAuth;
 use crate::auth::bearer::Scope;
 use crate::auth::device::{self, PollOutcome};
-use crate::auth::{RecentAuth, rate_limit};
-use crate::error::ApiError;
+use crate::error::{ApiError, ErrorCode};
 use crate::extract::Json;
-use crate::ids::now_ms;
-use crate::net::ClientIp;
 use crate::state::AppState;
 
 /// The web app's page that approves a user code.
@@ -115,8 +118,9 @@ pub struct DeviceApproval {
 /// Show the user `userCode` and `verificationUri` (or open
 /// `verificationUriComplete`), then poll `POST /auth/device/poll` with
 /// `deviceCode` every `interval` seconds until it is approved, for at most
-/// `expiresIn` seconds. Limit: 10 requests per minute per client, shared
-/// with the sign-in routes. No cookie and no CSRF headers are needed.
+/// `expiresIn` seconds. Limit: the sign-in limit, 10 requests per minute per
+/// client over every `/auth` route (429). No cookie and no CSRF headers are
+/// needed.
 #[utoipa::path(
     post,
     path = "/api/v1/auth/device/start",
@@ -127,15 +131,7 @@ pub struct DeviceApproval {
         (status = OK, description = "The codes of a new device sign-in.", body = DeviceAuthorization),
     )
 )]
-pub async fn start_device(
-    State(state): State<AppState>,
-    ClientIp(client): ClientIp,
-) -> Result<Response, ApiError> {
-    hit(
-        state.auth().ip_limiter(),
-        &rate_limit::ip_key(client),
-        now_ms(),
-    )?;
+pub async fn start_device(State(state): State<AppState>) -> Result<Response, ApiError> {
     let started = device::start(&state);
     let page = state.config().public_url.join(APPROVAL_PAGE);
     let user_code = started.user_code.into_inner();
@@ -155,8 +151,10 @@ pub async fn start_device(
 /// `pending`: wait `interval` seconds and poll again. `slow_down`: the poll
 /// came too soon; wait the new `interval`. `approved`: the `migrate` token,
 /// delivered once; the codes stop working. 400 `invalid_device_code` for a
-/// device code that is unknown, expired or used: start again. No cookie and
-/// no CSRF headers are needed.
+/// device code that is unknown, expired or used: start again. 429
+/// `rate_limited` with `Retry-After` past 20 polls a minute of one device
+/// code. The sign-in limit per client does not count polls. No cookie and no
+/// CSRF headers are needed.
 #[utoipa::path(
     post,
     path = "/api/v1/auth/device/poll",
@@ -179,6 +177,12 @@ pub async fn poll_device(
         PollOutcome::SlowDown { interval } => DevicePoll::SlowDown {
             interval: interval.as_secs(),
         },
+        PollOutcome::Limited { retry_after } => {
+            let seconds = retry_after.as_secs() + u64::from(retry_after.subsec_nanos() > 0);
+            return Err(ApiError::new(ErrorCode::RateLimited)
+                .with_retry_after(u32::try_from(seconds.max(1)).unwrap_or(u32::MAX))
+                .with_detail("too many polls of this device code"));
+        }
         PollOutcome::Approved(minted) => DevicePoll::Approved {
             scopes: Scope::parse_list(&minted.row.scopes),
             token_id: minted.row.id,

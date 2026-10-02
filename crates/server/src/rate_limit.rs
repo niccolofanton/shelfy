@@ -5,7 +5,7 @@
 //! | user | 20 per second, 60 at once | user | every `/api/v1/*` route a signed-in user calls, with a session or an API token | [`by_user`] |
 //! | search | 5 per second, 5 at once | user | `GET /api/v1/search`, and `GET /api/v1/posts` and `/api/v1/posts/count` with a text query (`q` or `concept`) | [`by_user`] |
 //! | client errors | 10 per minute, 10 at once | user | `POST /api/v1/client-errors` | [`by_user`] |
-//! | sign-in | 10 per minute | client address | every `/api/v1/auth/*` route, signed in or not | [`by_client`] |
+//! | sign-in | 10 per minute | client address | every `/api/v1/auth/*` route, signed in or not, but the device poll ([`UNCOUNTED_SIGN_IN_ROUTES`]) | [`by_client`] |
 //!
 //! A request over a limit answers 429 `rate_limited` with `Retry-After`, the
 //! seconds until it would pass, before the handler runs. A limit does not
@@ -63,6 +63,17 @@ use crate::state::AppState;
 pub const API_PREFIX: &str = "/api/v1/";
 /// Prefix of the sign-in routes, limited per client address.
 pub const AUTH_PREFIX: &str = "/api/v1/auth/";
+
+/// Sign-in routes that the limit per client address does not count: the
+/// device poll of the migration CLI (P1-17). The CLI polls every few seconds
+/// (RFC 8628's interval is 5 s: 12 polls a minute) while the user approves
+/// its code in a browser that usually shares its address; counted, the polls
+/// alone would spend that browser's sign-in budget, and its re-authentication
+/// and approval would answer 429. A poll needs the 256-bit device code, and
+/// each device code is paced on its own instead ([`crate::auth::device`]:
+/// `slow_down`, and at most 20 polls a minute).
+pub const UNCOUNTED_SIGN_IN_ROUTES: &[(Method, &str)] =
+    &[(Method::POST, "/api/v1/auth/device/poll")];
 
 /// Most keys one limiter tracks.
 pub const MAX_KEYS: u64 = 10_000;
@@ -386,13 +397,23 @@ pub async fn by_user(State(state): State<AppState>, request: Request, next: Next
     next.run(request).await
 }
 
+/// Whether the limit per client address counts `method path` (a route
+/// template): the `/api/v1/auth/*` routes, but [`UNCOUNTED_SIGN_IN_ROUTES`].
+#[must_use]
+pub fn counts_as_sign_in(method: &Method, path: &str) -> bool {
+    path.starts_with(AUTH_PREFIX)
+        && !UNCOUNTED_SIGN_IN_ROUTES
+            .iter()
+            .any(|(m, p)| m == method && *p == path)
+}
+
 /// Layer right inside the security headers: the sign-in limit per client
-/// address, on every `/api/v1/auth/*` route.
+/// address, on the `/api/v1/auth/*` routes ([`counts_as_sign_in`]).
 pub async fn by_client(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let sign_in = request
         .extensions()
         .get::<MatchedPath>()
-        .is_some_and(|path| path.as_str().starts_with(AUTH_PREFIX));
+        .is_some_and(|path| counts_as_sign_in(request.method(), path.as_str()));
     if sign_in {
         let peer = request
             .extensions()
@@ -412,6 +433,23 @@ mod tests {
     use super::*;
 
     const MS: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn the_sign_in_limit_counts_the_auth_routes_but_the_device_poll() {
+        for (method, path) in [
+            (Method::GET, "/api/v1/auth/methods"),
+            (Method::POST, "/api/v1/auth/device/start"),
+            (Method::POST, "/api/v1/auth/device/approve"),
+            (Method::GET, "/api/v1/auth/device/poll"),
+        ] {
+            assert!(counts_as_sign_in(&method, path), "{method} {path}");
+        }
+        assert!(!counts_as_sign_in(
+            &Method::POST,
+            "/api/v1/auth/device/poll"
+        ));
+        assert!(!counts_as_sign_in(&Method::GET, "/api/v1/me"));
+    }
 
     fn alice() -> Key {
         key("user", "01J9Z3B8K4QW6TFX0V7G2N5RCA")

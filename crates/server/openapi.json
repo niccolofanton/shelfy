@@ -40,7 +40,7 @@
       "post": {
         "tags": ["auth"],
         "summary": "Asks whether a device sign-in was approved.",
-        "description": "`pending`: wait `interval` seconds and poll again. `slow_down`: the poll\ncame too soon; wait the new `interval`. `approved`: the `migrate` token,\ndelivered once; the codes stop working. 400 `invalid_device_code` for a\ndevice code that is unknown, expired or used: start again. No cookie and\nno CSRF headers are needed.",
+        "description": "`pending`: wait `interval` seconds and poll again. `slow_down`: the poll\ncame too soon; wait the new `interval`. `approved`: the `migrate` token,\ndelivered once; the codes stop working. 400 `invalid_device_code` for a\ndevice code that is unknown, expired or used: start again. 429\n`rate_limited` with `Retry-After` past 20 polls a minute of one device\ncode. The sign-in limit per client does not count polls. No cookie and no\nCSRF headers are needed.",
         "operationId": "pollDeviceSignIn",
         "requestBody": {
           "content": {
@@ -74,7 +74,7 @@
       "post": {
         "tags": ["auth"],
         "summary": "Starts signing a device in: the migration CLI's `login`.",
-        "description": "Show the user `userCode` and `verificationUri` (or open\n`verificationUriComplete`), then poll `POST /auth/device/poll` with\n`deviceCode` every `interval` seconds until it is approved, for at most\n`expiresIn` seconds. Limit: 10 requests per minute per client, shared\nwith the sign-in routes. No cookie and no CSRF headers are needed.",
+        "description": "Show the user `userCode` and `verificationUri` (or open\n`verificationUriComplete`), then poll `POST /auth/device/poll` with\n`deviceCode` every `interval` seconds until it is approved, for at most\n`expiresIn` seconds. Limit: the sign-in limit, 10 requests per minute per\nclient over every `/auth` route (429). No cookie and no CSRF headers are\nneeded.",
         "operationId": "startDeviceSignIn",
         "responses": {
           "200": {
