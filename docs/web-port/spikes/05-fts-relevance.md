@@ -9,6 +9,7 @@
 - **Like for like on the current reference library: MRR is equal, nDCG@10 is 0.019 short of the tolerance.** On the 2026-10-02 snapshot, the desktop harness scores **0.791 / 1.000** and FTS5 scores **0.752 / 1.000**.
   - Only one case, `fluidi`, causes the gap. Its cause is recall: three relevant posts contain a query term only inside a longer token. A token index cannot match there, while `LIKE '%term%'` can.
   - A trigram index closes the gap exactly, but it needs a schema change. It is left to P1-05 (see *Options*).
+  - **Update (P1-05):** the trigram infix index is adopted (schema v2). Both libraries now pass, the 2026-10-02 one at desktop parity, and the gate also runs in CI on a synthetic library. See [P1-05](#p1-05-the-infix-index-and-the-gate-in-ci).
 - **Tuning changed the score, not the index.**
   - Each term gets the desktop's clamped weight, `ln(N/df)` limited to 1–3, instead of bm25's unbounded IDF.
   - Whole-token hits count on top of prefix hits.
@@ -170,7 +171,7 @@ Where:
 
 | Option | Baseline library | Reference snapshot | Cost | Decision |
 |---|---|---|---|---|
-| **Trigram infix index:** `fts5(tokenize='trigram remove_diacritics 1')` over the same text, used for matching. Infix-only hits score a constant × w. | 0.692 / 0.861 | **0.791 / 1.000** (desktop parity) | Needs a new table and migration. Index 6.2 MB beside `posts_fts`'s 3.6 MB on 6,138 posts. 0.1–0.4 ms per term. One more FTS write per post. | Recommended to P1-05. It is a schema change outside this lane. |
+| **Trigram infix index:** `fts5(tokenize='trigram remove_diacritics 1')` over the same text, used for matching. Infix-only hits score a constant × w. | 0.692 / 0.861 | **0.791 / 1.000** (desktop parity) | Needs a new table and migration. Index 6.2 MB beside `posts_fts`'s 3.6 MB on 6,138 posts. 0.1–0.4 ms per term. One more FTS write per post. | Recommended to P1-05. It is a schema change outside this lane. **Adopted in P1-05** (see below). |
 | **Light stemming:** the prefix match uses the term minus a final vowel or plural `s` (terms of 5+ letters), so "fluidi" also finds "fluid", "fluido". | 0.728 / 0.854 | 0.846 / 0.917 | none | Not adopted. nDCG rises on both libraries, but MRR falls 0.08 on one or the other, depending on the variant. Six cases cannot settle it. |
 | Exact and prefix as one bm25 query | 0.616 / 0.778 | 0.715 / 0.917 | none | rejected |
 | Coverage first (distinct terms matched), then bm25 | 0.640 / 0.917 | 0.700 / 0.917 | none | rejected |
@@ -194,7 +195,7 @@ At 18,412 posts:
 
 ## How to re-run the gate
 
-The gate needs **a desktop library and a `search-eval` report measured on those same rows**. The test checks this through the gold-set sizes. Without `SHELFY_SEARCH_EVAL_DB`, `cargo test` skips the gate, so CI passes.
+The gate needs **a desktop library and a `search-eval` report measured on those same rows**. The test checks this through the gold-set sizes. Without `SHELFY_SEARCH_EVAL_DB`, `cargo test` skips the gate on a real library; since P1-05 it always runs on the synthetic library (see [P1-05](#p1-05-the-infix-index-and-the-gate-in-ci)).
 
 | Variable | Meaning |
 |---|---|
@@ -206,8 +207,8 @@ The gate needs **a desktop library and a `search-eval` report measured on those 
 
 | Directory | Library | Desktop report | Expected result |
 |---|---|---|---|
-| `search-eval-2026-05-31/` | the baseline library: a copy of `scripts/search-eval/.scratch/shelfy.sqlite` | `last-report.json` | pass, 0.653 / 0.861 |
-| `search-eval-2026-10-02/` | the reference snapshot: a copy of `ref/shelfy.sqlite` | the desktop harness re-run on it | nDCG@10 0.752 against 0.791: fails by 0.019 |
+| `search-eval-2026-05-31/` | the baseline library: a copy of `scripts/search-eval/.scratch/shelfy.sqlite` | `last-report.json` | pass, 0.653 / 0.861 (T4); 0.692 / 0.861 since P1-05 |
+| `search-eval-2026-10-02/` | the reference snapshot: a copy of `ref/shelfy.sqlite` | the desktop harness re-run on it | T4: nDCG@10 0.752 against 0.791, fails by 0.019; since P1-05 pass, 0.791 / 1.000 |
 
 The copies matter: a `pnpm run eval:search` run overwrites `.scratch/shelfy.sqlite` and `last-report.json` in the main checkout with the live library.
 
@@ -241,7 +242,60 @@ The test opens the library the way `core::legacy` does: immutable when there is 
 - **P1-05, the gate in CI.** CI can run the skip path, the drift check against `cases.ts` and the metric unit tests. It cannot run the gate itself: the gate needs the owner's library, and lane rule 9 keeps that library off CI.
   - Either the gate stays a manual lead/owner step on the frozen pair in `../shelfy-web-local/data/t4/`, or CI gets a synthetic library and a desktop report made from it.
 - **P1-05, refreshing the baseline.** If `last-report.json` is refreshed from today's library, the gate fails by 0.019 nDCG@10 (`fluidi`) until infix matching lands. The frozen 2026-10-02 pair reproduces this. Decide on the trigram index, or keep the frozen 2026-05-31 pair as the gate's reference.
+  - **Done in P1-05:** the infix index landed, and the 2026-10-02 pair passes at parity, so a refreshed baseline no longer fails the gate.
 - **P3.** Re-run SPIKE-5 once posts carry AI fields, to tune `BM25_WEIGHTS` and the tag boost. Port the tag-only ranking (`searchPostsByTags`) with the AI views. The oracle reads the desktop library's AI fields, so an AI layer made only by the web app needs a new gold source.
+
+## P1-05: the infix index and the gate in CI
+
+P1-05 adopted the trigram infix index and moved the gate into CI. All numbers below are aggregates: means over the six cases, index sizes and latency percentiles. Measured on 2026-10-02 in release builds on the dev machine (Apple M1 Pro), while other lanes shared the machine.
+
+**The index.** `posts_infix` is a second contentless FTS5 table (library schema v2, `0002_search_infix.sql`):
+- `tokenize="trigram remove_diacritics 1"`, case-insensitive, `detail=full`. FTS5 refuses phrase queries without full position lists, and every term longer than 3 characters is a phrase of trigrams.
+- One column per post: caption, AI description, note, author, the AI and manual tag, keyword and entity lists as stored, and the tag rows' forms. The text is one SQL expression, `search::index::INFIX_TEXT_SQL`, so the migration backfills the index in SQL (20,000 posts in about 1.3 s) and `rebuild_infix` re-derives it, for example after a rollback.
+- `reindex_post`, `remove_post` and `rebuild` maintain it with `posts_fts`, in the same transaction; `index::verify` checks both.
+
+**Matching and score.**
+- A term of 3 or more characters matches anywhere in the text, as the desktop's `LIKE '%term%'` did: the search block is the token match or the infix match. Shorter terms (`3d`, `r`) stay token-only.
+- Every post that holds the term anywhere adds `INFIX_WEIGHT` × w(term), with `INFIX_WEIGHT = 1.0`: the desktop's substring tier for a caption (1 × w), below any token hit.
+- w(term) is the clamped weight of S5-2, from the token index's document frequency. A term found only inside longer tokens takes it from the infix index.
+
+| Library | Desktop | FTS5 T4 | FTS5 P1-05 | Gate |
+|---|---|---|---|---|
+| Frozen 2026-05-31 pair (3,235 posts) | 0.620 / 0.861 | 0.653 / 0.861 | **0.692 / 0.861** | pass |
+| Frozen 2026-10-02 pair (6,138 posts) | 0.791 / 1.000 | 0.752 / 1.000 | **0.791 / 1.000** | pass (was short by 0.019) |
+| Synthetic library (3,000 posts, CI) | 0.905 / 1.000 | — | **0.940 / 1.000** | pass |
+
+Values are mean nDCG@10 / mean MRR. Variants measured on both frozen pairs, all with the same means: `INFIX_WEIGHT` 0.5, 1, 2 and 3; scoring only the posts that the token index misses; taking w from the infix index's frequency. The simplest one was kept.
+
+**Cost.**
+
+| Library | `posts_fts` | `posts_infix` |
+|---|---|---|
+| 3,235 posts | 1.8 MB | 3.0 MB |
+| 6,138 posts | 3.4 MB | 5.7 MB |
+| 20,000 synthetic posts | 7.7 MB | 13.7 MB |
+
+- About 0.7–0.9 KB per post, 1.7 times `posts_fts`; one more FTS5 write per post write.
+- Latency of the gate's first page plus count, p95: 5.0 ms on the 2026-05-31 pair and 6.3 ms on the 2026-10-02 pair. T4 measured 2.5 and 3.3 ms without the infix arm and on a quieter machine.
+- On the 20,000-post synthetic library, `admin bench` gives `GET /search` p95 11.3 ms against the 60 ms budget (P1-05 lane report).
+
+**Paging and totals (§2.14).**
+- `posts::rank` returns the first 1,000 post ids of a search, best first.
+- The server caches that ranking per user, library state and filters. Cursors name the state, and every later page is cut from the same ranking, so a write between two pages neither repeats nor skips a post. A post trashed in between drops out of its page.
+- When the ranking is shorter than 1,000, its length is the total, so most searches run no count.
+- The gate measures `posts::list`, which is `rank` plus `ranked_page`, the builder the routes use.
+
+**The gate in CI.** CI cannot read the owner's library, so it gets a synthetic one, paired with the desktop's own numbers on it.
+- `search_eval/synthetic.rs` writes a desktop library (`shelfy.sqlite`, the desktop's current schema) from a fixed seed: 3,000 posts about the six cases' topics, near misses that share a query word without being relevant, and a background. It includes compound hashtags, Italian and English text, a little AI layer, and the reference platform mix.
+- `search_eval/synthetic-report.json` holds the desktop harness's numbers on that file: aggregates only, all synthetic, with the library's fingerprint (`libraryDigest`).
+- `search_eval_gate_on_the_synthetic_library` runs in every `cargo test`, so in the CI `rust` job. It refuses a report whose fingerprint or gold-set sizes differ. A debug build checks the metrics; a release build also checks the latency.
+- The server test `search_ranking` builds the same library behind the HTTP routes. For every case, `GET /search` and `GET /posts?q=` return the core's ranking, page after page, with the core's total; so does the hybrid probe.
+- The frozen pairs stay the check on real data, run locally (*How to re-run the gate*).
+
+**Regenerating the synthetic report**, after a change to the generator or to `cases.ts`:
+1. `SHELFY_SEARCH_EVAL_SYNTHETIC_OUT="$DIR/Library/Application Support/Shelfy/shelfy.sqlite" cargo test -p shelfy-core --test search_eval write_the_synthetic_library -- --ignored`
+2. `HOME="$DIR" pnpm run eval:search`, which needs `better-sqlite3` built for Electron (see above). It writes `scripts/search-eval/last-report.json`, so keep a copy of the frozen one.
+3. `cargo test -p shelfy-core --test search_eval record_the_synthetic_report -- --ignored`, which rewrites `synthetic-report.json` from that report after checking the gold-set sizes. Then restore the frozen `last-report.json`.
 
 ## Decisions
 
@@ -254,3 +308,7 @@ The test opens the library the way `core::legacy` does: immutable when there is 
 | S5-5 | One-letter terms match whole tokens. | Latency (no 1-character prefix index) and meaning (`r`). |
 | S5-6 | The index stays as specified (`unicode61`, prefix 2 and 3). Infix matching (trigram) goes to P1-05. | A schema change is outside this spike's scope. |
 | S5-7 | No stemming for now. | Its effect is not stable across the two libraries. |
+| P1-05-1 | Adopt the trigram infix index `posts_infix` (library schema v2): a term of 3 or more characters also matches anywhere in a post's text. | Desktop parity on both frozen pairs (the 2026-10-02 pair passes instead of failing by 0.019); terms inside compound hashtags are found again; about 0.7–0.9 KB of index per post; search stays well inside its budget. |
+| P1-05-2 | Every post that holds a term anywhere adds `INFIX_WEIGHT` (1.0) × w(term); w comes from the token index, else from the infix index. | Every variant measured gave the same means; this one needs no extra subquery. |
+| P1-05-3 | The gate runs in CI on a synthetic library paired with the desktop harness's numbers on it; the frozen pairs stay the local check on real data. | CI gets a real desktop-vs-FTS comparison with no personal data, under the same pairing guard (S5-1) plus a fingerprint of the rows. |
+| P1-05-4 | Relevance pages come from one ranking of at most 1,000 posts per search and library state, cached by the server; its length is the total when it is shorter than the window. | §2.14 "inside a snapshot": pages never repeat or skip a post across writes, later pages skip the ranking, and most searches skip the count. |
