@@ -25,8 +25,9 @@
 #   SHELFY_ADMIN                the `shelfy-server admin` command, run at the lowest
 #                               CPU and I/O priority inside the API container
 #   SHELFY_RESTIC_IMAGE         restic/restic, pinned by digest
-#   SHELFY_RESTIC_ENV_FILE      /etc/shelfy/restic.env (0600): RESTIC_REPOSITORY,
-#                               RESTIC_PASSWORD and the R2 credentials
+#   SHELFY_RESTIC_ENV_FILE      /etc/shelfy/restic.env: RESTIC_REPOSITORY,
+#                               RESTIC_PASSWORD and the R2 credentials; mode 0600
+#                               (or 0400), or restic does not run
 #   SHELFY_RESTIC_CACHE_DIR     /var/cache/shelfy-restic
 #   SHELFY_RESTIC_HOST          shelfy (the host name recorded in the snapshots)
 #   SHELFY_RESTIC_LIMIT_UPLOAD  20480 (KiB/s)
@@ -84,9 +85,35 @@ run_admin() {
   "${admin[@]}" "$@"
 }
 
+# file_mode FILE: the permission bits of FILE in octal, such as 600 (GNU stat
+# on the hosts, BSD stat for a rehearsal on macOS).
+file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
+# check_restic_env: the restic env file holds the repository password and the
+# R2 keys, so only its owner may read it.
+check_restic_env() {
+  local mode
+  if [ ! -f "$SHELFY_RESTIC_ENV_FILE" ]; then
+    log "no restic env file at $SHELFY_RESTIC_ENV_FILE"
+    return 1
+  fi
+  mode=$(file_mode "$SHELFY_RESTIC_ENV_FILE")
+  case "$mode" in
+    600 | 400) ;;
+    *)
+      log "$SHELFY_RESTIC_ENV_FILE has mode $mode: it holds secrets, make it 0600 (chmod 600)"
+      return 1
+      ;;
+  esac
+}
+
 # run_restic ARGS...: restic in its container.
 run_restic() {
   local extra=()
+  # Explicit: errexit is off in a command substitution and in a condition.
+  check_restic_env || return
   if [ -n "$SHELFY_RESTIC_DOCKER_ARGS" ]; then
     read -r -a extra <<<"$SHELFY_RESTIC_DOCKER_ARGS"
   fi
@@ -103,10 +130,12 @@ run_restic() {
 }
 
 # ensure_repository: creates the repository on the first run (restic exit
-# code 10: it does not exist); any other failure stops the job.
+# code 10: it does not exist); any other failure stops the job, with what
+# restic said. restic never prints the password or the keys: its messages name
+# the repository location at most, with any password in a URL stripped.
 ensure_repository() {
-  local status=0
-  run_restic cat config >/dev/null 2>&1 || status=$?
+  local status=0 said line
+  said=$(run_restic cat config 2>&1 >/dev/null) || status=$?
   case "$status" in
     0) ;;
     10)
@@ -115,6 +144,9 @@ ensure_repository() {
       ;;
     *)
       log "cannot open the restic repository (restic exit $status)"
+      while IFS= read -r line; do
+        [ -z "$line" ] || log "restic: $line"
+      done <<<"$said"
       return "$status"
       ;;
   esac
@@ -139,7 +171,9 @@ record_result() {
   if [ "$ok" = 1 ]; then
     last=$(date +%s)
   fi
-  mkdir -p "$SHELFY_TEXTFILE_DIR"
+  # The units run with UMask=0077, but node-exporter reads the directory as
+  # another user: create it, and any missing parent, with mode 0755.
+  (umask 022 && mkdir -p "$SHELFY_TEXTFILE_DIR")
   tmp=$(mktemp "$SHELFY_TEXTFILE_DIR/.$JOB_FILE.XXXXXX")
   {
     printf '# HELP %s %s\n' "$JOB_METRIC" "$JOB_HELP"
@@ -170,9 +204,18 @@ finish_job() {
 }
 
 # begin_job NAME: logs the start and records the result on exit.
+#
+# A job stopped by a signal fails: systemd's TERM at TimeoutStartSec, at
+# `systemctl stop` or at a reboot, Ctrl-C (INT), a hangup. Without these traps
+# bash would run the EXIT trap with the status of the last command that
+# finished, often 0, and record a success with a fresh time stamp, so the
+# "backups stale" alert would never fire.
 begin_job() {
   JOB_NAME=$1
   SECONDS=0
   trap finish_job EXIT
+  trap 'exit 143' TERM
+  trap 'exit 130' INT
+  trap 'exit 129' HUP
   log "$JOB_NAME started"
 }
