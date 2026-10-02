@@ -385,3 +385,25 @@ fn evict_releases_immediately() {
     assert_eq!(db.open_connections(), (false, 0));
     assert!(cache.is_empty());
 }
+
+#[test]
+fn get_if_present_never_opens_a_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = cache(&dir, 64, Duration::from_secs(600));
+    assert!(cache.get_if_present("userA").is_none());
+    assert!(
+        !dir.path().join("users/userA").exists(),
+        "a peek creates nothing"
+    );
+    let db = cache.get("userA").unwrap();
+    let peeked = cache.get_if_present("userA").expect("cached");
+    assert!(Arc::ptr_eq(&db, &peeked));
+    cache.evict("userA");
+    assert!(cache.get_if_present("userA").is_none());
+    let reopened = cache.get("userA").unwrap();
+    assert!(
+        !Arc::ptr_eq(&db, &reopened),
+        "a new handle after the eviction"
+    );
+    assert_ne!(db.generation().instance, reopened.generation().instance);
+}

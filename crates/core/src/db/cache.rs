@@ -100,6 +100,18 @@ impl UserDbCache {
             .map_err(DbError::Open)
     }
 
+    /// The cached database of `user_id`, without opening it when it is not
+    /// cached. Lets a caller check whether the handle it used is still the one
+    /// the cache serves (the server's job system does, after each chunk of
+    /// work, so that its writes always move the [`Generation`] that the API's
+    /// ETags read).
+    ///
+    /// [`Generation`]: super::Generation
+    #[must_use]
+    pub fn get_if_present(&self, user_id: &str) -> Option<Arc<UserDb>> {
+        self.cache.get(user_id)
+    }
+
     /// Evicts and releases `user_id`'s database, for example before replacing
     /// or deleting its files.
     pub fn evict(&self, user_id: &str) {
