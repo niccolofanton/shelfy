@@ -13,12 +13,15 @@
 mod support;
 
 use std::collections::BTreeSet;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
+use shelfy_core::repo::RepoError;
 use shelfy_core::search::index;
 use shelfy_server::error::ErrorCode;
 use shelfy_server::ids::{new_ulid, now_ms};
@@ -1402,4 +1405,55 @@ async fn a_patch_that_repeats_the_stored_values_keeps_every_etag() {
         }
     }
     assert_index_consistent(&t, ALICE, "repeated patches");
+}
+
+/// F6 (P1-03 review, L2): a write whose request is gone (the 30 s time limit
+/// answered 504, or the client closed the connection) while the write waited
+/// for the writer still commits, and is announced: the announcement is made
+/// by the write itself, not by the request after it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_write_whose_request_was_dropped_is_still_announced() {
+    let t = TestState::new();
+    t.write(ALICE, |tx| fixture(tx)).await;
+    let app = t.app_as(ALICE);
+    let mut stream = Stream::connect(&app, "/api/v1/events", &[]).await;
+    stream.hello().await;
+
+    // Another write (a job chunk, a large from-query) holds the writer until
+    // the request is gone.
+    let db = t.state.user_db(ALICE).await.unwrap();
+    let (held, holding) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let blocker = std::thread::spawn(move || {
+        db.write(|_tx| {
+            held.send(()).unwrap();
+            released.recv().unwrap();
+            Ok::<_, RepoError>(())
+        })
+        .unwrap();
+    });
+    tokio::task::spawn_blocking(move || holding.recv().unwrap())
+        .await
+        .unwrap();
+    let request = send(
+        &app,
+        patch("/api/v1/posts/x_2001", &json!({ "userNote": "applied" })),
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(250), request)
+            .await
+            .is_err(),
+        "the request is dropped while its write waits for the writer"
+    );
+    release.send(()).unwrap();
+    tokio::task::spawn_blocking(move || blocker.join().unwrap())
+        .await
+        .unwrap();
+
+    let event = tokio::time::timeout(Duration::from_secs(5), announced(&mut stream))
+        .await
+        .expect("the committed write is announced");
+    assert_eq!(changed_keys(&event), Some(vec!["x_2001".to_owned()]));
+    let shown = ok(&app, get("/api/v1/posts/x_2001")).await;
+    assert_eq!(shown["userNote"], "applied", "the write committed");
 }

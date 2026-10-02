@@ -32,9 +32,10 @@ use crate::conditional::{ConditionalHeaders, ETag};
 use crate::current_user::CurrentUser;
 use crate::error::ApiError;
 use crate::events::MAX_EVENT_KEYS;
+use crate::events::model::ChangeReason;
 use crate::extract::{Json, Path, Query};
 use crate::ids::now_ms;
-use crate::library::{self, event_keys};
+use crate::library::{self, Change, event_keys};
 use crate::state::{AppState, blocking};
 
 /// Every collection, in manual order, then creation order.
@@ -117,11 +118,10 @@ pub async fn create_collection(
 ) -> Result<Response, ApiError> {
     let new = request.into_new();
     let now = now_ms();
-    let written = library::write(&state, user.id(), move |tx| {
-        collections::create(tx, &new, now)
+    let written = library::write(&state, user.id(), ChangeReason::Edit, move |tx| {
+        collections::create(tx, &new, now).map(Change::collections)
     })
     .await?;
-    library::announce(&state, user.id(), Some(Vec::new()));
     Ok((StatusCode::CREATED, Json(Collection::from(written.value))).into_response())
 }
 
@@ -170,7 +170,7 @@ pub async fn update_collection(
     {
         return Err(ApiError::invalid_field("name", "is blank"));
     }
-    let written = library::write(&state, user.id(), move |tx| {
+    let written = library::write(&state, user.id(), ChangeReason::Edit, move |tx| {
         let mut collection = if update.name.is_some() || update.color.is_some() {
             let patch = CollectionPatch {
                 name: update.name,
@@ -184,12 +184,9 @@ pub async fn update_collection(
             let index = usize::try_from(position).unwrap_or(usize::MAX);
             collection = collections::move_to(tx, id, index)?;
         }
-        Ok(collection)
+        Ok(Change::collections(collection))
     })
     .await?;
-    if written.changed {
-        library::announce(&state, user.id(), Some(Vec::new()));
-    }
     Ok(Json(Collection::from(written.value)))
 }
 
@@ -243,16 +240,17 @@ pub async fn delete_collection(
 ) -> Result<Json<CollectionDeleted>, ApiError> {
     // The one mode until `withPosts` (P1-11).
     let CollectionDeleteMode::Label = query.mode.unwrap_or_default();
-    let written = library::write(&state, user.id(), move |tx| {
+    let written = library::write(&state, user.id(), ChangeReason::Edit, move |tx| {
         let members = collections::member_keys(tx, id, MAX_EVENT_KEYS + 1)?;
         let trashed = collections::delete(tx, id, DeleteMode::KeepPosts, now_ms())?;
-        Ok((members, trashed))
+        Ok(Change {
+            value: trashed,
+            keys: event_keys(members),
+        })
     })
     .await?;
-    let (members, trashed) = written.value;
-    library::announce(&state, user.id(), event_keys(members));
     Ok(Json(CollectionDeleted {
-        trashed: u64::try_from(trashed).unwrap_or(u64::MAX),
+        trashed: u64::try_from(written.value).unwrap_or(u64::MAX),
     }))
 }
 
@@ -297,17 +295,17 @@ pub async fn add_collection_posts(
 ) -> Result<Json<CollectionPostsAdded>, ApiError> {
     let selector = request.selector.resolve("selector")?;
     let now = now_ms();
-    let written = library::write(&state, user.id(), move |tx| {
+    let written = library::write(&state, user.id(), ChangeReason::Edit, move |tx| {
         let added = collections::add_selected(tx, id, &selector, now)?;
         let collection = collections::get(tx, id)?.ok_or(RepoError::NotFound)?;
         let keys = added_keys(tx, &added)?;
-        Ok((added.len(), collection, keys))
+        Ok(Change {
+            value: (added.len(), collection),
+            keys,
+        })
     })
     .await?;
-    let (added, collection, keys) = written.value;
-    if written.changed {
-        library::announce(&state, user.id(), keys);
-    }
+    let (added, collection) = written.value;
     Ok(Json(CollectionPostsAdded {
         added: u64::try_from(added).unwrap_or(u64::MAX),
         collection: collection.into(),
@@ -355,20 +353,22 @@ pub async fn remove_collection_post(
     if key.len() > MAX_KEY_BYTES {
         return Err(ApiError::not_found());
     }
-    let lookup = key.clone();
-    let written = library::write(&state, user.id(), move |tx| {
+    let written = library::write(&state, user.id(), ChangeReason::Edit, move |tx| {
         let collection = collections::get(tx, id)?.ok_or(RepoError::NotFound)?;
-        let post = posts::id_for_key(tx, &lookup)?.ok_or(RepoError::NotFound)?;
-        if !collections::remove_post(tx, post, collection.id)? {
-            return Ok((false, collection));
-        }
-        Ok((true, collections::get(tx, id)?.ok_or(RepoError::NotFound)?))
+        let post = posts::id_for_key(tx, &key)?.ok_or(RepoError::NotFound)?;
+        let removed = collections::remove_post(tx, post, collection.id)?;
+        let collection = if removed {
+            collections::get(tx, id)?.ok_or(RepoError::NotFound)?
+        } else {
+            collection
+        };
+        Ok(Change {
+            value: (removed, collection),
+            keys: Some(vec![key]),
+        })
     })
     .await?;
     let (removed, collection) = written.value;
-    if written.changed {
-        library::announce(&state, user.id(), Some(vec![key]));
-    }
     Ok(Json(CollectionPostRemoved {
         removed,
         collection: collection.into(),
@@ -412,7 +412,7 @@ pub async fn create_collection_from_query(
         ..NewCollection::default()
     };
     let now = now_ms();
-    let written = library::write(&state, user.id(), move |tx| {
+    let written = library::write(&state, user.id(), ChangeReason::Edit, move |tx| {
         let created = collections::create(tx, &new, now)?;
         let added = collections::add_selected(tx, created.id, &selector, now)?;
         let collection = collections::get(tx, created.id)?.ok_or(RepoError::NotFound)?;
@@ -421,11 +421,13 @@ pub async fn create_collection_from_query(
         } else {
             added_keys(tx, &added)?
         };
-        Ok((added.len(), collection, keys))
+        Ok(Change {
+            value: (added.len(), collection),
+            keys,
+        })
     })
     .await?;
-    let (added, collection, keys) = written.value;
-    library::announce(&state, user.id(), keys);
+    let (added, collection) = written.value;
     let body = CollectionPostsAdded {
         added: u64::try_from(added).unwrap_or(u64::MAX),
         collection: collection.into(),

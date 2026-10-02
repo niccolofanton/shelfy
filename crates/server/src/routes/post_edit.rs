@@ -32,9 +32,10 @@ use super::model::PostDetail;
 use super::posts::MAX_KEY_BYTES;
 use crate::current_user::CurrentUser;
 use crate::error::ApiError;
+use crate::events::model::ChangeReason;
 use crate::extract::{Json, Path};
 use crate::ids::now_ms;
-use crate::library;
+use crate::library::{self, Change};
 use crate::state::AppState;
 
 /// Longest note, description or save reason, in characters (like a caption).
@@ -244,19 +245,19 @@ pub async fn update_post(
     patch.validate()?;
     let (user_patch, ai_patch) = (patch.user(), patch.ai());
     let now = now_ms();
-    let lookup = key.clone();
-    let written = library::write(&state, user.id(), move |tx| {
-        let id = posts::id_for_key(tx, &lookup)?.ok_or(RepoError::NotFound)?;
+    let written = library::write(&state, user.id(), ChangeReason::Edit, move |tx| {
+        let id = posts::id_for_key(tx, &key)?.ok_or(RepoError::NotFound)?;
         posts::update_user_content(tx, id, &user_patch, now)?;
         if let Some(ai) = &ai_patch {
             posts::update_ai(tx, id, ai, now)?;
         }
-        posts::get(tx, &lookup)?.ok_or(RepoError::NotFound)
+        let post = posts::get(tx, &key)?.ok_or(RepoError::NotFound)?;
+        Ok(Change {
+            value: post,
+            keys: Some(vec![key]),
+        })
     })
     .await?;
-    if written.changed {
-        library::announce(&state, user.id(), Some(vec![key]));
-    }
     Ok(Json(PostDetail::from(written.value)))
 }
 

@@ -6,19 +6,24 @@
 //! library [`Generation`] (the handle's write path bumps it after the commit;
 //! see [`shelfy_core::generation`]), so every ETag of the library's views
 //! (list, post, search, stats, collections, counts) and every cached count
-//! is stale at once. The route then calls [`announce`], and the user's open
+//! is stale at once. Right after the commit, still on the blocking thread,
+//! [`write`] then announces the change ([`announce`]): the user's open
 //! streams get `posts.changed` (the posts it changed, `[]` when it changed
 //! only collections, `null` for more than 200 or "any") and
-//! `stats.changed`. A write that changed nothing announces nothing.
+//! `stats.changed`.
+//!
+//! This happens even when the request that started the write is gone (a 504
+//! from the time limit, a closed connection): the blocking task runs to the
+//! end. A write that changed nothing announces nothing.
 //!
 //! **Caches** ([`LibraryCaches`]): post counts per filter (`GET
 //! /posts/count`) and the stats (`GET /stats`), keyed by `(user,
 //! generation, view)`. Values are computed on a read snapshot opened after
 //! the generation was read, the order the ETags rely on too.
 //!
-//! Seams: the bulk and trash routes (P1-11) write through [`write`] and
-//! announce with their own [`ChangeReason`] ([`announce_as`]); a job that
-//! changes posts announces the same way.
+//! Seams: the bulk and trash routes (P1-11) write through [`write`] with
+//! their own [`ChangeReason`] (`delete`); a job that changes posts announces
+//! with [`announce`] after its chunk commits.
 //!
 //! [`Generation`]: shelfy_core::generation::Generation
 
@@ -32,8 +37,8 @@ use shelfy_core::repo::RepoError;
 use shelfy_core::repo::stats::Stats;
 
 use crate::error::ApiError;
-use crate::events::MAX_EVENT_KEYS;
 use crate::events::model::ChangeReason;
+use crate::events::{EventBus, MAX_EVENT_KEYS};
 use crate::state::{AppState, blocking};
 
 /// Cached counts, over every user (§2.14). An entry is a few dozen bytes.
@@ -43,35 +48,68 @@ const STATS_ENTRIES: u64 = 1_024;
 /// An entry nobody read for this long is dropped.
 const TIME_TO_IDLE: Duration = Duration::from_secs(10 * 60);
 
+/// What a change gives [`write`]: its value for the route, and the posts it
+/// touched, for the `posts.changed` event of a write that changed rows.
+#[derive(Debug)]
+pub struct Change<T> {
+    /// What the change returns to the route.
+    pub value: T,
+    /// The keys of the posts it touched (see [`event_keys`]): `[]` when it
+    /// touched only collections, `None` for "any".
+    pub keys: Option<Vec<String>>,
+}
+
+impl<T> Change<T> {
+    /// A change that touched only collections: `posts.changed` gets `[]`.
+    pub fn collections(value: T) -> Self {
+        Self {
+            value,
+            keys: Some(Vec::new()),
+        }
+    }
+}
+
 /// The outcome of a [`write`].
 #[derive(Debug)]
 pub struct Written<T> {
     /// What the change returned.
     pub value: T,
-    /// Whether it changed rows: the generation moved, and the change is
-    /// worth announcing.
+    /// Whether it changed rows: the generation moved, and the change was
+    /// announced.
     pub changed: bool,
 }
 
 /// Runs `change` in a write transaction on `user_id`'s library, off the
-/// async workers. An error rolls the transaction back.
+/// async workers, and, when it changed rows, announces the change as
+/// `reason` (module docs). An error rolls the transaction back and announces
+/// nothing.
 ///
 /// # Errors
 ///
 /// `change`'s error; the library cannot be opened or the commit fails.
-pub async fn write<T, F>(state: &AppState, user_id: &str, change: F) -> Result<Written<T>, ApiError>
+pub async fn write<T, F>(
+    state: &AppState,
+    user_id: &str,
+    reason: ChangeReason,
+    change: F,
+) -> Result<Written<T>, ApiError>
 where
-    F: FnOnce(&Transaction<'_>) -> Result<T, RepoError> + Send + 'static,
+    F: FnOnce(&Transaction<'_>) -> Result<Change<T>, RepoError> + Send + 'static,
     T: Send + 'static,
 {
     let db = state.user_db(user_id).await?;
+    let events = state.events().clone();
+    let user = user_id.to_owned();
     blocking(move || {
-        db.write(|tx| {
+        let (Change { value, keys }, changed) = db.write(|tx| {
             let before = tx.total_changes();
-            let value = change(tx)?;
-            let changed = tx.total_changes() != before;
-            Ok::<_, RepoError>(Written { value, changed })
-        })
+            let change = change(tx)?;
+            Ok::<_, RepoError>((change, tx.total_changes() != before))
+        })?;
+        if changed {
+            announce(&events, &user, reason, keys);
+        }
+        Ok::<_, RepoError>(Written { value, changed })
     })
     .await
 }
@@ -83,22 +121,12 @@ pub fn event_keys(keys: Vec<String>) -> Option<Vec<String>> {
     (keys.len() <= MAX_EVENT_KEYS).then_some(keys)
 }
 
-/// Tells `user_id`'s open streams that an edit changed their library:
-/// `posts.changed` with reason `edit` and `keys` (see [`event_keys`]; `[]`
-/// when only collections changed), and `stats.changed`.
-pub fn announce(state: &AppState, user_id: &str, keys: Option<Vec<String>>) {
-    announce_as(state, user_id, ChangeReason::Edit, keys);
-}
-
-/// [`announce`] with another reason (`delete` for the trash, …).
-pub fn announce_as(
-    state: &AppState,
-    user_id: &str,
-    reason: ChangeReason,
-    keys: Option<Vec<String>>,
-) {
-    state.events().posts_changed(user_id, reason, keys);
-    state.events().stats_changed(user_id);
+/// Tells `user_id`'s open streams that a committed change touched their
+/// library: `posts.changed` with `reason` and `keys` (see [`event_keys`];
+/// `[]` when only collections changed), and `stats.changed`.
+pub fn announce(events: &EventBus, user_id: &str, reason: ChangeReason, keys: Option<Vec<String>>) {
+    events.posts_changed(user_id, reason, keys);
+    events.stats_changed(user_id);
 }
 
 /// The digest that keys a cached value: `view` (what was computed) and its
