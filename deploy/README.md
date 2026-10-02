@@ -33,25 +33,41 @@ validated at start: a bad one stops the process with a message.
 | `SHELFY_DATA_DIR` | `/data/shelfy` | Data directory (§2.5). `serve` creates `control/` and `users/` (mode 0750) if missing |
 | `SHELFY_LISTEN_ADDR` | `0.0.0.0:8080` | API listener; the edge nginx is its only client |
 | `SHELFY_METRICS_ADDR` | `0.0.0.0:9464` | Prometheus listener (`GET /metrics`). Never proxied: publish it on the internal network only. Must not share the API port |
-| `SHELFY_PUBLIC_URL` | `http://localhost:8080` | Public origin, without a path. Links the server hands out start with it, and state-changing cookie requests must send it as their `Origin` (CSRF check); later also the passkey RP ID. Use https unless the host is localhost: the session cookie is `Secure` |
+| `SHELFY_PUBLIC_URL` | `http://localhost:8080` | Public origin, without a path. Links the server hands out start with it (`/login/magic#<token>`), and every state-changing request without an `Authorization` header must send it as its `Origin` (CSRF check); later also the passkey RP ID. Use https unless the host is localhost: the session cookie is `Secure` |
+| `SHELFY_TRUSTED_PROXIES` | none | Proxies whose `CF-Connecting-IP` header names the client, as CIDR blocks separated by commas: on the VPS, the Docker network of the edge nginx. Requests from any other peer are keyed on their TCP address (sign-in rate limits; IPv6 clients by /64). Empty: the header is ignored, and behind a proxy every client shares the proxy's budget |
 | `SHELFY_LOG_FORMAT` | `json` | `json` (one object per line, for Docker's `json-file`) or `text` |
 | `RUST_LOG` | `info` | Log filter (`tracing` env-filter syntax); an invalid filter stops the start |
 | `SHELFY_OWNER_EMAIL` | none | Default `--email` of `shelfy-server admin create-owner` and `admin login-link` (E4) |
 | `SHELFY_SMTP_HOST` | none | SMTP relay for sign-in emails, `host[:port]` (§3.2: `smtp.resend.com:587`). Setting it turns email sign-in on. Without it, and without the dev mailbox, email is off and `admin login-link` is the way in (E4) |
-| `SHELFY_SMTP_TLS` | `starttls` | `starttls` (required, not opportunistic; port 587), `tls` (implicit TLS; port 465) or `none` (plain text for a local catcher such as mailpit; refused together with credentials) |
+| `SHELFY_SMTP_TLS` | `starttls` | `starttls` (required, not opportunistic; port 587), `tls` (implicit TLS; port 465) or `none` (plain text for a local catcher such as mailpit: only to a loopback, private or single-label host, and refused together with credentials) |
 | `SHELFY_SMTP_USER`, `SHELFY_SMTP_PASSWORD` | none | SMTP credentials, set together. The password is a secret (§3.4: `RESEND_API_KEY`) |
 | `SHELFY_SMTP_FROM` | none | Sender, `address` or `Name <address>`; required with `SHELFY_SMTP_HOST` |
-| `SHELFY_DEV_MAILBOX` | `false` | Write emails as `.eml` files to `<data>/dev-mailbox/` instead of sending them. Local runs and tests only; refused together with `SHELFY_SMTP_HOST` |
+| `SHELFY_DEV_MAILBOX` | `false` | Write emails as `.eml` files to `<data>/dev-mailbox/` instead of sending them. Local runs and tests only: refused together with `SHELFY_SMTP_HOST`, and unless `SHELFY_PUBLIC_URL` is loopback (`localhost`) |
 
 Empty values count as unset, so a compose file may pass `SHELFY_SMTP_HOST=` when email is off.
 Later tasks add the master key, the capture and egress endpoints and the media budgets (§3.2,
 §3.4). The operator commands (`shelfy-server admin create-owner | invite | login-link |
 snapshot`) use `SHELFY_DATA_DIR` too and print their results on stdout, never to the logs.
 
-To sign in, create the owner once, then mint a one-time link (valid 15 minutes) and open it in
-the browser:
+To sign in, create the owner once, then mint a one-time link (valid 15 minutes):
 
 ```sh
 shelfy-server admin create-owner --email you@example.com
 shelfy-server admin login-link --email you@example.com
 ```
+
+The link is `<SHELFY_PUBLIC_URL>/login/magic#<token>`. The token sits in the URL's fragment,
+which browsers never send to a server, so no proxy or server log sees it. Open the link in a
+browser: the web app's sign-in page redeems the token after a click (no `GET` ever redeems a
+link, so email scanners cannot use it up). Without the web app, redeem it with `curl`; the
+answer sets the `__Host-shelfy_session` cookie:
+
+```sh
+TOKEN='<what follows # in the link>'
+curl -i -X POST "$SHELFY_PUBLIC_URL/api/v1/auth/magic-links/redeem" \
+  -H 'Content-Type: application/json' -H "Origin: $SHELFY_PUBLIC_URL" -H 'X-Shelfy-Client: web' \
+  -d "{\"token\":\"$TOKEN\"}"
+```
+
+Every route needs a signed-in session unless it is listed as public (or open to API tokens) in
+`crates/server/src/routes/mod.rs`.
