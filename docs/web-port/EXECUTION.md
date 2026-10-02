@@ -36,6 +36,11 @@ These owner decisions override the plan where they conflict.
 | E4 | 2026-10-02 | Owner-only until further notice: no invites and no closed beta. The owner account is created with the admin CLI; its email lives in the osn secrets, not in this repo. | P2 closed beta; P5 invites |
 | E5 | 2026-10-02 | The web app is served at `refs.niccolofanton.dev`. Done on 2026-10-02 (osn `ebd2de8`): the CNAME, an owner-only Access app, the tunnel ingress and the edge block to `shelfy-api:8080` are live, so the host answers 502 until the service is deployed. The lead sets up the DNS record, the tunnel route, Access and the edge nginx route on Cloudflare and the VPS. | `shelfy.niccolofanton.dev` throughout the plan |
 
+| E6 | 2026-10-03 | A mock account on the live host, seeded with about 500 of the owner's posts, is the test account: lanes may sign in to it in automation (unlike the owner's, lane rule 8). Every web feature is tested end to end on it before the port is called done. | §6.1 test data; P1 lane rule 8 for this account only |
+| E7 | 2026-10-03 | The desktop app becomes a client of the server: it signs in to an account and works on the server's library; the in-app browser sync and downloads feed the server like the extension does. It keeps a local AI model for cataloging. Every feature is tested in the desktop app with the mock account too. | §2.20 and P6 (a local library on the shared core through napi-rs) |
+| E8 | 2026-10-03 | The mobile UI is optimized, and UX/UI design experts review the whole app and improve it to a professional standard without redesigning it. | — |
+| E9 | 2026-10-03 | The owner's AI node may be woken when the tests need it, as Hermes does with `/wake`. | L15's "never wakes it" |
+
 ### Lead decisions
 
 Changes to the plan that the lead made during execution, with the reason.
