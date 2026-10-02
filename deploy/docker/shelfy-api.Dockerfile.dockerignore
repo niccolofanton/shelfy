@@ -1,0 +1,14 @@
+# Build context of shelfy-api.Dockerfile: BuildKit reads this file instead of a
+# root .dockerignore. Only what the image needs goes in: the Cargo workspace
+# without its tests, and the built web app.
+*
+!Cargo.toml
+!Cargo.lock
+!crates/
+!web/dist/
+crates/*/tests/
+crates/*/examples/
+crates/*/benches/
+crates/server/openapi.json
+**/target/
+**/.DS_Store
