@@ -6,7 +6,7 @@
 //!
 //! | Group | Limits | Routes |
 //! |---|---|---|
-//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07) |
+//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03) |
 //! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
 //! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
 //! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, [`uploads`]) |
@@ -23,6 +23,12 @@
 //! [`CurrentUser`](crate::current_user::CurrentUser) and conditional
 //! ([`crate::conditional`]); their JSON shapes are in [`model`] and the shared
 //! paging in [`listing`].
+//!
+//! The library writes (P1-03): `GET /posts/count`, `POST /posts/batch-get`
+//! and `POST /posts/lookup` in [`posts`]; `PATCH /posts/{key}` in
+//! [`post_edit`]; the collection writes in [`collections`]; the selector of
+//! the routes that act on many posts in [`selector`]. Every write goes
+//! through [`crate::library`], which announces it on the event bus.
 //!
 //! The platform routes (P1-01): [`events`] (the SSE stream of
 //! [`crate::events`]), [`notifications`], [`client_errors`] and [`version`],
@@ -53,8 +59,10 @@ pub mod media;
 pub mod migrations;
 pub mod model;
 pub mod notifications;
+pub mod post_edit;
 pub mod posts;
 pub mod search;
+pub mod selector;
 pub mod stats;
 pub mod uploads;
 pub mod version;
@@ -119,6 +127,7 @@ const PROBLEM_RESPONSE: &str = "Problem";
         listing::YesNo,
         posts::PostSource,
         search::SearchScope,
+        collections::CollectionDeleteMode,
     )),
     modifiers(&SecuritySchemes),
     tags(
@@ -126,7 +135,8 @@ const PROBLEM_RESPONSE: &str = "Problem";
                                            notifications, client error reports and the version."),
         (name = "auth", description = "Sign-in links, sessions and sign-out."),
         (name = "account", description = "The signed-in user."),
-        (name = "library", description = "The signed-in user's posts, stats and collections."),
+        (name = "library", description = "The signed-in user's posts, stats and collections, \
+                                          and their edits."),
         (name = "search", description = "Ranked search over the signed-in user's library."),
         (
             name = "migration",
@@ -210,10 +220,23 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(health::health))
         .routes(routes!(docs::openapi_json))
         .routes(routes!(posts::list_posts))
-        .routes(routes!(posts::get_post))
+        .routes(routes!(posts::count_posts))
+        .routes(routes!(posts::batch_get_posts))
+        .routes(routes!(posts::lookup_posts))
+        .routes(routes!(posts::get_post, post_edit::update_post))
         .routes(routes!(search::search))
         .routes(routes!(stats::get_stats))
-        .routes(routes!(collections::list_collections))
+        .routes(routes!(
+            collections::list_collections,
+            collections::create_collection
+        ))
+        .routes(routes!(
+            collections::update_collection,
+            collections::delete_collection
+        ))
+        .routes(routes!(collections::add_collection_posts))
+        .routes(routes!(collections::remove_collection_post))
+        .routes(routes!(collections::create_collection_from_query))
         .routes(routes!(notifications::list_notifications))
         .routes(routes!(notifications::mark_notifications_read))
         .routes(routes!(client_errors::report_client_error))

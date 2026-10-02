@@ -200,6 +200,240 @@
             "$ref": "#/components/responses/Problem"
           }
         }
+      },
+      "post": {
+        "tags": ["library"],
+        "summary": "Creates a collection; it comes last in the manual order.",
+        "operationId": "createCollection",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewCollectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new collection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/collections/from-query": {
+      "post": {
+        "tags": ["library"],
+        "summary": "Creates a collection holding the posts of a selector, in one step: \"save\nthis view as a folder\". Trashed posts are skipped.",
+        "operationId": "createCollectionFromQuery",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionFromQuery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "The new collection.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPostsAdded"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/collections/{id}": {
+      "delete": {
+        "tags": ["library"],
+        "summary": "Deletes a collection. Its posts stay in the library, out of the\ncollection.",
+        "operationId": "deleteCollection",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The collection's id.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "What happens to the posts; default `label`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CollectionDeleteMode"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The collection is gone.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionDeleted"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["library"],
+        "summary": "Renames, recolors or moves a collection. A platform folder keeps its\nlink.",
+        "operationId": "updateCollection",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The collection's id.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The collection after the change.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/collections/{id}/posts": {
+      "post": {
+        "tags": ["library"],
+        "summary": "Adds posts to a collection: a list of keys, or every post a filter\nlists (minus some), however many, in one step. Trashed posts and posts\nalready in the collection are skipped.",
+        "operationId": "addCollectionPosts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The collection's id.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddPostsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What was added.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPostsAdded"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/collections/{id}/posts/{key}": {
+      "delete": {
+        "tags": ["library"],
+        "summary": "Takes one post out of a collection (§1.2 #12). Taking out a post that is\nnot in it changes nothing.",
+        "operationId": "removeCollectionPost",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The collection's id.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "description": "The post's key.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What was removed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionPostRemoved"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
       }
     },
     "/api/v1/events": {
@@ -1001,6 +1235,299 @@
         }
       }
     },
+    "/api/v1/posts/batch-get": {
+      "post": {
+        "tags": ["library"],
+        "summary": "Several posts by key, trashed or not (desktop `getPostsByIds`).",
+        "operationId": "batchGetPosts",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchGetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The posts found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostBatch"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/posts/count": {
+      "get": {
+        "tags": ["library"],
+        "summary": "How many posts `GET /posts` lists with these filters, over all its pages:\nthe gallery's count pill, and the size of a selection by filter.",
+        "description": "Counts are cached per library state, so repeating a count costs nothing\nuntil the library changes. The response is conditional: send the `ETag`\nback in `If-None-Match` and an unchanged count answers 304.",
+        "operationId": "countPosts",
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "query",
+            "description": "Only posts of this platform.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Platform"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "description": "Only websites (`web`) or only everything else (`social`).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/PostSource"
+            }
+          },
+          {
+            "name": "collection",
+            "in": "query",
+            "description": "Only posts in this collection (its `id`).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "mediaType",
+            "in": "query",
+            "description": "Only posts of these kinds: any of them. Repeatable in a query.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/MediaType"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "stored",
+            "in": "query",
+            "description": "Only posts with (`yes`) or without (`no`) a stored object.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/YesNo"
+            }
+          },
+          {
+            "name": "aiTagged",
+            "in": "query",
+            "description": "Only posts with (`yes`) or without (`no`) AI tags; manual tags do not\ncount.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/YesNo"
+            }
+          },
+          {
+            "name": "aiStatus",
+            "in": "query",
+            "description": "Only posts with this AI status.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "description": "Only posts with this tag (the gallery's tag chip; always a filter).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "description": "Tags of the AI views, combined by `tagMode`. Repeatable in a query.\nWith `q` in `or` mode they widen the search.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "tagMode",
+            "in": "query",
+            "description": "How `tags` combine. Default `or`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MatchMode"
+            }
+          },
+          {
+            "name": "entity",
+            "in": "query",
+            "description": "Only posts with this AI entity.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Only posts with this AI category.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "contentType",
+            "in": "query",
+            "description": "Only posts with this AI content type.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Free-text search (plan §2.14). At most 500 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "concept",
+            "in": "query",
+            "description": "Suggested concepts: more search terms, combined with `q` by\n`conceptMode`. Repeatable in a query.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "conceptMode",
+            "in": "query",
+            "description": "How `q` and the concepts combine. Default `or`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/MatchMode"
+            }
+          },
+          {
+            "name": "trash",
+            "in": "query",
+            "description": "The trash instead of the library: `true` (or `1` in a query).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The count.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`private, no-cache`."
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Weak ETag of this count in this library state."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostCount"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The count is unchanged since the ETag in `If-None-Match`; no body.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The same ETag."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/posts/lookup": {
+      "post": {
+        "tags": ["library"],
+        "summary": "Which of these posts, named by the ids a platform's pages show, are\nalready saved (desktop `savedByKeys`): the \"already saved\" badges of the\nselection overlay. An Instagram id matches by the media pk it stands for\nor by the post's stored shortcode.",
+        "description": "Signed-in sessions only for now; the extension's `lookup` token joins in\nP1-17.",
+        "operationId": "lookupPosts",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LookupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The saved posts found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LookupResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/posts/{key}": {
       "get": {
         "tags": ["library"],
@@ -1059,6 +1586,47 @@
                   "type": "string"
                 },
                 "description": "The same ETag."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["library"],
+        "summary": "Edits a post's note and tags, or its AI fields (a manual edit: the AI\nstatus becomes `done` and the model `manual`). Trashed posts can be\nedited too.",
+        "operationId": "updatePost",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "The post's key, for example `ig_3141592653589793238`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The post after the edit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostDetail"
+                }
               }
             }
           },
@@ -1687,6 +2255,18 @@
   },
   "components": {
     "schemas": {
+      "AddPostsRequest": {
+        "type": "object",
+        "description": "The posts to add.",
+        "required": ["selector"],
+        "properties": {
+          "selector": {
+            "$ref": "#/components/schemas/PostSelector",
+            "description": "Which posts."
+          }
+        },
+        "additionalProperties": false
+      },
       "ArchiveCounts": {
         "type": "object",
         "description": "Archive work left for the workers (P1-19, P2), by class (OI-6, OI-7).",
@@ -1774,6 +2354,21 @@
             "description": "Passkey sign-in (P1-13). Always false for now."
           }
         }
+      },
+      "BatchGetRequest": {
+        "type": "object",
+        "description": "The posts to fetch.",
+        "required": ["keys"],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The posts' keys, at most 200."
+          }
+        },
+        "additionalProperties": false
       },
       "ChangeReason": {
         "type": "string",
@@ -1891,6 +2486,44 @@
           }
         }
       },
+      "CollectionDeleteMode": {
+        "type": "string",
+        "description": "What happens to the posts of a deleted collection.",
+        "enum": ["label"]
+      },
+      "CollectionDeleted": {
+        "type": "object",
+        "description": "The outcome of deleting a collection.",
+        "required": ["trashed"],
+        "properties": {
+          "trashed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts moved to the trash with the collection: 0 with `mode=label`.",
+            "minimum": 0
+          }
+        }
+      },
+      "CollectionFromQuery": {
+        "type": "object",
+        "description": "A collection to create with posts.",
+        "required": ["name", "selector"],
+        "properties": {
+          "color": {
+            "type": "string",
+            "description": "The color, `#rgb` or `#rrggbb`; default `#3d5afe`."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name, 1–200 characters once trimmed."
+          },
+          "selector": {
+            "$ref": "#/components/schemas/PostSelector",
+            "description": "The posts to put in it: usually the current gallery filter."
+          }
+        },
+        "additionalProperties": false
+      },
       "CollectionList": {
         "type": "object",
         "description": "Every collection, in manual order, then creation order.",
@@ -1904,6 +2537,59 @@
             "description": "The collections."
           }
         }
+      },
+      "CollectionPostRemoved": {
+        "type": "object",
+        "description": "The outcome of taking a post out of a collection.",
+        "required": ["removed", "collection"],
+        "properties": {
+          "collection": {
+            "$ref": "#/components/schemas/Collection",
+            "description": "The collection, with its new count."
+          },
+          "removed": {
+            "type": "boolean",
+            "description": "Whether the post was in the collection."
+          }
+        }
+      },
+      "CollectionPostsAdded": {
+        "type": "object",
+        "description": "The outcome of adding posts to a collection.",
+        "required": ["added", "collection"],
+        "properties": {
+          "added": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts that joined the collection; trashed posts and posts already in\nit are not counted.",
+            "minimum": 0
+          },
+          "collection": {
+            "$ref": "#/components/schemas/Collection",
+            "description": "The collection, with its new count."
+          }
+        }
+      },
+      "CollectionUpdate": {
+        "type": "object",
+        "description": "Changes to a collection; absent fields are left alone.",
+        "properties": {
+          "color": {
+            "type": "string",
+            "description": "The new color, `#rgb` or `#rrggbb`."
+          },
+          "name": {
+            "type": "string",
+            "description": "The new name, 1–200 characters once trimmed."
+          },
+          "position": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The new place in the manual order, from 0; past the end means last.\nEvery collection's `position` is renumbered from 0.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "ErrorCode": {
         "type": "string",
@@ -1950,6 +2636,149 @@
           "reason": {
             "type": "string",
             "description": "Why the value was refused, for developers."
+          }
+        }
+      },
+      "FilterParams": {
+        "type": "object",
+        "description": "The filters of `GET /api/v1/posts`, without paging or order. Every\nfilter is optional; the ones given combine with AND.",
+        "properties": {
+          "aiStatus": {
+            "type": ["string", "null"],
+            "description": "Only posts with this AI status.",
+            "default": null
+          },
+          "aiTagged": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/YesNo",
+                "description": "Only posts with (`yes`) or without (`no`) AI tags; manual tags do not\ncount."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "category": {
+            "type": ["string", "null"],
+            "description": "Only posts with this AI category.",
+            "default": null
+          },
+          "collection": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Only posts in this collection (its `id`).",
+            "default": null
+          },
+          "concept": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Suggested concepts: more search terms, combined with `q` by\n`conceptMode`. Repeatable in a query.",
+            "default": []
+          },
+          "conceptMode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MatchMode",
+                "description": "How `q` and the concepts combine. Default `or`."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "contentType": {
+            "type": ["string", "null"],
+            "description": "Only posts with this AI content type.",
+            "default": null
+          },
+          "entity": {
+            "type": ["string", "null"],
+            "description": "Only posts with this AI entity.",
+            "default": null
+          },
+          "mediaType": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MediaType"
+            },
+            "description": "Only posts of these kinds: any of them. Repeatable in a query.",
+            "default": []
+          },
+          "platform": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Platform",
+                "description": "Only posts of this platform."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "q": {
+            "type": ["string", "null"],
+            "description": "Free-text search (plan §2.14). At most 500 characters.",
+            "default": null
+          },
+          "source": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PostSource",
+                "description": "Only websites (`web`) or only everything else (`social`)."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "stored": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/YesNo",
+                "description": "Only posts with (`yes`) or without (`no`) a stored object."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tag": {
+            "type": ["string", "null"],
+            "description": "Only posts with this tag (the gallery's tag chip; always a filter).",
+            "default": null
+          },
+          "tagMode": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MatchMode",
+                "description": "How `tags` combine. Default `or`."
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags of the AI views, combined by `tagMode`. Repeatable in a query.\nWith `q` in `or` mode they widen the search.",
+            "default": []
+          },
+          "trash": {
+            "type": ["boolean", "null"],
+            "description": "The trash instead of the library: `true` (or `1` in a query).",
+            "default": null
           }
         }
       },
@@ -2271,6 +3100,63 @@
           }
         }
       },
+      "LookupMatch": {
+        "type": "object",
+        "description": "A saved post found by `POST /posts/lookup`.",
+        "required": ["key", "postKey", "trashed"],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "The id as asked for."
+          },
+          "postKey": {
+            "type": "string",
+            "description": "The saved post's key."
+          },
+          "trashed": {
+            "type": "boolean",
+            "description": "Whether the saved post is in the trash."
+          }
+        }
+      },
+      "LookupPlatform": {
+        "type": "string",
+        "description": "A platform whose ids `POST /posts/lookup` resolves.",
+        "enum": ["instagram", "twitter", "pinterest"]
+      },
+      "LookupRequest": {
+        "type": "object",
+        "description": "Ids of posts as a platform's own pages show them.",
+        "required": ["platform", "keys"],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The ids, at most 1,000."
+          },
+          "platform": {
+            "$ref": "#/components/schemas/LookupPlatform",
+            "description": "The platform of the ids."
+          }
+        },
+        "additionalProperties": false
+      },
+      "LookupResult": {
+        "type": "object",
+        "description": "The saved posts among the ids asked for.",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LookupMatch"
+            },
+            "description": "One entry per id that names a saved post, in the order asked; ids of\nno post are left out."
+          }
+        }
+      },
       "MagicLinkRequest": {
         "type": "object",
         "description": "Body of `POST /api/v1/auth/magic-links`.",
@@ -2519,6 +3405,22 @@
             "description": "The bundle's objects, at most 500 per request."
           }
         }
+      },
+      "NewCollectionRequest": {
+        "type": "object",
+        "description": "A collection to create.",
+        "required": ["name"],
+        "properties": {
+          "color": {
+            "type": "string",
+            "description": "The color, `#rgb` or `#rrggbb`; default `#3d5afe`."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name, 1–200 characters once trimmed."
+          }
+        },
+        "additionalProperties": false
       },
       "Notification": {
         "type": "object",
@@ -2866,6 +3768,33 @@
           }
         }
       },
+      "PostBatch": {
+        "type": "object",
+        "description": "Posts fetched by key.",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Post"
+            },
+            "description": "The posts, in the order of the keys asked for, each once. Keys of no\npost are left out."
+          }
+        }
+      },
+      "PostCount": {
+        "type": "object",
+        "description": "The number of posts matching some filters.",
+        "required": ["total"],
+        "properties": {
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts matching the filters, over all pages of `GET /posts`.",
+            "minimum": 0
+          }
+        }
+      },
       "PostDetail": {
         "allOf": [
           {
@@ -3071,6 +4000,90 @@
             "minimum": 0
           }
         }
+      },
+      "PostPatch": {
+        "type": "object",
+        "description": "Changes to a post. Every field is optional: absent fields are left\nalone, and `null` clears one.",
+        "properties": {
+          "aiCategory": {
+            "type": ["string", "null"],
+            "description": "Manual AI edit: the category, at most 200 characters."
+          },
+          "aiContentType": {
+            "type": ["string", "null"],
+            "description": "Manual AI edit: the content type, at most 200 characters."
+          },
+          "aiDescription": {
+            "type": ["string", "null"],
+            "description": "Manual AI edit: the description, at most 20,000 characters."
+          },
+          "aiEntities": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "Manual AI edit: the entities (at most 100, of at most 200 characters)."
+          },
+          "aiKeywords": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "Manual AI edit: the keywords (at most 100, of at most 200 characters)."
+          },
+          "aiLanguage": {
+            "type": ["string", "null"],
+            "description": "Manual AI edit: the language, at most 200 characters."
+          },
+          "aiSaveReason": {
+            "type": ["string", "null"],
+            "description": "Manual AI edit: why the post was saved, at most 20,000 characters."
+          },
+          "aiTags": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "Manual AI edit: the AI tags, replacing the old ones (at most 100, of\nat most 200 characters)."
+          },
+          "userNote": {
+            "type": ["string", "null"],
+            "description": "The user's note, at most 20,000 characters, stored as given."
+          },
+          "userTags": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "The user's tags, replacing the old ones: at most 100, of at most 200\ncharacters. `null` clears them, like `[]`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PostSelector": {
+        "type": "object",
+        "description": "Which posts an action applies to: exactly one of `keys` and `filter`.",
+        "properties": {
+          "exceptKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "With `filter`: posts to leave out, by key, at most 1,000 (\"select all\nmatching\" minus the ones unticked)."
+          },
+          "filter": {
+            "$ref": "#/components/schemas/FilterParams",
+            "description": "Every post `GET /posts` lists with these filters, over all its pages\n(`trash: true` selects in the trash)."
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "These posts, by key, in the trash or not: at most 500. Unknown keys\nare skipped."
+          }
+        },
+        "additionalProperties": false
       },
       "PostSort": {
         "type": "string",
@@ -3698,7 +4711,7 @@
     },
     {
       "name": "library",
-      "description": "The signed-in user's posts, stats and collections."
+      "description": "The signed-in user's posts, stats and collections, and their edits."
     },
     {
       "name": "search",

@@ -6,6 +6,12 @@
 //! coexist, as on the desktop: `tag` is the gallery's tag chip and always
 //! filters; `tags` + `tagMode` are the tags of the AI views, which in `or` mode
 //! with `q` widen the search instead of filtering it.
+//!
+//! Also the other reads of posts (P1-03): `GET /posts/count` (the list's
+//! filters, conditional, cached per library generation), `POST
+//! /posts/batch-get` (≤ 200 keys) and `POST /posts/lookup` (≤ 1,000 ids as a
+//! platform's pages show them). The edit, `PATCH /posts/{key}`, is in
+//! [`super::post_edit`].
 
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -19,14 +25,20 @@ use super::listing::{
     check_text, check_values, flag, page_size,
 };
 use super::model::{MediaType, Platform, Post, PostDetail, PostPage};
+use super::selector::FilterParams;
 use crate::conditional::{ConditionalHeaders, ETag};
 use crate::current_user::CurrentUser;
 use crate::error::ApiError;
 use crate::extract::{Json, Path, Query};
+use crate::library;
 use crate::state::{AppState, blocking};
 
 /// Longest post key (plan §2.8); longer keys cannot exist.
-const MAX_KEY_BYTES: usize = 200;
+pub(crate) const MAX_KEY_BYTES: usize = 200;
+/// Most keys of one `POST /posts/batch-get` (plan §2.9).
+pub const MAX_BATCH_KEYS: usize = 200;
+/// Most keys of one `POST /posts/lookup` (plan §2.9).
+pub const MAX_LOOKUP_KEYS: usize = 1_000;
 
 /// Websites or social posts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -102,7 +114,7 @@ pub struct PostsQuery {
 
 impl PostsQuery {
     /// Refuses over-long text and too many values (422 `validation_failed`).
-    fn validate(&self) -> Result<(), ApiError> {
+    pub(crate) fn validate(&self) -> Result<(), ApiError> {
         check_text("q", self.q.as_deref(), MAX_QUERY_CHARS)?;
         for (field, value) in [
             ("aiStatus", &self.ai_status),
@@ -119,7 +131,7 @@ impl PostsQuery {
     }
 
     /// The core filter.
-    fn filter(&self) -> PostFilter {
+    pub(crate) fn filter(&self) -> PostFilter {
         PostFilter {
             platform: self.platform.map(Into::into),
             source: self.source.map(|s| match s {
@@ -276,4 +288,220 @@ pub async fn get_post(
         .await?
         .ok_or_else(ApiError::not_found)?;
     Ok(etag.respond(Json(PostDetail::from(detail))))
+}
+
+/// The number of posts matching some filters.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PostCount {
+    /// Posts matching the filters, over all pages of `GET /posts`.
+    pub total: u64,
+}
+
+/// How many posts `GET /posts` lists with these filters, over all its pages:
+/// the gallery's count pill, and the size of a selection by filter.
+///
+/// Counts are cached per library state, so repeating a count costs nothing
+/// until the library changes. The response is conditional: send the `ETag`
+/// back in `If-None-Match` and an unchanged count answers 304.
+#[utoipa::path(
+    get,
+    path = "/api/v1/posts/count",
+    tag = "library",
+    operation_id = "countPosts",
+    params(FilterParams, ConditionalHeaders),
+    responses(
+        (
+            status = OK,
+            description = "The count.",
+            body = PostCount,
+            headers(
+                ("ETag" = String, description = "Weak ETag of this count in this library state."),
+                ("Cache-Control" = String, description = "`private, no-cache`."),
+            )
+        ),
+        (
+            status = NOT_MODIFIED,
+            description = "The count is unchanged since the ETag in `If-None-Match`; no body.",
+            headers(("ETag" = String, description = "The same ETag."))
+        ),
+    )
+)]
+pub async fn count_posts(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    headers: HeaderMap,
+    Query(params): Query<FilterParams>,
+) -> Result<Response, ApiError> {
+    let query = params.into_query();
+    query.validate()?;
+    let db = state.user_db(user.id()).await?;
+    // Read before the snapshot (`crate::conditional`, `crate::library`).
+    let generation = db.generation();
+    let etag = ETag::for_view("posts.count", user.id(), generation, &query);
+    if etag.matches(&headers) {
+        return Ok(etag.not_modified());
+    }
+    let counts = &state.library_caches().counts;
+    let view = library::view_digest("posts.count", &query);
+    let total = if let Some(total) = counts.get(user.id(), generation, &view) {
+        total
+    } else {
+        let filter = query.filter();
+        let total = blocking(move || db.read(|conn| posts::count(conn, &filter))).await?;
+        counts.insert(user.id(), generation, view, total);
+        total
+    };
+    Ok(etag.respond(Json(PostCount { total })))
+}
+
+/// Refuses more than `max` keys, or a key no post can have (422
+/// `validation_failed` on `keys`).
+fn check_keys(keys: &[String], max: usize) -> Result<(), ApiError> {
+    if keys.len() > max {
+        return Err(ApiError::invalid_field(
+            "keys",
+            format!("has more than {max} keys"),
+        ));
+    }
+    if keys.iter().any(|key| key.len() > MAX_KEY_BYTES) {
+        return Err(ApiError::invalid_field(
+            "keys",
+            format!("has a key longer than {MAX_KEY_BYTES} bytes"),
+        ));
+    }
+    Ok(())
+}
+
+/// The posts to fetch.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct BatchGetRequest {
+    /// The posts' keys, at most 200.
+    pub keys: Vec<String>,
+}
+
+/// Posts fetched by key.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PostBatch {
+    /// The posts, in the order of the keys asked for, each once. Keys of no
+    /// post are left out.
+    pub items: Vec<Post>,
+}
+
+/// Several posts by key, trashed or not (desktop `getPostsByIds`).
+#[utoipa::path(
+    post,
+    path = "/api/v1/posts/batch-get",
+    tag = "library",
+    operation_id = "batchGetPosts",
+    request_body = BatchGetRequest,
+    responses(
+        (status = OK, description = "The posts found.", body = PostBatch),
+    )
+)]
+pub async fn batch_get_posts(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<BatchGetRequest>,
+) -> Result<Json<PostBatch>, ApiError> {
+    check_keys(&request.keys, MAX_BATCH_KEYS)?;
+    let db = state.user_db(user.id()).await?;
+    let found = blocking(move || db.read(|conn| posts::get_many(conn, &request.keys))).await?;
+    Ok(Json(PostBatch {
+        items: found.into_iter().map(Post::from).collect(),
+    }))
+}
+
+/// A platform whose ids `POST /posts/lookup` resolves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum LookupPlatform {
+    /// Instagram: shortcodes, media pks or REST ids `<pk>_<owner>`.
+    Instagram,
+    /// X: tweet ids.
+    Twitter,
+    /// Pinterest: pin ids.
+    Pinterest,
+}
+
+impl From<LookupPlatform> for shelfy_core::repo::Platform {
+    fn from(platform: LookupPlatform) -> Self {
+        match platform {
+            LookupPlatform::Instagram => Self::Instagram,
+            LookupPlatform::Twitter => Self::Twitter,
+            LookupPlatform::Pinterest => Self::Pinterest,
+        }
+    }
+}
+
+/// Ids of posts as a platform's own pages show them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct LookupRequest {
+    /// The platform of the ids.
+    pub platform: LookupPlatform,
+    /// The ids, at most 1,000.
+    pub keys: Vec<String>,
+}
+
+/// A saved post found by `POST /posts/lookup`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LookupMatch {
+    /// The id as asked for.
+    pub key: String,
+    /// The saved post's key.
+    pub post_key: String,
+    /// Whether the saved post is in the trash.
+    pub trashed: bool,
+}
+
+/// The saved posts among the ids asked for.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LookupResult {
+    /// One entry per id that names a saved post, in the order asked; ids of
+    /// no post are left out.
+    pub items: Vec<LookupMatch>,
+}
+
+/// Which of these posts, named by the ids a platform's pages show, are
+/// already saved (desktop `savedByKeys`): the "already saved" badges of the
+/// selection overlay. An Instagram id matches by the media pk it stands for
+/// or by the post's stored shortcode.
+///
+/// Signed-in sessions only for now; the extension's `lookup` token joins in
+/// P1-17.
+#[utoipa::path(
+    post,
+    path = "/api/v1/posts/lookup",
+    tag = "library",
+    operation_id = "lookupPosts",
+    request_body = LookupRequest,
+    responses(
+        (status = OK, description = "The saved posts found.", body = LookupResult),
+    )
+)]
+pub async fn lookup_posts(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(request): Json<LookupRequest>,
+) -> Result<Json<LookupResult>, ApiError> {
+    check_keys(&request.keys, MAX_LOOKUP_KEYS)?;
+    let db = state.user_db(user.id()).await?;
+    let platform = request.platform.into();
+    let hits =
+        blocking(move || db.read(|conn| posts::lookup(conn, platform, &request.keys))).await?;
+    Ok(Json(LookupResult {
+        items: hits
+            .into_iter()
+            .map(|hit| LookupMatch {
+                key: hit.key,
+                post_key: hit.post_key,
+                trashed: hit.trashed,
+            })
+            .collect(),
+    }))
 }

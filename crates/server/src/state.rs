@@ -1,6 +1,6 @@
 //! The state shared by every request: the databases, the configuration,
-//! authentication, the mailer, the realtime event bus, the job system and
-//! the shutdown token.
+//! authentication, the mailer, the realtime event bus, the job system, the
+//! library caches and the shutdown token.
 
 use std::sync::Arc;
 
@@ -14,6 +14,7 @@ use crate::config::Config;
 use crate::error::ApiError;
 use crate::events::EventBus;
 use crate::jobs::Jobs;
+use crate::library::LibraryCaches;
 use crate::mail::Mailer;
 
 /// Cheap to clone: everything lives behind one `Arc`.
@@ -30,6 +31,7 @@ struct Inner {
     mailer: Mailer,
     events: EventBus,
     jobs: Jobs,
+    library_caches: LibraryCaches,
     shutdown: CancellationToken,
 }
 
@@ -89,6 +91,7 @@ impl AppState {
                 mailer,
                 events,
                 jobs,
+                library_caches: LibraryCaches::new(),
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -135,6 +138,12 @@ impl AppState {
     #[must_use]
     pub fn jobs(&self) -> &Jobs {
         &self.inner.jobs
+    }
+
+    /// Counts and stats cached per library generation ([`crate::library`]).
+    #[must_use]
+    pub fn library_caches(&self) -> &LibraryCaches {
+        &self.inner.library_caches
     }
 
     /// Cancelled when the server starts shutting down. Long-running work (job

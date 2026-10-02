@@ -465,6 +465,9 @@ impl JobContext {
     /// §2.9, the *From T11* note of P1-07). Should the cache evict the
     /// handle during the chunk and serve a new one, the new one is evicted
     /// too after the chunk wrote, so no ETag taken from it can match again.
+    /// Since P1-03 the handles of a library share its generation across
+    /// evictions for idleness or capacity ([`shelfy_core::generation`]); an
+    /// explicit eviction retires the generation, which this check covers.
     ///
     /// # Errors
     ///

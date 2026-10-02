@@ -37,6 +37,7 @@
 //! | [`jobs`] | the job system: scheduler, workers, job-kind registry, `Idempotency-Key` |
 //! | [`static_files`] | the web app's files: precompressed assets, `index.html` for client routes |
 //! | [`security_headers`] | the content security policy, HSTS and `nosniff` on every response |
+//! | [`library`] | the library write path (events after each write) and the caches keyed by the generation |
 //!
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.2–§2.4 and §3.
 
@@ -54,6 +55,7 @@ pub mod extract;
 pub mod healthcheck;
 pub mod ids;
 pub mod jobs;
+pub mod library;
 pub mod limits;
 pub mod mail;
 pub mod migrations;

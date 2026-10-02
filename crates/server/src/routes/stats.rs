@@ -1,5 +1,7 @@
 //! `GET /api/v1/stats`: the library counters (plan §2.9; desktop `getStats`,
-//! with every platform counted, `manual` included, and the trash apart).
+//! with every platform counted, `manual` included (§1.2 #12), and the trash
+//! apart). Conditional, and cached per library generation (§2.14), so the
+//! tabs that refresh on `stats.changed` share one computation.
 
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -11,6 +13,7 @@ use crate::conditional::{ConditionalHeaders, ETag};
 use crate::current_user::CurrentUser;
 use crate::error::ApiError;
 use crate::extract::Json;
+use crate::library;
 use crate::state::{AppState, blocking};
 
 /// The library counters.
@@ -43,10 +46,20 @@ pub async fn get_stats(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let db = state.user_db(user.id()).await?;
-    let etag = ETag::for_view("stats", user.id(), db.generation(), &());
+    // Read before the snapshot (`crate::conditional`, `crate::library`).
+    let generation = db.generation();
+    let etag = ETag::for_view("stats", user.id(), generation, &());
     if etag.matches(&headers) {
         return Ok(etag.not_modified());
     }
-    let counters = blocking(move || db.read(stats::get)).await?;
+    let cache = &state.library_caches().stats;
+    let view = library::view_digest("stats", &());
+    let counters = if let Some(counters) = cache.get(user.id(), generation, &view) {
+        counters
+    } else {
+        let counters = blocking(move || db.read(stats::get)).await?;
+        cache.insert(user.id(), generation, view, counters.clone());
+        counters
+    };
     Ok(etag.respond(Json(Stats::from(counters))))
 }
