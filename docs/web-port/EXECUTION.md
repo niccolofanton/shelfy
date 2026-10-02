@@ -7,7 +7,7 @@ Live status of [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). The plan is the
 - **Integration branch:** `web/foundations`, branched from `dev`. Every task lands on it as a fast-forward and is pushed; CI must be green.
 - **Lanes:** one task per lane. A lane is a Claude Code subagent in its own git worktree, on branch `web/<task>-<slug>`, started from the tip of `web/foundations`.
 - **Lead:** one session plans the waves, reviews each lane (diff, checks, and an independent reviewer for substantive tasks), integrates it and updates this file.
-- **Concurrency:** at most 3 lanes at once, and only while 8 GB of local disk stay free: a Rust lane with its own target dir takes about 6 GB.
+- **Concurrency:** a new lane starts only while 8 GB of local disk stay free. Since 7ba4ea2 (line tables only in dev builds), a Rust lane takes about 2–3 GB plus 1.3 GB of `node_modules`.
 
 ## Lane rules
 
@@ -60,6 +60,14 @@ These owner decisions override the plan where they conflict.
 | Task | What | Status | Branch |
 |---|---|---|---|
 | P1-01 | Realtime: SSE bus, notifications, client errors, version | running | `web/p1-01-realtime` |
+
+### Follow-ups
+
+Work that a review or a later finding added to an integrated task.
+
+| # | What | From | Status | Branch |
+|---|---|---|---|---|
+| F1 | T10 hardening: links redeem only by POST with the token in the URL fragment, CSRF check on every unsafe request, trusted-proxy client IPs, no re-caching of revoked sessions, deny-by-default authentication, mail and cookie fixes | the T10 security review (no critical or high finding) | running | `web/t10-hardening` |
 
 ### P2–P6
 
