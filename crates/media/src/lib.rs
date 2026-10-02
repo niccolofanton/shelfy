@@ -7,10 +7,14 @@
 //! | [`kind`] | the media type allowlist and magic-byte sniffing |
 //! | [`name`] | object and rendition file names, the `variants` bitmask |
 //! | [`store`] | the per-user store: streaming ingest, atomic writes, dedupe |
+//! | [`render`] | decode, resize, WebP renditions and ThumbHash |
+//! | [`pool`] | the dedicated 2-thread pool the pipeline runs on |
 
 pub mod digest;
 pub mod kind;
 pub mod name;
+pub mod pool;
+pub mod render;
 pub mod store;
 
 pub use digest::Digest;
