@@ -143,8 +143,94 @@ export interface paths {
     /** Every collection, in manual order, then creation order. */
     get: operations['listCollections'];
     put?: never;
-    post?: never;
+    /** Creates a collection; it comes last in the manual order. */
+    post: operations['createCollection'];
     delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/collections/from-query': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Creates a collection holding the posts of a selector, in one step: "save
+     *     this view as a folder". Trashed posts are skipped.
+     */
+    post: operations['createCollectionFromQuery'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/collections/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Deletes a collection. Its posts stay in the library, out of the
+     *     collection.
+     */
+    delete: operations['deleteCollection'];
+    options?: never;
+    head?: never;
+    /**
+     * Renames, recolors or moves a collection. A platform folder keeps its
+     *     link.
+     */
+    patch: operations['updateCollection'];
+    trace?: never;
+  };
+  '/api/v1/collections/{id}/posts': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Adds posts to a collection: a list of keys, or every post a filter
+     *     lists (minus some), however many, in one step. Trashed posts and posts
+     *     already in the collection are skipped.
+     */
+    post: operations['addCollectionPosts'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/collections/{id}/posts/{key}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Takes one post out of a collection (§1.2 #12). Taking out a post that is
+     *     not in it changes nothing.
+     */
+    delete: operations['removeCollectionPost'];
     options?: never;
     head?: never;
     patch?: never;
@@ -434,6 +520,70 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/posts/batch-get': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Several posts by key, trashed or not (desktop `getPostsByIds`). */
+    post: operations['batchGetPosts'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/posts/count': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * How many posts `GET /posts` lists with these filters, over all its pages:
+     *     the gallery's count pill, and the size of a selection by filter.
+     * @description Counts are cached per library state, so repeating a count costs nothing
+     *     until the library changes. The response is conditional: send the `ETag`
+     *     back in `If-None-Match` and an unchanged count answers 304.
+     */
+    get: operations['countPosts'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/posts/lookup': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Which of these posts, named by the ids a platform's pages show, are
+     *     already saved (desktop `savedByKeys`): the "already saved" badges of the
+     *     selection overlay. An Instagram id matches by the media pk it stands for
+     *     or by the post's stored shortcode.
+     * @description Signed-in sessions only for now; the extension's `lookup` token joins in
+     *     P1-17.
+     */
+    post: operations['lookupPosts'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/posts/{key}': {
     parameters: {
       query?: never;
@@ -448,7 +598,12 @@ export interface paths {
     delete?: never;
     options?: never;
     head?: never;
-    patch?: never;
+    /**
+     * Edits a post's note and tags, or its AI fields (a manual edit: the AI
+     *     status becomes `done` and the model `manual`). Trashed posts can be
+     *     edited too.
+     */
+    patch: operations['updatePost'];
     trace?: never;
   };
   '/api/v1/queues/{kind}/cancel-all': {
@@ -650,6 +805,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /** @description The posts to add. */
+    AddPostsRequest: {
+      /** @description Which posts. */
+      selector: components['schemas']['PostSelector'];
+    };
     /** @description Archive work left for the workers (P1-19, P2), by class (OI-6, OI-7). */
     ArchiveCounts: {
       /** @description Posts by `archive_state`. */
@@ -706,6 +866,11 @@ export interface components {
       emailLink: boolean;
       /** @description Passkey sign-in (P1-13). Always false for now. */
       passkeys: boolean;
+    };
+    /** @description The posts to fetch. */
+    BatchGetRequest: {
+      /** @description The posts' keys, at most 200. */
+      keys: string[];
     };
     /**
      * @description What changed posts (plan §2.10).
@@ -786,10 +951,63 @@ export interface components {
       /** @description Name of the folder or board when it was linked. */
       sourceName: string | null;
     };
+    /**
+     * @description What happens to the posts of a deleted collection.
+     * @enum {string}
+     */
+    CollectionDeleteMode: 'label';
+    /** @description The outcome of deleting a collection. */
+    CollectionDeleted: {
+      /**
+       * Format: int64
+       * @description Posts moved to the trash with the collection: 0 with `mode=label`.
+       */
+      trashed: number;
+    };
+    /** @description A collection to create with posts. */
+    CollectionFromQuery: {
+      /** @description The color, `#rgb` or `#rrggbb`; default `#3d5afe`. */
+      color?: string;
+      /** @description The name, 1–200 characters once trimmed. */
+      name: string;
+      /** @description The posts to put in it: usually the current gallery filter. */
+      selector: components['schemas']['PostSelector'];
+    };
     /** @description Every collection, in manual order, then creation order. */
     CollectionList: {
       /** @description The collections. */
       items: components['schemas']['Collection'][];
+    };
+    /** @description The outcome of taking a post out of a collection. */
+    CollectionPostRemoved: {
+      /** @description The collection, with its new count. */
+      collection: components['schemas']['Collection'];
+      /** @description Whether the post was in the collection. */
+      removed: boolean;
+    };
+    /** @description The outcome of adding posts to a collection. */
+    CollectionPostsAdded: {
+      /**
+       * Format: int64
+       * @description Posts that joined the collection; trashed posts and posts already in
+       *     it are not counted.
+       */
+      added: number;
+      /** @description The collection, with its new count. */
+      collection: components['schemas']['Collection'];
+    };
+    /** @description Changes to a collection; absent fields are left alone. */
+    CollectionUpdate: {
+      /** @description The new color, `#rgb` or `#rrggbb`. */
+      color?: string;
+      /** @description The new name, 1–200 characters once trimmed. */
+      name?: string;
+      /**
+       * Format: int32
+       * @description The new place in the manual order, from 0; past the end means last.
+       *     Every collection's `position` is renumbered from 0.
+       */
+      position?: number;
     };
     /**
      * @description Stable, machine-readable error codes. Each one has a fixed HTTP status.
@@ -833,6 +1051,82 @@ export interface components {
       field: string;
       /** @description Why the value was refused, for developers. */
       reason: string;
+    };
+    /**
+     * @description The filters of `GET /api/v1/posts`, without paging or order. Every
+     *     filter is optional; the ones given combine with AND.
+     */
+    FilterParams: {
+      /**
+       * @description Only posts with this AI status.
+       * @default null
+       */
+      aiStatus: string | null;
+      /** @default null */
+      aiTagged: components['schemas']['YesNo'] | null;
+      /**
+       * @description Only posts with this AI category.
+       * @default null
+       */
+      category: string | null;
+      /**
+       * Format: int64
+       * @description Only posts in this collection (its `id`).
+       * @default null
+       */
+      collection: number | null;
+      /**
+       * @description Suggested concepts: more search terms, combined with `q` by
+       *     `conceptMode`. Repeatable in a query.
+       * @default []
+       */
+      concept: string[];
+      /** @default null */
+      conceptMode: components['schemas']['MatchMode'] | null;
+      /**
+       * @description Only posts with this AI content type.
+       * @default null
+       */
+      contentType: string | null;
+      /**
+       * @description Only posts with this AI entity.
+       * @default null
+       */
+      entity: string | null;
+      /**
+       * @description Only posts of these kinds: any of them. Repeatable in a query.
+       * @default []
+       */
+      mediaType: components['schemas']['MediaType'][];
+      /** @default null */
+      platform: components['schemas']['Platform'] | null;
+      /**
+       * @description Free-text search (plan §2.14). At most 500 characters.
+       * @default null
+       */
+      q: string | null;
+      /** @default null */
+      source: components['schemas']['PostSource'] | null;
+      /** @default null */
+      stored: components['schemas']['YesNo'] | null;
+      /**
+       * @description Only posts with this tag (the gallery's tag chip; always a filter).
+       * @default null
+       */
+      tag: string | null;
+      /** @default null */
+      tagMode: components['schemas']['MatchMode'] | null;
+      /**
+       * @description Tags of the AI views, combined by `tagMode`. Repeatable in a query.
+       *     With `q` in `or` mode they widen the search.
+       * @default []
+       */
+      tags: string[];
+      /**
+       * @description The trash instead of the library: `true` (or `1` in a query).
+       * @default null
+       */
+      trash: boolean | null;
     };
     /** @description Health of the process. */
     Health: {
@@ -1007,6 +1301,35 @@ export interface components {
       /** @description The queues, by kind. */
       queues: components['schemas']['QueueSummary'][];
     };
+    /** @description A saved post found by `POST /posts/lookup`. */
+    LookupMatch: {
+      /** @description The id as asked for. */
+      key: string;
+      /** @description The saved post's key. */
+      postKey: string;
+      /** @description Whether the saved post is in the trash. */
+      trashed: boolean;
+    };
+    /**
+     * @description A platform whose ids `POST /posts/lookup` resolves.
+     * @enum {string}
+     */
+    LookupPlatform: 'instagram' | 'twitter' | 'pinterest';
+    /** @description Ids of posts as a platform's own pages show them. */
+    LookupRequest: {
+      /** @description The ids, at most 1,000. */
+      keys: string[];
+      /** @description The platform of the ids. */
+      platform: components['schemas']['LookupPlatform'];
+    };
+    /** @description The saved posts among the ids asked for. */
+    LookupResult: {
+      /**
+       * @description One entry per id that names a saved post, in the order asked; ids of
+       *     no post are left out.
+       */
+      items: components['schemas']['LookupMatch'][];
+    };
     /** @description Body of `POST /api/v1/auth/magic-links`. */
     MagicLinkRequest: {
       /** @description The account's email address. */
@@ -1170,6 +1493,13 @@ export interface components {
     MissingObjectsRequest: {
       /** @description The bundle's objects, at most 500 per request. */
       objects: components['schemas']['ObjectRef'][];
+    };
+    /** @description A collection to create. */
+    NewCollectionRequest: {
+      /** @description The color, `#rgb` or `#rrggbb`; default `#3d5afe`. */
+      color?: string;
+      /** @description The name, 1–200 characters once trimmed. */
+      name: string;
     };
     /**
      * @description A notification: an item of `GET /notifications` and the payload of the
@@ -1352,6 +1682,22 @@ export interface components {
       /** @description Website URL as saved. */
       webUrl: string | null;
     };
+    /** @description Posts fetched by key. */
+    PostBatch: {
+      /**
+       * @description The posts, in the order of the keys asked for, each once. Keys of no
+       *     post are left out.
+       */
+      items: components['schemas']['Post'][];
+    };
+    /** @description The number of posts matching some filters. */
+    PostCount: {
+      /**
+       * Format: int64
+       * @description Posts matching the filters, over all pages of `GET /posts`.
+       */
+      total: number;
+    };
     /**
      * @description Everything about one post: the gallery fields plus the AI bookkeeping and
      *     the tag and entity rows.
@@ -1446,6 +1792,56 @@ export interface components {
        *     `includeTotal=true`.
        */
       total?: number;
+    };
+    /**
+     * @description Changes to a post. Every field is optional: absent fields are left
+     *     alone, and `null` clears one.
+     */
+    PostPatch: {
+      /** @description Manual AI edit: the category, at most 200 characters. */
+      aiCategory?: string | null;
+      /** @description Manual AI edit: the content type, at most 200 characters. */
+      aiContentType?: string | null;
+      /** @description Manual AI edit: the description, at most 20,000 characters. */
+      aiDescription?: string | null;
+      /** @description Manual AI edit: the entities (at most 100, of at most 200 characters). */
+      aiEntities?: string[] | null;
+      /** @description Manual AI edit: the keywords (at most 100, of at most 200 characters). */
+      aiKeywords?: string[] | null;
+      /** @description Manual AI edit: the language, at most 200 characters. */
+      aiLanguage?: string | null;
+      /** @description Manual AI edit: why the post was saved, at most 20,000 characters. */
+      aiSaveReason?: string | null;
+      /**
+       * @description Manual AI edit: the AI tags, replacing the old ones (at most 100, of
+       *     at most 200 characters).
+       */
+      aiTags?: string[] | null;
+      /** @description The user's note, at most 20,000 characters, stored as given. */
+      userNote?: string | null;
+      /**
+       * @description The user's tags, replacing the old ones: at most 100, of at most 200
+       *     characters. `null` clears them, like `[]`.
+       */
+      userTags?: string[] | null;
+    };
+    /** @description Which posts an action applies to: exactly one of `keys` and `filter`. */
+    PostSelector: {
+      /**
+       * @description With `filter`: posts to leave out, by key, at most 1,000 ("select all
+       *     matching" minus the ones unticked).
+       */
+      exceptKeys?: string[];
+      /**
+       * @description Every post `GET /posts` lists with these filters, over all its pages
+       *     (`trash: true` selects in the trash).
+       */
+      filter?: components['schemas']['FilterParams'];
+      /**
+       * @description These posts, by key, in the trash or not: at most 500. Unknown keys
+       *     are skipped.
+       */
+      keys?: string[];
     };
     /**
      * @description Order of a list of posts.
@@ -1970,6 +2366,165 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  createCollection: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['NewCollectionRequest'];
+      };
+    };
+    responses: {
+      /** @description The new collection. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Collection'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  createCollectionFromQuery: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CollectionFromQuery'];
+      };
+    };
+    responses: {
+      /** @description The new collection. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CollectionPostsAdded'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  deleteCollection: {
+    parameters: {
+      query?: {
+        /** @description What happens to the posts; default `label`. */
+        mode?: components['schemas']['CollectionDeleteMode'];
+      };
+      header?: never;
+      path: {
+        /** @description The collection's id. */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The collection is gone. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CollectionDeleted'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  updateCollection: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The collection's id. */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CollectionUpdate'];
+      };
+    };
+    responses: {
+      /** @description The collection after the change. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Collection'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  addCollectionPosts: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The collection's id. */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AddPostsRequest'];
+      };
+    };
+    responses: {
+      /** @description What was added. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CollectionPostsAdded'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  removeCollectionPost: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The collection's id. */
+        id: number;
+        /** @description The post's key. */
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description What was removed. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['CollectionPostRemoved'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   streamEvents: {
     parameters: {
       query?: {
@@ -2407,6 +2962,140 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  batchGetPosts: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['BatchGetRequest'];
+      };
+    };
+    responses: {
+      /** @description The posts found. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PostBatch'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  countPosts: {
+    parameters: {
+      query?: {
+        /** @description Only posts of this platform. */
+        platform?: components['schemas']['Platform'];
+        /** @description Only websites (`web`) or only everything else (`social`). */
+        source?: components['schemas']['PostSource'];
+        /** @description Only posts in this collection (its `id`). */
+        collection?: number;
+        /** @description Only posts of these kinds: any of them. Repeatable in a query. */
+        mediaType?: components['schemas']['MediaType'][];
+        /** @description Only posts with (`yes`) or without (`no`) a stored object. */
+        stored?: components['schemas']['YesNo'];
+        /**
+         * @description Only posts with (`yes`) or without (`no`) AI tags; manual tags do not
+         *     count.
+         */
+        aiTagged?: components['schemas']['YesNo'];
+        /** @description Only posts with this AI status. */
+        aiStatus?: string;
+        /** @description Only posts with this tag (the gallery's tag chip; always a filter). */
+        tag?: string;
+        /**
+         * @description Tags of the AI views, combined by `tagMode`. Repeatable in a query.
+         *     With `q` in `or` mode they widen the search.
+         */
+        tags?: string[];
+        /** @description How `tags` combine. Default `or`. */
+        tagMode?: components['schemas']['MatchMode'];
+        /** @description Only posts with this AI entity. */
+        entity?: string;
+        /** @description Only posts with this AI category. */
+        category?: string;
+        /** @description Only posts with this AI content type. */
+        contentType?: string;
+        /** @description Free-text search (plan §2.14). At most 500 characters. */
+        q?: string;
+        /**
+         * @description Suggested concepts: more search terms, combined with `q` by
+         *     `conceptMode`. Repeatable in a query.
+         */
+        concept?: string[];
+        /** @description How `q` and the concepts combine. Default `or`. */
+        conceptMode?: components['schemas']['MatchMode'];
+        /** @description The trash instead of the library: `true` (or `1` in a query). */
+        trash?: boolean;
+      };
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The count. */
+      200: {
+        headers: {
+          /** @description `private, no-cache`. */
+          'Cache-Control'?: string;
+          /** @description Weak ETag of this count in this library state. */
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PostCount'];
+        };
+      };
+      /** @description The count is unchanged since the ETag in `If-None-Match`; no body. */
+      304: {
+        headers: {
+          /** @description The same ETag. */
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  lookupPosts: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LookupRequest'];
+      };
+    };
+    responses: {
+      /** @description The saved posts found. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LookupResult'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   getPost: {
     parameters: {
       query?: never;
@@ -2446,6 +3135,34 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  updatePost: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The post's key, for example `ig_3141592653589793238`. */
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PostPatch'];
+      };
+    };
+    responses: {
+      /** @description The post after the edit. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PostDetail'];
+        };
       };
       default: components['responses']['Problem'];
     };
