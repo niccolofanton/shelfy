@@ -92,7 +92,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-09 | Deployable server: SPA hosting, headers, image, release workflow, `compose.test` | done | `web/p1-09-deploy` (0f35249…04f00a5) |
 | P1-13 | Owner passkeys, re-auth, login-link bootstrap, optional SMTP | done | `web/p1-13-passkeys` (fcd5cd7…c887a3c) |
 | P1-03 | Library writes, folders, selector, stats, ETags | done; the independent review found no critical or high issue, 1 medium (fixed in P1-05) and 6 low (fixed in F6) | `web/p1-03-writes` (cde994f…232539f) |
-| P1-04 | Client seam: routes, SSE client, error boundary, error codes | running | `web/p1-04-client-seam` |
+| P1-04 | Client seam: routes, SSE client, error boundary, error codes | done | `web/p1-04-client-seam` (4f16f8e…b4afd04) |
 | P1-10 | Merge rules in the core and golden parity | done | `web/p1-10-merge` (ab6efbd, 2364d64) |
 | P1-05 | Search and filters complete, search-eval gate, `admin synth`/`bench` | running | `web/p1-05-search` |
 | P1-15 | Metrics, log redaction, rate limits | running | `web/p1-15-observability` |
@@ -136,6 +136,10 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P1-11 | Run destructive bulk operations only after P1-05's strict selector filters have landed (review M1). | P1-03 review |
 | P1-18 | Follow the apply plan in the P1-16 report, summarized in `doc/RUNBOOK-shelfy.md` in osn: secrets with `just shelfy-secrets` (generated, never printed; the owner email is asked with echo off); the image through `docker save | ssh … docker load` while the GHCR package is private; a Hermes baseline before and after; `just apply "--check --diff"`, then `just apply "--tags monitoring,shelfy,app"` with backups off; then the checks, `create-owner` and `login-link`. Run `just shelfy-sync` after F4 lands, because the vendored backup scripts predate F4. The `edge` subnet is pinned to `10.91.0.0/24`, which is also `SHELFY_TRUSTED_PROXIES`. | P1-16 |
 | P1-23 | `shelfy_backups_enabled: true`, then `just apply "--tags shelfy"`, `just shelfy-backup-now` and `just shelfy-restore-drill`. `just cf-apply` for the G2 service token needs `Access: Service Tokens = Edit` on the OpenTofu Cloudflare token (owner action O5). | P1-16 |
+| P1-02 | For the bottom nav, use `useNavigation()` or App's `setView`, which maps a view to its route on the web; "Search" has no route. Add your viewports to `web/playwright.config.ts`. `web/e2e/api.ts` provides an automatic API-mock fixture. | P1-04 |
+| P1-06 | The gallery's own modal is not on the route yet: a card click calls `navigate({ name: 'post', key })`, closing calls `back(...)`, and prev/next replace the route. Then merge or drop App's `/p/:key` modal (the `routePost` block), so that one modal owns the route. Sidebar folder clicks already push `/c/:id`. | P1-04 |
+| P1-20 | Build the client with the capabilities from `GET /me`, once per session; the client owns the SSE stream. Replace `DevicePage` in `web/src/Root.tsx`, and read the Settings section from the route. `reauth_required` is the hook for the re-auth dialog. After a passkey sign-in, set the session back to "checking" to return to `?next=`. | P1-04 |
+| P1-21 | Replace the route mocks with `compose.test` plus `admin synth`. Run the desktop e2e with `CI=1`, or turn off `reuseExistingServer`: otherwise Playwright silently reuses any dev server on port 5173, such as the owner's `pnpm dev`, and tests the wrong checkout. | P1-04 |
 | P1-21 | The CSP blocks the inline `<style>` in `src/views/Browser.tsx`, a desktop-only view. | P1-09 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
 
