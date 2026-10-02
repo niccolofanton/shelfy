@@ -34,6 +34,16 @@ These owner decisions override the plan where they conflict.
 | E4 | 2026-10-02 | Owner-only until further notice: no invites and no closed beta. The owner account is created with the admin CLI; its email lives in the osn secrets, not in this repo. | P2 closed beta; P5 invites |
 | E5 | 2026-10-02 | The web app is served at `refs.niccolofanton.dev`. Done on 2026-10-02 (osn `ebd2de8`): the CNAME, an owner-only Access app, the tunnel ingress and the edge block to `shelfy-api:8080` are live, so the host answers 502 until the service is deployed. The lead sets up the DNS record, the tunnel route, Access and the edge nginx route on Cloudflare and the VPS. | `shelfy.niccolofanton.dev` throughout the plan |
 
+### Lead decisions
+
+Changes to the plan that the lead made during execution, with the reason.
+
+| # | Date | Decision | Replaces in the plan | Why |
+|---|---|---|---|---|
+| L1 | 2026-10-02 | Sign-in links are `<public URL>/login/magic#<token>`. The SPA page redeems them with `POST /auth/magic-links/redeem` after a click; there is no GET route that signs in. | §2.9 `GET /auth/magic/{token}` that sets the cookie and redirects | Mail scanners and link previews fetch URLs and would spend the link or sign themselves in; a token in the path lands in the nginx and Cloudflare logs (T10 security review, M1). |
+| L2 | 2026-10-02 | Authentication is deny-by-default. A route answers 401 unless it is listed in `routes::PUBLIC_ROUTES` or `routes::TOKEN_ROUTES`; the authz test pins the OpenAPI document to those lists. | Per-route opt-in through the `CurrentUser` extractor | A route that forgets the extractor, or one missing from the document, would ship public (T10 security review, L5). |
+| L3 | 2026-10-02 | `CF-Connecting-IP` is trusted only when the TCP peer is inside `SHELFY_TRUSTED_PROXIES`; IPv6 clients are rate-limited per /64. | The header was trusted from any peer | Any container on the Docker network could set the header, and IPv6 clients rotate addresses inside their /64 (T10 security review, L3). |
+
 ## Status
 
 ### P0 — Foundations and spikes
@@ -68,7 +78,7 @@ Work that a review or a later finding added to an integrated task.
 
 | # | What | From | Status | Branch |
 |---|---|---|---|---|
-| F1 | T10 hardening: links redeem only by POST with the token in the URL fragment, CSRF check on every unsafe request, trusted-proxy client IPs, no re-caching of revoked sessions, deny-by-default authentication, mail and cookie fixes | the T10 security review (no critical or high finding) | running | `web/t10-hardening` |
+| F1 | T10 hardening: links redeem only by POST with the token in the URL fragment, CSRF check on every unsafe request, trusted-proxy client IPs, no re-caching of revoked sessions, deny-by-default authentication, mail and cookie fixes | the T10 security review (no critical or high finding) | done | `web/t10-hardening` (b8503e0…0d66c7b) |
 
 ### P2–P6
 
