@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { Construction, FileQuestion } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import WindowControls from './components/WindowControls';
 import Gallery from './views/Gallery';
@@ -16,6 +17,7 @@ import AiOnboarding from './views/AiOnboarding';
 import RemoteAiBanner from './components/RemoteAiBanner';
 import { useAiSetupStatus } from './hooks/useAiSetup';
 import PostModal from './components/PostModal';
+import ErrorBoundary, { ErrorPanel } from './components/ErrorBoundary';
 import DisclaimerGate from './components/DisclaimerGate';
 import { shouldShowDisclaimerGate } from './disclaimer';
 import { useCollections } from './hooks/useCollections';
@@ -26,10 +28,26 @@ import { ActivityProvider } from './hooks/useActivity';
 import type { SourceSyncApi, SyncTarget } from './hooks/useSourceSync';
 import { useT, useLang, localeTag } from './i18n';
 import { useShelfy } from './api/ShelfyProvider';
+import { errorMessageKey } from './api/errors';
+import {
+  DEFAULT_SETTINGS_SECTION,
+  useNavigation,
+  type AppRoute,
+  type CurrentRoute,
+} from './api/navigation';
 import { buildTime } from 'virtual:build-time';
 
-// The non-browser view identifiers, in render order.
-type ViewId = 'gallery' | 'downloads' | 'aitags' | 'aiqueue' | 'aiweb' | 'aisearch' | 'settings';
+// The non-browser view identifiers, in render order. `trash` exists only as
+// a web route so far.
+type ViewId =
+  | 'gallery'
+  | 'downloads'
+  | 'aitags'
+  | 'aiqueue'
+  | 'aiweb'
+  | 'aisearch'
+  | 'settings'
+  | 'trash';
 // All navigable views, including the always-mounted browser.
 type View = ViewId | 'browser';
 // The three browser-backed platforms that own a sidebar badge.
@@ -111,6 +129,14 @@ interface AiFilterPatch {
   tag?: string | null;
 }
 
+// The post of a `/p/:key` address once fetched: `post` is null when it could
+// not be opened (missing, or `error`).
+interface RoutePost {
+  key: string;
+  post: Shelfy.Post | null;
+  error: unknown;
+}
+
 // Non-browser views, in render order. Each is kept alive once visited (see the
 // keep-alive overlay in AppInner) so switching back is instant.
 const VIEW_IDS: ViewId[] = [
@@ -121,7 +147,51 @@ const VIEW_IDS: ViewId[] = [
   'aiweb',
   'aisearch',
   'settings',
+  'trash',
 ];
+
+// ── Routes (web) ──────────────────────────────────────────────────────────────
+// On the web the address bar decides the view, the folder and the open post
+// (src/api/navigation.tsx); these map routes to App's state and back. The
+// desktop has no addresses and never calls them.
+
+const ALL_SOURCE: ActiveSource = { type: 'platform', value: 'all' };
+
+// The view a route shows. An address with nothing behind it keeps the gallery
+// mounted under its panel.
+function viewOfRoute(route: CurrentRoute): ViewId {
+  if (route.name === 'trash') return 'trash';
+  if (route.name === 'settings') return 'settings';
+  return 'gallery';
+}
+
+// The library source of a route: `/c/:id` names a folder, `/` the whole
+// library (where a platform picked in the sidebar stays), and the other routes
+// leave the library behind them as it is.
+function sourceOfRoute(route: CurrentRoute, current: ActiveSource): ActiveSource {
+  if (route.name === 'collection') return { type: 'collection', value: route.collectionId };
+  if (route.name === 'library' && current.type === 'collection') return ALL_SOURCE;
+  return current;
+}
+
+function sameSource(a: ActiveSource, b: ActiveSource): boolean {
+  return a.type === b.type && a.value === b.value;
+}
+
+// A folder has an address; the platforms live on the library's.
+function routeOfSource(source: ActiveSource): AppRoute {
+  return source.type === 'collection'
+    ? { name: 'collection', collectionId: Number(source.value) }
+    : { name: 'library' };
+}
+
+// The route that shows a view, if the web has it.
+function routeOfView(view: View, source: ActiveSource): AppRoute | null {
+  if (view === 'gallery') return routeOfSource(source);
+  if (view === 'trash') return { name: 'trash' };
+  if (view === 'settings') return { name: 'settings', section: DEFAULT_SETTINGS_SECTION };
+  return null;
+}
 
 // The AI tabs gated by the first-run onboarding: until the local pipeline is
 // fully configured they show the setup wizard instead of their own content.
@@ -148,21 +218,33 @@ const WEB_ACTIVE_STATUS: string[] = [
 ];
 
 export default function App(): React.JSX.Element {
+  // The last resort for the shell itself (sidebar, modals); each view has its own.
   return (
-    <AnalysisProvider>
-      <AppInner />
-    </AnalysisProvider>
+    <ErrorBoundary view="app" layout="page">
+      <AnalysisProvider>
+        <AppInner />
+      </AnalysisProvider>
+    </ErrorBoundary>
   );
 }
 
 function AppInner(): React.JSX.Element {
   const t = useT('app');
+  const te = useT('errors');
   const { lang } = useLang();
   // The backend seam: what this client can do decides which surfaces exist
   // (the web app has no browser, downloads, AI… yet; see ShelfyCapabilities).
   const client = useShelfy();
   const caps = client.capabilities;
-  const [view, setView] = useState<View>('gallery');
+  // The address bar, on the web: its route decides the view, the folder and
+  // the open post, and moving around changes the address. The desktop has
+  // none (`route` is null) and keeps its view state.
+  const nav = useNavigation();
+  const route = nav?.route ?? null;
+  const navigate = nav?.navigate;
+  const navigateBack = nav?.back;
+  const [stateView, setStateView] = useState<View>('gallery');
+  const view: View = route ? viewOfRoute(route) : stateView;
   // First-run legal gate: blocks the app until the current disclaimer version is
   // acknowledged (see DISCLAIMER.md). It keeps appearing at launch until the user
   // accepts with "don't show again" ticked. Persisted in localStorage.
@@ -170,7 +252,9 @@ function AppInner(): React.JSX.Element {
   // Views that have been opened at least once — kept mounted thereafter so
   // returning to them is instant (no re-fetch / skeleton). Seeded with the
   // initial view; 'browser' is always mounted separately and never listed here.
-  const [mountedViews, setMountedViews] = useState<Set<ViewId>>(() => new Set<ViewId>(['gallery']));
+  const [mountedViews, setMountedViews] = useState<Set<ViewId>>(
+    () => new Set<ViewId>([route ? viewOfRoute(route) : 'gallery']),
+  );
   const [browserTab, setBrowserTab] = useState<BrowserPlatform>('instagram');
   const [collectionModal, setCollectionModal] = useState<CollectionModalState | null>(null); // null | { initial?: Collection }
   const [stats, setStats] = useState<Shelfy.Stats | InitialStats>({
@@ -189,11 +273,36 @@ function AppInner(): React.JSX.Element {
     twitter: false,
     pinterest: false,
   });
-  const [activeSource, setActiveSource] = useState<ActiveSource>({
-    type: 'platform',
-    value: 'all',
-  });
+  const [activeSource, setActiveSource] = useState<ActiveSource>(() =>
+    route ? sourceOfRoute(route, ALL_SOURCE) : ALL_SOURCE,
+  );
+  const activeSourceRef = useRef<ActiveSource>(activeSource);
+  activeSourceRef.current = activeSource;
   const [gallerySourceNonce, setGallerySourceNonce] = useState<number>(0); // bumped on each Sources click
+
+  // Web: when the address changes under the app (the back button, a link),
+  // take the folder it names and have the gallery apply it.
+  useEffect(() => {
+    if (!route) return;
+    const next = sourceOfRoute(route, activeSourceRef.current);
+    if (sameSource(next, activeSourceRef.current)) return;
+    setActiveSource(next);
+    setGallerySourceNonce((n) => n + 1);
+  }, [route]);
+
+  // Shows a view: on the web through its address (a view without one does
+  // not exist there), on the desktop by state.
+  const setView = useCallback(
+    (next: View): void => {
+      if (!navigate) {
+        setStateView(next);
+        return;
+      }
+      const to = routeOfView(next, activeSourceRef.current);
+      if (to) navigate(to);
+    },
+    [navigate],
+  );
   const [devBarVisible, setDevBarVisible] = useState<boolean>(false);
   const devBarMounted = useRef<boolean>(false);
 
@@ -335,6 +444,28 @@ function AppInner(): React.JSX.Element {
   const openAddSite = useCallback(() => setShowAddSite(true), []);
   const openAddBookmark = useCallback(() => setShowAddBookmark(true), []);
 
+  // Web: `/p/:key` opens that post's modal over the library (a deep link; the
+  // gallery's own modal moves onto the route in P1-06). `null` while it loads.
+  const routeKey = route?.name === 'post' ? route.key : null;
+  const [routePost, setRoutePost] = useState<RoutePost | null>(null);
+  useEffect(() => {
+    setRoutePost(null);
+    if (!routeKey) return undefined;
+    let alive = true;
+    client.getPostsByIds([routeKey]).then(
+      ([post]) => alive && setRoutePost({ key: routeKey, post: post ?? null, error: null }),
+      (error: unknown) => {
+        console.error('[App] cannot open the post of the address:', error);
+        if (alive) setRoutePost({ key: routeKey, post: null, error });
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [client, routeKey]);
+  // Back where the modal was opened from; a deep link goes to the library.
+  const closeRoutePost = useCallback(() => navigateBack?.({ name: 'library' }), [navigateBack]);
+
   // Download queue — lifted here (App is always mounted) so the sidebar can show
   // live progress regardless of the current view, and the Downloads view shares
   // the same single instance via props.
@@ -394,28 +525,36 @@ function AppInner(): React.JSX.Element {
   // From a web post's modal: jump to the Websites panel, optionally re-running
   // the whole capture+analysis with overwrite so the bad screenshots/data are
   // regenerated and the live process is visible there.
-  const goOpenInWebsites = useCallback(() => setView('aiweb'), []);
-  const goReanalyzeWeb = useCallback(async (p: Shelfy.Post): Promise<void> => {
-    const url = p?.webUrl || p?.webFinalUrl || p?.postUrl;
-    if (!url) return;
-    try {
-      // singlePage is deliberately left undefined: the orchestrator replays the
-      // persisted capture mode (web_meta_json → webSinglePage). Passing the
-      // renderer's copy here proved unreliable — the gallery post can be stale
-      // (e.g. opened while the first capture was still a placeholder), which
-      // silently turned a single-page reference into a full sitemap crawl.
-      await window.electronAPI.addWebReference(url, undefined, true);
-    } catch (e) {
-      console.error('[App] reanalyze web failed:', e);
-    }
-    setView('aiweb');
-  }, []);
+  const goOpenInWebsites = useCallback(() => setView('aiweb'), [setView]);
+  const goReanalyzeWeb = useCallback(
+    async (p: Shelfy.Post): Promise<void> => {
+      const url = p?.webUrl || p?.webFinalUrl || p?.postUrl;
+      if (!url) return;
+      try {
+        // singlePage is deliberately left undefined: the orchestrator replays the
+        // persisted capture mode (web_meta_json → webSinglePage). Passing the
+        // renderer's copy here proved unreliable — the gallery post can be stale
+        // (e.g. opened while the first capture was still a placeholder), which
+        // silently turned a single-page reference into a full sitemap crawl.
+        await window.electronAPI.addWebReference(url, undefined, true);
+      } catch (e) {
+        console.error('[App] reanalyze web failed:', e);
+      }
+      setView('aiweb');
+    },
+    [setView],
+  );
 
-  const handleSelectSource = useCallback((source: ActiveSource) => {
-    setActiveSource(source);
-    setGallerySourceNonce((n) => n + 1);
-    setView('gallery');
-  }, []);
+  const handleSelectSource = useCallback(
+    (source: ActiveSource) => {
+      setActiveSource(source);
+      setGallerySourceNonce((n) => n + 1);
+      // Web: the source's address, which shows the gallery.
+      if (navigate) navigate(routeOfSource(source));
+      else setStateView('gallery');
+    },
+    [navigate],
+  );
 
   const handleSelectBrowserTab = useCallback(
     (tabId: BrowserPlatform) => {
@@ -423,7 +562,7 @@ function AppInner(): React.JSX.Element {
       setView('browser');
       clearAlert(tabId);
     },
-    [clearAlert],
+    [clearAlert, setView],
   );
 
   // Navigazione dalla sidebar e dal Centro Attività. Quando una notifica di sync
@@ -436,7 +575,7 @@ function AppInner(): React.JSX.Element {
       }
       setView(nextView);
     },
-    [handleSelectBrowserTab],
+    [handleSelectBrowserTab, setView],
   );
 
   // Queue controls fired from the Activity center popover (pause / cancel-all).
@@ -536,6 +675,8 @@ function AppInner(): React.JSX.Element {
     const res = await removeCollection(id, opts);
     if (activeSource.type === 'collection' && activeSource.value === id) {
       setActiveSource({ type: 'platform', value: 'all' });
+      // Web: the folder's address is gone too.
+      navigate?.({ name: 'library' }, { replace: true });
     }
     // Re-apply the source filter so the grid reflects the removed tag (and, when
     // its posts were deleted too, drops them library-wide). Refresh counters when
@@ -558,7 +699,12 @@ function AppInner(): React.JSX.Element {
     return () => clearTimeout(t);
   }, [currentBuild]);
 
-  // Load stats on mount and subscribe to new posts events
+  // Read by the mount-once subscriptions below.
+  const reloadCollectionsRef = useRef(reloadCollections);
+  reloadCollectionsRef.current = reloadCollections;
+
+  // Load stats on mount and keep them live: `stats.changed` says the counters
+  // moved (the web stream's event; on the desktop, every new-posts push).
   useEffect(() => {
     refreshStats();
     // A sync can emit hundreds of new-post events in a burst; getStats runs several
@@ -583,12 +729,18 @@ function AppInner(): React.JSX.Element {
         );
       }
     };
-    const unsub = client.on('posts.changed', (event) => {
+    const offStats = client.on('stats.changed', bumpStats);
+    // Live changes were lost (the web stream fell behind): reload what the
+    // shell shows. Each view reloads its own (usePosts).
+    const offResync = client.on('resync', () => {
       bumpStats();
-      // Questo canale è riusato come segnale generico di refresh della lista (es.
-      // backfill blur 'thumb-blur', placeholder web): tali payload non hanno un
-      // count numerico valido e non devono toccare il badge. bumpStats() sopra
-      // ricarica comunque la gallery; qui usciamo senza alterare newPostsAlert.
+      void reloadCollectionsRef.current();
+    });
+    const unsub = client.on('posts.changed', (event) => {
+      // The event doubles as a generic "reload the list" signal (the 'thumb-blur'
+      // backfill, web placeholders): those payloads carry no valid count and must
+      // not touch the badge. The counters follow 'stats.changed' (above), so leave
+      // newPostsAlert alone here.
       const n = event.count ?? NaN;
       if (!Number.isFinite(n) || n <= 0) return;
       // Solo le tre piattaforme browser hanno un badge in sidebar. Altre sorgenti
@@ -609,6 +761,8 @@ function AppInner(): React.JSX.Element {
     });
     return () => {
       if (statsTimer) clearTimeout(statsTimer);
+      offStats();
+      offResync();
       unsub();
     };
   }, [client, refreshStats]);
@@ -624,6 +778,36 @@ function AppInner(): React.JSX.Element {
   const galleryCollection = galleryCollectionId
     ? collections.find((c) => c.id === galleryCollectionId)
     : null;
+  const galleryResetKey = `${activeSource.type}:${activeSource.value}`;
+
+  // Pages a route has nothing for. `route-back` returns to the library.
+  const backToLibrary = { label: te('backToLibrary'), testId: 'route-back', primary: true };
+  const unavailablePanel = (
+    <ErrorPanel
+      testId="route-unavailable"
+      icon={Construction}
+      title={te('unavailableTitle')}
+      message={te('unavailable')}
+      actions={[{ ...backToLibrary, onClick: () => handleSelectSource(ALL_SOURCE) }]}
+    />
+  );
+  let routePanel: React.ReactNode = null;
+  const missingPost = routeKey !== null && routePost?.key === routeKey && !routePost.post;
+  if (route?.name === 'notFound' || missingPost) {
+    // A post that failed to load says why when its error has a message.
+    const reasonKey = missingPost ? errorMessageKey(routePost?.error) : null;
+    routePanel = (
+      <ErrorPanel
+        testId="route-not-found"
+        icon={FileQuestion}
+        title={te(missingPost ? 'postMissingTitle' : 'notFoundTitle')}
+        message={te(reasonKey ?? (missingPost ? 'postMissing' : 'notFound'))}
+        actions={[
+          { ...backToLibrary, onClick: () => navigate?.({ name: 'library' }, { replace: true }) },
+        ]}
+      />
+    );
+  }
 
   const lastUpdate = new Date(buildTime).toLocaleTimeString(localeTag(lang), {
     hour: '2-digit',
@@ -714,17 +898,19 @@ function AppInner(): React.JSX.Element {
             loading bar (zIndex:10) can't poke through the overlay (zIndex:2) below. */}
           {caps.browser && (
             <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
-              <BrowserMemo
-                activeTab={browserTab}
-                onSyncingChange={setBrowserSyncing}
-                onSavingChange={setSaving}
-                onSaved={handleBrowserSaved}
-                collections={collections}
-                onCreateCollection={createCollection}
-                onCollectionsChanged={handleCollectionsChanged}
-                registerSourceSyncApi={registerSourceSyncApi}
-                onSourceSyncJobs={setSourceSyncJobs as (jobs: unknown) => void}
-              />
+              <ErrorBoundary view="browser">
+                <BrowserMemo
+                  activeTab={browserTab}
+                  onSyncingChange={setBrowserSyncing}
+                  onSavingChange={setSaving}
+                  onSaved={handleBrowserSaved}
+                  collections={collections}
+                  onCreateCollection={createCollection}
+                  onCollectionsChanged={handleCollectionsChanged}
+                  registerSourceSyncApi={registerSourceSyncApi}
+                  onSourceSyncJobs={setSourceSyncJobs as (jobs: unknown) => void}
+                />
+              </ErrorBoundary>
             </div>
           )}
           {/* Keep-alive: every visited (non-browser) view stays mounted in its own
@@ -763,52 +949,66 @@ function AppInner(): React.JSX.Element {
                     transition: 'opacity var(--dur-3) var(--ease-out)',
                   }}
                 >
-                  {v === 'gallery' && (
-                    <GalleryMemo
-                      active={view === 'gallery'}
-                      platform={galleryPlatform}
-                      collectionId={galleryCollectionId}
-                      collectionLabel={galleryCollection?.name}
-                      collectionColor={galleryCollection?.color}
-                      sourceNonce={gallerySourceNonce}
-                      collections={collections}
-                      stats={stats as Shelfy.Stats | Record<string, never>}
-                      activeSource={activeSource}
-                      onSelectSource={handleSelectSource}
-                      onCreateCollection={handleCreateCollection}
-                      onAssigned={reloadCollections}
-                      onStatsChanged={refreshStats}
-                      onOpenInWebsites={caps.websites ? goOpenInWebsites : undefined}
-                      onReanalyzeWeb={caps.websites ? goReanalyzeWeb : undefined}
-                      sourceSyncJobs={sourceSyncJobs}
-                      onSyncSource={caps.browser ? handleSyncSource : undefined}
-                    />
-                  )}
-                  {v === 'downloads' && <Downloads downloads={downloads} />}
-                  {v === 'aitags' && (
-                    <AiTagsMemo
-                      active={view === 'aitags'}
-                      initialTag={aiTagsInitial.tag}
-                      initialTagNonce={aiTagsInitial.nonce}
-                      onOpenInWebsites={goOpenInWebsites}
-                      onReanalyzeWeb={goReanalyzeWeb}
-                    />
-                  )}
-                  {v === 'aiqueue' && <AiTagsQueueMemo onOpenPost={openAiPost} />}
-                  {v === 'aiweb' && (
-                    <AiWebsitesMemo
-                      webJobs={webJobs as React.ComponentProps<typeof AiWebsites>['webJobs']}
-                      onAddSite={openAddSite}
-                      onOpenPost={openAiPost}
-                    />
-                  )}
-                  {v === 'aisearch' && (
-                    <AiSearchMemo
-                      onOpenInWebsites={goOpenInWebsites}
-                      onReanalyzeWeb={goReanalyzeWeb}
-                    />
-                  )}
-                  {v === 'settings' && <SettingsMemo onDataCleared={handleDataCleared} />}
+                  {/* A crashed view renders again when it comes back on screen
+                    (the gallery also when its source changes). */}
+                  <ErrorBoundary
+                    view={v}
+                    resetKey={visible && (v === 'gallery' ? galleryResetKey : true)}
+                  >
+                    {v === 'gallery' && (
+                      <GalleryMemo
+                        active={view === 'gallery'}
+                        platform={galleryPlatform}
+                        collectionId={galleryCollectionId}
+                        collectionLabel={galleryCollection?.name}
+                        collectionColor={galleryCollection?.color}
+                        sourceNonce={gallerySourceNonce}
+                        collections={collections}
+                        stats={stats as Shelfy.Stats | Record<string, never>}
+                        activeSource={activeSource}
+                        onSelectSource={handleSelectSource}
+                        onCreateCollection={handleCreateCollection}
+                        onAssigned={reloadCollections}
+                        onStatsChanged={refreshStats}
+                        onOpenInWebsites={caps.websites ? goOpenInWebsites : undefined}
+                        onReanalyzeWeb={caps.websites ? goReanalyzeWeb : undefined}
+                        sourceSyncJobs={sourceSyncJobs}
+                        onSyncSource={caps.browser ? handleSyncSource : undefined}
+                      />
+                    )}
+                    {v === 'downloads' && <Downloads downloads={downloads} />}
+                    {v === 'aitags' && (
+                      <AiTagsMemo
+                        active={view === 'aitags'}
+                        initialTag={aiTagsInitial.tag}
+                        initialTagNonce={aiTagsInitial.nonce}
+                        onOpenInWebsites={goOpenInWebsites}
+                        onReanalyzeWeb={goReanalyzeWeb}
+                      />
+                    )}
+                    {v === 'aiqueue' && <AiTagsQueueMemo onOpenPost={openAiPost} />}
+                    {v === 'aiweb' && (
+                      <AiWebsitesMemo
+                        webJobs={webJobs as React.ComponentProps<typeof AiWebsites>['webJobs']}
+                        onAddSite={openAddSite}
+                        onOpenPost={openAiPost}
+                      />
+                    )}
+                    {v === 'aisearch' && (
+                      <AiSearchMemo
+                        onOpenInWebsites={goOpenInWebsites}
+                        onReanalyzeWeb={goReanalyzeWeb}
+                      />
+                    )}
+                    {v === 'settings' &&
+                      (caps.settings ? (
+                        <SettingsMemo onDataCleared={handleDataCleared} />
+                      ) : (
+                        unavailablePanel
+                      ))}
+                    {/* The trash view arrives with P1-14. */}
+                    {v === 'trash' && unavailablePanel}
+                  </ErrorBoundary>
                 </div>
               );
             })}
@@ -835,6 +1035,13 @@ function AppInner(): React.JSX.Element {
                   onSkip={() => dismissAiGate(true)}
                   onOpenSettings={() => setView('settings')}
                 />
+              </div>
+            )}
+
+            {/* Web: an address with nothing behind it, over the views. */}
+            {routePanel && (
+              <div style={{ position: 'absolute', inset: 0, zIndex: 6, background: '#0f0f0f' }}>
+                {routePanel}
               </div>
             )}
           </div>
@@ -872,29 +1079,60 @@ function AppInner(): React.JSX.Element {
           />
         )}
         {aiModalPost && (
-          <PostModal
-            post={aiModalPost}
-            onClose={() => setAiModalPost(null)}
-            onApplyAiFilter={(patch: AiFilterPatch) => {
-              setAiModalPost(null);
-              if (patch?.tag) {
-                setAiTagsInitial((s) => ({ tag: patch.tag ?? null, nonce: s.nonce + 1 }));
-                setView('aitags');
+          <ErrorBoundary
+            view="postModal"
+            layout="dialog"
+            resetKey={aiModalPost.id}
+            onDismiss={() => setAiModalPost(null)}
+          >
+            <PostModal
+              post={aiModalPost}
+              onClose={() => setAiModalPost(null)}
+              onApplyAiFilter={(patch: AiFilterPatch) => {
+                setAiModalPost(null);
+                if (patch?.tag) {
+                  setAiTagsInitial((s) => ({ tag: patch.tag ?? null, nonce: s.nonce + 1 }));
+                  setView('aitags');
+                }
+              }}
+              onPostUpdated={(postId: string, fields: Partial<Shelfy.Post>) =>
+                setAiModalPost((prev) =>
+                  prev && prev.id === postId ? { ...prev, ...fields } : prev,
+                )
               }
-            }}
-            onPostUpdated={(postId: string, fields: Partial<Shelfy.Post>) =>
-              setAiModalPost((prev) => (prev && prev.id === postId ? { ...prev, ...fields } : prev))
-            }
-            onAssigned={reloadCollections}
-            onOpenInWebsites={() => {
-              setAiModalPost(null);
-              goOpenInWebsites();
-            }}
-            onReanalyzeWeb={(p: Shelfy.Post) => {
-              setAiModalPost(null);
-              goReanalyzeWeb(p);
-            }}
-          />
+              onAssigned={reloadCollections}
+              onOpenInWebsites={() => {
+                setAiModalPost(null);
+                goOpenInWebsites();
+              }}
+              onReanalyzeWeb={(p: Shelfy.Post) => {
+                setAiModalPost(null);
+                goReanalyzeWeb(p);
+              }}
+            />
+          </ErrorBoundary>
+        )}
+        {/* Web: the post of a `/p/:key` address. */}
+        {routePost?.post && routePost.key === routeKey && (
+          <ErrorBoundary
+            view="postModal"
+            layout="dialog"
+            resetKey={routeKey}
+            onDismiss={closeRoutePost}
+          >
+            <PostModal
+              post={routePost.post}
+              onClose={closeRoutePost}
+              onPostUpdated={(postId: string, fields: Partial<Shelfy.Post>) =>
+                setRoutePost((prev) =>
+                  prev?.post && prev.post.id === postId
+                    ? { ...prev, post: { ...prev.post, ...fields } }
+                    : prev,
+                )
+              }
+              onAssigned={reloadCollections}
+            />
+          </ErrorBoundary>
         )}
         {showDisclaimer && <DisclaimerGate onAccept={() => setShowDisclaimer(false)} />}
       </div>

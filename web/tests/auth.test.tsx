@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, cleanup } from '@testing-library/react';
 import type { AuthApi } from '../src/api/auth';
 import { ApiError, type Http } from '../src/api/http';
-import { readInitialRoute } from '../src/route';
 import LoginScreen from '../src/auth/LoginScreen';
 import MagicLinkScreen from '../src/auth/MagicLinkScreen';
 import Root from '../src/Root';
@@ -23,33 +22,6 @@ function fakeAuth(overrides: Partial<AuthApi> = {}): AuthApi {
 
 afterEach(() => {
   window.history.replaceState(null, '', '/');
-});
-
-describe('initial route', () => {
-  it('takes a sign-in token out of the address at once', () => {
-    const history = { replaceState: vi.fn() };
-    const route = readInitialRoute(
-      { pathname: '/login/magic', search: '', hash: '#tok_123' },
-      history,
-    );
-    expect(route).toEqual({ kind: 'magic', token: 'tok_123' });
-    expect(history.replaceState).toHaveBeenCalledWith(null, '', '/login/magic');
-  });
-
-  it('reads a sign-in page error and anything else as the app', () => {
-    const history = { replaceState: vi.fn() };
-    expect(
-      readInitialRoute({ pathname: '/login', search: '?error=invalid_link', hash: '' }, history),
-    ).toEqual({ kind: 'login', error: 'invalid_link' });
-    expect(readInitialRoute({ pathname: '/login/magic/', search: '', hash: '' }, history)).toEqual({
-      kind: 'magic',
-      token: null,
-    });
-    expect(readInitialRoute({ pathname: '/', search: '', hash: '#x' }, history)).toEqual({
-      kind: 'app',
-    });
-    expect(history.replaceState).not.toHaveBeenCalled();
-  });
 });
 
 describe('LoginScreen', () => {
@@ -156,73 +128,94 @@ describe('Root', () => {
     };
   }
   const client = {} as ShelfyClient;
+  const owner = { id: 'u1', email: 'o@x.test', role: 'owner' as const, createdAt: 0 };
+  const at = (path: string) => window.history.replaceState(null, '', path);
+  const address = () => window.location.pathname + window.location.search;
 
   it('shows the sign-in page without a session', async () => {
-    window.history.replaceState(null, '', '/');
-    render(<Root route={{ kind: 'app' }} client={client} auth={fakeAuth()} http={fakeHttp()} />);
+    at('/');
+    render(<Root client={client} auth={fakeAuth()} http={fakeHttp()} />);
     await screen.findByTestId('login-form');
-    expect(window.location.pathname).toBe('/login');
+    expect(address()).toBe('/login');
   });
 
   it('opens the app with a session and leaves /login', async () => {
-    window.history.replaceState(null, '', '/login');
-    const auth = fakeAuth({
-      me: vi.fn().mockResolvedValue({ id: 'u1', email: 'o@x.test', role: 'owner', createdAt: 0 }),
-    });
-    render(
-      <Root route={{ kind: 'login', error: null }} client={client} auth={auth} http={fakeHttp()} />,
-    );
+    at('/login');
+    const auth = fakeAuth({ me: vi.fn().mockResolvedValue(owner) });
+    render(<Root client={client} auth={auth} http={fakeHttp()} />);
     await screen.findByTestId('the-app');
-    expect(window.location.pathname).toBe('/');
+    expect(address()).toBe('/');
+  });
+
+  it('opens a deep link in place', async () => {
+    at('/c/5');
+    const auth = fakeAuth({ me: vi.fn().mockResolvedValue(owner) });
+    render(<Root client={client} auth={auth} http={fakeHttp()} />);
+    await screen.findByTestId('the-app');
+    expect(address()).toBe('/c/5');
+  });
+
+  it('remembers a deep link while signed out and opens it once signed in', async () => {
+    at('/p/ig_7');
+    render(<Root client={client} auth={fakeAuth()} http={fakeHttp()} />);
+    await screen.findByTestId('login-form');
+    expect(address()).toBe('/login?next=%2Fp%2Fig_7');
+    cleanup();
+
+    // Signed in elsewhere (the link's tab), then this tab reloads.
+    const auth = fakeAuth({ me: vi.fn().mockResolvedValue(owner) });
+    render(<Root client={client} auth={auth} http={fakeHttp()} />);
+    await screen.findByTestId('the-app');
+    expect(address()).toBe('/p/ig_7');
+  });
+
+  it('ignores a next page outside the app', async () => {
+    at('/login?next=%2F%2Fevil.example');
+    const auth = fakeAuth({ me: vi.fn().mockResolvedValue(owner) });
+    render(<Root client={client} auth={auth} http={fakeHttp()} />);
+    await screen.findByTestId('the-app');
+    expect(address()).toBe('/');
   });
 
   it('goes back to the sign-in page when the session expires', async () => {
+    at('/c/2');
     const http = fakeHttp();
-    const auth = fakeAuth({
-      me: vi.fn().mockResolvedValue({ id: 'u1', email: 'o@x.test', role: 'owner', createdAt: 0 }),
-    });
-    render(<Root route={{ kind: 'app' }} client={client} auth={auth} http={http} />);
+    const auth = fakeAuth({ me: vi.fn().mockResolvedValue(owner) });
+    render(<Root client={client} auth={auth} http={http} />);
     await screen.findByTestId('the-app');
     act(() => http.expire());
     await screen.findByTestId('login-form');
+    expect(address()).toBe('/login?next=%2Fc%2F2');
+  });
+
+  it('shows the device page to a signed-in user', async () => {
+    at('/device');
+    const auth = fakeAuth({ me: vi.fn().mockResolvedValue(owner) });
+    render(<Root client={client} auth={auth} http={fakeHttp()} />);
+    await screen.findByTestId('device-unavailable');
+    expect(screen.queryByTestId('the-app')).toBeNull();
+    fireEvent.click(screen.getByTestId('device-back'));
+    await screen.findByTestId('the-app');
+    expect(address()).toBe('/');
   });
 
   it('signs in from a link and then opens the app', async () => {
-    const auth = fakeAuth();
-    vi.mocked(auth.me).mockResolvedValue({
-      id: 'u1',
-      email: 'o@x.test',
-      role: 'owner',
-      createdAt: 0,
-    });
-    render(
-      <Root
-        route={{ kind: 'magic', token: 'tok_4' }}
-        client={client}
-        auth={auth}
-        http={fakeHttp()}
-      />,
-    );
+    at('/login/magic');
+    const auth = fakeAuth({ me: vi.fn().mockResolvedValue(owner) });
+    render(<Root magicToken="tok_4" client={client} auth={auth} http={fakeHttp()} />);
     expect(auth.me).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTestId('magic-sign-in'));
     await screen.findByTestId('the-app');
     expect(auth.redeem).toHaveBeenCalledWith('tok_4');
-    expect(window.location.pathname).toBe('/');
+    expect(address()).toBe('/');
   });
 
   it('takes a link opened over the link page, which only changes the fragment', async () => {
     const auth = fakeAuth({
       redeem: vi.fn().mockRejectedValueOnce(new ApiError(400, 'invalid_link')),
     });
-    window.history.replaceState(null, '', '/login/magic');
-    render(
-      <Root
-        route={{ kind: 'magic', token: 'tok_old' }}
-        client={client}
-        auth={auth}
-        http={fakeHttp()}
-      />,
-    );
+    at('/login/magic');
+    render(<Root magicToken="tok_old" client={client} auth={auth} http={fakeHttp()} />);
     fireEvent.click(screen.getByTestId('magic-sign-in'));
     await screen.findByTestId('magic-invalid');
 

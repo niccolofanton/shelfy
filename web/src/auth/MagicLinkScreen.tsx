@@ -3,7 +3,7 @@ import { Loader2, LogIn } from 'lucide-react';
 import { useT } from '@ui/i18n';
 import type { AuthApi } from '../api/auth';
 import { isApiError } from '../api/http';
-import { LOGIN_PATH } from '../route';
+import { LOGIN_PATH } from '../routes';
 import AuthLayout, { Notice, PRIMARY_BUTTON } from './AuthLayout';
 
 type Status = 'ready' | 'busy' | 'invalid' | 'rateLimited' | 'unreachable' | 'error';
