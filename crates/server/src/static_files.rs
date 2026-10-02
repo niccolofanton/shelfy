@@ -143,6 +143,15 @@ fn serve_dir(root: &Path) -> ServeDir {
         .append_index_html_on_directories(false)
 }
 
+/// Whether the web app's files answer a request with `method` and `path`
+/// that no route matched: a page, an asset or another file of the directory,
+/// as opposed to the 404 problem of other methods and server paths. The
+/// request metrics label these `spa` ([`crate::telemetry::http::SPA_ROUTE`]).
+#[must_use]
+pub fn serves(method: &Method, path: &str) -> bool {
+    Target::of(method, path) != Target::NotFound
+}
+
 /// What a request that no route matched gets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Target {
@@ -276,6 +285,17 @@ mod tests {
         }
         assert_eq!(Target::of(&Method::POST, "/"), Target::NotFound);
         assert_eq!(Target::of(&Method::OPTIONS, "/login"), Target::NotFound);
+    }
+
+    #[test]
+    fn the_app_serves_its_pages_and_files_only() {
+        assert!(serves(&Method::GET, "/"));
+        assert!(serves(&Method::HEAD, "/p/web_example.com"));
+        assert!(serves(&Method::GET, "/assets/index-abc.js"));
+        assert!(serves(&Method::GET, "/favicon.svg"));
+        assert!(!serves(&Method::GET, "/api/v1/nope"));
+        assert!(!serves(&Method::GET, "/media/x"));
+        assert!(!serves(&Method::POST, "/"));
     }
 
     #[test]

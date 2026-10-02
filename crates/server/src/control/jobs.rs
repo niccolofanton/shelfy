@@ -642,6 +642,38 @@ pub struct QueuedJob {
     pub run_at: i64,
 }
 
+/// For each kind of `kinds`, the `run_at` of its oldest queued job that is
+/// due at `now` and whose queue is not paused (`None` when there is none):
+/// how long work has waited for a slot, for the metric
+/// `shelfy_job_oldest_queued_seconds`. A paused queue waits on purpose, and
+/// a job waiting for its `run_at` (a backoff, a drain's next item) is not
+/// due. One `jobs_ready` index probe per kind.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn oldest_due<'k>(
+    conn: &Connection,
+    kinds: &[&'k str],
+    now: i64,
+) -> Result<Vec<(&'k str, Option<i64>)>> {
+    let mut statement = conn.prepare_cached(
+        "SELECT run_at FROM jobs j WHERE kind = ?1 AND state = 'queued' AND run_at <= ?2 \
+         AND NOT EXISTS (SELECT 1 FROM queue_state q WHERE q.user_id = j.user_id \
+                         AND q.kind = j.kind AND q.paused = 1) \
+         ORDER BY run_at LIMIT 1",
+    )?;
+    kinds
+        .iter()
+        .map(|&kind| {
+            let run_at = statement
+                .query_row(params![kind, now], |row| row.get(0))
+                .optional()?;
+            Ok((kind, run_at))
+        })
+        .collect()
+}
+
 /// Every queued job, oldest first, for the scheduler at boot.
 ///
 /// # Errors

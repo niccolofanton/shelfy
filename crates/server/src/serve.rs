@@ -8,7 +8,8 @@
 //! - **Jobs:** the scheduler ([`crate::jobs`]) runs beside the listeners on
 //!   a child of the shutdown token.
 //! - **Background tasks:** the maintenance timer (idle databases, locked
-//!   libraries, event buses, metrics) and, once per boot, the library
+//!   libraries, event buses, metrics: gauges every 5 s, the data directory's
+//!   size every 5 minutes) and, once per boot, the library
 //!   upgrade sweep ([`upgrade_libraries`], plan §3.8). The control database
 //!   is upgraded before the listeners bind.
 //! - **Shutdown** on SIGTERM or Ctrl-C: stop accepting, cancel the shutdown
@@ -37,7 +38,7 @@ use crate::app;
 use crate::config::{Config, ServeArgs};
 use crate::state::AppState;
 use crate::telemetry;
-use crate::telemetry::metrics::UPKEEP_INTERVAL;
+use crate::telemetry::metrics::{DISK_INTERVAL, UPKEEP_INTERVAL};
 
 /// Async worker threads (§2.3): the API is I/O-bound and the host's 4 shared
 /// vCPUs also run Hermes and capture.
@@ -291,13 +292,15 @@ impl Server {
 }
 
 /// Periodic upkeep until shutdown: evicts idle user databases and closes idle
-/// readers, drops expired realtime events and idle event buses, and drains the
-/// metrics recorder.
+/// readers, drops expired realtime events and idle event buses, drains the
+/// metrics recorder and samples the gauges, and measures the data directory.
 async fn maintenance(state: AppState, metrics: PrometheusHandle, token: CancellationToken) {
     let mut databases = tokio::time::interval(MAINTENANCE_INTERVAL);
     let mut upkeep = tokio::time::interval(UPKEEP_INTERVAL);
+    let mut disk = tokio::time::interval(DISK_INTERVAL);
     databases.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     upkeep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    disk.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             () = token.cancelled() => break,
@@ -308,7 +311,11 @@ async fn maintenance(state: AppState, metrics: PrometheusHandle, token: Cancella
                     tracing::warn!(error = %err, "database maintenance failed");
                 }
             }
-            _ = upkeep.tick() => metrics.run_upkeep(),
+            _ = upkeep.tick() => {
+                metrics.run_upkeep();
+                telemetry::metrics::sample(&state).await;
+            }
+            _ = disk.tick() => telemetry::metrics::sample_disk(&state).await,
         }
     }
 }

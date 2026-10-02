@@ -100,10 +100,14 @@ pub fn build_with_access(
         None => router.fallback(not_found),
     };
     let security = SecurityHeaders::new(&state.config().public_url);
+    let observe = telemetry::http::Observe::new(state.config().web.is_some());
     router
         .layer(
             ServiceBuilder::new()
-                .layer(middleware::from_fn(telemetry::http::observe))
+                .layer(middleware::from_fn_with_state(
+                    observe,
+                    telemetry::http::observe,
+                ))
                 .layer(middleware::from_fn_with_state(
                     security,
                     security_headers::apply,

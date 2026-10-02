@@ -37,6 +37,8 @@ use crate::error::{ApiError, ErrorCode};
 use crate::events::EventBus;
 use crate::events::model::{JobState, JobUpdatedEvent};
 use crate::state::{AppState, blocking};
+use crate::telemetry;
+use crate::telemetry::metrics::job_outcome;
 
 /// What the job system shares between the API, the dispatcher and the
 /// supervisors.
@@ -780,6 +782,12 @@ impl Shared {
                 now,
             )),
         };
+        let elapsed = started.elapsed();
+        telemetry::metrics::record_job_attempt(
+            kind.name(),
+            attempt_outcome(change.as_ref(), stop),
+            elapsed,
+        );
         let mut row = None;
         if let Some(change) = &change {
             let change = change.clone();
@@ -824,7 +832,7 @@ impl Shared {
         self.wake.notify_one();
         if let (Some(row), Some(change)) = (&row, &change) {
             self.publish(row);
-            log_outcome(row, change, started.elapsed());
+            log_outcome(row, change, elapsed);
         } else if stop == Some(Stop::Cancelled) {
             // A progress report that raced the cancel may have gone out after
             // it: the stored state has the last word.
@@ -936,6 +944,27 @@ struct Ended {
     progress: Option<f64>,
     stage: Option<String>,
     started: Instant,
+}
+
+/// The `outcome` of an ended attempt in `shelfy_job_duration_seconds`: what
+/// [`Shared::finish`] records, or, when the scheduler had stopped the
+/// attempt, why.
+fn attempt_outcome(change: Option<&Change>, stop: Option<Stop>) -> &'static str {
+    match (change, stop) {
+        (Some(Change::Succeeded), _) => job_outcome::SUCCEEDED,
+        (
+            Some(Change::Requeue {
+                interrupted: true, ..
+            }),
+            _,
+        ) => job_outcome::INTERRUPTED,
+        (Some(Change::Requeue { .. }), _) => job_outcome::REQUEUED,
+        (Some(Change::Retry { .. }), _) => job_outcome::RETRIED,
+        (Some(Change::Fail { .. }), _) => job_outcome::FAILED,
+        (None, Some(Stop::Cancelled)) => job_outcome::CANCELLED,
+        // The watchdog took the attempt back.
+        (None, _) => job_outcome::LEASE_EXPIRED,
+    }
 }
 
 fn log_outcome(row: &JobRow, change: &Change, elapsed: Duration) {

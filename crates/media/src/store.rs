@@ -58,6 +58,12 @@ use crate::name::{ObjectName, Rendition};
 
 /// Directory of a user's store, inside `users/<user_id>/`.
 pub const MEDIA_DIR: &str = "media";
+
+/// Histogram of the size of every rendition written, in bytes, labelled
+/// `variant` ([`Rendition::suffix`], such as `g480`): the §6.2 `g480` budget
+/// (p50 ≤ 35 KB, p95 ≤ 60 KB). It goes to the process's `metrics` recorder:
+/// the server's Prometheus exporter, nothing in a command-line tool.
+pub const RENDITION_BYTES: &str = "shelfy_rendition_bytes";
 /// Directory of the files being written, inside the store.
 pub const TEMP_DIR: &str = ".tmp";
 
@@ -278,7 +284,7 @@ impl UserMedia {
     }
 
     /// Writes a rendition of the object `digest` atomically, replacing an
-    /// older one. Blocking.
+    /// older one, and records its size in [`RENDITION_BYTES`]. Blocking.
     ///
     /// # Errors
     ///
@@ -296,7 +302,10 @@ impl UserMedia {
         create_dir_durable(&shard)?;
         file.persist(self.rendition_path(digest, rendition))
             .map_err(|e| e.error)?;
-        sync_dir(&shard)
+        sync_dir(&shard)?;
+        metrics::histogram!(RENDITION_BYTES, "variant" => rendition.suffix())
+            .record(bytes.len() as f64);
+        Ok(())
     }
 
     /// Removes a stored object and every rendition of it; missing files are

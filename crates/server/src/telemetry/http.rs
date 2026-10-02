@@ -3,26 +3,34 @@
 //!
 //! Only the route template (`/api/v1/posts/{key}`), never the URL, reaches the
 //! logs and the metric labels, so paths with user data and query strings stay
-//! out. The span declares an empty `user_id` field that the authentication
-//! layer (T10) records once it knows the user.
+//! out. A request no route matched is labelled [`SPA_ROUTE`] when the web
+//! app's files answer it, [`UNMATCHED_ROUTE`] otherwise. The span declares an
+//! empty `user_id` field that the authentication layer (T10) records once it
+//! knows the user.
 
 use std::fmt;
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::extract::{MatchedPath, Request};
+use axum::extract::{MatchedPath, Request, State};
 use axum::http::{HeaderName, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
 use tracing::Instrument as _;
 
 use crate::ids::new_ulid;
+use crate::static_files;
 
 /// Header that carries the request id on every response.
 pub const REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
 
-/// Route label of requests that matched no route.
+/// Route label of requests that matched no route and that the web app's
+/// files do not answer: unknown API paths, probes, other methods.
 pub const UNMATCHED_ROUTE: &str = "unmatched";
+
+/// Route label of the requests the web app's files answer (the router's
+/// fallback, [`crate::static_files`]): its pages, assets and other files.
+pub const SPA_ROUTE: &str = "spa";
 
 /// Route whose successful requests are logged at `debug` (probes hit it every
 /// few seconds).
@@ -61,19 +69,37 @@ impl fmt::Display for RequestId {
     }
 }
 
+/// What [`observe`] knows of the router it watches.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Observe {
+    web_app: bool,
+}
+
+impl Observe {
+    /// For a router whose fallback serves the web app's files when
+    /// `web_app` is set (`SHELFY_WEB_DIR`), or answers 404 otherwise.
+    #[must_use]
+    pub fn new(web_app: bool) -> Self {
+        Self { web_app }
+    }
+}
+
 /// Middleware: assigns the request id, runs the request inside its span,
 /// then logs the response and records the HTTP metrics.
 ///
 /// It must run after routing (`Router::layer`), where [`MatchedPath`] is set.
-pub async fn observe(mut request: Request, next: Next) -> Response {
+pub async fn observe(State(observe): State<Observe>, mut request: Request, next: Next) -> Response {
     let started = Instant::now();
     let id = RequestId::new();
     request.extensions_mut().insert(id.clone());
-    let route = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map_or(UNMATCHED_ROUTE, MatchedPath::as_str)
-        .to_owned();
+    let route = match request.extensions().get::<MatchedPath>() {
+        Some(path) => path.as_str(),
+        None if observe.web_app && static_files::serves(request.method(), request.uri().path()) => {
+            SPA_ROUTE
+        }
+        None => UNMATCHED_ROUTE,
+    }
+    .to_owned();
     let method = request.method().clone();
     let span = tracing::info_span!(
         "request",

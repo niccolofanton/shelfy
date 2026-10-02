@@ -12,6 +12,8 @@ fast_image_resize.workspace = true
 # The codecs of the archived and uploaded images. WebP is decoded by `image-webp` (pure
 # Rust); libwebp (`webp`) only encodes.
 image = { workspace = true, features = ["gif", "jpeg", "png", "webp"] }
+# The size of each rendition written (`shelfy_rendition_bytes`), for the server's exporter.
+metrics.workspace = true
 rayon.workspace = true
 rusqlite.workspace = true
 sha2.workspace = true
