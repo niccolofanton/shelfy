@@ -814,6 +814,7 @@ export interface components {
       | 'validation_failed'
       | 'provider_key_invalid'
       | 'capture_blocked'
+      | 'user_locked'
       | 'extension_outdated'
       | 'rate_limited'
       | 'internal'
