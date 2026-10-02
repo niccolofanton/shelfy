@@ -12,7 +12,7 @@
 //! | `bulk` | P1-11 | | | | | new kind, bulk actions over 500 posts (G6) |
 //! | `purge` | P1-11 | 1 | — | 3 | 60 min | `nightly` |
 //! | `usage.recompute` | P1-17 | 2 | 1 | 3 | 5 min | new kind, `nightly` and after an install or a purge ([`super::usage`]) |
-//! | `migrate` | P1-19 | 1 | 1 | 2 | 60 min | the install of a migration bundle |
+//! | `migrate` | P1-19 | 1 | 1 | 2 | 60 min | the install of a migration bundle ([`super::migrate`]) |
 //! | `archive.drain` | P2 | 4 fetches, 2 encodes | 2 | 5 per item | 5 min | a drain: dedupe key = the kind, plus a [`Sweep`](super::Sweep) check |
 //! | `link.hydrate` | P2 | 2 | 1 | 5 | 2 min | |
 //! | `ai.drain` | P3 | 32 in flight | 4 | 3 per item | 10 min | a drain |
@@ -33,10 +33,12 @@
 //! ))
 //! ```
 
-use super::{Registry, usage};
+use super::{Registry, migrate, usage};
 
 /// Every kind this server runs.
 #[must_use]
 pub fn registry() -> Registry {
-    Registry::new().register(usage::kind())
+    Registry::new()
+        .register(usage::kind())
+        .register(migrate::kind())
 }

@@ -11,9 +11,11 @@
 //! mix, and a failure leaves the old one untouched.
 //!
 //! Before that, the live library is copied the same way to
-//! `library.prev-<install id>.sqlite` next to it. Its settings and
-//! notifications are carried into the new library, since an empty library
-//! (no posts, no collections) may still have them.
+//! `library.prev-<job id>.sqlite` next to it ([`keep_previous`]; a retry of
+//! the same job keeps the first copy). Its settings and notifications are
+//! carried into the new library, since an empty library (no posts, no
+//! collections) may still have them: a setting the web library has wins over
+//! the desktop's.
 //!
 //! A library locked for maintenance (`admin user lock`, a restore) is never
 //! touched: the lock is checked before the live library is opened and again
@@ -95,13 +97,16 @@ pub fn replace_library(new: &Path, live: &Path, previous: &Path) -> Result<(), S
         return Err(SwapError::NotEmpty);
     }
 
-    // The new library takes the live one's settings and notifications.
+    // The new library takes the live one's settings (they win over the
+    // desktop's) and notifications.
     {
         let new_conn = Connection::open(new)?;
         new_conn.execute("ATTACH DATABASE ?1 AS live", [live.to_string_lossy()])?;
         new_conn.execute_batch(
-            "INSERT OR IGNORE INTO main.settings (key, value_json, updated_at)
-               SELECT key, value_json, updated_at FROM live.settings;
+            "INSERT INTO main.settings (key, value_json, updated_at)
+               SELECT key, value_json, updated_at FROM live.settings WHERE true
+               ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json,
+                                               updated_at = excluded.updated_at;
              INSERT INTO main.notifications (kind, code, params_json, target, created_at, read_at)
                SELECT kind, code, params_json, target, created_at, read_at FROM live.notifications
                ORDER BY id;
@@ -109,16 +114,7 @@ pub fn replace_library(new: &Path, live: &Path, previous: &Path) -> Result<(), S
         )?;
     }
 
-    // Keep the previous library: one consistent copy, as a single file.
-    let partial = previous.with_extension("sqlite.partial");
-    let _ = fs::remove_file(&partial);
-    {
-        let mut copy = Connection::open(&partial)?;
-        copy_pages(&live_conn, &mut copy)?;
-        copy.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get::<_, String>(0))?;
-    }
-    fs::File::open(&partial)?.sync_all()?;
-    fs::rename(&partial, previous)?;
+    keep_previous(&live_conn, previous)?;
 
     // Install: every page of the new library, in one write transaction.
     let new_conn = Connection::open_with_flags(
@@ -137,12 +133,35 @@ pub fn replace_library(new: &Path, live: &Path, previous: &Path) -> Result<(), S
 
 /// [`SwapError::Locked`] when the library at `live` is locked for
 /// maintenance.
-fn refuse_locked(live: &Path) -> Result<(), SwapError> {
+pub(crate) fn refuse_locked(live: &Path) -> Result<(), SwapError> {
     if is_library_file_locked(live)? {
         Err(SwapError::Locked)
     } else {
         Ok(())
     }
+}
+
+/// Keeps the library of `live_conn` as `previous`: one consistent copy, as a
+/// single file. A copy that exists already (an earlier try of the same job)
+/// is kept: it holds the library as it was before the job. Blocking.
+///
+/// # Errors
+///
+/// [`SwapError::Busy`] when the library stays locked; SQLite or I/O errors.
+pub fn keep_previous(live_conn: &Connection, previous: &Path) -> Result<(), SwapError> {
+    if previous.exists() {
+        return Ok(());
+    }
+    let partial = previous.with_extension("sqlite.partial");
+    let _ = fs::remove_file(&partial);
+    {
+        let mut copy = Connection::open(&partial)?;
+        copy_pages(live_conn, &mut copy)?;
+        copy.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get::<_, String>(0))?;
+    }
+    fs::File::open(&partial)?.sync_all()?;
+    fs::rename(&partial, previous)?;
+    Ok(())
 }
 
 /// Copies every page of `source` into `target` in one step, retrying while a
@@ -248,5 +267,56 @@ mod tests {
 
         std::fs::remove_file(dir.path().join(LOCK_FILE_NAME)).unwrap();
         replace_library(&new_path, &live_path, &previous).unwrap();
+    }
+
+    #[test]
+    fn the_web_librarys_settings_win_and_the_first_copy_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let live_path = dir.path().join("library.sqlite");
+        let new_path = dir.path().join("new.sqlite");
+        let previous = dir.path().join("library.prev-7.sqlite");
+        let setting = |db: &UserDb, key: &str, value: &str| {
+            db.write(|tx| {
+                tx.execute(
+                    "INSERT INTO settings (key, value_json, updated_at) VALUES (?1, ?2, 1)",
+                    [key, value],
+                )
+                .map_err(DbError::from)
+            })
+            .unwrap();
+        };
+        let live = UserDb::open(&live_path, &UserDbConfig::default()).unwrap();
+        setting(&live, "language", "\"en\"");
+        // The desktop's settings, in the bundle.
+        let new = UserDb::open(&new_path, &UserDbConfig::default()).unwrap();
+        setting(&new, "language", "\"it\"");
+        setting(
+            &new,
+            "archiveAssetTypes",
+            r#"{"thumbnail":true,"image":true,"video":false}"#,
+        );
+        new.checkpoint().unwrap();
+        drop(new);
+
+        // A copy from an earlier try of the same job holds the library as it
+        // was before the job: it is kept.
+        std::fs::write(&previous, b"the first copy").unwrap();
+        replace_library(&new_path, &live_path, &previous).unwrap();
+        assert_eq!(std::fs::read(&previous).unwrap(), b"the first copy");
+
+        let settings: Vec<String> = live
+            .read(|c| {
+                c.prepare("SELECT key || '=' || value_json FROM settings ORDER BY key")
+                    .and_then(|mut s| s.query_map([], |r| r.get(0))?.collect())
+                    .map_err(DbError::from)
+            })
+            .unwrap();
+        assert_eq!(
+            settings,
+            [
+                r#"archiveAssetTypes={"thumbnail":true,"image":true,"video":false}"#,
+                r#"language="en""#
+            ]
+        );
     }
 }

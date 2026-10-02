@@ -9,8 +9,10 @@
 //!
 //! T9 uses two purposes, both for the desktop migration: a media object of
 //! the bundle and the bundle's database. Bookmarks and imports (P4) add their
-//! own purposes; the expiry sweep (P4 GC) removes rows and files past
-//! `expires_at` for every user, where T9 only sweeps the requesting user's.
+//! own purposes. A new upload sweeps its user's expired ones; the hourly
+//! housekeeping (`crate::migrations::housekeeping`, P1-19) sweeps every
+//! user's: unfinished uploads past `expires_at`, and complete ones that no
+//! install consumed within a week ([`expired_all`], [`complete_before`]).
 
 use std::path::{Path, PathBuf};
 
@@ -234,6 +236,52 @@ pub fn expired(conn: &Connection, user_id: &str, now: i64) -> Result<Vec<String>
     Ok(ids)
 }
 
+/// Unfinished uploads of every user past their expiry at `now`: the
+/// housekeeping's work list.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn expired_all(conn: &Connection, now: i64) -> Result<Vec<String>> {
+    let ids = conn
+        .prepare(
+            "SELECT id FROM uploads WHERE completed_at IS NULL AND expires_at <= ?1 ORDER BY id",
+        )?
+        .query_map([now], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
+}
+
+/// Complete uploads of every user that completed before `before` and were
+/// never consumed by an install.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn complete_before(conn: &Connection, before: i64) -> Result<Vec<String>> {
+    let ids = conn
+        .prepare(
+            "SELECT id FROM uploads WHERE completed_at IS NOT NULL AND completed_at < ?1 \
+             ORDER BY id",
+        )?
+        .query_map([before], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
+}
+
+/// Every upload id, of every user.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn all_ids(conn: &Connection) -> Result<std::collections::HashSet<String>> {
+    let ids = conn
+        .prepare("SELECT id FROM uploads")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
+}
+
 /// The complete uploads of `user_id` with `purpose` whose declared SHA-256 is
 /// one of `hashes`: `(sha256, upload)` pairs, oldest upload first.
 ///
@@ -378,6 +426,40 @@ mod tests {
         }
         assert_eq!(db.read(|c| expired(c, &owner, NOW)).unwrap(), ["U1"]);
         assert_eq!(db.read(|c| count_unfinished(c, &owner, NOW)).unwrap(), 1);
+    }
+
+    #[test]
+    fn the_housekeeping_finds_every_users_stale_uploads() {
+        let (db, owner, member) = control_with_users();
+        let meta = UploadMeta {
+            sha256: SHA.into(),
+            ext: None,
+        };
+        for (id, user, expires_at) in [
+            ("U1", &owner, NOW - 1),
+            ("U2", &member, NOW - 1),
+            ("U3", &member, NOW + 1),
+            ("U4", &owner, NOW + 1),
+        ] {
+            let new = NewUpload {
+                id,
+                user_id: user,
+                purpose: UploadPurpose::MigrationDb,
+                length: 10,
+                meta: &meta,
+                expires_at,
+            };
+            db.write(|tx| insert(tx, &new, NOW)).unwrap();
+        }
+        db.write(|tx| complete(tx, "U4", NOW - 10)).unwrap();
+        assert_eq!(db.read(|c| expired_all(c, NOW)).unwrap(), ["U1", "U2"]);
+        assert_eq!(db.read(|c| complete_before(c, NOW)).unwrap(), ["U4"]);
+        assert!(
+            db.read(|c| complete_before(c, NOW - 10))
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(db.read(all_ids).unwrap().len(), 4);
     }
 
     #[test]

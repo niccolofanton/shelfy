@@ -54,6 +54,7 @@
 //! | `queues` | the in-memory queues: turn order, limits, pauses |
 //! | [`kinds`] | the job-kind registry of the server |
 //! | [`usage`] | `usage.recompute`: a user's storage (P1-17) |
+//! | [`migrate`] | `migrate`: the install of a migrated desktop library (P1-19) |
 //! | [`idempotency`] | the `Idempotency-Key` middleware of job-creating routes |
 //! | `registry`, `context`, `clock` | [`Registry`], [`KindSpec`], [`Worker`]; [`JobContext`], [`JobError`]; [`Clock`] |
 //!
@@ -64,6 +65,7 @@ mod clock;
 mod context;
 pub mod idempotency;
 pub mod kinds;
+pub mod migrate;
 mod queues;
 mod registry;
 mod scheduler;

@@ -9,7 +9,8 @@
 //!   a child of the shutdown token.
 //! - **Background tasks:** the maintenance timer (idle databases, locked
 //!   libraries, event buses, metrics: gauges every 5 s, the data directory's
-//!   size every 5 minutes) and, once per boot, the library
+//!   size every 5 minutes; what migration installs left behind, every hour,
+//!   [`crate::migrations::housekeeping`]) and, once per boot, the library
 //!   upgrade sweep ([`upgrade_libraries`], plan §3.8). The control database
 //!   is upgraded before the listeners bind.
 //! - **Shutdown** on SIGTERM or Ctrl-C: stop accepting, cancel the shutdown
@@ -298,9 +299,11 @@ async fn maintenance(state: AppState, metrics: PrometheusHandle, token: Cancella
     let mut databases = tokio::time::interval(MAINTENANCE_INTERVAL);
     let mut upkeep = tokio::time::interval(UPKEEP_INTERVAL);
     let mut disk = tokio::time::interval(DISK_INTERVAL);
+    let mut housekeeping = tokio::time::interval(crate::migrations::housekeeping::INTERVAL);
     databases.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     upkeep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     disk.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    housekeeping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             () = token.cancelled() => break,
@@ -316,6 +319,9 @@ async fn maintenance(state: AppState, metrics: PrometheusHandle, token: Cancella
                 telemetry::metrics::sample(&state).await;
             }
             _ = disk.tick() => telemetry::metrics::sample_disk(&state).await,
+            _ = housekeeping.tick() => {
+                crate::migrations::housekeeping::sweep(&state, crate::ids::now_ms()).await;
+            }
         }
     }
 }

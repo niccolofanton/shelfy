@@ -12,11 +12,11 @@
 //! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, [`uploads`]) |
 //! | ingest, STT | [`RouteLimits::INGEST`], [`RouteLimits::STT`] | added with their routes (P2, P3) |
 //!
-//! The migration routes (T9): [`uploads`] (tus creation, `HEAD` to resume,
-//! `PATCH` chunks) and [`migrations`] (missing objects, install, status).
-//! They take a `migrate` token and nothing else ([`TOKEN_ROUTES`]), and
-//! share the in-process state of [`crate::migrations`] through request
-//! extensions.
+//! The migration routes (T9, P1-19): [`uploads`] (tus creation, `HEAD` to
+//! resume, `PATCH` chunks, `DELETE` to terminate) and [`migrations`]
+//! (preflight, missing objects, install, status). They take a `migrate`
+//! token and nothing else ([`TOKEN_ROUTES`]); the install is the `migrate`
+//! job ([`crate::jobs::migrate`]).
 //!
 //! The read API (T11): [`posts`] (`GET /posts`, `GET /posts/{key}`),
 //! [`search`], [`stats`] and [`collections`], all behind
@@ -204,6 +204,18 @@ pub const TOKEN_ROUTES: &[(Method, &str, Scope, bool)] = &[
     (Method::HEAD, "/api/v1/uploads/{id}", Scope::Migrate, false),
     (Method::PATCH, "/api/v1/uploads/{id}", Scope::Migrate, false),
     (
+        Method::DELETE,
+        "/api/v1/uploads/{id}",
+        Scope::Migrate,
+        false,
+    ),
+    (
+        Method::GET,
+        "/api/v1/migrations/preflight",
+        Scope::Migrate,
+        false,
+    ),
+    (
         Method::POST,
         "/api/v1/migrations/missing-objects",
         Scope::Migrate,
@@ -223,11 +235,18 @@ pub const TOKEN_ROUTES: &[(Method, &str, Scope, bool)] = &[
 /// ([`crate::jobs::idempotency`]). Such a route also declares
 /// `params(IdempotencyHeader)` in its `#[utoipa::path]`; a test checks that
 /// this list and the document agree. `body_bytes` is the route's body limit.
-pub const IDEMPOTENT_ROUTES: &[IdempotentRoute] = &[IdempotentRoute {
-    method: Method::POST,
-    path: "/api/v1/jobs/{id}/retry",
-    body_bytes: RouteLimits::STANDARD.body_bytes,
-}];
+pub const IDEMPOTENT_ROUTES: &[IdempotentRoute] = &[
+    IdempotentRoute {
+        method: Method::POST,
+        path: "/api/v1/jobs/{id}/retry",
+        body_bytes: RouteLimits::STANDARD.body_bytes,
+    },
+    IdempotentRoute {
+        method: Method::POST,
+        path: "/api/v1/migrations",
+        body_bytes: RouteLimits::STANDARD.body_bytes,
+    },
+];
 
 /// The access policy of [`router`]: [`PUBLIC_ROUTES`] and [`TOKEN_ROUTES`];
 /// every other route needs a session.
@@ -274,7 +293,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(client_errors::report_client_error))
         .routes(routes!(version::get_version))
         .routes(routes!(uploads::create_upload))
-        .routes(routes!(uploads::upload_offset))
+        .routes(routes!(uploads::upload_offset, uploads::delete_upload))
+        .routes(routes!(migrations::migration_preflight))
         .routes(routes!(migrations::find_missing_objects))
         .routes(routes!(migrations::start_migration))
         .routes(routes!(migrations::get_migration))
@@ -293,7 +313,6 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(RouteLimits::UPLOAD_CHUNK.apply(upload_chunks))
         .merge(RouteLimits::STANDARD.apply(media::router()))
         .layer(Extension(Arc::new(uploads::UploadLocks::default())))
-        .layer(Extension(Arc::new(crate::migrations::Installs::default())))
 }
 
 /// The OpenAPI document of [`router`], with the shared error response added

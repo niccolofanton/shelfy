@@ -1260,9 +1260,20 @@
     "/api/v1/migrations": {
       "post": {
         "tags": ["migration"],
-        "summary": "Starts installing an uploaded bundle (plan §4.1 step 5).",
-        "description": "Answers 202 with the install, polled at `Location`. 422 when the upload\nis not a complete bundle database of this user; 409 when the web library\nis not empty (merging arrives with P1-19) or another install runs.",
+        "summary": "Starts installing an uploaded bundle (plan §4.1 step 5): enqueues the\n`migrate` job.",
+        "description": "Answers 202 with the install, polled at `Location`; its progress also\narrives as `job.updated`. 422 when the upload is not a complete bundle\ndatabase of this user; 409 when the web library is not empty and `merge`\nis false, or another install of the library is queued or running. Send an\n`Idempotency-Key`: a repeat gets the first answer back.",
         "operationId": "startMigration",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -1275,7 +1286,7 @@
         },
         "responses": {
           "202": {
-            "description": "The install started.",
+            "description": "The install is queued.",
             "headers": {
               "Location": {
                 "schema": {
@@ -1341,16 +1352,43 @@
         ]
       }
     },
+    "/api/v1/migrations/preflight": {
+      "get": {
+        "tags": ["migration"],
+        "summary": "What the library looks like before a migration: whether it is empty (a\nbundle replaces it) or needs `--merge`, and the quota.",
+        "operationId": "getMigrationPreflight",
+        "responses": {
+          "200": {
+            "description": "The library and its quota.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationPreflight"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "bearer": ["migrate"]
+          }
+        ]
+      }
+    },
     "/api/v1/migrations/{id}": {
       "get": {
         "tags": ["migration"],
-        "summary": "The state of an install, and its report once it succeeded. The install\nruns in this server process: after a restart its id is unknown (404),\nwhile the report stays in the installed library.",
+        "summary": "The state of an install, and its report once it succeeded.",
         "operationId": "getMigration",
         "parameters": [
           {
             "name": "id",
             "in": "path",
-            "description": "Install id.",
+            "description": "Install id (the `migrate` job's id).",
             "required": true,
             "schema": {
               "type": "string"
@@ -2598,6 +2636,53 @@
       }
     },
     "/api/v1/uploads/{id}": {
+      "delete": {
+        "tags": ["migration"],
+        "summary": "Terminates an upload (tus termination): its row and its bytes are\nremoved, whether it was complete or not.",
+        "description": "204; 412 without `Tus-Resumable: 1.0.0`; 404 for an unknown or another\nuser's upload; 409 while a `PATCH` writes it.",
+        "operationId": "deleteUpload",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Upload id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Tus-Resumable",
+            "in": "header",
+            "description": "`1.0.0`.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The upload is gone.",
+            "headers": {
+              "Tus-Resumable": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`1.0.0`."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "bearer": ["migrate"]
+          }
+        ]
+      },
       "head": {
         "tags": ["migration"],
         "summary": "Where an upload stands, so a client can resume it (tus core).",
@@ -2922,21 +3007,12 @@
       },
       "ArchiveCounts": {
         "type": "object",
-        "description": "Archive work left for the workers (P1-19, P2), by class (OI-6, OI-7).",
-        "required": [
-          "byState",
-          "igCoverValid",
-          "igCoverExpired",
-          "igCoverNoExpiry",
-          "xCover",
-          "pinterestCover",
-          "otherCover",
-          "imageSlidesPending"
-        ],
+        "description": "Archive work left for the workers (P2), by class (OI-6, OI-7).",
         "properties": {
           "byState": {
             "type": "object",
             "description": "Posts by `archive_state`.",
+            "default": {},
             "additionalProperties": {
               "type": "integer",
               "format": "int64",
@@ -2950,40 +3026,47 @@
             "type": "integer",
             "format": "int64",
             "description": "Instagram covers whose URL has expired: extension `refresh_media`\ntasks.",
+            "default": 0,
             "minimum": 0
           },
           "igCoverNoExpiry": {
             "type": "integer",
             "format": "int64",
             "description": "Instagram covers whose URL has no expiry.",
+            "default": 0,
             "minimum": 0
           },
           "igCoverValid": {
             "type": "integer",
             "format": "int64",
             "description": "Instagram covers to archive whose signed URL is still valid: archive\nthem first, before they expire.",
+            "default": 0,
             "minimum": 0
           },
           "imageSlidesPending": {
             "type": "integer",
             "format": "int64",
             "description": "Image slides without a stored image.",
+            "default": 0,
             "minimum": 0
           },
           "otherCover": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "pinterestCover": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "xCover": {
             "type": "integer",
             "format": "int64",
             "description": "X covers to archive (they do not expire).",
+            "default": 0,
             "minimum": 0
           }
         }
@@ -3839,51 +3922,49 @@
           }
         }
       },
+      "InstallMode": {
+        "type": "string",
+        "description": "How the bundle joined the web library.",
+        "enum": ["replace", "merge"]
+      },
       "InstalledCounts": {
         "type": "object",
         "description": "Rows of the installed library.",
-        "required": [
-          "posts",
-          "slides",
-          "collections",
-          "memberships",
-          "postTags",
-          "postEntities",
-          "tagAliases",
-          "tagClusters",
-          "webCaptures",
-          "webCaptureAssets",
-          "mediaObjects"
-        ],
         "properties": {
           "collections": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "mediaObjects": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "memberships": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "postEntities": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "postTags": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "posts": {
             "type": "object",
             "description": "Posts by platform.",
+            "default": {},
             "additionalProperties": {
               "type": "integer",
               "format": "int64",
@@ -3896,26 +3977,31 @@
           "slides": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "tagAliases": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "tagClusters": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "webCaptureAssets": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "webCaptures": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           }
         }
@@ -3923,28 +4009,31 @@
       "InstalledObjects": {
         "type": "object",
         "description": "The objects the install stored.",
-        "required": ["total", "bytes", "fromUploads", "alreadyStored"],
         "properties": {
           "alreadyStored": {
             "type": "integer",
             "format": "int64",
             "description": "Already in the store (an earlier install, or another post's file).",
+            "default": 0,
             "minimum": 0
           },
           "bytes": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "fromUploads": {
             "type": "integer",
             "format": "int64",
             "description": "Moved into the store from uploads.",
+            "default": 0,
             "minimum": 0
           },
           "total": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           }
         }
@@ -4303,19 +4392,167 @@
         "description": "Kind of post (`posts.media_type`).",
         "enum": ["image", "images", "carousel", "video", "text", "website", "file"]
       },
+      "MergeCounts": {
+        "type": "object",
+        "description": "What a merge did with the bundle's rows (plan §4.2: the duplicate policy\nof P1-10 for posts the library already had).",
+        "properties": {
+          "aiFilled": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Merged posts that took the bundle's analysis or date.",
+            "default": 0,
+            "minimum": 0
+          },
+          "aliasesAdded": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "capturesAdded": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The bundle's site versions: new, or already there (same post and\ncapture time).",
+            "default": 0,
+            "minimum": 0
+          },
+          "capturesPresent": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "clusterMembershipsAdded": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "clustersAdded": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "collectionsInserted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The bundle's collections: new, or the library's of the same folder\n(`platform` and `external_id`, else the same name).",
+            "default": 0,
+            "minimum": 0
+          },
+          "collectionsMatched": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "datesFilled": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "membershipsAdded": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The bundle's memberships: new, or already there.",
+            "default": 0,
+            "minimum": 0
+          },
+          "membershipsPresent": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "notesJoined": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Merged posts whose notes were joined, and manual tags added.",
+            "default": 0,
+            "minimum": 0
+          },
+          "posts": {
+            "type": "object",
+            "description": "The bundle's posts by platform: inserted as new posts, or merged into\nthe post with the same key.",
+            "default": {},
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MergedPosts"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "replaced": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Merged posts whose bundle row won (more archived files, an analysis,\na user layer): its media and AI layers replaced the stored ones.",
+            "default": 0,
+            "minimum": 0
+          },
+          "tagsAdded": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "unchanged": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Merged posts that did not change.",
+            "default": 0,
+            "minimum": 0
+          }
+        }
+      },
+      "MergedPosts": {
+        "type": "object",
+        "description": "The bundle's posts of one platform.",
+        "properties": {
+          "inserted": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "merged": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          }
+        }
+      },
       "Migration": {
         "type": "object",
-        "description": "An install of a migration bundle.",
-        "required": ["id", "state", "stage", "progress", "createdAt"],
+        "description": "An install of a migration bundle: a `migrate` job.",
+        "required": [
+          "id",
+          "jobId",
+          "state",
+          "stage",
+          "progress",
+          "merge",
+          "attempts",
+          "maxAttempts",
+          "createdAt"
+        ],
         "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Tries that ended without success; a transient failure is tried again.",
+            "minimum": 0
+          },
           "createdAt": {
             "type": "integer",
             "format": "int64",
-            "description": "When it started, unix ms."
+            "description": "When it was accepted, unix ms."
           },
           "error": {
             "$ref": "#/components/schemas/MigrationFailure",
-            "description": "Why it failed."
+            "description": "Why it failed, or why its last try failed before a retry."
           },
           "finishedAt": {
             "type": "integer",
@@ -4324,12 +4561,27 @@
           },
           "id": {
             "type": "string",
-            "description": "Install id (ULID)."
+            "description": "Install id: the job id, as text."
+          },
+          "jobId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `migrate` job (`GET /jobs`, `job.updated`)."
+          },
+          "maxAttempts": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Tries allowed.",
+            "minimum": 0
+          },
+          "merge": {
+            "type": "boolean",
+            "description": "Whether the CLI asked to merge into a library that is not empty."
           },
           "progress": {
             "type": "number",
             "format": "double",
-            "description": "Progress of the stage, 0 to 1."
+            "description": "Progress of the whole install, 0 to 1."
           },
           "report": {
             "$ref": "#/components/schemas/MigrationReport",
@@ -4349,22 +4601,82 @@
         "required": ["code"],
         "properties": {
           "code": {
-            "$ref": "#/components/schemas/ErrorCode",
-            "description": "A stable error code (`validation_failed`, `conflict`, `internal`…)."
+            "type": "string",
+            "description": "A stable code: an API error code (`validation_failed`, `conflict`,\n`quota_exceeded`, `user_locked`, `internal`…) or a job code\n(`lease_expired`, `cancelled`)."
           },
           "detail": {
             "type": "string",
-            "description": "Developer-facing detail; never content."
+            "description": "Developer-facing detail of a refused bundle (`validation_failed`,\n`conflict`, `quota_exceeded`); never content."
+          }
+        }
+      },
+      "MigrationPreflight": {
+        "type": "object",
+        "description": "What `GET /migrations/preflight` tells the CLI before it uploads.",
+        "required": [
+          "libraryEmpty",
+          "posts",
+          "quotaBytes",
+          "usedBytes",
+          "maxObjectBytes",
+          "maxDatabaseBytes"
+        ],
+        "properties": {
+          "activeJobId": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The `migrate` job already queued or running, if any."
+          },
+          "libraryEmpty": {
+            "type": "boolean",
+            "description": "The web library has no posts and no collections: a bundle replaces\nit. Otherwise a bundle needs `--merge`."
+          },
+          "maxDatabaseBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The largest bundle database.",
+            "minimum": 0
+          },
+          "maxObjectBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The largest object an upload may hold (a kept video).",
+            "minimum": 0
+          },
+          "posts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts in the web library, trash included.",
+            "minimum": 0
+          },
+          "quotaBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The quota in bytes, media plus database; 0 means unlimited."
+          },
+          "usedBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "What the library uses now, media plus database, in bytes."
           }
         }
       },
       "MigrationReport": {
         "type": "object",
         "description": "The reconciliation report of an install (plan §4.3): counts only.",
-        "required": ["bundle", "installed", "objects", "renditions", "archive", "durationMs"],
         "properties": {
           "archive": {
-            "$ref": "#/components/schemas/ArchiveCounts"
+            "$ref": "#/components/schemas/ArchiveCounts",
+            "default": {
+              "byState": {},
+              "igCoverExpired": 0,
+              "igCoverNoExpiry": 0,
+              "igCoverValid": 0,
+              "imageSlidesPending": 0,
+              "otherCover": 0,
+              "pinterestCover": 0,
+              "xCover": 0
+            }
           },
           "bundle": {
             "type": "object",
@@ -4374,23 +4686,84 @@
             "type": "integer",
             "format": "int64",
             "description": "How long the install took, ms.",
+            "default": 0,
             "minimum": 0
           },
           "installed": {
-            "$ref": "#/components/schemas/InstalledCounts"
+            "$ref": "#/components/schemas/InstalledCounts",
+            "description": "Rows of the web library after the install.",
+            "default": {
+              "collections": 0,
+              "mediaObjects": 0,
+              "memberships": 0,
+              "postEntities": 0,
+              "postTags": 0,
+              "posts": {},
+              "slides": 0,
+              "tagAliases": 0,
+              "tagClusters": 0,
+              "webCaptureAssets": 0,
+              "webCaptures": 0
+            }
+          },
+          "merge": {
+            "$ref": "#/components/schemas/MergeCounts",
+            "description": "What the merge did, for a merge.",
+            "default": null
+          },
+          "mode": {
+            "$ref": "#/components/schemas/InstallMode",
+            "description": "Whether the bundle replaced an empty library or was merged into one.",
+            "default": "replace"
           },
           "objects": {
-            "$ref": "#/components/schemas/InstalledObjects"
+            "$ref": "#/components/schemas/InstalledObjects",
+            "default": {
+              "alreadyStored": 0,
+              "bytes": 0,
+              "fromUploads": 0,
+              "total": 0
+            }
+          },
+          "previous": {
+            "type": "string",
+            "description": "The file the previous library is kept in for 7 days, next to the\nlive one.",
+            "default": null
           },
           "renditions": {
-            "$ref": "#/components/schemas/RenditionCounts"
+            "$ref": "#/components/schemas/RenditionCounts",
+            "default": {
+              "existing": 0,
+              "failed": 0,
+              "notRenderable": 0,
+              "rendered": 0,
+              "thumbhashes": 0,
+              "wanted": 0
+            }
+          },
+          "settings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The desktop settings the library took (`language`,\n`archiveAssetTypes`); settings the web library had already win.",
+            "default": []
           }
         }
       },
       "MigrationStage": {
         "type": "string",
         "description": "What the install is doing.",
-        "enum": ["queued", "validating", "objects", "index", "report", "installing", "done"]
+        "enum": [
+          "queued",
+          "validating",
+          "objects",
+          "merging",
+          "index",
+          "report",
+          "installing",
+          "done"
+        ]
       },
       "MigrationState": {
         "type": "string",
@@ -5637,41 +6010,51 @@
       "RenditionCounts": {
         "type": "object",
         "description": "The `g480` renditions and ThumbHashes of the install.",
-        "required": ["wanted", "rendered", "existing", "failed", "notRenderable", "thumbhashes"],
         "properties": {
+          "coverBytes": {
+            "$ref": "#/components/schemas/SizeStats",
+            "description": "Sizes of the covers' `g480` renditions rendered by this install (plan\n§6.2 budget: p50 ≤35 KB, p95 ≤60 KB).",
+            "default": null
+          },
           "existing": {
             "type": "integer",
             "format": "int64",
             "description": "Already rendered in the store.",
+            "default": 0,
             "minimum": 0
           },
           "failed": {
             "type": "integer",
             "format": "int64",
             "description": "Images the pipeline could not decode.",
+            "default": 0,
             "minimum": 0
           },
           "notRenderable": {
             "type": "integer",
             "format": "int64",
             "description": "Types the pipeline does not decode (AVIF, videos, PDF).",
+            "default": 0,
             "minimum": 0
           },
           "rendered": {
             "type": "integer",
             "format": "int64",
+            "default": 0,
             "minimum": 0
           },
           "thumbhashes": {
             "type": "integer",
             "format": "int64",
             "description": "Posts whose ThumbHash was set.",
+            "default": 0,
             "minimum": 0
           },
           "wanted": {
             "type": "integer",
             "format": "int64",
             "description": "Objects the grid shows: covers, slides 1–3, site heroes.",
+            "default": 0,
             "minimum": 0
           }
         }
@@ -5901,6 +6284,36 @@
         },
         "additionalProperties": false
       },
+      "SizeStats": {
+        "type": "object",
+        "description": "A distribution of sizes, in bytes.",
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "max": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "p50": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          },
+          "p95": {
+            "type": "integer",
+            "format": "int64",
+            "default": 0,
+            "minimum": 0
+          }
+        }
+      },
       "SlideKind": {
         "type": "string",
         "description": "Kind of slide (`post_media.kind`).",
@@ -5917,7 +6330,7 @@
           },
           "merge": {
             "type": "boolean",
-            "description": "Merge into a library that is not empty. Not supported yet: such a\nlibrary answers 409 either way."
+            "description": "Merge into a library that is not empty. An empty library is replaced\neither way."
           }
         }
       },

@@ -7,6 +7,7 @@
 //! | `POST /uploads` with `Upload-Length` and `Upload-Metadata` | 201, `Location: /api/v1/uploads/{id}` |
 //! | `HEAD /uploads/{id}` | 200 with `Upload-Offset` and `Upload-Length`: where to resume |
 //! | `PATCH /uploads/{id}` with `Upload-Offset` and an `application/offset+octet-stream` body (≤16 MiB) | 204 with the new `Upload-Offset` |
+//! | `DELETE /uploads/{id}` (tus termination, P1-19) | 204: the upload and its bytes are gone |
 //!
 //! Every request carries `Tus-Resumable: 1.0.0` (412 otherwise). A `HEAD`
 //! answer has no body, errors included: its status says what went wrong.
@@ -25,8 +26,11 @@
 //! **Auth.** A token with the `migrate` scope, and nothing else
 //! ([`crate::routes::TOKEN_ROUTES`]); another user's upload is 404.
 //! Bookmarks and imports (P4) add their own purposes, the `uploads` scope
-//! and the session; the termination extension (`DELETE`) and the expiry
-//! sweep of every user join with them.
+//! and the session.
+//!
+//! **Expiry.** Creating an upload sweeps the user's expired ones; the hourly
+//! housekeeping sweeps every user's, and the complete uploads no install
+//! consumed within a week ([`crate::migrations::housekeeping`]).
 
 use std::collections::HashSet;
 use std::fs;
@@ -446,6 +450,58 @@ pub async fn append_upload(
         finish(&state, &dir, &upload).await?;
     }
     Ok(appended(next))
+}
+
+/// Terminates an upload (tus termination): its row and its bytes are
+/// removed, whether it was complete or not.
+///
+/// 204; 412 without `Tus-Resumable: 1.0.0`; 404 for an unknown or another
+/// user's upload; 409 while a `PATCH` writes it.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/uploads/{id}",
+    tag = "migration",
+    operation_id = "deleteUpload",
+    security(("bearer" = ["migrate"])),
+    params(("id" = String, Path, description = "Upload id."), TusHeaders),
+    responses(
+        (
+            status = NO_CONTENT,
+            description = "The upload is gone.",
+            headers(("Tus-Resumable" = String, description = "`1.0.0`.")),
+        ),
+    )
+)]
+pub async fn delete_upload(
+    caller: TokenUser<Migrate>,
+    State(state): State<AppState>,
+    Extension(locks): Extension<Arc<UploadLocks>>,
+    UrlPath(id): UrlPath<String>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    require_tus(&headers)?;
+    let Some(_writing) = locks.try_lock(&id) else {
+        return Err(ApiError::new(ErrorCode::Conflict)
+            .with_detail("another request is writing this upload"));
+    };
+    let control = Arc::clone(state.control());
+    let (user_id, upload_id) = (caller.id().to_owned(), id.clone());
+    let upload = blocking(move || control.read(|c| uploads::get(c, &user_id, &upload_id)))
+        .await?
+        .ok_or_else(ApiError::not_found)?;
+    let dir = state.config().data_dir.uploads_dir();
+    let control = Arc::clone(state.control());
+    blocking(move || -> Result<(), ApiError> {
+        control.write(|tx| uploads::delete(tx, std::slice::from_ref(&upload.id)))?;
+        remove_files(&dir, std::slice::from_ref(&upload.id));
+        Ok(())
+    })
+    .await?;
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    response
+        .headers_mut()
+        .insert(TUS_RESUMABLE, HeaderValue::from_static(TUS_VERSION));
+    Ok(no_store(response))
 }
 
 /// The 204 of a stored chunk.
