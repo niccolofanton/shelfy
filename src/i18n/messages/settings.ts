@@ -238,6 +238,103 @@ export default {
       'Rimuove definitivamente tutti i post dal database. I file già scaricati sul disco non vengono eliminati.',
     dangerDataButton: 'Cancella tutti i dati',
     dangerDataDone: 'Tutti i post sono stati eliminati.',
+
+    // ── The web: an account on a server (src/views/settings/) ──────────────────
+    pageSubtitleAccount: 'Il tuo account, la lingua, lo spazio e le note legali.',
+    sectionAccount: 'Account',
+    sectionStorage: 'Spazio',
+    versionPillWeb: 'server {server} · web {build}',
+    versionTitleWeb: 'Versione del server {server} · build dell’app web {build} (UTC)',
+
+    // Account → profile
+    profileTitle: 'Profilo',
+    emailLabel: 'Email',
+    emailManaged: 'L’indirizzo di accesso è gestito da chi amministra il server.',
+    roleOwner: 'Proprietario',
+    roleMember: 'Membro',
+    signOut: 'Esci',
+    signingOut: 'Uscita…',
+
+    // Account → passkeys
+    passkeysTitle: 'Passkey',
+    passkeysDesc:
+      'Accedi senza password, con l’impronta, il volto o il PIN del dispositivo. Le passkey restano sui tuoi dispositivi: il server conserva solo la loro chiave pubblica.',
+    passkeysEmpty: 'Nessuna passkey. Aggiungine una per accedere senza link.',
+    passkeyUnnamed: 'Passkey senza nome',
+    passkeyAdded: 'Aggiunta il {date}',
+    passkeyLastUsed: 'usata il {date}',
+    passkeyNeverUsed: 'mai usata',
+    passkeyAdd: 'Aggiungi una passkey',
+    passkeyPreparing: 'Preparazione…',
+    passkeyLabel: 'Nome',
+    passkeyCreate: 'Crea la passkey',
+    passkeyCreating: 'In attesa del dispositivo…',
+    passkeyCreated: 'Passkey aggiunta.',
+    passkeysOff: 'Le passkey non sono attive su questo server.',
+    passkeysUnsupported:
+      'Questo browser non supporta le passkey: aggiungile da un altro dispositivo.',
+
+    // Account → sessions
+    sessionsTitle: 'Sessioni',
+    sessionsDesc: 'I browser in cui hai effettuato l’accesso. Esci da quelli che non riconosci.',
+    sessionThisBrowser: 'Questo browser',
+    sessionSignedIn: 'Accesso il {date}',
+    sessionLastSeen: 'attiva il {date}',
+    sessionEnd: 'Esci',
+    sessionsEndOthers: 'Esci da tutte le altre sessioni',
+    deviceOn: '{browser} su {os}',
+    unknownDevice: 'Dispositivo sconosciuto',
+
+    // Account → API tokens
+    tokensTitle: 'Token API',
+    tokensDesc:
+      'Danno accesso alla tua libreria all’estensione del browser, al Comando rapido di iOS e allo strumento di migrazione. Revoca quelli che non usi.',
+    tokensEmpty: 'Nessun token.',
+    tokenKind_extension: 'Estensione del browser',
+    tokenKind_shortcut: 'Comando rapido iOS',
+    tokenKind_migrate: 'Strumento di migrazione',
+    tokenCreated: 'Creato il {date}',
+    tokenLastUsed: 'usato il {date}',
+    tokenNeverUsed: 'mai usato',
+    tokenExpires: 'scade il {date}',
+    tokenRevoke: 'Revoca',
+    tokenNew: 'Nuovo token',
+    tokenKindLabel: 'Per',
+    tokenLabel: 'Nome',
+    tokenCreate: 'Crea',
+    tokenValueTitle: 'Copia il token ora',
+    tokenValueWarning:
+      'È l’unica volta che lo vedi: il server ne conserva solo l’impronta. Chi lo possiede può usare la tua libreria, quindi non condividerlo.',
+    tokenCopy: 'Copia',
+    tokenCopied: 'Copiato',
+
+    // Storage
+    storageTitle: 'Spazio usato',
+    storageUsed: '{used} usati',
+    storageOfQuota: '{used} di {quota}',
+    storageNoLimit: 'Nessun limite',
+    storageBarLabel: 'Spazio usato da media e database',
+    storageMedia: 'Media',
+    storageDatabase: 'Database',
+    storageCounted: 'Conteggio del {date}',
+    storageCounting: 'Conteggio in corso…',
+    archiveTitle: 'Cosa archiviare',
+    archiveDesc: 'Scegli quali file dei tuoi post conserva il server.',
+    archiveThumbnail: 'Copertine',
+    archiveThumbnailDesc: 'Copertine dei post e anteprime dei video',
+    archiveImage: 'Immagini',
+    archiveImageDesc: 'Le immagini dei post, a piena risoluzione',
+    archiveVideo: 'Video',
+    archiveVideoDesc: 'I video, quando li salvi',
+
+    // Legal
+    legalDescWeb:
+      'Le regole d’uso di Shelfy: cosa archivia e di cosa sei responsabile per i contenuti che salvi.',
+    privacyTitle: 'Informativa sulla privacy',
+    privacyDesc: 'Quali dati conserva questo server, dove, per quanto tempo e chi li tratta.',
+    privacyAccepted: 'Accettata il {date} · versione {version}',
+    privacyNotAccepted: 'Non ancora accettata · versione corrente {version}',
+    privacyRead: 'Leggi l’informativa',
   },
   en: {
     // Page header
@@ -465,5 +562,101 @@ export default {
       'Permanently removes all posts from the database. Files already downloaded to disk are not deleted.',
     dangerDataButton: 'Delete all data',
     dangerDataDone: 'All posts have been deleted.',
+
+    // ── The web: an account on a server (src/views/settings/) ──────────────────
+    pageSubtitleAccount: 'Your account, language, storage and legal notices.',
+    sectionAccount: 'Account',
+    sectionStorage: 'Storage',
+    versionPillWeb: 'server {server} · web {build}',
+    versionTitleWeb: 'Server version {server} · web app build {build} (UTC)',
+
+    // Account → profile
+    profileTitle: 'Profile',
+    emailLabel: 'Email',
+    emailManaged: 'The sign-in address is managed by the server’s operator.',
+    roleOwner: 'Owner',
+    roleMember: 'Member',
+    signOut: 'Sign out',
+    signingOut: 'Signing out…',
+
+    // Account → passkeys
+    passkeysTitle: 'Passkeys',
+    passkeysDesc:
+      'Sign in without a password, with your device’s fingerprint, face or PIN. Passkeys stay on your devices: the server keeps only their public key.',
+    passkeysEmpty: 'No passkeys yet. Add one to sign in without a link.',
+    passkeyUnnamed: 'Unnamed passkey',
+    passkeyAdded: 'Added {date}',
+    passkeyLastUsed: 'last used {date}',
+    passkeyNeverUsed: 'never used',
+    passkeyAdd: 'Add a passkey',
+    passkeyPreparing: 'Preparing…',
+    passkeyLabel: 'Name',
+    passkeyCreate: 'Create passkey',
+    passkeyCreating: 'Waiting for your device…',
+    passkeyCreated: 'Passkey added.',
+    passkeysOff: 'Passkeys are off on this server.',
+    passkeysUnsupported: 'This browser does not support passkeys: add them from another device.',
+
+    // Account → sessions
+    sessionsTitle: 'Sessions',
+    sessionsDesc: 'The browsers where you are signed in. Sign out of any you don’t recognize.',
+    sessionThisBrowser: 'This browser',
+    sessionSignedIn: 'Signed in {date}',
+    sessionLastSeen: 'active {date}',
+    sessionEnd: 'Sign out',
+    sessionsEndOthers: 'Sign out all other sessions',
+    deviceOn: '{browser} on {os}',
+    unknownDevice: 'Unknown device',
+
+    // Account → API tokens
+    tokensTitle: 'API tokens',
+    tokensDesc:
+      'They give the browser extension, the iOS Shortcut and the migration tool access to your library. Revoke the ones you don’t use.',
+    tokensEmpty: 'No tokens.',
+    tokenKind_extension: 'Browser extension',
+    tokenKind_shortcut: 'iOS Shortcut',
+    tokenKind_migrate: 'Migration tool',
+    tokenCreated: 'Created {date}',
+    tokenLastUsed: 'last used {date}',
+    tokenNeverUsed: 'never used',
+    tokenExpires: 'expires {date}',
+    tokenRevoke: 'Revoke',
+    tokenNew: 'New token',
+    tokenKindLabel: 'For',
+    tokenLabel: 'Name',
+    tokenCreate: 'Create',
+    tokenValueTitle: 'Copy the token now',
+    tokenValueWarning:
+      'This is the only time you’ll see it: the server keeps only its fingerprint. Anyone holding it can use your library, so don’t share it.',
+    tokenCopy: 'Copy',
+    tokenCopied: 'Copied',
+
+    // Storage
+    storageTitle: 'Space used',
+    storageUsed: '{used} used',
+    storageOfQuota: '{used} of {quota}',
+    storageNoLimit: 'No limit',
+    storageBarLabel: 'Space used by media and the database',
+    storageMedia: 'Media',
+    storageDatabase: 'Database',
+    storageCounted: 'Counted {date}',
+    storageCounting: 'Counting…',
+    archiveTitle: 'What to archive',
+    archiveDesc: 'Choose which files of your posts the server keeps.',
+    archiveThumbnail: 'Covers',
+    archiveThumbnailDesc: 'Post covers and video posters',
+    archiveImage: 'Images',
+    archiveImageDesc: 'The posts’ images, full size',
+    archiveVideo: 'Videos',
+    archiveVideoDesc: 'Videos, when you keep them',
+
+    // Legal
+    legalDescWeb:
+      'The terms of using Shelfy: what it stores, and what you are responsible for in the content you save.',
+    privacyTitle: 'Privacy notice',
+    privacyDesc: 'What this server keeps, where, for how long, and who processes it.',
+    privacyAccepted: 'Accepted on {date} · version {version}',
+    privacyNotAccepted: 'Not yet accepted · current version {version}',
+    privacyRead: 'Read the notice',
   },
 } satisfies LangMessages;

@@ -49,14 +49,15 @@ export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
 });
 
 // What the web app can do for a signed-in user, from `GET /me` (plan §2.19
-// Capabilities): their account. The server's other capabilities drive views
-// that still call the desktop bridge, so they stay off here until those views
-// move onto this client: `extension` (P2), `ai.tasks` → `ai` (P3), `capture`
-// → `websites` and `video.onDemand` (P4). `passkeys` and `emailLink` are the
-// account's sign-in methods (AccountApi.signIn).
+// Capabilities): their account and its Settings. The server's other
+// capabilities drive views that still call the desktop bridge, so they stay
+// off here until those views move onto this client: `extension` (P2),
+// `ai.tasks` → `ai` (P3), `capture` → `websites` and `video.onDemand` (P4).
+// `passkeys` and `emailLink` are the account's sign-in methods
+// (AccountApi.signIn).
 export function webCapabilities(me: Schemas['Me'] | null | undefined): ShelfyCapabilities {
   if (!me) return WEB_CAPABILITIES;
-  return Object.freeze({ ...WEB_CAPABILITIES, account: true });
+  return Object.freeze({ ...WEB_CAPABILITIES, account: true, settings: true });
 }
 
 // Opens only http(s) URLs, in a new tab without access to this window.

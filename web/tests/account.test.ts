@@ -212,9 +212,9 @@ describe('account', () => {
 });
 
 describe('web capabilities', () => {
-  it('turn on the account for a signed-in user, and nothing else yet', () => {
+  it('turn on the account and its Settings for a signed-in user, and nothing else yet', () => {
     expect(webCapabilities(null)).toBe(WEB_CAPABILITIES);
-    expect(webCapabilities(OWNER)).toEqual({ ...WEB_CAPABILITIES, account: true });
+    expect(webCapabilities(OWNER)).toEqual({ ...WEB_CAPABILITIES, account: true, settings: true });
   });
 
   it('give a client made for a user its account', () => {

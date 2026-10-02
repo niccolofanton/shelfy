@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import {
   Trash2,
   AlertTriangle,
@@ -33,6 +33,9 @@ import DisclaimerGate from '../components/DisclaimerGate';
 import LanguageCard from '../components/LanguageCard';
 import { getDisclaimerAcceptance, DISCLAIMER_VERSION } from '../disclaimer';
 import { useT, useLang, localeTag } from '../i18n';
+import { useCapabilities, useShelfy } from '../api/ShelfyProvider';
+import { DEFAULT_SETTINGS_SECTION, useNavigation, type Navigation } from '../api/navigation';
+import { buildTime } from 'virtual:build-time';
 
 // ── Local boundary shapes ──────────────────────────────────────────────────────
 // Several electronAPI methods return `Promise<unknown>` because they surface
@@ -1794,12 +1797,26 @@ function SectionBlock({ title, delay, children }: SectionBlockProps) {
   );
 }
 
-// Small monospace pill in the header showing the installed app version.
+// The web app's build, from its build constant: `2026-10-02 18:30` (UTC).
+function webBuildLabel(time: number): string {
+  const date = new Date(time);
+  return Number.isFinite(date.getTime())
+    ? date.toISOString().slice(0, 16).replace('T', ' ')
+    : String(time);
+}
+
+// Small monospace pill in the header showing the installed app version: the
+// desktop's, or on the web the server's (`GET /version`) and the web build.
 function VersionPill(): React.JSX.Element | null {
+  const account = useShelfy().account;
+  const t = useT('settings');
   const [version, setVersion] = useState('');
   useEffect(() => {
     let alive = true;
-    Promise.resolve(window.electronAPI?.getAppVersion?.())
+    const pending = account
+      ? account.serverVersion().then((v) => v.version)
+      : Promise.resolve(window.electronAPI?.getAppVersion?.());
+    pending
       .then((v) => {
         if (alive && v) setVersion(v);
       })
@@ -1807,11 +1824,19 @@ function VersionPill(): React.JSX.Element | null {
     return () => {
       alive = false;
     };
-  }, []);
-  if (!version) return null;
+  }, [account]);
+  if (!version && !account) return null;
+  const build = webBuildLabel(buildTime);
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-[#262626] bg-[#161616] px-3 py-1 text-[11px] text-gray-400 tabular-nums">
-      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/80" />v{version}
+    <span
+      data-testid="version-pill"
+      title={account ? t('versionTitleWeb', { server: version || '?', build }) : undefined}
+      className="inline-flex items-center gap-1.5 rounded-full border border-[#262626] bg-[#161616] px-3 py-1 text-[11px] text-gray-400 tabular-nums"
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/80" />
+      {account
+        ? t('versionPillWeb', { server: version ? `v${version}` : '…', build })
+        : `v${version}`}
     </span>
   );
 }
@@ -2200,129 +2225,325 @@ interface SettingsProps {
   onDataCleared?: () => void;
 }
 
-export default function Settings({ onDataCleared }: SettingsProps) {
-  const { prefs, setType } = useDownloadPrefs();
+// The sections of an account on a server, loaded when first shown: the
+// desktop never needs them (plan §2.19: Settings is code-split).
+const AccountSection = React.lazy(() => import('./settings/Account'));
+const StorageSection = React.lazy(() => import('./settings/Storage'));
+const AccountLegalSection = React.lazy(() => import('./settings/Legal'));
+
+// A section of Settings. On the web it has an address (`/settings/<id>`) and
+// a tab; the desktop shows every section, one under the other.
+interface SettingsSection {
+  id: string;
+  title: string;
+  // Entrance delay of the section on the desktop page.
+  delay: string;
+  content: React.ReactNode;
+}
+
+function SectionFallback(): React.JSX.Element {
+  const tc = useT('common');
+  return (
+    <p className="flex items-center gap-2 text-xs text-gray-500">
+      <Loader size={13} className="animate-spin" /> {tc('loading')}
+    </p>
+  );
+}
+
+// The AI section: the remote providers and suggestions wherever AI runs, the
+// local models only where they run on this machine.
+function AiSection(): React.JSX.Element {
+  const t = useT('settings');
+  const caps = useCapabilities();
+  return (
+    <div className="flex flex-col gap-4">
+      <AiSuggestionsCard />
+      <RemoteProvidersCard />
+      {caps.localModels && (
+        <>
+          <ModelPicker
+            icon={Cpu}
+            title={t('vlmTitle')}
+            description={t('vlmDesc')}
+            api={VLM_MODEL_API}
+          />
+          <ConcurrencyPicker />
+          <ModelPicker
+            icon={Mic}
+            title={t('sttTitle')}
+            description={t('sttDesc')}
+            api={STT_MODEL_API}
+          />
+          <ModelPicker
+            icon={Layers}
+            title={t('embTitle')}
+            description={t('embDesc')}
+            api={EMB_MODEL_API}
+          />
+          <PerformanceCard />
+        </>
+      )}
+    </div>
+  );
+}
+
+// Downloads and data on this machine: which asset types to download, and the
+// JSON import / export. The preferences stay a hook of Settings itself, where
+// they were before the sections: useDownloadPrefs writes localStorage inside
+// its state updater, then re-reads it on an event it sends at once, so a
+// toggle survives only when React runs that updater right away. Moved into
+// this section, the second toggle was lost (desktop e2e "asset types").
+function DataSection({
+  onDataCleared,
+  prefs,
+  setType,
+}: SettingsProps & ReturnType<typeof useDownloadPrefs>): React.JSX.Element {
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+      <AssetTypesCard prefs={prefs} setType={setType} />
+      <DataActions onChanged={onDataCleared} />
+    </div>
+  );
+}
+
+// App updates and the runtime of the local models.
+function UpdatesSection(): React.JSX.Element {
+  const caps = useCapabilities();
+  return (
+    <div className="flex flex-col gap-4">
+      {caps.updates && <UpdateChannelPicker />}
+      {caps.localModels && <RuntimeBinariesCard />}
+    </div>
+  );
+}
+
+function DangerSection({ onDataCleared }: SettingsProps): React.JSX.Element {
   const t = useT('settings');
   const tc = useT('common');
-  const tl = useT('language');
   const tcDeleting = tc('deleting'); // shared "Eliminazione…" busy label for danger rows
+  return (
+    <div className="rounded-xl border border-red-900/40 bg-gradient-to-b from-[#160c0c] to-[#141010] overflow-hidden">
+      <div className="flex items-start gap-3 px-5 py-4 border-b border-red-900/30">
+        <ShieldAlert size={18} className="text-red-500 mt-0.5 shrink-0" />
+        <div>
+          <p className="text-white text-sm font-medium">{t('dangerHeading')}</p>
+          <p className="text-gray-500 text-xs mt-1 leading-relaxed">{t('dangerSubheading')}</p>
+        </div>
+      </div>
+
+      <div className="px-5 py-1 divide-y divide-red-900/20">
+        <DangerRow
+          title={t('dangerAssetsTitle')}
+          desc={t('dangerAssetsDesc')}
+          buttonLabel={t('dangerAssetsButton')}
+          busyLabel={tcDeleting}
+          doneLabel={t('dangerAssetsDone')}
+          onConfirm={async () => {
+            await window.electronAPI.clearAllAssets();
+            onDataCleared?.();
+          }}
+        />
+
+        <DangerRow
+          title={t('dangerAiTitle')}
+          desc={t('dangerAiDesc')}
+          buttonLabel={t('dangerAiButton')}
+          busyLabel={tcDeleting}
+          doneLabel={t('dangerAiDone')}
+          onConfirm={async () => {
+            await window.electronAPI.clearAllAiAnalysis();
+            onDataCleared?.();
+          }}
+        />
+
+        <DangerRow
+          title={t('dangerDataTitle')}
+          desc={t('dangerDataDesc')}
+          buttonLabel={t('dangerDataButton')}
+          busyLabel={tcDeleting}
+          doneLabel={t('dangerDataDone')}
+          onConfirm={async () => {
+            await window.electronAPI.clearAllData();
+            onDataCleared?.();
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// The sections this client has, in page order. Each one shows by capability:
+// the desktop has language, AI, data, updates, the danger zone and legal; an
+// account on a server has account, language, storage and legal (plan §2.19
+// Settings: the updates, runtime, performance and local-model cards are the
+// desktop's).
+function useSections({ onDataCleared }: SettingsProps): SettingsSection[] {
+  const downloadPrefs = useDownloadPrefs();
+  const client = useShelfy();
+  const caps = client.capabilities;
+  const account = client.account;
+  const t = useT('settings');
+  const tl = useT('language');
+  const sections: (SettingsSection | false | undefined)[] = [
+    !!account && {
+      id: 'account',
+      title: t('sectionAccount'),
+      delay: '20ms',
+      content: <AccountSection account={account} />,
+    },
+    { id: 'language', title: tl('section'), delay: '20ms', content: <LanguageCard /> },
+    caps.ai && { id: 'ai', title: t('sectionAi'), delay: '40ms', content: <AiSection /> },
+    caps.localFiles && {
+      id: 'data',
+      title: t('sectionData'),
+      delay: '80ms',
+      content: <DataSection onDataCleared={onDataCleared} {...downloadPrefs} />,
+    },
+    !!account && {
+      id: 'storage',
+      title: t('sectionStorage'),
+      delay: '80ms',
+      content: <StorageSection account={account} />,
+    },
+    (caps.updates || caps.localModels) && {
+      id: 'updates',
+      title: t('sectionUpdates'),
+      delay: '120ms',
+      content: <UpdatesSection />,
+    },
+    caps.localFiles && {
+      id: 'danger',
+      title: t('sectionDanger'),
+      delay: '160ms',
+      content: <DangerSection onDataCleared={onDataCleared} />,
+    },
+    {
+      id: 'legal',
+      title: t('sectionLegal'),
+      delay: '200ms',
+      content: account ? <AccountLegalSection account={account} /> : <LegalCard />,
+    },
+  ];
+  return sections.filter((s): s is SettingsSection => !!s);
+}
+
+function SettingsHeader({ subtitle }: { subtitle: string }): React.JSX.Element {
+  const t = useT('settings');
+  return (
+    <header className="u-fade-in-up flex items-start justify-between gap-4">
+      <div>
+        <h1 className="text-white text-2xl font-semibold font-display tracking-tight">
+          {t('pageTitle')}
+        </h1>
+        <p className="text-gray-500 text-sm mt-1">{subtitle}</p>
+      </div>
+      <div className="shrink-0 pt-1">
+        <VersionPill />
+      </div>
+    </header>
+  );
+}
+
+// The web: one section at a time, by address (`/settings/:section`), with a
+// tab per section. An unknown section goes to the first one. While another
+// view is on screen (`onScreen` false: Settings stays mounted, hidden), the
+// last section stays.
+function RoutedSettings({
+  sections,
+  section,
+  onScreen,
+  navigate,
+}: {
+  sections: SettingsSection[];
+  section: string;
+  onScreen: boolean;
+  navigate: Navigation['navigate'];
+}): React.JSX.Element {
+  const t = useT('settings');
+  const active = sections.find((s) => s.id === section) ?? sections[0];
+  const known = active.id === section;
+
+  useEffect(() => {
+    if (onScreen && !known) navigate({ name: 'settings', section: active.id }, { replace: true });
+  }, [onScreen, known, active.id, navigate]);
+
+  return (
+    <div className="flex-1 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] bg-[#0f0f0f]">
+      <div className="max-w-4xl mx-auto px-4 py-6 sm:px-8 sm:py-8">
+        <SettingsHeader subtitle={t('pageSubtitleAccount')} />
+        <nav
+          role="tablist"
+          aria-label={t('pageTitle')}
+          data-testid="settings-tabs"
+          className="u-fade-in-up mt-6 flex gap-1 overflow-x-auto border-b border-[#1f1f1f]"
+        >
+          {sections.map((s) => {
+            const selected = s.id === active.id;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                role="tab"
+                aria-selected={selected}
+                data-testid={`settings-tab-${s.id}`}
+                onClick={() => navigate({ name: 'settings', section: s.id })}
+                className={[
+                  'u-press -mb-px shrink-0 border-b-2 px-3 py-2 text-sm transition-colors',
+                  selected
+                    ? 'border-[#7B5CFF] text-white'
+                    : 'border-transparent text-gray-500 hover:text-gray-200',
+                ].join(' ')}
+              >
+                {s.title}
+              </button>
+            );
+          })}
+        </nav>
+        <section
+          key={active.id}
+          role="tabpanel"
+          data-testid={`settings-section-${active.id}`}
+          className="u-fade-in-up pt-6"
+        >
+          <Suspense fallback={<SectionFallback />}>{active.content}</Suspense>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+export default function Settings({ onDataCleared }: SettingsProps) {
+  const t = useT('settings');
+  const nav = useNavigation();
+  const sections = useSections({ onDataCleared });
+  // The web: the section of the address, or the last one while the address
+  // is another view's.
+  const routeSection = nav?.route.name === 'settings' ? nav.route.section : null;
+  const lastSection = useRef(routeSection ?? DEFAULT_SETTINGS_SECTION);
+  if (routeSection) lastSection.current = routeSection;
+
+  if (nav) {
+    return (
+      <RoutedSettings
+        sections={sections}
+        section={routeSection ?? lastSection.current}
+        onScreen={routeSection !== null}
+        navigate={nav.navigate}
+      />
+    );
+  }
 
   return (
     <div className="flex-1 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] bg-[#0f0f0f]">
       <div className="max-w-4xl mx-auto px-8 py-8">
-        <header className="u-fade-in-up flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-white text-2xl font-semibold font-display tracking-tight">
-              {t('pageTitle')}
-            </h1>
-            <p className="text-gray-500 text-sm mt-1">{t('pageSubtitle')}</p>
-          </div>
-          <div className="shrink-0 pt-1">
-            <VersionPill />
-          </div>
-        </header>
+        <SettingsHeader subtitle={t('pageSubtitle')} />
 
         <div className="mt-2 flex flex-col divide-y divide-[#1f1f1f]">
-          <SectionBlock title={tl('section')} delay="20ms">
-            <LanguageCard />
-          </SectionBlock>
-
-          <SectionBlock title={t('sectionAi')} delay="40ms">
-            <div className="flex flex-col gap-4">
-              <AiSuggestionsCard />
-              <RemoteProvidersCard />
-              <ModelPicker
-                icon={Cpu}
-                title={t('vlmTitle')}
-                description={t('vlmDesc')}
-                api={VLM_MODEL_API}
-              />
-              <ConcurrencyPicker />
-              <ModelPicker
-                icon={Mic}
-                title={t('sttTitle')}
-                description={t('sttDesc')}
-                api={STT_MODEL_API}
-              />
-              <ModelPicker
-                icon={Layers}
-                title={t('embTitle')}
-                description={t('embDesc')}
-                api={EMB_MODEL_API}
-              />
-              <PerformanceCard />
-            </div>
-          </SectionBlock>
-
-          <SectionBlock title={t('sectionData')} delay="80ms">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-              <AssetTypesCard prefs={prefs} setType={setType} />
-              <DataActions onChanged={onDataCleared} />
-            </div>
-          </SectionBlock>
-
-          <SectionBlock title={t('sectionUpdates')} delay="120ms">
-            <div className="flex flex-col gap-4">
-              <UpdateChannelPicker />
-              <RuntimeBinariesCard />
-            </div>
-          </SectionBlock>
-
-          <SectionBlock title={t('sectionDanger')} delay="160ms">
-            <div className="rounded-xl border border-red-900/40 bg-gradient-to-b from-[#160c0c] to-[#141010] overflow-hidden">
-              <div className="flex items-start gap-3 px-5 py-4 border-b border-red-900/30">
-                <ShieldAlert size={18} className="text-red-500 mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-white text-sm font-medium">{t('dangerHeading')}</p>
-                  <p className="text-gray-500 text-xs mt-1 leading-relaxed">
-                    {t('dangerSubheading')}
-                  </p>
-                </div>
-              </div>
-
-              <div className="px-5 py-1 divide-y divide-red-900/20">
-                <DangerRow
-                  title={t('dangerAssetsTitle')}
-                  desc={t('dangerAssetsDesc')}
-                  buttonLabel={t('dangerAssetsButton')}
-                  busyLabel={tcDeleting}
-                  doneLabel={t('dangerAssetsDone')}
-                  onConfirm={async () => {
-                    await window.electronAPI.clearAllAssets();
-                    onDataCleared?.();
-                  }}
-                />
-
-                <DangerRow
-                  title={t('dangerAiTitle')}
-                  desc={t('dangerAiDesc')}
-                  buttonLabel={t('dangerAiButton')}
-                  busyLabel={tcDeleting}
-                  doneLabel={t('dangerAiDone')}
-                  onConfirm={async () => {
-                    await window.electronAPI.clearAllAiAnalysis();
-                    onDataCleared?.();
-                  }}
-                />
-
-                <DangerRow
-                  title={t('dangerDataTitle')}
-                  desc={t('dangerDataDesc')}
-                  buttonLabel={t('dangerDataButton')}
-                  busyLabel={tcDeleting}
-                  doneLabel={t('dangerDataDone')}
-                  onConfirm={async () => {
-                    await window.electronAPI.clearAllData();
-                    onDataCleared?.();
-                  }}
-                />
-              </div>
-            </div>
-          </SectionBlock>
-
-          <SectionBlock title={t('sectionLegal')} delay="200ms">
-            <LegalCard />
-          </SectionBlock>
+          {sections.map((s) => (
+            <SectionBlock key={s.id} title={s.title} delay={s.delay}>
+              <Suspense fallback={<SectionFallback />}>{s.content}</Suspense>
+            </SectionBlock>
+          ))}
         </div>
       </div>
     </div>
