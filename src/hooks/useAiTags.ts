@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useT } from '../i18n';
+import { useShelfy } from '../api/ShelfyProvider';
+import type { AiAliasProgress, AiClusterProgress, AiQueueApi, AiTagsApi } from '../api/ai';
 import type {
   AliasStatusResult,
   CancelledResult,
@@ -10,18 +12,12 @@ import type {
   QueuedResult,
   RemoveTagResult,
 } from '../../types/electron-api';
+import type { ShelfyClient } from '../api/ShelfyClient';
 
 // Progress callback shape passed to the long-running cluster/alias LLM jobs. The
 // payload is opaque (regenerateClusters/proposeAliases run summaries are typed
-// `unknown` on the bridge); callers forward it straight to their UI.
+// `unknown` on the seam); callers forward it straight to their UI.
 type ProgressCallback = (p: unknown) => void;
-
-// An analyze-progress event (onAnalyzeProgress payload is `unknown`); only
-// `status` is read here to decide whether the aggregates changed.
-interface AnalyzeProgressJob {
-  status?: string;
-  [key: string]: unknown;
-}
 
 // Internal cluster shape: identical to Shelfy.TagCluster but with the status
 // widened to the full review lifecycle so the optimistic dismiss can stamp a
@@ -65,6 +61,20 @@ export interface UseAiTagsResult {
   fetchPosts: (filters?: unknown) => Promise<PostSearchResult>;
 }
 
+// `client.ai` is only absent on a client with no AI seam yet (the web, before
+// P3-11). The AI Tags view is desktop-only reachable today (the nav gates on
+// `aiTags`, App.tsx/Sidebar.tsx, untouched by P3-08), so a throw here only
+// ever surfaces if that gate is bypassed — `load()` below catches it into
+// `error` instead of crashing the view.
+function tagsOf(client: ShelfyClient): AiTagsApi {
+  if (!client.ai) throw new Error('useAiTags: no AI seam on this client');
+  return client.ai.tags;
+}
+function queueOf(client: ShelfyClient): AiQueueApi {
+  if (!client.ai) throw new Error('useAiTags: no AI seam on this client');
+  return client.ai.queue;
+}
+
 /**
  * Loads and manages all AI-tagging insight data for the AI Tags view.
  *
@@ -81,6 +91,7 @@ export interface UseAiTagsResult {
  *   analysis jobs for SQLite/the main thread.
  */
 export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResult {
+  const client = useShelfy();
   const [overview, setOverview] = useState<Shelfy.AiOverview | null>(null);
   const [tagStats, setTagStats] = useState<Shelfy.Tag[]>([]);
   const [clusters, setClusters] = useState<ClusterState[]>([]);
@@ -116,17 +127,17 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
       if (!silent) setLoading(true);
       setError(null);
       try {
-        const api = window.electronAPI;
+        const api = tagsOf(client);
         const [ov, ts, cl, es, hl, ms, al] = await Promise.all([
-          api.getAiOverview(),
+          api.getOverview(),
           api.getTagStats({ limit: 200 }),
-          api.getTagClusters({ maxClusters: 24 }),
+          api.getClusters({ maxClusters: 24 }),
           api.getEntityStats({ limit: 60 }),
-          api.getTagHealth(),
-          api.getTagMergeSuggestions({ limit: 30 }),
+          api.getHealth(),
+          api.getMergeSuggestions({ limit: 30 }),
           // Tag aliases are LLM proposals awaiting accept/dismiss review; missing
           // API or errors degrade gracefully to an empty list.
-          api.getTagAliases?.({ status: 'proposed' }).catch(() => [] as Shelfy.TagAlias[]) ?? [],
+          api.getAliases({ status: 'proposed' }).catch(() => [] as Shelfy.TagAlias[]),
         ]);
         if (!mountedRef.current) return;
         setOverview(ov || null);
@@ -144,7 +155,7 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         if (mountedRef.current && !silent) setLoading(false);
       }
     },
-    [t],
+    [t, client],
   );
 
   useEffect(() => {
@@ -165,29 +176,27 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
   }, [active, load]);
 
   // ── Real-time refresh while analysis runs ──────────────────────────────────
-  // Subscribe to analyze-progress events and reload the aggregate data with a
-  // debounce so overview/tagStats/clusters update live without thrashing.
+  // `post.analyzed` fires once per finished queue item (ShelfyClient.ts): reload
+  // the aggregate data with a debounce so overview/tagStats/clusters update live
+  // without thrashing.
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    const onProgress = (raw: unknown): void => {
+    const onProgress = (): void => {
       // Skip the heavy aggregate suite while the view isn't visible — see the
       // hook's `active` doc above. The view does a full load() when it remounts/
       // becomes visible, so nothing is lost by deferring.
       if (!activeRef.current) return;
-      const job = (raw && typeof raw === 'object' ? raw : null) as AnalyzeProgressJob | null;
-      // Only react to states that change the underlying data.
-      if (!job || (job.status !== 'done' && job.status !== 'completed')) return;
       if (reloadTimer.current) clearTimeout(reloadTimer.current);
       reloadTimer.current = setTimeout(() => {
         if (mountedRef.current) load({ silent: true });
       }, 800);
     };
-    const unsubscribe = window.electronAPI?.onAnalyzeProgress?.(onProgress);
+    const unsubscribe = client.on('post.analyzed', onProgress);
     return () => {
       if (reloadTimer.current) clearTimeout(reloadTimer.current);
-      if (typeof unsubscribe === 'function') unsubscribe();
+      unsubscribe();
     };
-  }, [load]);
+  }, [load, client]);
 
   const refresh = useCallback((): Promise<void> => load(), [load]);
 
@@ -204,7 +213,7 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         })),
       );
       try {
-        const res = await window.electronAPI.renameTag(from, to);
+        const res = await tagsOf(client).renameTag(from, to);
         load({ silent: true });
         return res;
       } catch (err) {
@@ -212,7 +221,7 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         throw err;
       }
     },
-    [load],
+    [load, client],
   );
 
   const mergeTags = useCallback(
@@ -225,7 +234,7 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         })),
       );
       try {
-        const res = await window.electronAPI.mergeTags(sources, target);
+        const res = await tagsOf(client).mergeTags(sources, target);
         load({ silent: true });
         return res;
       } catch (err) {
@@ -233,30 +242,28 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         throw err;
       }
     },
-    [load],
+    [load, client],
   );
 
   const analyzeMissing = useCallback(async (): Promise<QueuedResult> => {
-    const res = await window.electronAPI.analyzeMissing();
+    const res = await queueOf(client).analyzeMissing();
     // Don't refresh immediately — analysis is queued and runs async.
     return res;
-  }, []);
+  }, [client]);
 
   // ── Cluster review actions ──────────────────────────────────────────────────
-  // Regeneration is an explicit, long-running LLM job: subscribe to progress for
-  // the duration of the call, then reload the (now persisted) clusters.
+  // Regeneration is an explicit, long-running LLM job: the seam subscribes to
+  // progress for the duration of the call, then reload the (now persisted)
+  // clusters.
   const regenerateClusters = useCallback(
     async (onProgress?: ProgressCallback): Promise<unknown> => {
-      const unsubscribe = window.electronAPI.onClusterProgress?.((p) => onProgress?.(p));
-      try {
-        const res = await window.electronAPI.regenerateClusters();
-        await load({ silent: true });
-        return res;
-      } finally {
-        if (typeof unsubscribe === 'function') unsubscribe();
-      }
+      const res = await tagsOf(client).regenerateClusters((p: AiClusterProgress) =>
+        onProgress?.(p),
+      );
+      await load({ silent: true });
+      return res;
     },
-    [load],
+    [load, client],
   );
 
   // Cluster review actions are optimistic: the card updates instantly, the IPC
@@ -266,7 +273,7 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
     async (id: number): Promise<ClusterStatusResult> => {
       setClusters((prev) => prev.map((c) => (c.id === id ? { ...c, status: 'accepted' } : c)));
       try {
-        const res = await window.electronAPI.acceptCluster(id);
+        const res = await tagsOf(client).acceptCluster(id);
         load({ silent: true });
         return res;
       } catch (err) {
@@ -274,7 +281,7 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         throw err;
       }
     },
-    [load],
+    [load, client],
   );
 
   // Accept every proposed cluster in one pass, optimistically, then reconcile.
@@ -284,20 +291,21 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
       prev.map((c) => (c.status === 'proposed' ? { ...c, status: 'accepted' } : c)),
     );
     try {
-      await Promise.all(proposed.map((c) => window.electronAPI.acceptCluster(c.id)));
+      const api = tagsOf(client);
+      await Promise.all(proposed.map((c) => api.acceptCluster(c.id)));
       load({ silent: true });
     } catch (err) {
       await load({ silent: true });
       throw err;
     }
     return { accepted: proposed.length };
-  }, [clusters, load]);
+  }, [clusters, load, client]);
 
   const dismissCluster = useCallback(
     async (id: number): Promise<ClusterStatusResult> => {
       setClusters((prev) => prev.map((c) => (c.id === id ? { ...c, status: 'dismissed' } : c)));
       try {
-        const res = await window.electronAPI.dismissCluster(id);
+        const res = await tagsOf(client).dismissCluster(id);
         load({ silent: true });
         return res;
       } catch (err) {
@@ -305,14 +313,14 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         throw err;
       }
     },
-    [load],
+    [load, client],
   );
 
   const renameCluster = useCallback(
     async (id: number, label: string): Promise<ClusterStatusResult> => {
       setClusters((prev) => prev.map((c) => (c.id === id ? { ...c, label } : c)));
       try {
-        const res = await window.electronAPI.renameCluster(id, label);
+        const res = await tagsOf(client).renameCluster(id, label);
         load({ silent: true });
         return res;
       } catch (err) {
@@ -320,7 +328,7 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         throw err;
       }
     },
-    [load],
+    [load, client],
   );
 
   const removeTagFromCluster = useCallback(
@@ -331,7 +339,7 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         ),
       );
       try {
-        const res = await window.electronAPI.removeTagFromCluster(tag, clusterId);
+        const res = await tagsOf(client).removeTagFromCluster(tag, clusterId);
         load({ silent: true });
         return res;
       } catch (err) {
@@ -339,12 +347,12 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         throw err;
       }
     },
-    [load],
+    [load, client],
   );
 
   const cancelClusters = useCallback(
-    (): Promise<CancelledResult> => window.electronAPI.cancelClusters(),
-    [],
+    (): Promise<CancelledResult> => tagsOf(client).cancelClusters(),
+    [client],
   );
 
   // ── Alias review actions ────────────────────────────────────────────────────
@@ -352,32 +360,28 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
   // an optimistic mutation). Failures degrade to an empty list.
   const reloadAliases = useCallback(async (): Promise<void> => {
     try {
-      const al = await window.electronAPI.getTagAliases?.({ status: 'proposed' });
+      const al = await tagsOf(client).getAliases({ status: 'proposed' });
       if (mountedRef.current) setAliases(Array.isArray(al) ? al : []);
     } catch {
       if (mountedRef.current) setAliases([]);
     }
-  }, []);
+  }, [client]);
 
-  // Proposing aliases is an explicit, long-running LLM job: subscribe to progress
-  // for the duration of the call, then reload the (now persisted) proposals.
+  // Proposing aliases is an explicit, long-running LLM job: the seam subscribes
+  // to progress for the duration of the call, then reload the (now persisted)
+  // proposals.
   const proposeAliases = useCallback(
     async (onProgress?: ProgressCallback): Promise<ProposeAliasesResult> => {
-      const unsubscribe = window.electronAPI.onAliasProgress?.((p) => onProgress?.(p));
-      try {
-        const res = await window.electronAPI.proposeAliases();
-        await reloadAliases();
-        return res;
-      } finally {
-        if (typeof unsubscribe === 'function') unsubscribe();
-      }
+      const res = await tagsOf(client).proposeAliases((p: AiAliasProgress) => onProgress?.(p));
+      await reloadAliases();
+      return res;
     },
-    [reloadAliases],
+    [reloadAliases, client],
   );
 
   const cancelAliasProposals = useCallback(
-    (): Promise<CancelledResult> => window.electronAPI.cancelAliases(),
-    [],
+    (): Promise<CancelledResult> => tagsOf(client).cancelAliases(),
+    [client],
   );
 
   // Alias review actions are optimistic: the row vanishes instantly, the IPC
@@ -390,7 +394,7 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
     async (aliasNorm: string): Promise<AliasStatusResult> => {
       setAliases((prev) => prev.filter((a) => a.aliasNorm !== aliasNorm));
       try {
-        const res = await window.electronAPI.acceptAlias(aliasNorm);
+        const res = await tagsOf(client).acceptAlias(aliasNorm);
         load({ silent: true });
         return res;
       } catch (err) {
@@ -398,14 +402,14 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         throw err;
       }
     },
-    [load, reloadAliases],
+    [load, reloadAliases, client],
   );
 
   const dismissAlias = useCallback(
     async (aliasNorm: string): Promise<AliasStatusResult> => {
       setAliases((prev) => prev.filter((a) => a.aliasNorm !== aliasNorm));
       try {
-        const res = await window.electronAPI.dismissAlias(aliasNorm);
+        const res = await tagsOf(client).dismissAlias(aliasNorm);
         load({ silent: true });
         return res;
       } catch (err) {
@@ -413,7 +417,7 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         throw err;
       }
     },
-    [load, reloadAliases],
+    [load, reloadAliases, client],
   );
 
   // Accept every proposed alias in one pass, optimistically, then reconcile.
@@ -421,7 +425,8 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
     const proposed = aliases.filter((a) => a.status === 'proposed');
     setAliases((prev) => prev.filter((a) => a.status !== 'proposed'));
     try {
-      await Promise.all(proposed.map((a) => window.electronAPI.acceptAlias(a.aliasNorm)));
+      const api = tagsOf(client);
+      await Promise.all(proposed.map((a) => api.acceptAlias(a.aliasNorm)));
       load({ silent: true });
     } catch (err) {
       // Reload the full aggregates (not just the alias list): a partial Promise.all
@@ -431,24 +436,24 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
       throw err;
     }
     return { accepted: proposed.length };
-  }, [aliases, load]);
+  }, [aliases, load, client]);
 
   // ── Read helpers ───────────────────────────────────────────────────────────
   const getPostIdsByTags = useCallback(
     (tags: string[], mode: 'and' | 'or' = 'or'): Promise<string[]> =>
-      window.electronAPI.getPostIdsByTags(tags, mode),
-    [],
+      tagsOf(client).getPostIdsByTags(tags, mode),
+    [client],
   );
 
   const getTagCooccurrence = useCallback(
     (tag: string, limit = 12): Promise<Shelfy.TagCount[]> =>
-      window.electronAPI.getTagCooccurrence(tag, limit),
-    [],
+      tagsOf(client).getTagCooccurrence(tag, limit),
+    [client],
   );
 
   const fetchPosts = useCallback(
-    (filters?: unknown): Promise<PostSearchResult> => window.electronAPI.getPosts(filters),
-    [],
+    (filters?: unknown): Promise<PostSearchResult> => tagsOf(client).getPosts(filters),
+    [client],
   );
 
   return {

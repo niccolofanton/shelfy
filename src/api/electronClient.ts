@@ -3,6 +3,7 @@
 // the desktop's behavior does not change.
 import type { ElectronAPI } from '../../types/electron-api';
 import { assetThumbUrl, assetUrl, isAssetUrl } from '../lib/asset';
+import { createElectronAiApi } from './ai/electron';
 import type {
   CollectionDeleteOptions,
   CollectionDeleteResult,
@@ -39,6 +40,11 @@ export function desktopCapabilities(platform: string | undefined): ShelfyCapabil
     browser: true,
     webviewFallback: true,
     ai: true,
+    aiQueue: true,
+    aiTags: true,
+    aiChat: true,
+    aiSuggest: true,
+    dictation: true,
     websites: true,
     bookmarks: true,
     libraryEdit: true,
@@ -74,6 +80,8 @@ export function createElectronClient(
     },
 
     media: DESKTOP_MEDIA,
+
+    ai: createElectronAiApi(bridge),
 
     async listPosts(query: PostQuery, { limit, cursor }: PageRequest): Promise<PostPage> {
       const offset = offsetOf(cursor);

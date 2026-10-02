@@ -1,5 +1,9 @@
 import { useSyncExternalStore, useMemo } from 'react';
 import { translate, getInitialLang } from '../i18n';
+import { getElectronClient } from '../api/electronClient';
+import { useShelfy } from '../api/ShelfyProvider';
+import type { ShelfyClient } from '../api/ShelfyClient';
+import type { AiSearchApi, AiSearchProvider } from '../api/ai';
 
 // ────────────────────────────────────────────────────────────────────────────
 // Module-scope store
@@ -11,7 +15,19 @@ import { translate, getInitialLang } from '../i18n';
 // Implemented as a tiny subscribe + getSnapshot store consumed via
 // useSyncExternalStore. State is treated as immutable: every mutation produces
 // a brand-new object so the snapshot identity changes and React re-renders.
+//
+// Because the store lives outside any component, it can't read a ShelfyClient
+// from React context by itself — `useAiSearch()` stashes the current one in
+// `activeClient` on every render, and the module functions below read it from
+// there (falling back to the desktop singleton, as `useShelfy()` itself does
+// without a provider). Web support (P3-22) only needs to keep that stash
+// current; the actions below don't change.
 // ────────────────────────────────────────────────────────────────────────────
+
+let activeClient: ShelfyClient | null = null;
+function searchApi(): AiSearchApi | undefined {
+  return (activeClient ?? getElectronClient()).ai?.search;
+}
 
 // Tag-grouping payload carried by an assistant reply (mirrors ChatSearchResult
 // .tagGroups; null when the model produced none).
@@ -39,7 +55,7 @@ type TagMode = 'or' | 'and';
 type SourceScope = 'all' | 'web' | 'social';
 
 // Coarse readiness of the local VLM (model status surfaces as `unknown` on the
-// bridge; only ready/downloading are tracked here).
+// seam; only ready/downloading are tracked here).
 interface ModelStatusFlags {
   ready: boolean;
   downloading: boolean;
@@ -60,7 +76,7 @@ export interface AiSearchStoreState {
   resultsLoading: boolean;
   error: string | null;
   modelStatus: ModelStatusFlags;
-  searchProviders: Array<{ id: string; name: string; selected: boolean; vision?: boolean }>;
+  searchProviders: AiSearchProvider[];
 }
 
 const RESULT_LIMIT = 60;
@@ -116,15 +132,15 @@ function nextId(): string {
 // ── Anti-race guards (module-scope so they survive remounts) ────────────────
 let resultsReqId = 0; // bumped per gallery fetch; stale responses are dropped
 let chatToken = 0; // bumped per sendMessage; ignores stale invoke RESULTS
-// Backend run id (stamped by ipc.js) of the run currently allowed to stream
-// tokens. null = no adopted run, every token is dropped. ipc.js announces each
+// Backend run id (stamped by the seam) of the run currently allowed to stream
+// tokens. null = no adopted run, every token is dropped. The seam announces each
 // run with { start: true, runId } on the token channel BEFORE its first token
 // (IPC delivery is FIFO), so adopting the latest announcement binds the stream
 // to the newest run and stragglers from an aborted run carry an older runId.
 let activeChatRunId: number | null = null;
 
 // Shape of a streamed-token event on the chat-token channel. Either a run
-// announcement ({ start, runId }) or a token chunk ({ token, runId }). The bridge
+// announcement ({ start, runId }) or a token chunk ({ token, runId }). The seam
 // delivers this as `unknown`, so it's narrowed before use.
 interface ChatTokenPayload {
   start?: boolean;
@@ -142,8 +158,9 @@ function asChatTokenPayload(v: unknown): ChatTokenPayload | null {
 let chatTokenUnsub: (() => void) | null = null;
 function ensureChatTokenSubscription(): void {
   if (chatTokenUnsub) return;
-  if (!window.electronAPI?.onChatToken) return;
-  chatTokenUnsub = window.electronAPI.onChatToken((raw) => {
+  const api = searchApi();
+  if (!api) return;
+  chatTokenUnsub = api.onToken((raw) => {
     const payload = asChatTokenPayload(raw);
     // Only accept events while a chat request is in flight.
     if (!state.chatLoading) return;
@@ -154,7 +171,7 @@ function ensureChatTokenSubscription(): void {
       if (state.streamingText) setState({ streamingText: '' });
       return;
     }
-    // Drop tokens from a superseded (just-aborted) run — llama-server can still
+    // Drop tokens from a superseded (just-aborted) run — the provider can still
     // flush a few buffered tokens before the abort propagates, and chatLoading
     // is already true again for the NEW request, so it can't distinguish them.
     if (payload?.runId == null || payload.runId !== activeChatRunId) return;
@@ -194,17 +211,20 @@ function runGallerySearch(
     return;
   }
 
+  const api = searchApi();
+  if (!api) return;
+
   const reqId = ++resultsReqId;
   setState({ resultsLoading: true });
 
   // All three search paths resolve a { posts, total } envelope.
   let searchFn: Promise<{ posts?: Shelfy.Post[]; total?: number }>;
-  if (hasTags && textQuery && window.electronAPI?.searchHybrid) {
-    searchFn = window.electronAPI.searchHybrid(tags, textQuery, mode, RESULT_LIMIT, 0, source);
+  if (hasTags && textQuery) {
+    searchFn = api.hybrid(tags, textQuery, mode, RESULT_LIMIT, 0, source);
   } else if (hasTags) {
-    searchFn = window.electronAPI.searchByTags(tags, mode, RESULT_LIMIT, 0, source);
+    searchFn = api.byTags(tags, mode, RESULT_LIMIT, 0, source);
   } else {
-    searchFn = window.electronAPI.searchByText(textQuery, RESULT_LIMIT, 0, source);
+    searchFn = api.byText(textQuery, RESULT_LIMIT, 0, source);
   }
 
   searchFn
@@ -250,6 +270,8 @@ function applyMessageTags(messageId: string): void {
 async function sendMessage(text: string): Promise<void> {
   const trimmed = (text || '').trim();
   if (!trimmed || state.chatLoading) return;
+  const api = searchApi();
+  if (!api) return;
 
   ensureChatTokenSubscription();
 
@@ -268,12 +290,12 @@ async function sendMessage(text: string): Promise<void> {
   }));
 
   const runId = ++chatToken;
-  // No adopted backend run yet: ignore every token until ipc.js announces this
+  // No adopted backend run yet: ignore every token until the seam announces this
   // run's id on the token channel (which happens before its first token).
   activeChatRunId = null;
 
   try {
-    const res = await window.electronAPI.chatSearch(history, state.activeTags);
+    const res = await api.chat(history, state.activeTags);
     // A newer request (or a cancel) superseded this one — drop the result.
     if (runId !== chatToken) return;
 
@@ -395,7 +417,7 @@ async function stopStreaming(): Promise<void> {
   activeChatRunId = null;
   setState({ chatLoading: false, streamingText: '' });
   try {
-    await window.electronAPI?.cancelChatSearch?.();
+    await searchApi()?.cancelChat();
   } catch (err) {
     console.error('[useAiSearch] cancelChatSearch error:', err);
   }
@@ -411,13 +433,13 @@ function reset(): void {
   state = { ...initialState(), modelStatus: ms, searchProviders: providers };
   listeners.forEach((l) => l());
   try {
-    window.electronAPI?.cancelChatSearch?.();
+    searchApi()?.cancelChat();
   } catch {
     /* ignore */
   }
 }
 
-// VLM model status surfaces as `unknown` on the bridge; only ready/downloading
+// VLM model status surfaces as `unknown` on the seam; only ready/downloading
 // are read here.
 interface RawModelStatus {
   ready?: boolean;
@@ -429,9 +451,10 @@ function asRawModelStatus(v: unknown): RawModelStatus | null {
 }
 
 async function refreshModelStatus(): Promise<void> {
-  if (!window.electronAPI?.getModelStatus) return;
+  const api = searchApi();
+  if (!api) return;
   try {
-    const s = asRawModelStatus(await window.electronAPI.getModelStatus());
+    const s = asRawModelStatus(await api.getModelStatus());
     setState({
       modelStatus: {
         ready: !!s?.ready,
@@ -444,9 +467,10 @@ async function refreshModelStatus(): Promise<void> {
 }
 
 async function refreshSearchProviders(): Promise<void> {
-  if (!window.electronAPI?.getSearchProviders) return;
+  const api = searchApi();
+  if (!api) return;
   try {
-    setState({ searchProviders: await window.electronAPI.getSearchProviders() });
+    setState({ searchProviders: await api.getProviders() });
   } catch (err) {
     console.error('[useAiSearch] getSearchProviders error:', err);
   }
@@ -454,20 +478,19 @@ async function refreshSearchProviders(): Promise<void> {
 
 async function selectSearchProvider(id: string): Promise<void> {
   if (state.chatLoading) return;
-  setState({ searchProviders: await window.electronAPI.selectSearchProvider(id) });
+  const api = searchApi();
+  if (!api) return;
+  setState({ searchProviders: await api.selectProvider(id) });
   await refreshModelStatus();
   window.dispatchEvent(new Event('ai-model-changed'));
 }
 
 async function downloadModel(): Promise<void> {
-  if (!window.electronAPI?.downloadModel) return;
+  const api = searchApi();
+  if (!api) return;
   setState({ modelStatus: { ...state.modelStatus, downloading: true } });
   try {
-    // The bridge types `downloadModel` with a required `id`, but at runtime the
-    // id is optional (preload/ipc default it to undefined → resume the pending
-    // download). Call it with no argument to preserve that behavior; cast to the
-    // no-arg signature so the frozen type's required param doesn't force one.
-    await (window.electronAPI.downloadModel as () => Promise<unknown>)();
+    await api.downloadModel();
   } catch (err) {
     console.error('[useAiSearch] downloadModel error:', err);
   } finally {
@@ -482,7 +505,7 @@ let modelProgressUnsub: (() => void) | null = null;
 let newPostsUnsub: (() => void) | null = null;
 let modelPollTimer: ReturnType<typeof setInterval> | null = null;
 let previewRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-// While a download is in flight, poll the authoritative status. analyzer's
+// While a download is in flight, poll the authoritative status. The analyzer's
 // downloadModel emits NO terminal progress=1 on failure/pause/cancel (and a
 // download may be started from the Settings picker, not via our own action), so
 // without this the banner could spin on "Download in corso…" forever. getStatus
@@ -503,33 +526,23 @@ function stopModelStatusPoll(): void {
   }
 }
 
-// Model-download progress event (onModelProgress payload is `unknown`).
-interface ModelProgressPayload {
-  progress?: number;
-  [key: string]: unknown;
-}
-function asModelProgressPayload(v: unknown): ModelProgressPayload | null {
-  return v && typeof v === 'object' ? (v as ModelProgressPayload) : null;
-}
-
 function ensureInit(): void {
   if (initialized) return;
   initialized = true;
   refreshModelStatus();
   refreshSearchProviders();
+  const api = searchApi();
   newPostsUnsub =
-    window.electronAPI?.onNewPosts?.((raw) => {
-      const source = (raw as { source?: unknown } | null)?.source;
-      if ((source !== 'preview-cache' && source !== 'preview-repair') || !state.results.length)
-        return;
+    api?.onResultsStale(() => {
+      if (!state.results.length) return;
       if (previewRefreshTimer) clearTimeout(previewRefreshTimer);
       previewRefreshTimer = setTimeout(() => {
         previewRefreshTimer = null;
         void runGallerySearch(state.activeTags, state.activeKeywords, state.tagMode);
       }, 300);
     }) ?? null;
-  if (window.electronAPI?.onModelProgress) {
-    modelProgressUnsub = window.electronAPI.onModelProgress((raw) => {
+  modelProgressUnsub =
+    api?.onModelProgress((raw) => {
       const p = asModelProgressPayload(raw);
       if (p && typeof p.progress === 'number' && p.progress >= 1) {
         stopModelStatusPoll();
@@ -540,8 +553,7 @@ function ensureInit(): void {
         // without ever emitting a terminal progress event.
         startModelStatusPoll();
       }
-    });
-  }
+    }) ?? null;
   window.addEventListener(
     'beforeunload',
     () => {
@@ -551,6 +563,15 @@ function ensureInit(): void {
     },
     { once: true },
   );
+}
+
+// Model-download progress event (onModelProgress payload is `unknown`).
+interface ModelProgressPayload {
+  progress?: number;
+  [key: string]: unknown;
+}
+function asModelProgressPayload(v: unknown): ModelProgressPayload | null {
+  return v && typeof v === 'object' ? (v as ModelProgressPayload) : null;
 }
 
 // The stable actions object exposed by the store.
@@ -608,6 +629,8 @@ export type UseAiSearchResult = AiSearchStoreState & { actions: AiSearchActions 
  *              downloadModel, refreshModelStatus }
  */
 export function useAiSearch(): UseAiSearchResult {
+  // Stashed for the module-scope functions above (see the file-header note).
+  activeClient = useShelfy();
   ensureInit();
   ensureChatTokenSubscription();
   const snapshot = useSyncExternalStore(subscribe, getSnapshot);

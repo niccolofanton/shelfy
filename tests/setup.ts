@@ -77,10 +77,14 @@ const API_DEFAULTS: Record<string, unknown> = {
   analyzeAll: { queued: 0 },
   analyzeMissing: { queued: 0 },
   getAnalyzeStatus: [],
+  getAnalyzeIsPaused: false,
+  getAnalyzeConcurrency: { value: 1, max: 1 },
   cancelAnalyzeJob: undefined,
   cancelAllAnalyze: undefined,
+  clearAllAnalyze: undefined,
   retryAnalyzeJob: undefined,
   clearCompletedAnalyze: undefined,
+  clearPostDescriptions: 0,
   getModelStatus: {
     ready: true,
     downloading: false,
@@ -181,6 +185,37 @@ const API_DEFAULTS: Record<string, unknown> = {
   renameTag: { updated: 0 },
   mergeTags: { updated: 0 },
   getPostIdsByTags: [],
+  // Cluster review (aitags:cluster:*)
+  regenerateClusters: {},
+  cancelClusters: { cancelled: false },
+  acceptCluster: { updated: 0 },
+  dismissCluster: { updated: 0 },
+  renameCluster: { updated: 0 },
+  removeTagFromCluster: { removed: 0 },
+  // Alias review (aitags:alias(es):*)
+  getTagAliases: [],
+  proposeAliases: { ok: true, proposed: 0 },
+  cancelAliases: { cancelled: false },
+  acceptAlias: { ok: true, rewritten: 0 },
+  dismissAlias: { ok: true, rewritten: 0 },
+  // AI ▸ Search (chat + tag/text/hybrid search)
+  chatSearch: {
+    reply: '',
+    tagsToAdd: [],
+    tagsToRemove: [],
+    keywordsToAdd: [],
+    tagGroups: { broad: [], specific: [], keywords: [] },
+    modelUsed: false,
+  },
+  cancelChatSearch: { ok: true },
+  searchByTags: { posts: [], total: 0 },
+  searchHybrid: { posts: [], total: 0 },
+  searchByText: { posts: [], total: 0 },
+  suggestSearch: { tags: [] },
+  // AI ▸ Search ▸ dictation (local whisper.cpp)
+  sttStatus: { modelReady: true, binaryReady: true, ready: true, downloading: false },
+  sttEnsure: { ok: true },
+  sttTranscribe: { text: '' },
 };
 
 // Event subscribers return an unsubscribe function.
@@ -192,6 +227,9 @@ const EVENT_SUBS: string[] = [
   'onSttModelProgress',
   'onEmbModelProgress',
   'onBinariesProgress',
+  'onClusterProgress',
+  'onAliasProgress',
+  'onChatToken',
 ];
 
 // Provide a window.electronAPI mock for all jsdom-environment tests.

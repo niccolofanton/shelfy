@@ -20,6 +20,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { useAnalysis, analysisSummary, liveRemainingMs } from '../hooks/useAnalysis';
+import { useShelfy } from '../api/ShelfyProvider';
 import { useToast } from '../hooks/useToast';
 import { assetThumbUrl } from '../lib/asset';
 import { formatDuration, formatEta } from '../lib/duration';
@@ -723,6 +724,7 @@ export default function AiTagsQueue({ onOpenPost }: AiTagsQueueProps): React.JSX
     resumeAll,
     retryJob,
   } = useAnalysis() as AnalysisContextValue;
+  const { ai } = useShelfy();
   // Web-reference cataloging is delegated to the SAME analyzer queue, so the raw
   // job list also carries platform==='web' jobs that belong to the AI Websites
   // view, not here. Filter them out so this view's rows, summary and counts only
@@ -795,7 +797,7 @@ export default function AiTagsQueue({ onOpenPost }: AiTagsQueueProps): React.JSX
 
   async function handleAnalyzeMissing(): Promise<void> {
     try {
-      await window.electronAPI.analyzeMissing();
+      await ai?.queue.analyzeMissing();
     } catch {
       // Model unavailable, DB error or a main-process exception: surface a toast
       // so the click isn't a silent no-op (and the rejection isn't left floating).

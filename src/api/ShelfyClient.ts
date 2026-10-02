@@ -8,6 +8,7 @@
 // (Shelfy.Post): the web client maps the API's posts onto it, with the post
 // `key` as `id` and same-origin `/media` URLs as the local file references.
 import type { AccountApi } from './account';
+import type { AiApi } from './ai';
 import type { LinksApi } from './links';
 
 // What a client can do. The UI hides what its client cannot do instead of
@@ -25,8 +26,27 @@ export interface ShelfyCapabilities {
   browser: boolean;
   // The original page, live, inside the post modal when no media can be shown.
   webviewFallback: boolean;
-  // AI: the analysis queue, the AI views, search suggestions and the model setup.
+  // AI: true when any of the five flags below is (plan §2.19; P3-08
+  // Assumption G3-21 — §2.19 names one `ai.tasks` capability for several
+  // views that land at different times, so each area gets its own flag and
+  // `ai` reads as "any of them"). Consumers that only care whether SOME AI
+  // feature is on (e.g. AiPanel.tsx) read this one; a specific view or hook
+  // reads its own flag.
   ai: boolean;
+  // The analyze queue (src/hooks/useAnalysis.tsx, src/views/AiTagsQueue.tsx):
+  // `useShelfy().ai.queue`.
+  aiQueue: boolean;
+  // The AI Tags explorer (src/views/AiTags.tsx, src/hooks/useAiTags.ts):
+  // `useShelfy().ai.tags`.
+  aiTags: boolean;
+  // AI chat search (src/views/AiSearch.tsx, src/hooks/useAiSearch.ts):
+  // `useShelfy().ai.search`.
+  aiChat: boolean;
+  // Gallery search-suggestion chips (AI-41, P3-21): `useShelfy().ai.suggest`.
+  aiSuggest: boolean;
+  // Voice dictation for the AI-search composer (src/hooks/useDictation.ts):
+  // `useShelfy().ai.dictation`.
+  dictation: boolean;
   // Website capture and the Websites view.
   websites: boolean;
   // Manual bookmarks made from local files.
@@ -130,6 +150,14 @@ export type ShelfyEvent =
   // A post's AI analysis finished.
   | { type: 'post.analyzed'; postId: string | null };
 
+// The AI events: `post.analyzed` above is the one cross-cutting AI signal
+// (any queue item finishing) — consumers that just need to know "something
+// finished, reload" (src/hooks/useAiTags.ts's live refresh) subscribe to it
+// here. Every other AI progress stream (queue items, cluster/alias runs, chat
+// tokens, model downloads) is per-area and finer-grained than this coarse,
+// replayed union, so it lives on its own `AiApi` area instead
+// (`ai.queue.onProgress`, `ai.search.onToken`, …) — see src/api/ai/*.ts.
+
 export type ShelfyEventType = ShelfyEvent['type'];
 export type ShelfyEventOf<T extends ShelfyEventType> = Extract<ShelfyEvent, { type: T }>;
 
@@ -192,6 +220,10 @@ export interface ShelfyClient {
   // Turning a URL into a post (src/api/links.ts), when the backend has one:
   // the web client's, once signed in. The desktop has none.
   readonly links?: LinksApi;
+  // The AI seam (src/api/ai/), present when any `ai*`/`dictation` capability
+  // is on: the desktop always has it; the web gains it area by area (P3-11,
+  // P3-17, P3-18, P3-20, P3-22) as each capability flag turns on.
+  readonly ai?: AiApi;
 
   // One page of the library (or of a folder, a search…).
   listPosts(query: PostQuery, page: PageRequest): Promise<PostPage>;

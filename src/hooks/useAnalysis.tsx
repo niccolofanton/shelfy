@@ -9,6 +9,7 @@ import React, {
   type ReactNode,
 } from 'react';
 import type { AnalyzePostResult, QueuedResult } from '../../types/electron-api';
+import type { AiQueueApi } from '../api/ai/queue';
 import { useCapabilities, useShelfy } from '../api/ShelfyProvider';
 
 // The analyzer's runtime job record (analyze:getJobs → onAnalyzeProgress). It has
@@ -155,7 +156,21 @@ const FLUSH_WINDOW = 100;
 // Used both by the provider (shared, single subscription) and as a standalone
 // fallback for consumers without a provider.
 function useAnalysisStandalone(enabled = true): AnalysisInstance {
+  // Resolved once per render; `useShelfy()` is stable for the app's lifetime
+  // (one client per session), so capturing it in refs/callbacks below is safe.
+  // `queue` is only undefined on a client with no AI seam yet (the web,
+  // before P3-20) — `enabled` (the `aiQueue` capability) is false there too,
+  // so the effect below never fires and the stub below is never called.
   const client = useShelfy();
+  const queueRef = useRef<AiQueueApi | undefined>(client.ai?.queue);
+  queueRef.current = client.ai?.queue;
+  // A thin accessor so every call site below reads the same up-to-date
+  // reference without repeating the optional-chaining fallback everywhere.
+  const queue = useCallback((): AiQueueApi => {
+    if (!queueRef.current) throw new Error('useAnalysis: no AI queue on this client');
+    return queueRef.current;
+  }, []);
+
   const [jobs, setJobs] = useState<AnalyzeJob[]>([]);
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null); // { ready, downloading, files, name }
   const [modelProgress, setModelProgress] = useState<ModelProgress | null>(null); // { progress, label } during download
@@ -215,10 +230,10 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
   );
 
   const refreshModel = useCallback(async (): Promise<ModelStatus | null> => {
-    const s = asModelStatus(await window.electronAPI.getModelStatus());
+    const s = asModelStatus(await queue().getModelStatus());
     setModelStatus(s);
     return s;
-  }, []);
+  }, [queue]);
 
   const stopModelPoll = useCallback((): void => {
     if (modelPollRef.current) {
@@ -244,13 +259,15 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
     // When a provider already owns the shared instance, the fallback copy stays
     // dormant to avoid duplicate IPC subscriptions and divergent state.
     if (!enabled) return undefined;
-    window.electronAPI.getAnalyzeStatus().then((j) => syncJobs(asAnalyzeJobs(j)));
-    window.electronAPI.getAnalyzeIsPaused?.().then(setIsPaused);
+    queue()
+      .getStatus()
+      .then((j) => syncJobs(asAnalyzeJobs(j)));
+    queue().getIsPaused().then(setIsPaused);
     // Mirror the parallel-slot setting so ETA math matches how the queue actually
     // drains. Refreshed below whenever Settings changes it.
     const readConcurrency = (): void => {
-      window.electronAPI
-        .getAnalyzeConcurrency?.()
+      queue()
+        .getConcurrency()
         .then((r) => {
           if (r && typeof r.value === 'number') setConcurrency(Math.max(1, r.value));
         })
@@ -259,7 +276,7 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
     readConcurrency();
     refreshModel();
 
-    const unsubJob = window.electronAPI.onAnalyzeProgress((raw) => {
+    const unsubJob = queue().onProgress((raw) => {
       const job = asAnalyzeJob(raw);
       if (!job) return;
       const map = jobsMapRef.current;
@@ -285,7 +302,7 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
       scheduleFlush();
     });
 
-    const unsubModel = window.electronAPI.onModelProgress((raw) => {
+    const unsubModel = queue().onModelProgress((raw) => {
       const p = asModelProgress(raw);
       if (!p) return;
       if (p.progress >= 1) {
@@ -325,7 +342,7 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
       window.removeEventListener('ai-model-changed', onModelChanged);
       window.removeEventListener('ai-concurrency-changed', onConcurrencyChanged);
     };
-  }, [refreshModel, enabled, syncJobs, scheduleFlush, startModelPoll, stopModelPoll]);
+  }, [refreshModel, enabled, syncJobs, scheduleFlush, startModelPoll, stopModelPoll, queue]);
 
   const jobFor = useCallback(
     (postId: string): AnalyzeJob | null => jobs.find((j) => j.key === `${postId}:analyze`) || null,
@@ -333,19 +350,13 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
   );
 
   const analyzePost = useCallback(
-    (postId: string): Promise<AnalyzePostResult> => window.electronAPI.analyzePost(postId),
-    [],
+    (postId: string): Promise<AnalyzePostResult> => queue().analyzePost(postId),
+    [queue],
   );
-  const analyzeAll = useCallback((): Promise<QueuedResult> => window.electronAPI.analyzeAll(), []);
-  const cancelJob = useCallback(
-    (key: string): Promise<unknown> => window.electronAPI.cancelAnalyzeJob(key),
-    [],
-  );
-  const cancelAll = useCallback((): Promise<unknown> => window.electronAPI.cancelAllAnalyze(), []);
-  const retryJob = useCallback(
-    (key: string): Promise<unknown> => window.electronAPI.retryAnalyzeJob(key),
-    [],
-  );
+  const analyzeAll = useCallback((): Promise<QueuedResult> => queue().analyzeAll(), [queue]);
+  const cancelJob = useCallback((key: string): Promise<unknown> => queue().cancelJob(key), [queue]);
+  const cancelAll = useCallback((): Promise<unknown> => queue().cancelAll(), [queue]);
+  const retryJob = useCallback((key: string): Promise<unknown> => queue().retryJob(key), [queue]);
 
   // Flip the UI optimistically so the button/badge react instantly, then confirm
   // with the main process. If the IPC fails, roll back so the UI can't lie about
@@ -353,19 +364,19 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
   const pauseAll = useCallback(async (): Promise<void> => {
     setIsPaused(true);
     try {
-      await window.electronAPI.pauseAnalyze();
+      await queue().pauseAll();
     } catch {
       setIsPaused(false);
     }
-  }, []);
+  }, [queue]);
   const resumeAll = useCallback(async (): Promise<void> => {
     setIsPaused(false);
     try {
-      await window.electronAPI.resumeAnalyze();
+      await queue().resumeAll();
     } catch {
       setIsPaused(true);
     }
-  }, []);
+  }, [queue]);
   // Cancel in-flight/queued work and empty the list (the queue's "clear").
   // Snapshot the keys we're forgetting (with a timestamp) so the progress reducer
   // drops late stale events for THOSE jobs — still in flight over IPC when the
@@ -386,30 +397,29 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
       }
     };
     stampCleared();
-    await window.electronAPI.clearAllAnalyze();
+    await queue().clearAll();
     stampCleared();
     jobsMapRef.current = new Map();
     publishJobs();
     setIsPaused(false);
-  }, [publishJobs]);
+  }, [publishJobs, queue]);
 
   // Prune only the terminal (done/cancelled) rows, leaving in-flight and errored
   // jobs in place. Mirrors the backend analyzer.clearCompleted, which otherwise
   // grows jobsMap/jobstore/renderer state unbounded across the app's lifetime.
   const clearCompleted = useCallback(async (): Promise<void> => {
-    await window.electronAPI.clearCompletedAnalyze?.();
+    await queue().clearCompleted();
     const map = jobsMapRef.current;
     for (const [k, j] of map) {
       if (j.status === 'done' || j.status === 'cancelled') map.delete(k);
     }
     publishJobs();
-  }, [publishJobs]);
+  }, [publishJobs, queue]);
 
   // Persist manual edits to a post's AI fields (description / tags / saveReason).
   const updatePostAiAnalysis = useCallback(
-    (id: string, fields: unknown): Promise<void> =>
-      window.electronAPI.updatePostAiAnalysis(id, fields),
-    [],
+    (id: string, fields: unknown): Promise<void> => queue().updateManual(id, fields),
+    [queue],
   );
 
   // Persist the user-authored layer (personal note + manual tags), distinct from
@@ -430,24 +440,20 @@ function useAnalysisStandalone(enabled = true): AnalysisInstance {
 
   // Delete the AI-generated description for one or more posts (tags kept).
   const clearPostDescriptions = useCallback(
-    (ids: string[]): Promise<number> => window.electronAPI.clearPostDescriptions(ids),
-    [],
+    (ids: string[]): Promise<number> => queue().clearDescriptions(ids),
+    [queue],
   );
 
   const downloadModel = useCallback(async (): Promise<void> => {
     setModelProgress({ progress: 0, label: 'modello' });
     try {
-      // No model id: the analyzer downloads the currently-selected/default model.
-      // The .d.ts (frozen) types `id` as required, but the IPC handler defaults it
-      // to undefined, so passing nothing is the intended runtime behavior. Cast to
-      // satisfy the required-parameter type without altering the call.
-      await (window.electronAPI.downloadModel as () => Promise<unknown>)();
+      await queue().downloadModel();
     } finally {
       stopModelPoll();
       setModelProgress(null);
       refreshModel();
     }
-  }, [refreshModel, stopModelPoll]);
+  }, [refreshModel, stopModelPoll, queue]);
 
   return {
     jobs,
@@ -566,10 +572,10 @@ interface AnalysisProviderProps {
 
 // Mounts a single shared analysis instance and exposes it to all descendants,
 // so App and PostModal share the same jobs/modelStatus/subscriptions. A client
-// without the `ai` capability gets a dormant instance (no jobs, no model).
+// without the `aiQueue` capability gets a dormant instance (no jobs, no model).
 export function AnalysisProvider({ children }: AnalysisProviderProps): React.JSX.Element {
-  const { ai } = useCapabilities();
-  const value = useAnalysisStandalone(ai);
+  const { aiQueue } = useCapabilities();
+  const value = useAnalysisStandalone(aiQueue);
   return createElement(AnalysisContext.Provider, { value }, children);
 }
 
@@ -577,9 +583,9 @@ export function AnalysisProvider({ children }: AnalysisProviderProps): React.JSX
 // falls back to a standalone instance otherwise (keeps renderHook tests working).
 export function useAnalysis(): AnalysisInstance {
   const ctx = useContext(AnalysisContext);
-  const { ai } = useCapabilities();
+  const { aiQueue } = useCapabilities();
   // The standalone instance is only active (subscribes/loads) when no provider
   // supplies the shared one — keeps hook order stable without double work.
-  const standalone = useAnalysisStandalone(ctx == null && ai);
+  const standalone = useAnalysisStandalone(ctx == null && aiQueue);
   return ctx ?? standalone;
 }

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DictationRecorder } from '../lib/dictation/recorder';
 import { translate, getInitialLang } from '../i18n';
+import { useShelfy } from '../api/ShelfyProvider';
+import type { AiDictationApi } from '../api/ai';
 
 // User-facing error messages surfaced via `error` (rendered in the AiSearch
 // composer). Resolved against the persisted language; the whisper `language`
@@ -8,7 +10,7 @@ import { translate, getInitialLang } from '../i18n';
 const td = (key: string): string => translate(getInitialLang(), `dictation.${key}`);
 
 // Voice dictation for the AI-search composer. Captures the mic, re-transcribes
-// the growing buffer every TICK_MS via the local whisper.cpp server (so the text
+// the growing buffer every TICK_MS via the configured STT route (so the text
 // updates live as you speak), and on stop hands the final text to `onResult`.
 //
 // Model lifecycle mirrors useAnalysis: `modelStatus` + `modelProgress` are tracked
@@ -23,8 +25,8 @@ const MIN_SECONDS = 0.4; // skip transcribing buffers too short to be useful
 // Dictation lifecycle states.
 type DictationStatus = 'idle' | 'requesting' | 'recording' | 'transcribing' | 'error';
 
-// stt:status shape (stt.* return a file-internal shape typed `unknown` on the
-// bridge); only these fields are read here.
+// stt:status shape (the seam types this `unknown`: it's a file-internal shape
+// on the desktop); only these fields are read here.
 interface SttModelStatus {
   modelReady?: boolean;
   binaryReady?: boolean;
@@ -33,7 +35,7 @@ interface SttModelStatus {
   [key: string]: unknown;
 }
 
-// stt model-download progress event (onSttModelProgress payload is `unknown`).
+// stt model-download progress event (onModelProgress payload is `unknown`).
 interface SttModelProgress {
   progress: number;
   label?: string;
@@ -45,7 +47,7 @@ function asSttStatus(v: unknown): SttModelStatus | null {
   return v && typeof v === 'object' ? (v as SttModelStatus) : null;
 }
 
-// Narrow an onSttModelProgress payload to an SttModelProgress.
+// Narrow an onModelProgress payload to an SttModelProgress.
 function asSttProgress(v: unknown): SttModelProgress | null {
   if (v && typeof v === 'object' && typeof (v as { progress?: unknown }).progress === 'number') {
     return v as SttModelProgress;
@@ -77,6 +79,12 @@ export function useDictation({
   onResult,
   language = 'it',
 }: UseDictationOpts = {}): UseDictationResult {
+  const { ai } = useShelfy();
+  // `dictation` is only absent on a client with no AI seam yet (the web,
+  // before P3-17) — the dictation mic button is desktop-only reachable today.
+  const dictationRef = useRef<AiDictationApi | undefined>(ai?.dictation);
+  dictationRef.current = ai?.dictation;
+
   const [status, setStatus] = useState<DictationStatus>('idle');
   const [liveText, setLiveText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -110,13 +118,14 @@ export function useDictation({
   const getAudioLevel = useCallback((): number => audioLevelRef.current, []);
 
   const refreshModel = useCallback(async (): Promise<SttModelStatus | null> => {
-    if (!window.electronAPI?.sttStatus) return null;
+    const dictation = dictationRef.current;
+    if (!dictation) return null;
     try {
-      const s = asSttStatus(await window.electronAPI.sttStatus());
+      const s = asSttStatus(await dictation.status());
       setModelStatus(s);
       return s;
     } catch (err) {
-      console.error('[useDictation] sttStatus error:', err);
+      console.error('[useDictation] status error:', err);
       return null;
     }
   }, []);
@@ -124,8 +133,9 @@ export function useDictation({
   // Mount: load model status + subscribe to download progress (mirrors useAnalysis).
   useEffect(() => {
     refreshModel();
-    if (!window.electronAPI?.onSttModelProgress) return undefined;
-    const unsub = window.electronAPI.onSttModelProgress((raw) => {
+    const dictation = dictationRef.current;
+    if (!dictation) return undefined;
+    const unsub = dictation.onModelProgress((raw) => {
       const p = asSttProgress(raw);
       setModelProgress(p);
       if (p && p.progress >= 1) {
@@ -133,24 +143,19 @@ export function useDictation({
         refreshModel();
       }
     });
-    return () => {
-      if (typeof unsub === 'function') unsub();
-    };
+    return () => unsub();
   }, [refreshModel]);
 
   // Explicit model download (mirrors useAnalysis.downloadModel): the banner calls
   // this; progress is reflected via modelProgress until the file is present.
   const downloadModel = useCallback(async (): Promise<void> => {
-    if (!window.electronAPI?.sttDownloadModel) return;
+    const dictation = dictationRef.current;
+    if (!dictation) return;
     setModelProgress({ progress: 0, label: 'voce' });
     try {
-      // The `.d.ts` types `sttDownloadModel` as `(id: string) => …`, but `id` is
-      // optional at runtime (preload passes `undefined`, the main handler defaults
-      // it to the active model). Calling with no arg is the intended behavior here
-      // (mirrors useAnalysis.downloadModel); cast to the actual zero-arg shape.
-      await (window.electronAPI.sttDownloadModel as () => Promise<unknown>)();
+      await dictation.downloadModel();
     } catch (err) {
-      console.error('[useDictation] sttDownloadModel error:', err);
+      console.error('[useDictation] downloadModel error:', err);
     } finally {
       setModelProgress(null);
       refreshModel();
@@ -176,9 +181,10 @@ export function useDictation({
   const transcribeSnapshot = useCallback(
     async (session: number): Promise<string> => {
       const rec = recRef.current;
-      if (!rec || !rec.hasAudio || rec.durationSec < MIN_SECONDS) return '';
+      const dictation = dictationRef.current;
+      if (!rec || !dictation || !rec.hasAudio || rec.durationSec < MIN_SECONDS) return '';
       const wav = rec.getWavSnapshot();
-      const res = await window.electronAPI.sttTranscribe(wav, { language });
+      const res = await dictation.transcribe(wav, { language });
       if (session !== sessionRef.current) return ''; // a newer session superseded us
       return res?.text ?? '';
     },
@@ -226,6 +232,8 @@ export function useDictation({
 
   const start = useCallback(async (): Promise<void> => {
     if (status !== 'idle' && status !== 'error') return;
+    const dictation = dictationRef.current;
+    if (!dictation) return;
 
     // The model + binary must be ready; the banner owns downloading. Re-check in
     // case status is stale.
@@ -242,7 +250,7 @@ export function useDictation({
 
     try {
       setStatus('requesting');
-      await window.electronAPI.sttEnsure();
+      await dictation.ensure();
       if (session !== sessionRef.current) return;
 
       const rec = new DictationRecorder();
