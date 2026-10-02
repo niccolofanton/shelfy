@@ -7,12 +7,17 @@
 //! see [`shelfy_core::generation`]), so every ETag of the library's views
 //! (list, post, search, stats, collections, counts) and every cached count
 //! is stale at once. Right after the commit, still on the blocking thread,
-//! [`write`] then announces the change ([`announce`]): the user's open
-//! streams get `posts.changed` (the posts it changed, `[]` when it changed
-//! only collections, `null` for more than 200 or "any") and
-//! `stats.changed`.
+//! [`write`] then:
 //!
-//! This happens even when the request that started the write is gone (a 504
+//! 1. retires the generation when the cache now serves the library through a
+//!    handle with another generation cell: an explicit eviction (a lock, a
+//!    migration install, a job's own check) landed while the write held its
+//!    handle, so the commit moved a cell that no new reader sees;
+//! 2. announces the change ([`announce`]): the user's open streams get
+//!    `posts.changed` (the posts it changed, `[]` when it changed only
+//!    collections, `null` for more than 200 or "any") and `stats.changed`.
+//!
+//! Both happen even when the request that started the write is gone (a 504
 //! from the time limit, a closed connection): the blocking task runs to the
 //! end. A write that changed nothing announces nothing.
 //!
@@ -27,11 +32,13 @@
 //!
 //! [`Generation`]: shelfy_core::generation::Generation
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use rusqlite::Transaction;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use shelfy_core::db::{UserDb, UserDbCache};
 use shelfy_core::generation::{GenerationCache, ViewDigest};
 use shelfy_core::repo::RepoError;
 use shelfy_core::repo::stats::Stats;
@@ -80,9 +87,9 @@ pub struct Written<T> {
 }
 
 /// Runs `change` in a write transaction on `user_id`'s library, off the
-/// async workers, and, when it changed rows, announces the change as
-/// `reason` (module docs). An error rolls the transaction back and announces
-/// nothing.
+/// async workers, and, when it changed rows, retires a generation that no
+/// reader would see and announces the change as `reason` (module docs). An
+/// error rolls the transaction back and announces nothing.
 ///
 /// # Errors
 ///
@@ -98,6 +105,7 @@ where
     T: Send + 'static,
 {
     let db = state.user_db(user_id).await?;
+    let cache = Arc::clone(state.user_dbs());
     let events = state.events().clone();
     let user = user_id.to_owned();
     blocking(move || {
@@ -107,11 +115,25 @@ where
             Ok::<_, RepoError>((change, tx.total_changes() != before))
         })?;
         if changed {
+            retire_if_unseen(&cache, &user, &db);
             announce(&events, &user, reason, keys);
         }
         Ok::<_, RepoError>(Written { value, changed })
     })
     .await
+}
+
+/// After a write through `db` moved its generation: when the cache serves
+/// `user_id`'s library through a handle with another generation cell (an
+/// explicit eviction retired `db`'s cell and a reader opened a new one), no
+/// reader sees the move, so retire the new cell too. The job system checks
+/// the same after each chunk.
+fn retire_if_unseen(cache: &UserDbCache, user_id: &str, db: &UserDb) {
+    if let Some(current) = cache.get_if_present(user_id)
+        && current.generation().instance != db.generation().instance
+    {
+        cache.evict(user_id);
+    }
 }
 
 /// The `keys` of a `posts.changed` event for these posts: the list, or

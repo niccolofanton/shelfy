@@ -13,7 +13,7 @@
 mod support;
 
 use std::collections::BTreeSet;
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use axum::Router;
@@ -21,14 +21,18 @@ use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
-use shelfy_core::repo::RepoError;
+use shelfy_core::repo::{RepoError, posts, stats};
 use shelfy_core::search::index;
+use shelfy_server::conditional::ETag;
 use shelfy_server::error::ErrorCode;
+use shelfy_server::events::model::ChangeReason;
 use shelfy_server::ids::{new_ulid, now_ms};
+use shelfy_server::library::{self, Change};
 use shelfy_server::tokens::{SecretToken, hash_token};
 use support::auth::{owner, sign_in, spa, with_session};
 use support::library::{
-    ALICE, BOB, FIXTURE_NEWEST, FIXTURE_TRASHED, Fixture, bob_library, fixture, synthetic_library,
+    ALICE, BOB, FIXTURE_NEWEST, FIXTURE_TRASHED, Fixture, NOW, bob_library, fixture,
+    synthetic_library,
 };
 use support::sse::{Stream, assert_event_schema, assert_schema};
 use support::{TestState, body, from_app, get, json, post_json, problem, send};
@@ -1405,6 +1409,59 @@ async fn a_patch_that_repeats_the_stored_values_keeps_every_etag() {
         }
     }
     assert_index_consistent(&t, ALICE, "repeated patches");
+}
+
+/// F6 (P1-03 review, L1): `library::write` writes through the handle it took
+/// before the write started. When an explicit eviction (the lock gate on
+/// another request, a migration install, a job's own check) retires that
+/// handle's generation meanwhile, and a reader opens a new handle and fills
+/// the stats cache and an ETag from the state before the commit, the write
+/// must still make them stale.
+#[tokio::test]
+async fn a_write_racing_an_eviction_still_moves_the_etags_and_cached_stats() {
+    let t = TestState::new();
+    t.write(ALICE, |tx| fixture(tx)).await;
+    let app = t.app_as(ALICE);
+    // A request warms the handle that the write takes.
+    assert_eq!(ok(&app, get("/api/v1/stats")).await["total"], 7);
+
+    let state = t.state.clone();
+    let seen = Arc::new(Mutex::new(String::new()));
+    let seen_in = Arc::clone(&seen);
+    let written = library::write(&t.state, ALICE, ChangeReason::Delete, move |tx| {
+        // The interleaving, fixed: another request's eviction lands while
+        // this write holds its handle, ...
+        state.user_dbs().evict(ALICE);
+        // ... and a reader opens the new handle and fills the ETag and the
+        // stats cache from the state before this write commits.
+        let fresh = state.user_dbs().get(ALICE).unwrap();
+        let generation = fresh.generation();
+        let counters = fresh.read(stats::get).unwrap();
+        assert_eq!(counters.total, 7);
+        let view = library::view_digest("stats", &());
+        state
+            .library_caches()
+            .stats
+            .insert(ALICE, generation, view, counters);
+        *seen_in.lock().unwrap() = ETag::for_view("stats", ALICE, generation, &())
+            .as_str()
+            .to_owned();
+        // The write itself: one post to the trash.
+        let id = posts::id_for_key(tx, "x_2001")?.unwrap();
+        posts::trash(tx, &[id], NOW)?;
+        Ok(Change {
+            value: (),
+            keys: Some(vec!["x_2001".into()]),
+        })
+    })
+    .await
+    .unwrap();
+    assert!(written.changed);
+    let etag = seen.lock().unwrap().clone();
+
+    let response = send(&app, get_if_none_match("/api/v1/stats", &etag)).await;
+    assert_eq!(response.status(), StatusCode::OK, "no stale 304");
+    assert_eq!(json(response).await["total"], 6, "no stale cached stats");
 }
 
 /// F6 (P1-03 review, L2): a write whose request is gone (the 30 s time limit
