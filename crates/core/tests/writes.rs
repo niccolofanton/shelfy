@@ -265,6 +265,70 @@ fn a_manual_edit_is_done_and_attributed_to_the_user() {
     assert_eq!(hits, [id], "the new description is searchable");
 }
 
+/// F6 (P1-03 review, L4): an edit that sends the values the post already has
+/// changes no row, so the library generation, and with it every ETag and
+/// cached count, stays where it was. A difference in the derived tag rows
+/// alone still counts, as on the desktop: an AI tag list sent without tiers
+/// drops the tiers.
+#[test]
+fn an_edit_that_repeats_the_stored_values_changes_no_row() {
+    let conn = library();
+    let id = posts::insert(&conn, &bare_post("ig_1", Platform::Instagram, NOW), NOW).unwrap();
+    let user = UserContentPatch {
+        note: Some(Some("for the hall".into())),
+        tags: Some(strings(&["Lamp", "glass"])),
+    };
+    let ai = AiPatch {
+        description: Some(Some("A blown-glass lamp".into())),
+        tags: Some(Some(strings(&["Lamp", "Glass"]))),
+        entities: Some(Some(strings(&["Murano"]))),
+        keywords: Some(Some(strings(&["blown glass"]))),
+        category: Some(Some("interior".into())),
+        ..AiPatch::default()
+    }
+    .manual();
+    posts::update_user_content(&conn, id, &user, NOW + 1).unwrap();
+    assert!(posts::update_ai(&conn, id, &ai, NOW + 1).unwrap());
+    let changes = conn.total_changes();
+    let columns = ai_columns(&conn, id);
+
+    posts::update_user_content(&conn, id, &user, NOW + 2).unwrap();
+    assert!(!posts::update_ai(&conn, id, &ai, NOW + 2).unwrap());
+    assert_eq!(conn.total_changes(), changes, "no row changed");
+    assert_eq!(updated_at(&conn, id), NOW + 1);
+    assert_eq!(ai_columns(&conn, id), columns, "no new analysis time");
+
+    // A change of the note alone moves the post again.
+    let note = UserContentPatch {
+        note: Some(Some("for the study".into())),
+        tags: None,
+    };
+    posts::update_user_content(&conn, id, &note, NOW + 3).unwrap();
+    assert_ne!(conn.total_changes(), changes);
+    assert_eq!(updated_at(&conn, id), NOW + 3);
+
+    // The same AI tags with tiers, then without: the rows change.
+    let tiered = AiPatch {
+        tags: Some(Some(strings(&["Lamp", "Glass"]))),
+        general_tags: Some(strings(&["lamp"])),
+        ..AiPatch::default()
+    };
+    assert!(posts::update_ai(&conn, id, &tiered, NOW + 4).unwrap());
+    let untiered = AiPatch {
+        tags: Some(Some(strings(&["Lamp", "Glass"]))),
+        ..AiPatch::default()
+    };
+    assert!(posts::update_ai(&conn, id, &untiered, NOW + 5).unwrap());
+    assert!(
+        tag_rows(&conn, id)
+            .iter()
+            .filter(|row| row.2 == "ai")
+            .all(|row| row.3.is_none())
+    );
+    assert_eq!(updated_at(&conn, id), NOW + 5);
+    assert_index_consistent(&conn, "edits that repeat the stored values");
+}
+
 /// Plan §1.2 #3: an AI tag and a manual tag with the same name are two rows;
 /// clearing either layer keeps the other.
 #[test]

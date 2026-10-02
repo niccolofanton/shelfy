@@ -1051,7 +1051,8 @@ pub fn clear_ai(conn: &Connection, post_id: i64, now: i64) -> Result<()> {
 /// post, with the desktop's `updateUserContent` semantics: both are stored as
 /// given (the API validates input first), and the manual tag rows are the
 /// trimmed, lowercased, alias-resolved and deduped tags. Unlike the desktop, an
-/// AI tag of the same name keeps its own row.
+/// AI tag of the same name keeps its own row, and values equal to the stored
+/// ones write nothing: no row, no `updated_at`, no reindex.
 ///
 /// # Errors
 ///
@@ -1063,17 +1064,27 @@ pub fn update_user_content(
     now: i64,
 ) -> Result<()> {
     ensure_exists(conn, post_id)?;
+    let mut changed = false;
     if let Some(note) = &patch.note {
-        conn.prepare_cached("UPDATE posts SET user_note = ?2, updated_at = ?3 WHERE id = ?1")?
-            .execute(params![post_id, note, now])?;
+        changed |= conn
+            .prepare_cached(
+                "UPDATE posts SET user_note = ?2 WHERE id = ?1 AND user_note IS NOT ?2",
+            )?
+            .execute(params![post_id, note])?
+            > 0;
     }
     if let Some(list) = &patch.tags {
         let json = serde_json::to_string(list).expect("strings serialize");
-        conn.prepare_cached("UPDATE posts SET user_tags_json = ?2, updated_at = ?3 WHERE id = ?1")?
-            .execute(params![post_id, json, now])?;
-        tags::sync_manual_tags(conn, post_id, list)?;
+        changed |= conn
+            .prepare_cached(
+                "UPDATE posts SET user_tags_json = ?2 WHERE id = ?1 AND user_tags_json IS NOT ?2",
+            )?
+            .execute(params![post_id, json])?
+            > 0;
+        changed |= tags::sync_manual_tags(conn, post_id, list)?;
     }
-    if patch.note.is_some() || patch.tags.is_some() {
+    if changed {
+        touch(conn, post_id, now)?;
         index::reindex_post(conn, post_id)?;
     }
     Ok(())
@@ -1092,9 +1103,11 @@ pub fn update_user_content(
 ///   entities present rebuild the entity rows (no aliases).
 ///
 /// Unlike the desktop, manual tags are a separate layer that this never
-/// touches, even for a tag of the same name (plan §1.2 #3), and times are in
-/// milliseconds. Returns whether anything was written: an empty patch is a
-/// no-op.
+/// touches, even for a tag of the same name (plan §1.2 #3), times are in
+/// milliseconds, and values equal to the stored ones write nothing: a patch
+/// that changes no column and no derived row leaves the post alone, without
+/// a new `ai_analyzed_at`, `updated_at` or index row. Returns whether the
+/// post changed: an empty patch is a no-op.
 ///
 /// # Errors
 ///
@@ -1107,7 +1120,7 @@ pub fn update_ai(conn: &Connection, post_id: i64, patch: &AiPatch, now: i64) -> 
             Value::Text(serde_json::to_string(items).expect("strings serialize"))
         })
     };
-    let mut sets: Vec<(&str, Value)> = Vec::new();
+    let mut columns: Vec<(&str, Value)> = Vec::new();
     let texts = [
         ("ai_description", &patch.description),
         ("ai_status", &patch.status),
@@ -1119,7 +1132,7 @@ pub fn update_ai(conn: &Connection, post_id: i64, patch: &AiPatch, now: i64) -> 
     ];
     for (column, value) in texts {
         if let Some(value) = value {
-            sets.push((column, text(value)));
+            columns.push((column, text(value)));
         }
     }
     let lists = [
@@ -1129,29 +1142,37 @@ pub fn update_ai(conn: &Connection, post_id: i64, patch: &AiPatch, now: i64) -> 
     ];
     for (column, value) in lists {
         if let Some(value) = value {
-            sets.push((column, list(value)));
+            columns.push((column, list(value)));
         }
     }
-    let done = matches!(&patch.status, Some(Some(status)) if status == "done");
-    match patch.analyzed_at {
-        Some(at) => sets.push(("ai_analyzed_at", at.map_or(Value::Null, Value::Integer))),
-        None if done => sets.push(("ai_analyzed_at", Value::Integer(now))),
-        None => {}
+    if let Some(at) = patch.analyzed_at {
+        columns.push(("ai_analyzed_at", at.map_or(Value::Null, Value::Integer)));
     }
-    // Tags and entities add their column above, so nothing to set means an
-    // empty patch.
-    if sets.is_empty() {
-        return Ok(false);
+
+    let mut changed = false;
+    if !columns.is_empty() {
+        let sets: Vec<String> = (2..)
+            .zip(&columns)
+            .map(|(n, (column, _))| format!("{column} = ?{n}"))
+            .collect();
+        let differs: Vec<String> = (2..)
+            .zip(&columns)
+            .map(|(n, (column, _))| format!("{column} IS NOT ?{n}"))
+            .collect();
+        let sql = format!(
+            "UPDATE posts SET {} WHERE id = ?1 AND ({})",
+            sets.join(", "),
+            differs.join(" OR ")
+        );
+        let values =
+            std::iter::once(Value::Integer(post_id)).chain(columns.into_iter().map(|c| c.1));
+        changed = conn
+            .prepare_cached(&sql)?
+            .execute(params_from_iter(values))?
+            > 0;
     }
-    sets.push(("updated_at", Value::Integer(now)));
-    let assignments: Vec<String> = sets.iter().map(|(c, _)| format!("{c} = ?")).collect();
-    let sql = format!("UPDATE posts SET {} WHERE id = ?", assignments.join(", "));
-    let mut values: Vec<Value> = sets.into_iter().map(|(_, v)| v).collect();
-    values.push(Value::Integer(post_id));
-    conn.prepare_cached(&sql)?
-        .execute(params_from_iter(values.iter()))?;
     if let Some(tags) = &patch.tags {
-        tags::sync_ai_tags(
+        changed |= tags::sync_ai_tags(
             conn,
             post_id,
             tags.as_deref().unwrap_or_default(),
@@ -1160,8 +1181,19 @@ pub fn update_ai(conn: &Connection, post_id: i64, patch: &AiPatch, now: i64) -> 
         )?;
     }
     if let Some(entities) = &patch.entities {
-        tags::sync_entities(conn, post_id, entities.as_deref().unwrap_or_default())?;
+        changed |= tags::sync_entities(conn, post_id, entities.as_deref().unwrap_or_default())?;
     }
+    if !changed {
+        return Ok(false);
+    }
+    // A status that becomes `done` stamps the analysis time, unless the patch
+    // gives one: the stamp follows a change, it is not a change of its own.
+    let done = matches!(&patch.status, Some(Some(status)) if status == "done");
+    if done && patch.analyzed_at.is_none() {
+        conn.prepare_cached("UPDATE posts SET ai_analyzed_at = ?2 WHERE id = ?1")?
+            .execute(params![post_id, now])?;
+    }
+    touch(conn, post_id, now)?;
     index::reindex_post(conn, post_id)?;
     Ok(true)
 }
@@ -1921,6 +1953,13 @@ fn ensure_exists(conn: &Connection, post_id: i64) -> Result<()> {
     } else {
         Err(RepoError::NotFound)
     }
+}
+
+/// Stamps `updated_at` on a post that an edit changed.
+fn touch(conn: &Connection, post_id: i64, now: i64) -> Result<()> {
+    conn.prepare_cached("UPDATE posts SET updated_at = ?2 WHERE id = ?1")?
+        .execute(params![post_id, now])?;
+    Ok(())
 }
 
 fn validate(post: &NewPost) -> Result<()> {

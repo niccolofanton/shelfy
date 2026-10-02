@@ -110,17 +110,35 @@ fn canonical_rows(conn: &Connection, items: &[String]) -> Result<Vec<NormForm>> 
     Ok(out)
 }
 
+/// A derived row: norm, display form, and the tier of an AI tag row.
+type Row = (String, String, Option<&'static str>);
+
+/// Whether the rows `sql` reads for `post_id` (norm, form, tier, ordered by
+/// norm) are `rows`: then a sync has nothing to write, and a write that
+/// repeats what is stored moves no row (and so no library generation).
+fn stored_rows_are(conn: &Connection, sql: &str, post_id: i64, rows: &[Row]) -> Result<bool> {
+    let mut wanted: Vec<&Row> = rows.iter().collect();
+    wanted.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    let stored: Vec<(String, String, Option<String>)> = conn
+        .prepare_cached(sql)?
+        .query_map([post_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(stored.len() == wanted.len()
+        && stored.iter().zip(wanted).all(|(stored, wanted)| {
+            stored.0 == wanted.0 && stored.1 == wanted.1 && stored.2.as_deref() == wanted.2
+        }))
+}
+
 /// Rebuilds the AI tag rows of a post. Tiers come from `general` and `specific`
-/// (`specific` wins); without either list every row has no tier.
+/// (`specific` wins); without either list every row has no tier. Writes only
+/// when the rows differ; returns whether it wrote.
 pub(crate) fn sync_ai_tags(
     conn: &Connection,
     post_id: i64,
     tags: &[String],
     general: Option<&[String]>,
     specific: Option<&[String]>,
-) -> Result<()> {
-    conn.prepare_cached("DELETE FROM post_tags WHERE post_id = ?1 AND source = 'ai'")?
-        .execute([post_id])?;
+) -> Result<bool> {
     let have_tiers = general.is_some() || specific.is_some();
     let mut tier_by_norm: HashMap<String, &'static str> = HashMap::new();
     for (list, tier) in [(general, "general"), (specific, "specific")] {
@@ -131,44 +149,77 @@ pub(crate) fn sync_ai_tags(
             }
         }
     }
+    let rows: Vec<Row> = canonical_rows(conn, tags)?
+        .into_iter()
+        .map(|row| {
+            let tier = if have_tiers {
+                tier_by_norm.get(&row.norm).copied()
+            } else {
+                None
+            };
+            (row.norm, row.form, tier)
+        })
+        .collect();
+    let stored = "SELECT tag_norm, tag_form, tier FROM post_tags
+                  WHERE post_id = ?1 AND source = 'ai' ORDER BY tag_norm";
+    if stored_rows_are(conn, stored, post_id, &rows)? {
+        return Ok(false);
+    }
+    conn.prepare_cached("DELETE FROM post_tags WHERE post_id = ?1 AND source = 'ai'")?
+        .execute([post_id])?;
     let mut insert = conn.prepare_cached(
         "INSERT INTO post_tags (post_id, tag_norm, tag_form, source, tier) VALUES (?1, ?2, ?3, 'ai', ?4)",
     )?;
-    for row in canonical_rows(conn, tags)? {
-        let tier = if have_tiers {
-            tier_by_norm.get(&row.norm).copied()
-        } else {
-            None
-        };
-        insert.execute(params![post_id, row.norm, row.form, tier])?;
+    for (norm, form, tier) in rows {
+        insert.execute(params![post_id, norm, form, tier])?;
     }
-    Ok(())
+    Ok(true)
 }
 
-/// Rebuilds the manual tag rows of a post.
-pub(crate) fn sync_manual_tags(conn: &Connection, post_id: i64, tags: &[String]) -> Result<()> {
+/// Rebuilds the manual tag rows of a post. Writes only when the rows differ;
+/// returns whether it wrote.
+pub(crate) fn sync_manual_tags(conn: &Connection, post_id: i64, tags: &[String]) -> Result<bool> {
+    let rows: Vec<Row> = canonical_rows(conn, tags)?
+        .into_iter()
+        .map(|row| (row.norm, row.form, None))
+        .collect();
+    let stored = "SELECT tag_norm, tag_form, NULL FROM post_tags
+                  WHERE post_id = ?1 AND source = 'manual' ORDER BY tag_norm";
+    if stored_rows_are(conn, stored, post_id, &rows)? {
+        return Ok(false);
+    }
     conn.prepare_cached("DELETE FROM post_tags WHERE post_id = ?1 AND source = 'manual'")?
         .execute([post_id])?;
     let mut insert = conn.prepare_cached(
         "INSERT INTO post_tags (post_id, tag_norm, tag_form, source) VALUES (?1, ?2, ?3, 'manual')",
     )?;
-    for row in canonical_rows(conn, tags)? {
-        insert.execute(params![post_id, row.norm, row.form])?;
+    for (norm, form, _) in rows {
+        insert.execute(params![post_id, norm, form])?;
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Rebuilds the entity rows of a post (no alias resolution, as on the desktop).
-pub(crate) fn sync_entities(conn: &Connection, post_id: i64, entities: &[String]) -> Result<()> {
+/// Writes only when the rows differ; returns whether it wrote.
+pub(crate) fn sync_entities(conn: &Connection, post_id: i64, entities: &[String]) -> Result<bool> {
+    let rows: Vec<Row> = normalize_rows(entities)
+        .into_iter()
+        .map(|row| (row.norm, row.form, None))
+        .collect();
+    let stored = "SELECT ent_norm, ent_form, NULL FROM post_entities
+                  WHERE post_id = ?1 ORDER BY ent_norm";
+    if stored_rows_are(conn, stored, post_id, &rows)? {
+        return Ok(false);
+    }
     conn.prepare_cached("DELETE FROM post_entities WHERE post_id = ?1")?
         .execute([post_id])?;
     let mut insert = conn.prepare_cached(
         "INSERT INTO post_entities (post_id, ent_norm, ent_form) VALUES (?1, ?2, ?3)",
     )?;
-    for row in normalize_rows(entities) {
-        insert.execute(params![post_id, row.norm, row.form])?;
+    for (norm, form, _) in rows {
+        insert.execute(params![post_id, norm, form])?;
     }
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]

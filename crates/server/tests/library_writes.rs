@@ -1115,9 +1115,17 @@ async fn every_write_announces_its_posts_and_the_stats() {
         "the members of the deleted collection"
     );
     pause().await;
-    // A write that changes nothing announces nothing: the next event is the
-    // next real change.
+    // A write that changes nothing announces nothing, an edit that repeats
+    // the stored values included: the next event is the next real change.
     ok(&app, patch("/api/v1/posts/ig_1001", &json!({}))).await;
+    ok(
+        &app,
+        patch(
+            "/api/v1/posts/m_01J9Z3B8K4QW6TFX0V7G2N5RCE",
+            &json!({ "userNote": "Brief from the client", "userTags": ["work"] }),
+        ),
+    )
+    .await;
     ok(
         &app,
         delete(&format!(
@@ -1346,4 +1354,37 @@ async fn every_write_invalidates_the_etags_and_cached_counts() {
             "{uri} after no-op writes"
         );
     }
+}
+
+/// F6 (P1-03 review, L4): a PATCH that sends the values the post already
+/// has, the note and tags or a manual AI edit, changes no row: every ETag
+/// still answers 304, and nothing is announced (see
+/// `every_write_announces_its_posts_and_the_stats`).
+#[tokio::test]
+async fn a_patch_that_repeats_the_stored_values_keeps_every_etag() {
+    let (t, _) = two_libraries().await;
+    let app = t.app_as(ALICE);
+    let uri = "/api/v1/posts/x_2001";
+    let views = [uri, "/api/v1/stats", "/api/v1/posts?platform=twitter"];
+    for body in [
+        json!({ "userNote": "same", "userTags": ["Lamp", "a"] }),
+        json!({ "aiDescription": "A lamp", "aiTags": ["lamp"], "aiCategory": null }),
+    ] {
+        let first = ok(&app, patch(uri, &body)).await;
+        let mut tags = Vec::new();
+        for view in views {
+            tags.push(etag(&app, view).await);
+        }
+        let again = ok(&app, patch(uri, &body)).await;
+        assert_eq!(again, first, "the same post after repeating {body}");
+        for (view, tag) in views.iter().zip(&tags) {
+            let response = send(&app, get_if_none_match(view, tag)).await;
+            assert_eq!(
+                response.status(),
+                StatusCode::NOT_MODIFIED,
+                "{view} after repeating {body}"
+            );
+        }
+    }
+    assert_index_consistent(&t, ALICE, "repeated patches");
 }
