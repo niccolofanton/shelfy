@@ -109,6 +109,11 @@ enum Claim {
     Skipped(Option<JobRow>),
 }
 
+/// How long the jobs of a user whose library is locked for maintenance wait
+/// before the next try, which uses none of the job's tries.
+pub(super) const USER_LOCKED_WAIT: Duration =
+    Duration::from_secs(crate::error::USER_LOCKED_RETRY_AFTER_SECS as u64);
+
 /// How an attempt ends in the database (an owned [`Finish`]).
 #[derive(Clone, Debug)]
 enum Change {
@@ -116,6 +121,11 @@ enum Change {
     Requeue {
         run_at: i64,
         interrupted: bool,
+    },
+    /// The user's library is locked: queued again without using a try, and
+    /// the user's jobs held back until `run_at`.
+    Locked {
+        run_at: i64,
     },
     Retry {
         run_at: i64,
@@ -132,7 +142,9 @@ impl Change {
     fn as_finish(&self) -> Finish<'_> {
         match self {
             Self::Succeeded => Finish::Succeeded,
-            Self::Requeue { run_at, .. } => Finish::Requeue { run_at: *run_at },
+            Self::Requeue { run_at, .. } | Self::Locked { run_at } => {
+                Finish::Requeue { run_at: *run_at }
+            }
             Self::Retry {
                 run_at,
                 code,
@@ -774,6 +786,11 @@ impl Shared {
                 run_at: now,
                 interrupted: true,
             }),
+            // An operator is restoring the user's library: wait for the
+            // unlock, the try not counted.
+            (None, Err(error)) if error.is_user_locked() => Some(Change::Locked {
+                run_at: now.saturating_add(millis(USER_LOCKED_WAIT)),
+            }),
             (None, Err(error)) => Some(Change::after_error(
                 error,
                 fence.attempts + 1,
@@ -819,6 +836,10 @@ impl Shared {
             let mut queues = self.queues();
             queues.end_run(fence.id, run);
             if let Some(row) = row.as_ref().filter(|row| row.state == JobState::Queued) {
+                if let Some(Change::Locked { run_at }) = &change {
+                    // The user's other jobs would find the library locked too.
+                    queues.hold(&row.user_id, *run_at);
+                }
                 queues.add(
                     row.id,
                     &row.kind,
@@ -958,7 +979,8 @@ fn attempt_outcome(change: Option<&Change>, stop: Option<Stop>) -> &'static str 
             }),
             _,
         ) => job_outcome::INTERRUPTED,
-        (Some(Change::Requeue { .. }), _) => job_outcome::REQUEUED,
+        // Back in the queue without using a try, to wait for the unlock.
+        (Some(Change::Requeue { .. } | Change::Locked { .. }), _) => job_outcome::REQUEUED,
         (Some(Change::Retry { .. }), _) => job_outcome::RETRIED,
         (Some(Change::Fail { .. }), _) => job_outcome::FAILED,
         (None, Some(Stop::Cancelled)) => job_outcome::CANCELLED,
@@ -983,6 +1005,12 @@ fn log_outcome(row: &JobRow, change: &Change, elapsed: Duration) {
         Change::Requeue { .. } => {
             tracing::debug!(job_id = row.id, kind = %row.kind, run_at = row.run_at, "job queued again");
         }
+        Change::Locked { .. } => tracing::info!(
+            job_id = row.id,
+            kind = %row.kind,
+            run_at = row.run_at,
+            "job waits: the user's library is locked for maintenance"
+        ),
         Change::Retry { code, .. } => tracing::info!(
             job_id = row.id,
             kind = %row.kind,

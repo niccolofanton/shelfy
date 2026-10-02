@@ -1,6 +1,7 @@
 //! The scheduler's memory (plan §2.12): for each kind, a FIFO of ready jobs
 //! per user, served round robin; the delayed jobs by `run_at`; the running
-//! attempts; the paused queues.
+//! attempts; the paused queues; the users held back while their library is
+//! locked for maintenance.
 //!
 //! It mirrors the `queued` and `running` rows of `jobs` and is rebuilt from
 //! them at boot. It only decides what to try next: a claim in the database
@@ -95,6 +96,9 @@ pub(super) struct Queues {
     pub(super) running: HashMap<i64, Running>,
     /// Paused users, by kind.
     paused: HashMap<&'static str, HashSet<Arc<str>>>,
+    /// Users none of whose jobs start before a time (unix ms): their library
+    /// was locked at their last try.
+    held: HashMap<Arc<str>, i64>,
 }
 
 impl Queues {
@@ -186,8 +190,10 @@ impl Queues {
         Some(waiting)
     }
 
-    /// Moves the delayed jobs due at `now` into their ready queues.
+    /// Moves the delayed jobs due at `now` into their ready queues, and lets
+    /// the users held until `now` start again.
     pub(super) fn promote(&mut self, now: i64) {
+        self.held.retain(|_, until| *until > now);
         while let Some(&(run_at, id)) = self.delayed.first() {
             if run_at > now {
                 break;
@@ -209,14 +215,15 @@ impl Queues {
     }
 
     /// The next job of `kind` to start, taking its slot: the first user in
-    /// turn order whose queue is not paused and who is under the per-user
-    /// limit; `None` when the kind is at its global limit or nobody can
-    /// start.
+    /// turn order whose queue is not paused, who is not held and who is under
+    /// the per-user limit; `None` when the kind is at its global limit or
+    /// nobody can start.
     pub(super) fn pick(&mut self, kind: &str) -> Option<(i64, Waiting)> {
         let Self {
             kinds,
             waiting,
             paused,
+            held,
             ..
         } = self;
         let queue = kinds.get_mut(kind)?;
@@ -226,6 +233,7 @@ impl Queues {
         let paused = paused.get(kind);
         let turn = queue.rotation.iter().position(|user| {
             !paused.is_some_and(|users| users.contains(user))
+                && !held.contains_key(user)
                 && queue.running_per_user.get(user).copied().unwrap_or(0) < queue.per_user
         })?;
         let user = queue.rotation.remove(turn)?;
@@ -278,6 +286,12 @@ impl Queues {
         } else {
             users.remove(user);
         }
+    }
+
+    /// Starts none of `user`'s jobs before `until` (unix ms), until the next
+    /// [`Queues::promote`] at or after it.
+    pub(super) fn hold(&mut self, user: &str, until: i64) {
+        self.held.insert(user.into(), until);
     }
 
     /// Whether `user` paused `kind`.
@@ -422,6 +436,21 @@ mod tests {
         q.promote(NOW + 1_000);
         assert_eq!(drain(&mut q), [1]);
         assert_eq!(q.next_delayed(), None);
+    }
+
+    #[test]
+    fn a_held_user_starts_nothing_until_the_time() {
+        let mut q = queues(2, 1);
+        q.add(1, "k", A, 100, NOW, NOW);
+        q.add(2, "k", B, 100, NOW, NOW);
+        q.hold(A, NOW + 60_000);
+        q.promote(NOW);
+        assert_eq!(drain(&mut q), [2], "A is held, B is not");
+        q.promote(NOW + 59_999);
+        assert_eq!(drain(&mut q), Vec::<i64>::new());
+        assert_eq!(q.stats()[0].ready, 1, "the held job stays ready");
+        q.promote(NOW + 60_000);
+        assert_eq!(drain(&mut q), [1]);
     }
 
     #[test]

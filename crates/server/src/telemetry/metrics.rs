@@ -114,8 +114,9 @@ pub mod job_outcome {
     pub const FAILED: &str = "failed";
     /// The try failed transiently; the job runs again after a backoff.
     pub const RETRIED: &str = "retried";
-    /// The worker asked to run again later without failing: a drain that
-    /// re-arms itself, a yield at a pause.
+    /// The job runs again later without using a try: the worker asked for it
+    /// (a drain that re-arms itself, a yield at a pause), or the user's
+    /// library was locked for maintenance.
     pub const REQUEUED: &str = "requeued";
     /// The server's shutdown stopped it; it runs again at the next start
     /// without using a try.

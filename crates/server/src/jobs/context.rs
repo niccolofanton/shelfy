@@ -51,6 +51,9 @@ pub mod codes {
     pub const INVALID_PAYLOAD: &str = "invalid_payload";
     /// The worker stopped because its job was cancelled.
     pub const CANCELLED: &str = "cancelled";
+    /// The user's library is locked for maintenance (`admin user lock`, a
+    /// restore): the job waits for the unlock without using a try.
+    pub const USER_LOCKED: &str = "user_locked";
 }
 
 /// Why a try failed (plan §2.12 Errors).
@@ -61,6 +64,11 @@ pub mod codes {
 ///   shortest wait.
 /// - **Permanent** (4xx, validation, blocked, quota, an invalid key): the
 ///   job fails at once, and the user can retry it.
+/// - **The user's library is locked** for maintenance ([`codes::USER_LOCKED`],
+///   from a [`DbError`] or an [`ApiError`] that says so): not a failure. The
+///   job goes back to the queue without using a try, and the user's jobs
+///   wait a minute before the next one starts; a restore that takes an hour
+///   costs no job anything. A worker that maps errors itself keeps the code.
 ///
 /// `code` reaches clients (`errorCode`); `detail` is for developers and is
 /// stored with the job but never sent or logged.
@@ -121,6 +129,13 @@ impl JobError {
         self.transient
     }
 
+    /// Whether the try stopped because the user's library is locked for
+    /// maintenance ([`codes::USER_LOCKED`]).
+    #[must_use]
+    pub fn is_user_locked(&self) -> bool {
+        self.code == codes::USER_LOCKED
+    }
+
     /// The code.
     #[must_use]
     pub fn code(&self) -> &str {
@@ -159,6 +174,9 @@ impl std::error::Error for JobError {}
 
 impl From<DbError> for JobError {
     fn from(err: DbError) -> Self {
+        if err.is_locked() {
+            return Self::transient(codes::USER_LOCKED).with_detail(err.to_string());
+        }
         // Every database failure may clear up (a busy lock, a full disk);
         // the tries bound how long it is retried.
         let code = if crate::error::is_transient(&err) {
@@ -635,15 +653,20 @@ mod tests {
         assert!(!quota.is_transient());
         assert_eq!(quota.code(), "quota_exceeded");
 
-        // A library locked for a restore is retried, however it surfaces.
-        let locked = JobError::from(DbError::Locked);
-        assert!(locked.is_transient());
-        assert_eq!(locked.code(), codes::UNAVAILABLE);
-        let opened = JobError::from(DbError::Open(std::sync::Arc::new(DbError::Locked)));
-        assert!(opened.is_transient());
-        let refused = JobError::from(ApiError::user_locked());
-        assert!(refused.is_transient());
-        assert_eq!(refused.code(), "user_locked");
+        // A library locked for a restore waits for the unlock, however it
+        // surfaces.
+        for locked in [
+            JobError::from(DbError::Locked),
+            JobError::from(DbError::Open(std::sync::Arc::new(DbError::Locked))),
+            JobError::from(RepoError::Db(DbError::Locked)),
+            JobError::from(ApiError::user_locked()),
+        ] {
+            assert!(locked.is_transient());
+            assert!(locked.is_user_locked(), "{locked}");
+            assert_eq!(locked.code(), codes::USER_LOCKED);
+            assert_eq!(codes::USER_LOCKED, ErrorCode::UserLocked.as_str());
+        }
+        assert!(!busy.is_user_locked());
 
         let shown = JobError::transient("unavailable")
             .with_detail("busy")

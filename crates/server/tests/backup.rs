@@ -10,6 +10,8 @@ mod support;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::http::{Method, StatusCode, header};
@@ -451,50 +453,67 @@ async fn a_locked_user_gets_423_on_token_routes_too() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_locked_users_jobs_back_off_and_run_after_the_unlock() {
-    let worker = |ctx: JobContext| async move {
-        ctx.user_db(|db: &UserDb| {
-            db.write(|tx| {
-                collections::create(
-                    tx,
-                    &NewCollection {
-                        name: "after the restore".into(),
-                        ..NewCollection::default()
-                    },
-                    NOW,
-                )
-            })?;
-            Ok(())
-        })
-        .await?;
-        Ok::<_, JobError>(Outcome::Succeeded)
+async fn a_locked_users_jobs_wait_for_the_unlock_without_using_their_tries() {
+    // Review of P1-12, M2 (follow-up F3): every try that found the library
+    // locked used one of the job's tries, so a restore of a few minutes
+    // failed the user's jobs for good (3 tries: about 45–90 s).
+    let tries = Arc::new(AtomicUsize::new(0));
+    let worker = {
+        let tries = Arc::clone(&tries);
+        move |ctx: JobContext| {
+            let tries = Arc::clone(&tries);
+            async move {
+                tries.fetch_add(1, Ordering::SeqCst);
+                let name = format!("job {}", ctx.id());
+                ctx.user_db(move |db: &UserDb| {
+                    db.write(|tx| {
+                        collections::create(
+                            tx,
+                            &NewCollection {
+                                name,
+                                ..NewCollection::default()
+                            },
+                            NOW,
+                        )
+                    })?;
+                    Ok(())
+                })
+                .await?;
+                Ok::<_, JobError>(Outcome::Succeeded)
+            }
+        }
     };
-    let t = TestState::with_jobs(
-        Registry::new().register(Kind::new(KindSpec::new("test.library"), worker)),
-    );
+    let t = TestState::with_jobs(Registry::new().register(Kind::new(
+        KindSpec::new("test.library").max_attempts(2),
+        worker,
+    )));
     t.add_user(ALICE);
-    lock_library(&t.data_dir().users_dir(), ALICE, "").unwrap();
-    let id = t.enqueue(ALICE, "test.library", json!({})).await;
+    lock_library(&t.data_dir().users_dir(), ALICE, "restore").unwrap();
+    let first = t.enqueue(ALICE, "test.library", json!({})).await;
+    let second = t.enqueue(ALICE, "test.library", json!({})).await;
     let _scheduler = t
         .state
         .jobs()
         .start(t.state.clone(), CancellationToken::new());
 
-    // While the library is locked, a try fails transiently: queued again.
-    let held = t.wait_job(ALICE, id, |job| job.attempts == 1).await;
-    assert_eq!(held.state, JobState::Queued, "retried, not failed");
-    assert_eq!(held.error_code.as_deref(), Some("unavailable"));
-    assert!(
-        held.error_detail
-            .as_deref()
-            .is_some_and(|d| d.contains("locked")),
-        "{:?}",
-        held.error_detail
-    );
+    // A restore that takes ten minutes.
+    tokio::time::sleep(Duration::from_secs(600)).await;
+    for id in [first, second] {
+        let job = t.job(ALICE, id).await;
+        assert_eq!(job.state, JobState::Queued, "still waiting: {job:?}");
+        assert_eq!(job.attempts, 0, "no try used: {job:?}");
+    }
+    // About one try a minute for the user, not one per job: the user's
+    // other jobs wait while the library is locked.
+    let tried = tries.load(Ordering::SeqCst);
+    assert!((9..=11).contains(&tried), "{tried} tries in 10 minutes");
 
     unlock_library(&t.data_dir().users_dir(), ALICE).unwrap();
-    let done = t.wait_job(ALICE, id, |job| job.state.is_final()).await;
-    assert_eq!(done.state, JobState::Succeeded);
+    for id in [first, second] {
+        let done = t.wait_job(ALICE, id, |job| job.state.is_final()).await;
+        assert_eq!(done.state, JobState::Succeeded);
+        assert_eq!(done.attempts, 0);
+    }
     let names: Vec<String> = t
         .state
         .user_db(ALICE)
@@ -505,7 +524,7 @@ async fn a_locked_users_jobs_back_off_and_run_after_the_unlock() {
         .into_iter()
         .map(|c| c.name)
         .collect();
-    assert_eq!(names, ["after the restore"]);
+    assert_eq!(names.len(), 2, "{names:?}");
 }
 
 #[test]
