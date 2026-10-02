@@ -66,6 +66,9 @@ const CONTROL_MIGRATIONS: &[M<'static>] = &[
     ))
     .comment("control schema v2: api_tokens.expires_at")
     .foreign_key_check(),
+    M::up(include_str!("../../migrations/control/0003_account.sql"))
+        .comment("control schema v3: consent and usage parts; passkey ids never reused")
+        .foreign_key_check(),
 ];
 
 /// Which database a connection belongs to.

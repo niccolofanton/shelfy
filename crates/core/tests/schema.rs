@@ -345,3 +345,71 @@ fn opening_refuses_foreign_files() {
         .unwrap();
     assert!(matches!(err, DbError::WrongApplication { .. }), "{err}");
 }
+
+/// Inserts a passkey of the fixture owner; returns the id it got.
+fn insert_passkey(conn: &Connection, cred: &[u8]) -> i64 {
+    conn.execute(
+        "INSERT INTO passkeys (user_id, cred_id, passkey_json, created_at) \
+         VALUES ('01J9Z3B8K4QW6TFX0V7G2N5RCA', ?1, '{}', 1)",
+        [cred],
+    )
+    .unwrap();
+    conn.last_insert_rowid()
+}
+
+fn add_owner(conn: &Connection) {
+    conn.execute(
+        "INSERT INTO users (id, email, role, quota_bytes, created_at) \
+         VALUES ('01J9Z3B8K4QW6TFX0V7G2N5RCA', 'owner@example.test', 'owner', 0, 1)",
+        [],
+    )
+    .unwrap();
+}
+
+#[test]
+fn passkey_ids_are_never_reused() {
+    // F5: before v3, deleting the newest passkey gave its id to the next one,
+    // so audit rows that name a passkey by id became ambiguous.
+    let mut conn = migrated(Kind::Control, 2);
+    add_owner(&conn);
+    conn.execute_batch(
+        "INSERT INTO audit_log (at, action, meta_json) VALUES (1, 'passkey.create', '{\"id\":4}');
+         INSERT INTO audit_log (at, action, meta_json) VALUES (1, 'passkey.delete', '{\"id\":4}');
+         INSERT INTO audit_log (at, action, meta_json) VALUES (1, 'passkey.delete', 'not json');
+         INSERT INTO audit_log (at, action, meta_json) VALUES (1, 'invite.create', '{\"id\":99}');",
+    )
+    .unwrap();
+    for cred in [b"c1", b"c2", b"c3"] {
+        insert_passkey(&conn, cred);
+    }
+    let delete = |conn: &Connection, id: i64| {
+        conn.execute("DELETE FROM passkeys WHERE id = ?1", [id])
+            .unwrap();
+    };
+    delete(&conn, 3);
+    assert_eq!(
+        insert_passkey(&conn, b"c9"),
+        3,
+        "v2 reuses the freed id: the bug"
+    );
+    delete(&conn, 3);
+
+    schema::migrate(&mut conn, Kind::Control).unwrap();
+    let kept: Vec<(i64, Vec<u8>)> = conn
+        .prepare("SELECT id, cred_id FROM passkeys ORDER BY id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(kept, [(1, b"c1".to_vec()), (2, b"c2".to_vec())]);
+    // Above every id the table or a passkey audit row has used, freed or not.
+    assert_eq!(insert_passkey(&conn, b"c4"), 5);
+    delete(&conn, 5);
+    assert_eq!(insert_passkey(&conn, b"c5"), 6, "a freed id stays freed");
+
+    // A fresh database starts at 1.
+    let fresh = migrated(Kind::Control, Kind::Control.latest_version());
+    add_owner(&fresh);
+    assert_eq!(insert_passkey(&fresh, b"c1"), 1);
+}

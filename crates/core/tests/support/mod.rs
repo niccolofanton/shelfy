@@ -570,6 +570,8 @@ pub fn fixture_control(conn: &Connection) {
                             disclaimer_accepted_at, created_at, last_seen_at)
          VALUES ('{user}', 'owner@example.test', 'Owner', 'owner', 'active', 0, 20, 1024, {NOW},
                  '2026-10', {NOW}, {NOW}, {NOW});
+         UPDATE users SET privacy_version = '1', privacy_accepted_at = {NOW},
+                          usage_media_bytes = 768, usage_db_bytes = 256 WHERE id = '{user}';
          INSERT INTO invites (token_hash, email, role, created_by, created_at, expires_at)
          VALUES (X'aa01', 'member@example.test', 'member', '{user}', {NOW}, {NOW} + 604800000);
          INSERT INTO passkeys (user_id, cred_id, passkey_json, label, created_at)
