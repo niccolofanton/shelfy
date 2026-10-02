@@ -88,7 +88,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-12 | Backup, restore and schema-upgrade tooling | done; the independent review found 2 high, 5 medium and 7 low issues, fixed in F4 | `web/p1-12-backup` (6989b13…61da797) |
 | P1-09 | Deployable server: SPA hosting, headers, image, release workflow, `compose.test` | done | `web/p1-09-deploy` (0f35249…04f00a5) |
 | P1-13 | Owner passkeys, re-auth, login-link bootstrap, optional SMTP | running | `web/p1-13-passkeys` |
-| P1-03 | Library writes, folders, selector, stats, ETags | running | `web/p1-03-writes` |
+| P1-03 | Library writes, folders, selector, stats, ETags | done; independent review running | `web/p1-03-writes` (cde994f…232539f) |
 | P1-04 | Client seam: routes, SSE client, error boundary, error codes | running | `web/p1-04-client-seam` |
 | P1-10 | Merge rules in the core and golden parity | done | `web/p1-10-merge` (ab6efbd, 2364d64) |
 | P1-15 | Metrics, log redaction, rate limits | running | `web/p1-15-observability` |
@@ -116,6 +116,11 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P3 | "Unanalyzed" means exactly `ai_status IS NULL`, so `pending` and `error` block AI writes at ingest. Revisit this if P3 marks new posts `pending` at ingest. | P1-10 |
 | P2 | Capture ingest feeds sanitizer output into `ingest::merge::upsert_batch` inside `UserDb::write`. Response mapping: inserted→inserted, changed→updated, merged→known. A merge that changes nothing writes nothing. | P1-10 |
 | P1-18 | The GHCR package starts private: load the image with `docker save`/`docker load` (G4), or have the owner make the package public. The `SHELFY_VERSION` tag carries a leading `v`. | P1-09 |
+| P1-11 | Reuse `PostSelector::resolve`, the core `Selector::sql()` for the UPDATEs, and `library::write` with `announce_as(ChangeReason::Delete, …)`. A `{keys}` selection (≤ 500, the inline bulk limit) reaches trashed posts; a filter reaches them only with `trash: true`. "Delete with posts" adds a `withPosts` variant to `CollectionDeleteMode`, using the existing core `DeleteMode::TrashPosts`; until then `mode=withPosts` answers 400. | P1-03 |
+| P1-14 | The count pill is `GET /posts/count` with the list's parameters. Select-all is `{filter, exceptKeys}`. | P1-03 |
+| P1-17 | Add `(POST, "/api/v1/posts/lookup", Scope::Lookup, true)` to `TOKEN_ROUTES`, plus the bearer security entry. The handler already takes `CurrentUser`. | P1-03 |
+| P1-05 | A new list filter must also go into `FilterParams`, or the parity test fails. `includeTotal` can use the count cache in `crates/server/src/library.rs`. P1-03 added `search::index::verify` to your module. | P1-03 |
+| P1-06 | `PATCH /posts/{key}` returns the full post, which suits optimistic updates. Refresh folders on `stats.changed`; folder-only writes send `posts.changed` with `keys: []`. The manual AI edit's model is `manual`, where the desktop wrote `manuale`. | P1-03 |
 | P1-21 | The CSP blocks the inline `<style>` in `src/views/Browser.tsx`, a desktop-only view. | P1-09 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
 
