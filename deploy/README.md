@@ -11,7 +11,7 @@ needs it; so far only `compose.dev.yml` exists.
 | --- | --- | --- |
 | `compose.dev.yml` | Local stack, used until the osn PRs land (§3): `shelfy-api` built and run from the working tree in `rust:1.99.0-bookworm`, API on `127.0.0.1:8080`, metrics on the compose network only | P0 (T7) |
 | Dockerfile for `shelfy-api` | Multi-stage build (`cargo-chef`, pinned `rust:*-bookworm`) into `debian:bookworm-slim` with `ca-certificates`, `tini`, Debian `ffmpeg`, the pinned `yt-dlp_linux` (SHA-256 checked), the server binary and `web/dist` (§3.2) | P1 |
-| nginx snippet | `shelfy.niccolofanton.dev` server block for the osn edge nginx (§3.3) | P1 |
+| nginx snippet | `refs.niccolofanton.dev` server block for the osn edge nginx (§3.3, E5). It already exists in osn and proxies to `shelfy-api:8080` | P1 |
 | `osn/` | osn patch set, landed as two osn PRs (Appendix B). PR 1: `shelfy-api` service, edge route, DNS and Access, secrets, backups, scrape config, Grafana dashboard `03-shelfy.json` and alert rules (§3.5, §3.6). PR 2: `shelfy-capture` and `shelfy-egress` services, seccomp profile and Smokescreen settings, capture alerts and panels | PR 1 in P1, PR 2 in P4 |
 | `compose.test.yml` | CI web e2e stack: mock AI provider, fixture CDN, Smokescreen that allows only the fixture subnet (§3.8) | With the first web e2e suite (no phase fixed in the plan) |
 | Dockerfile for `shelfy-capture` | `node:24-bookworm-slim`, pinned `playwright-core` with `chromium-headless-shell`, Debian `ffmpeg`, Noto and Liberation fonts (§2.18) | P4 |

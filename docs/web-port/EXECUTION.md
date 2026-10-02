@@ -43,14 +43,14 @@ These owner decisions override the plan where they conflict.
 | T1 | Cargo workspace, pinned toolchain, `deny.toml`, `deploy/` skeleton, CI `rust` job | — | done | `web/t1-workspace` (b0baaf5…bad7139) |
 | T2 | SPIKE-1: legacy reader, canonical keys, `shelfy-migrate plan` | T1 | done | `web/t2-legacy-reader` (dc6f5e7…a4d2c7c) |
 | T3 | Schema v1, `UserDb`, repositories, FTS maintenance, golden harness | T1 | done | `web/t3-schema-v1` (ec1d742…5362bc0) |
-| T4 | SPIKE-5: FTS relevance against `search-eval` | T3 | running | `web/t4-fts-relevance` |
+| T4 | SPIKE-5: FTS relevance against `search-eval` | T3 | done | `web/t4-fts-relevance` (9f0f4d3…37b31d0) |
 | T5 | SPIKE-3 build: minimal MV3 extension and comparison tooling | — | done (owner run pending, O1) | `web/t5-extension-spike` (a35f4fe…6b8dbf4) |
 | T6 | SPIKE-2 and SPIKE-10 on the osn VPS (E1) | — | done | `web/t6-spikes-vps` (861e361, 5e3b64f) |
-| T7 | `crates/server`: axum app, config, health, metrics, errors, OpenAPI, admin CLI | T3 | running | `web/t7-server` |
-| T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | todo | |
+| T7 | `crates/server`: axum app, config, health, metrics, errors, OpenAPI, admin CLI | T3 | done | `web/t7-server` (f95b212…bfb0dbc) |
+| T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | running | `web/t8-media` |
 | T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | todo | |
-| T10 | Owner auth v0: magic link, sessions, CSRF | T7 | todo | |
-| T11 | Read API and generated TS client | T4, T7 | todo | |
+| T10 | Owner auth v0: magic link, sessions, CSRF | T7 | running | `web/t10-auth` |
+| T11 | Read API and generated TS client | T4, T7 | running | `web/t11-read-api` |
 | T12 | SPA slice behind `ShelfyClient` | T10, T11 | todo | |
 
 ### P1 — Library on the web
@@ -66,6 +66,7 @@ Each phase is broken down into tasks when the previous one is close to done.
 | Spike | Result | Consequence |
 |---|---|---|
 | SPIKE-1 ([note](spikes/01-legacy-mapping.md)) | PASS: 19,976 rows accounted for, 121/121 columns mapped or dropped on purpose, 0 duplicate groups, and every IG shortcode decodes to its pk. 264 video paths point to missing files, and 220 IG covers were still valid. | Open items OI-1…OI-12 in the note go to T9 and P1-19. A dangling video path means the video was not kept; it is not an error. Archive the still-valid IG covers right after install. |
+| SPIKE-5 ([note](spikes/05-fts-relevance.md)) | PASS on the frozen baseline pair: nDCG@10 0.653 and MRR 0.861, against a desktop baseline of 0.620 and 0.861. On today's snapshot, nDCG@10 is 0.752 against 0.791, short by 0.019. The one losing case is a query that only matches inside a compound hashtag. Latency p95 is 3.3 ms on 6.1k posts and 20 ms on 18.4k. | Decide on a trigram infix index in P1-05: it reaches desktop parity on both libraries for about 6 MB of index. Keep the frozen pair as the gate until then. Re-tune the column weights in P3, once posts have AI fields. |
 | SPIKE-2 ([note](spikes/02-cdn-from-datacenter.md)) | From the VPS: Instagram 280/280 and X 300/300 of the URLs that work from a residential IP; no blocks or throttling. No Pinterest sample yet. | Archive mode: Instagram `server`, X `server`, Pinterest `auto` until O1 provides a sample. Start at 2 req/s per host and raise only while the breaker stays quiet. A 403 for an expired signature is not a breaker signal: check `oe` first and turn expired URLs into extension refresh tasks. Archive right after ingest: 73 % of the library's IG URLs had already expired. |
 | SPIKE-10 ([note](spikes/10-sse-tunnel.md)) | Through nginx: SSE p95 8 ms and a lossless `Last-Event-ID` resume. Through Cloudflare: a stream with no heartbeat is cut at about 125 s; the 20 s heartbeat keeps it open. Bearer calls were never challenged, and 16 MiB uploads arrive intact. Quick tunnels buffer SSE, so latency through Cloudflare is still unmeasured. | Measure live SSE latency, a long stream and a resume on the real hostname in P1-23. Bot Fight Mode must be off before P2 removes Access (O4). |
 
