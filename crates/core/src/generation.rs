@@ -16,9 +16,12 @@
 //! handle the cache has since evicted for idleness or capacity (and
 //! reopened) cannot write behind the back of the ETags (the *From T11* note
 //! of P1-07). A cell outlives such evictions as long as some handle holds
-//! it; once none does, [`Generations::prune`] drops it, and the next open
-//! starts a cell with a new `instance`, so a counter that restarts never
-//! repeats an earlier pair. A restart of the process does the same.
+//! it; once none does, it is never handed out again: the next open starts a
+//! cell with a new `instance`, even before [`Generations::prune`] drops the
+//! old one, so a counter that restarts never repeats an earlier pair, and a
+//! library replaced while no handle held it (a restore) cannot come back
+//! with the generation it had before. A restart of the process does the
+//! same.
 //!
 //! **Replacing a library** (the migration install, a restore under a
 //! maintenance lock) changes it through another connection, which no handle
@@ -118,12 +121,19 @@ impl Generations {
         self.cells.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The cell of `user_id`, created on first use. A handle opened on the
-    /// user's library takes it and keeps it alive.
+    /// The cell of `user_id`: the one a handle on the user's library holds,
+    /// else a new one. A handle opened on the library takes it and keeps it
+    /// alive.
+    ///
+    /// A cell that no handle holds any more is not reused, even before
+    /// [`Self::prune`] drops it: nothing can move it, but the library may
+    /// have been replaced since its last handle closed.
     #[must_use]
     pub fn cell(&self, user_id: &str) -> Arc<GenerationCell> {
         let mut cells = self.cells();
-        if let Some(cell) = cells.get(user_id) {
+        if let Some(cell) = cells.get(user_id)
+            && is_held(cell)
+        {
             return Arc::clone(cell);
         }
         let cell = GenerationCell::new();
@@ -131,10 +141,14 @@ impl Generations {
         cell
     }
 
-    /// The current generation of `user_id`, if the user has a cell.
+    /// The current generation of `user_id`, if a handle holds the user's
+    /// cell.
     #[must_use]
     pub fn current(&self, user_id: &str) -> Option<Generation> {
-        self.cells().get(user_id).map(|cell| cell.current())
+        self.cells()
+            .get(user_id)
+            .filter(|cell| is_held(cell))
+            .map(|cell| cell.current())
     }
 
     /// Moves `user_id`'s generation on and forgets its cell: handles still
@@ -151,8 +165,7 @@ impl Generations {
     pub fn prune(&self) -> usize {
         let mut cells = self.cells();
         let before = cells.len();
-        // The map holds one reference; any other belongs to a handle.
-        cells.retain(|_, cell| Arc::strong_count(cell) > 1);
+        cells.retain(|_, cell| is_held(cell));
         before - cells.len()
     }
 
@@ -167,6 +180,13 @@ impl Generations {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+}
+
+/// Whether a handle holds `cell`, a cell of the map: the map holds one
+/// reference, and any other belongs to a handle (or to a caller of
+/// [`Generations::cell`] about to open one).
+fn is_held(cell: &Arc<GenerationCell>) -> bool {
+    Arc::strong_count(cell) > 1
 }
 
 /// A digest of what a cached value was computed from (a normalized filter,
@@ -283,6 +303,22 @@ mod tests {
         assert!(generations.is_empty());
         assert_eq!(generations.current("u1"), None);
         assert_ne!(generations.cell("u1").current().instance, instance);
+    }
+
+    #[test]
+    fn a_cell_no_handle_holds_is_never_handed_out_again() {
+        let generations = Generations::new();
+        let held = generations.cell("u1");
+        held.bump();
+        let before = held.current();
+        drop(held);
+        // No prune ran: the map still has the cell, but nothing reports it.
+        assert_eq!(generations.len(), 1);
+        assert_eq!(generations.current("u1"), None);
+        let next = generations.cell("u1");
+        assert_ne!(next.current().instance, before.instance);
+        assert_eq!(generations.current("u1"), Some(next.current()));
+        assert_eq!(generations.len(), 1, "the new cell replaced the old one");
     }
 
     #[test]

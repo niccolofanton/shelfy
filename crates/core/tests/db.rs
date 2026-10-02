@@ -456,6 +456,55 @@ fn handles_of_one_library_share_its_generation() {
     assert_ne!(fresh.generation().instance, instance);
 }
 
+/// F6 (P1-03 review, L3): a library's generation cell stays registered after
+/// its last handle closes, until a maintenance pass forgets it. A library
+/// replaced in between (lock, restore, unlock, with no request of that user
+/// and no maintenance pass while it is locked) must still come back with a
+/// new generation, or the ETags and cached counts from before the restore
+/// would match it.
+#[test]
+fn a_library_replaced_while_no_handle_held_it_gets_a_new_generation() {
+    let dir = tempfile::tempdir().unwrap();
+    let users = dir.path().join("users");
+    let cache = cache(&dir, 1, Duration::from_secs(600));
+    let a = cache.get("userA").unwrap();
+    a.write(|tx| repo::posts::insert(tx, &bare_post("ig_1", Platform::Instagram, NOW), NOW))
+        .unwrap();
+    let before = a.generation();
+
+    // Another user's library pushes A out while a request still holds A's
+    // handle, so the maintenance pass keeps A's cell; then the request ends.
+    let _b = cache.get("userB").unwrap();
+    cache.run_maintenance();
+    assert!(cache.get_if_present("userA").is_none(), "A was evicted");
+    drop(a);
+
+    // The operator restores A: nobody holds the file (an exclusive lock is
+    // granted), its content changes, and it is unlocked again.
+    assert!(lock_library(&users, "userA", "restore").unwrap());
+    {
+        let conn = Connection::open(users.join("userA/library.sqlite")).unwrap();
+        conn.execute_batch("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT;")
+            .expect("nobody else has the library open");
+        conn.execute("DELETE FROM posts", []).unwrap();
+    }
+    assert!(unlock_library(&users, "userA").unwrap());
+
+    let reopened = cache.get("userA").unwrap();
+    let posts: i64 = reopened
+        .read(|c| {
+            c.query_row("SELECT count(*) FROM posts", [], |r| r.get(0))
+                .map_err(DbError::from)
+        })
+        .unwrap();
+    assert_eq!(posts, 0, "the restored content");
+    assert_ne!(
+        reopened.generation().instance,
+        before.instance,
+        "the replaced library starts a new generation"
+    );
+}
+
 #[test]
 fn handles_opened_outside_the_cache_have_their_own_generation() {
     let dir = tempfile::tempdir().unwrap();
