@@ -904,9 +904,11 @@ export interface paths {
     };
     /**
      * One page of the library (or of the trash), newest first by default.
-     * @description Browsing orders page by keyset; relevance pages within the first 1,000
-     *     results. The response is conditional: send the `ETag` back in
-     *     `If-None-Match` and an unchanged page answers 304.
+     * @description Browsing orders page by keyset. Relevance pages through a snapshot of the
+     *     first 1,000 results, ranked by the first page: changes to the library
+     *     between pages neither repeat nor skip a result. The response is
+     *     conditional: send the `ETag` back in `If-None-Match` and an unchanged
+     *     page answers 304.
      */
     get: operations['listPosts'];
     put?: never;
@@ -2563,7 +2565,8 @@ export interface components {
       exceptKeys?: string[];
       /**
        * @description Every post `GET /posts` lists with these filters, over all its pages
-       *     (`trash: true` selects in the trash).
+       *     (`trash: true` selects in the trash). A member that is not a filter
+       *     is refused.
        */
       filter?: components['schemas']['FilterParams'];
       /**
