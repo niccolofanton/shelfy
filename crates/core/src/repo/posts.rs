@@ -39,7 +39,7 @@ use serde::Serialize;
 
 use super::{
     ObjectRef, Platform, RepoError, Result, conflict_on_unique, id_list, json_array_or_null,
-    json_strings, json_value, media, object_columns, object_ref_at, tags,
+    json_strings, json_value, object_columns, object_ref_at, tags,
 };
 use crate::ids::ig;
 use crate::search::query::{self, RELEVANCE_WINDOW, TextQuery};
@@ -1231,86 +1231,37 @@ pub fn update_ai(conn: &Connection, post_id: i64, patch: &AiPatch, now: i64) -> 
     Ok(true)
 }
 
-/// Moves posts to the trash and drops their index rows; slides, tags and
-/// collection memberships stay for a restore. Returns how many were not already
-/// in the trash.
+/// Moves posts to the trash, stamped `now`, and drops their index rows;
+/// slides, tags and collection memberships stay for a restore
+/// ([`crate::trash::put`]). Returns how many were not already in the trash.
 ///
 /// # Errors
 ///
 /// Database errors.
 pub fn trash(conn: &Connection, post_ids: &[i64], now: i64) -> Result<usize> {
-    let moved: Vec<i64> = conn
-        .prepare_cached(
-            "UPDATE posts SET deleted_at = ?2, updated_at = ?2
-             WHERE deleted_at IS NULL AND id IN (SELECT value FROM json_each(?1))
-             RETURNING id",
-        )?
-        .query_map(params![id_list(post_ids), now], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    for &id in &moved {
-        index::remove_post(conn, id)?;
-    }
-    Ok(moved.len())
+    crate::trash::put(conn, &crate::trash::by_ids(post_ids), now).map(|moved| moved.len())
 }
 
-/// Restores posts from the trash and indexes them again. Returns how many were
-/// in it.
+/// Restores posts from the trash and indexes them again
+/// ([`crate::trash::restore`]). Returns how many were in it.
 ///
 /// # Errors
 ///
 /// Database errors.
 pub fn restore(conn: &Connection, post_ids: &[i64], now: i64) -> Result<usize> {
-    let restored: Vec<i64> = conn
-        .prepare_cached(
-            "UPDATE posts SET deleted_at = NULL, updated_at = ?2
-             WHERE deleted_at IS NOT NULL AND id IN (SELECT value FROM json_each(?1))
-             RETURNING id",
-        )?
-        .query_map(params![id_list(post_ids), now], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    for &id in &restored {
-        index::reindex_post(conn, id)?;
-    }
-    Ok(restored.len())
+    crate::trash::restore(conn, &crate::trash::by_ids(post_ids), now).map(|back| back.len())
 }
 
 /// Deletes posts for good: their index rows, the post rows and everything that
 /// cascades from them (slides, memberships, tags, entities, captures). Objects
-/// left without references are stamped for the GC. Returns the posts deleted.
+/// left without references are stamped for the GC ([`crate::trash::purge`]).
+/// Returns the posts deleted.
 ///
 /// # Errors
 ///
 /// Database errors.
 pub fn purge(conn: &Connection, post_ids: &[i64], now: i64) -> Result<usize> {
-    if post_ids.is_empty() {
-        return Ok(0);
-    }
-    let ids = id_list(post_ids);
-    let objects: Vec<i64> = conn
-        .prepare_cached(
-            "WITH doomed(id) AS (SELECT value FROM json_each(?1))
-             SELECT cover_object FROM posts WHERE id IN doomed AND cover_object IS NOT NULL
-             UNION SELECT object_id FROM post_media
-                   WHERE post_id IN doomed AND object_id IS NOT NULL
-             UNION SELECT video_object_id FROM post_media
-                   WHERE post_id IN doomed AND video_object_id IS NOT NULL
-             UNION SELECT hero_object FROM web_captures
-                   WHERE post_id IN doomed AND hero_object IS NOT NULL
-             UNION SELECT favicon_object FROM web_captures
-                   WHERE post_id IN doomed AND favicon_object IS NOT NULL
-             UNION SELECT a.object_id FROM web_capture_assets a
-                   JOIN web_captures c ON c.id = a.capture_id WHERE c.post_id IN doomed",
-        )?
-        .query_map([&ids], |r| r.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    for &id in post_ids {
-        index::remove_post(conn, id)?;
-    }
-    let deleted = conn
-        .prepare_cached("DELETE FROM posts WHERE id IN (SELECT value FROM json_each(?1))")?
-        .execute([&ids])?;
-    media::mark_unreferenced(conn, &objects, now)?;
-    Ok(deleted)
+    crate::trash::purge(conn, post_ids, now).map(|keys| keys.len())
 }
 
 // ── Internals ────────────────────────────────────────────────────────────────

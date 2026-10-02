@@ -1,12 +1,15 @@
 //! Selections of posts (plan §2.9, "Bulk selector"): what an action on many
 //! posts applies to, sent by the client instead of every id (DATA-17, UI-49).
 //!
-//! A [`Selector`] is either
+//! A [`Selector`] is one of
 //!
-//! - [`Selector::Keys`]: these posts, by key, in the trash or not; or
+//! - [`Selector::Keys`]: these posts, by key, in the trash or not;
 //! - [`Selector::Filter`]: every post the gallery list returns for the filter
 //!   (`GET /posts`, which hides the trash unless `trash` is set), minus the
-//!   posts in `except_keys` ("select all matching" with deselections).
+//!   posts in `except_keys` ("select all matching" with deselections); or
+//! - [`Selector::TrashedAt`]: the posts one delete moved to the trash, which
+//!   all carry its time as `deleted_at` ([`crate::trash`]): the undo of that
+//!   delete (P1-11).
 //!
 //! A selector compiles into a SQL condition on `posts p` ([`Selector::sql`]),
 //! so an action runs as one statement whatever the selection's size:
@@ -54,6 +57,9 @@ pub enum Selector {
         /// Posts left out of the selection.
         except_keys: Vec<String>,
     },
+    /// The posts in the trash whose `deleted_at` is this time (unix ms): the
+    /// posts one delete moved there ([`crate::trash`]).
+    TrashedAt(i64),
 }
 
 /// A selector as SQL: a condition on the table alias `p` of `posts`, and
@@ -135,6 +141,11 @@ impl Selector {
                 }
                 SelectorSql { condition, params }
             }
+            // Written literally so the partial index `posts_trash` applies.
+            Self::TrashedAt(at) => SelectorSql {
+                condition: "p.deleted_at IS NOT NULL AND p.deleted_at = ?".to_owned(),
+                params: vec![Value::Integer(*at)],
+            },
         })
     }
 }

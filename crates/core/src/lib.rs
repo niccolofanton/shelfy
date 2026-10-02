@@ -5,7 +5,8 @@
 //!
 //! - the schema and its migrations, and the repositories built on it;
 //! - the library generation and the caches keyed by it;
-//! - selections of posts (`{keys}` or `{filter, exceptKeys}`);
+//! - selections of posts (`{keys}` or `{filter, exceptKeys}`), the actions
+//!   on them (`bulk`) and the trash with its purge (`trash`);
 //! - ingest validation and merge rules, canonical ids and URL normalization;
 //! - search, tags, aliases and clusters;
 //! - web captures;
@@ -17,6 +18,7 @@
 //!
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.4.
 
+pub mod bulk;
 pub mod db;
 pub mod generation;
 pub mod ids;
@@ -26,6 +28,7 @@ pub mod repo;
 pub mod schema;
 pub mod search;
 pub mod selector;
+pub mod trash;
 
 #[cfg(test)]
 mod tests {

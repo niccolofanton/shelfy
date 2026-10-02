@@ -243,7 +243,7 @@ fn json_value(raw: Option<&str>) -> Option<serde_json::Value> {
 }
 
 /// A JSON array of ids, the parameter of `IN (SELECT value FROM json_each(?))`.
-fn id_list(ids: &[i64]) -> String {
+pub(crate) fn id_list(ids: &[i64]) -> String {
     serde_json::to_string(ids).expect("integers serialize")
 }
 
