@@ -16,7 +16,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 use shelfy_core::db::{DbError, UserDbConfig};
 use shelfy_core::repo::posts::{self, NewPost, PostFilter};
@@ -765,4 +765,114 @@ async fn bad_cursors_and_filters_are_problems() {
     // At the limit: accepted.
     let ok = format!("/api/v1/posts?q={}", "a".repeat(500));
     assert_eq!(send(&app, get(&ok)).await.status(), StatusCode::OK);
+}
+
+/// Relevance pages are cut from one snapshot (plan §2.14): a write between
+/// two pages neither repeats nor skips a result, a post trashed in between
+/// drops out of its page, and a new search ranks the new state.
+#[tokio::test]
+async fn relevance_pages_come_from_one_snapshot() {
+    let t = TestState::new();
+    t.write(ALICE, |tx| synthetic_library(tx, 300, 11)).await;
+    let app = t.app_as(ALICE);
+    for (route, words) in [("posts", "lampada"), ("search", "glass vetro")] {
+        let query = format!("q={}", words.replace(' ', "%20"));
+        let whole = keys(&get_ok(&app, &format!("/api/v1/{route}?{query}&limit=200")).await);
+        assert!(whole.len() > 30, "{route}: {} results", whole.len());
+        let first = get_ok(&app, &format!("/api/v1/{route}?{query}&limit=10")).await;
+        let mut seen = keys(&first);
+        let mut cursor = first["nextCursor"].as_str().unwrap().to_owned();
+
+        // Between two pages: a post that would now rank first arrives, and
+        // a post of the next page goes to the trash.
+        let doomed = whole[12].clone();
+        let newcomer = format!("ig_99{}", route.len());
+        t.write(ALICE, |tx| {
+            let native = newcomer.trim_start_matches("ig_");
+            let mut post = NewPost::new(&newcomer, Platform::Instagram, native, "image", NOW);
+            post.caption = Some(format!("{words} {words} {words}"));
+            post.user_tags = words.split(' ').map(str::to_owned).collect();
+            posts::insert(tx, &post, NOW)?;
+            let id = posts::id_for_key(tx, &doomed)?.expect("a listed post");
+            posts::trash(tx, &[id], NOW)
+        })
+        .await;
+
+        loop {
+            let uri = format!("/api/v1/{route}?{query}&limit=10&cursor={cursor}");
+            let page = get_ok(&app, &uri).await;
+            seen.extend(keys(&page));
+            match page["nextCursor"].as_str() {
+                Some(next) => cursor = next.to_owned(),
+                None => break,
+            }
+        }
+        let expected: Vec<String> = whole.iter().filter(|k| **k != doomed).cloned().collect();
+        assert_eq!(
+            seen, expected,
+            "{route}: the snapshot's order, minus the trashed post"
+        );
+
+        // A new search sees the new state.
+        let fresh = keys(&get_ok(&app, &format!("/api/v1/{route}?{query}&limit=200")).await);
+        assert_eq!(fresh[0], newcomer, "{route}");
+        assert!(!fresh.contains(&doomed), "{route}");
+    }
+}
+
+/// A relevance cursor whose snapshot left the cache still pages, on the
+/// library as it is now.
+#[tokio::test]
+async fn a_relevance_cursor_outlives_its_snapshot() {
+    let t = TestState::new();
+    t.write(ALICE, |tx| synthetic_library(tx, 300, 11)).await;
+    let app = t.app_as(ALICE);
+    let whole = keys(&get_ok(&app, "/api/v1/posts?q=lampada&limit=200").await);
+    let first = get_ok(&app, "/api/v1/posts?q=lampada&limit=10").await;
+    let cursor = first["nextCursor"].as_str().unwrap();
+    // The cursor names its snapshot's library state; point it at a state no
+    // cache entry has.
+    let payload = String::from_utf8(URL_SAFE_NO_PAD.decode(cursor).unwrap()).unwrap();
+    let (head, counter) = payload.rsplit_once('.').unwrap();
+    let counter = u64::from_str_radix(counter, 16).unwrap() + 1_000;
+    let moved = URL_SAFE_NO_PAD.encode(format!("{head}.{counter:x}"));
+    let second = get_ok(
+        &app,
+        &format!("/api/v1/posts?q=lampada&limit=10&cursor={moved}"),
+    )
+    .await;
+    assert_eq!(keys(&second), whole[10..20]);
+}
+
+/// `includeTotal` and a search's total read the counts that `GET
+/// /posts/count` caches, under the same key.
+#[tokio::test]
+async fn totals_share_the_count_cache() {
+    let (t, _) = two_libraries().await;
+    let app = t.app_as(ALICE);
+    let db = t.state.user_db(ALICE).await.unwrap();
+    let query = routes::posts::PostsQuery {
+        q: Some("design".into()),
+        ..routes::posts::PostsQuery::default()
+    };
+    let view =
+        shelfy_server::library::view_digest("posts.count", &routes::listing::cache_key(&query));
+    // A planted value proves the routes read the cache instead of counting.
+    t.state
+        .library_caches()
+        .counts
+        .insert(ALICE, db.generation(), view, 4_242);
+    let count = get_ok(&app, "/api/v1/posts/count?q=design").await;
+    assert_eq!(count["total"], 4_242);
+    let page = get_ok(&app, "/api/v1/posts?q=design&includeTotal=true&sort=newest").await;
+    assert_eq!(page["total"], 4_242);
+    let found = get_ok(&app, "/api/v1/search?q=design").await;
+    assert_eq!(found["total"], 4_242);
+    // Other filters have their own entries.
+    let other = get_ok(
+        &app,
+        "/api/v1/posts?q=design&platform=pinterest&includeTotal=true",
+    )
+    .await;
+    assert_eq!(other["total"], 1);
 }

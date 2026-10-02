@@ -1519,7 +1519,7 @@
       "get": {
         "tags": ["library"],
         "summary": "One page of the library (or of the trash), newest first by default.",
-        "description": "Browsing orders page by keyset; relevance pages within the first 1,000\nresults. The response is conditional: send the `ETag` back in\n`If-None-Match` and an unchanged page answers 304.",
+        "description": "Browsing orders page by keyset. Relevance pages through a snapshot of the\nfirst 1,000 results, ranked by the first page: changes to the library\nbetween pages neither repeat nor skip a result. The response is\nconditional: send the `ETag` back in `If-None-Match` and an unchanged\npage answers 304.",
         "operationId": "listPosts",
         "parameters": [
           {

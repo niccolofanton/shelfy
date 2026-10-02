@@ -5,14 +5,25 @@
 //!
 //! **Paging** (plan §2.9, §2.14). Browsing orders (`newest`, `oldest`) page by
 //! keyset on `(sortTs, key)`: a write between two pages never duplicates or
-//! skips a post that was already in the list. Relevance pages by offset within
-//! the first 1,000 results; a write between two pages can shift the ranking,
-//! which is the accepted cost of ranked search.
+//! skips a post that was already in the list. Relevance pages by offset
+//! inside a snapshot: the first page ranks the first 1,000 results once
+//! (`posts::rank`) and caches that order per library state, and every later
+//! page is cut from the same order, its posts read fresh. A write between two
+//! pages therefore shifts nothing: no post repeats or goes missing, and a
+//! post trashed in between drops out of its page. Only if the snapshot left
+//! the cache (10 minutes unused, or the bound on entries) is the order taken
+//! again on the current library.
 //!
-//! **Cursors** are opaque to clients: base64url of the core position plus a
-//! fingerprint of the view and its filters. A cursor sent with other filters,
-//! another sort or to the other route answers 400 `invalid_cursor`. The page
-//! size is not part of the fingerprint, so a client may change it between pages.
+//! **Cursors** are opaque to clients: base64url of the position plus a
+//! fingerprint of the view and its filters, and, for relevance, the library
+//! state of the snapshot. A cursor sent with other filters, another sort or
+//! to the other route answers 400 `invalid_cursor`. The page size is not part
+//! of the fingerprint, so a client may change it between pages.
+//!
+//! **Totals** (`includeTotal`, and every search) come from the count cache
+//! that `GET /posts/count` fills (`crate::library`), keyed by the same
+//! normalized filters, so a count pill and its list cost one count per
+//! library state.
 
 use std::sync::Arc;
 
@@ -20,16 +31,19 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
-use shelfy_core::db::UserDb;
+use shelfy_core::db::{Generation, UserDb};
 use shelfy_core::repo::RepoError;
 use shelfy_core::repo::posts::{
     self, Cursor, DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, Mode, Page, PageRequest, PostFilter,
     PostSummary, Sort,
 };
+use shelfy_core::search::query::RELEVANCE_WINDOW;
 use utoipa::ToSchema;
 
+use super::posts::PostsQuery;
 use crate::error::{ApiError, ErrorCode};
-use crate::state::blocking;
+use crate::library;
+use crate::state::{AppState, blocking};
 
 /// Longest free-text query, in characters.
 pub const MAX_QUERY_CHARS: usize = 500;
@@ -183,6 +197,20 @@ pub fn check_values(field: &'static str, values: &[String]) -> Result<(), ApiErr
         .try_for_each(|v| check_text(field, Some(v), MAX_VALUE_CHARS))
 }
 
+/// Where the next page of a list starts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Position {
+    /// After this post, in a browsing order.
+    Keyset(Cursor),
+    /// From this offset of the relevance snapshot taken at `snapshot`.
+    Ranked {
+        /// Results already returned.
+        offset: u32,
+        /// The library state the snapshot was ranked on.
+        snapshot: Generation,
+    },
+}
+
 /// Encodes and checks the cursors of one view with one set of filters.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Cursors {
@@ -209,10 +237,20 @@ impl Cursors {
         Self { fingerprint }
     }
 
-    /// The opaque text of `cursor`.
+    /// The opaque text of `position`.
     #[must_use]
-    pub fn encode(&self, cursor: &Cursor) -> String {
-        URL_SAFE_NO_PAD.encode(format!("{}.{cursor}", self.fingerprint))
+    pub fn encode(&self, position: &Position) -> String {
+        let payload = match position {
+            Position::Keyset(cursor) => format!("{}.{cursor}", self.fingerprint),
+            Position::Ranked { offset, snapshot } => format!(
+                "{}.{}~{:x}.{:x}",
+                self.fingerprint,
+                Cursor::Relevance { offset: *offset },
+                snapshot.instance,
+                snapshot.counter
+            ),
+        };
+        URL_SAFE_NO_PAD.encode(payload)
     }
 
     /// The position in `text`, if this view and these filters produced it.
@@ -220,7 +258,7 @@ impl Cursors {
     /// # Errors
     ///
     /// 400 `invalid_cursor` for anything else.
-    pub fn decode(&self, text: &str) -> Result<Cursor, ApiError> {
+    pub fn decode(&self, text: &str) -> Result<Position, ApiError> {
         let invalid = || ApiError::new(ErrorCode::InvalidCursor);
         if text.len() > MAX_CURSOR_CHARS {
             return Err(invalid());
@@ -233,43 +271,182 @@ impl Cursors {
                 invalid().with_detail("the cursor belongs to other filters or another sort")
             );
         }
-        Cursor::parse(position).map_err(|_| invalid())
+        let (position, snapshot) = match position.split_once('~') {
+            Some((position, snapshot)) => (position, Some(snapshot)),
+            None => (position, None),
+        };
+        let cursor = Cursor::parse(position).map_err(|_| invalid())?;
+        match (cursor, snapshot) {
+            (Cursor::Relevance { offset }, Some(snapshot)) => {
+                let (instance, counter) = snapshot.split_once('.').ok_or_else(invalid)?;
+                let hex = |s: &str| u64::from_str_radix(s, 16).map_err(|_| invalid());
+                Ok(Position::Ranked {
+                    offset,
+                    snapshot: Generation {
+                        instance: hex(instance)?,
+                        counter: hex(counter)?,
+                    },
+                })
+            }
+            (Cursor::Relevance { .. }, None) | (_, Some(_)) => Err(invalid()),
+            (cursor, None) => Ok(Position::Keyset(cursor)),
+        }
     }
+}
+
+/// The filters of a list as the caches key them: `query` without order and
+/// paging. `GET /posts/count` keys its counts by the same value, so a count
+/// pill and its list share them.
+#[must_use]
+pub fn cache_key(query: &PostsQuery) -> PostsQuery {
+    PostsQuery {
+        sort: None,
+        limit: None,
+        cursor: None,
+        include_total: None,
+        ..query.clone()
+    }
+}
+
+/// What to list: the filters as the core and the caches see them, the
+/// order, the page and whether the total is wanted.
+pub struct ListRequest {
+    /// The core filter.
+    pub filter: PostFilter,
+    /// The filters as the caches key them ([`cache_key`]).
+    pub key: PostsQuery,
+    /// The order actually used.
+    pub sort: Sort,
+    /// Page size, already clamped.
+    pub limit: u32,
+    /// Where the page starts; `None` for the first page.
+    pub position: Option<Position>,
+    /// Whether to count every match.
+    pub with_total: bool,
 }
 
 /// One page of posts and, when asked, the total.
 pub struct PostsResult {
     /// The page.
     pub page: Page<PostSummary>,
+    /// Where the next page starts; `None` on the last one.
+    pub next: Option<Position>,
     /// Posts matching the filter.
     pub total: Option<u64>,
 }
 
-/// Runs the list query, and the count when `with_total`, in one read snapshot
-/// of `db`, on the blocking pool.
+/// Lists one page for `user_id`, whose library `db` was at `generation`
+/// before this call (the order of `crate::conditional`): relevance pages
+/// from the cached snapshot (ranked here when it is not cached), browsing
+/// pages by keyset, and the total from the count cache or counted on the
+/// same read snapshot as the page.
 ///
 /// # Errors
 ///
 /// `invalid_cursor` when the position belongs to another order; database
 /// errors otherwise.
 pub async fn fetch(
+    state: &AppState,
+    user_id: &str,
     db: Arc<UserDb>,
-    filter: PostFilter,
-    page: PageRequest,
-    with_total: bool,
+    generation: Generation,
+    request: ListRequest,
 ) -> Result<PostsResult, ApiError> {
-    blocking(move || {
+    let caches = state.library_caches();
+    let count_view = library::view_digest("posts.count", &request.key);
+    let cached_total = request
+        .with_total
+        .then(|| caches.counts.get(user_id, generation, &count_view))
+        .flatten();
+    let count = request.with_total && cached_total.is_none();
+    let ListRequest {
+        filter,
+        key,
+        sort,
+        limit,
+        position,
+        ..
+    } = request;
+    if sort != Sort::Relevance {
+        let cursor = match position {
+            None => None,
+            Some(Position::Keyset(cursor)) => Some(cursor),
+            Some(Position::Ranked { .. }) => return Err(ApiError::new(ErrorCode::InvalidCursor)),
+        };
+        let page = PageRequest {
+            sort,
+            limit,
+            cursor,
+        };
+        let (page, counted) = blocking(move || {
+            db.read(|conn| {
+                let page = posts::list(conn, &filter, &page)?;
+                let counted = count.then(|| posts::count(conn, &filter)).transpose()?;
+                Ok::<_, RepoError>((page, counted))
+            })
+        })
+        .await?;
+        if let Some(total) = counted {
+            caches.counts.insert(user_id, generation, count_view, total);
+        }
+        return Ok(PostsResult {
+            next: page.next_cursor.map(Position::Keyset),
+            page,
+            total: cached_total.or(counted),
+        });
+    }
+
+    let (offset, snapshot) = match position {
+        None => (0, generation),
+        Some(Position::Ranked { offset, snapshot }) => (offset, snapshot),
+        Some(Position::Keyset(_)) => return Err(ApiError::new(ErrorCode::InvalidCursor)),
+    };
+    let rank_view = library::view_digest("posts.rank", &key);
+    let cached = caches.rankings.get(user_id, snapshot, &rank_view);
+    let (ranked, fresh, page, counted) = blocking(move || {
         db.read(|conn| {
-            let page = posts::list(conn, &filter, &page)?;
-            let total = if with_total {
-                Some(posts::count(conn, &filter)?)
-            } else {
-                None
+            let (ranked, fresh) = match cached {
+                Some(ranked) => (ranked, false),
+                None => (Arc::<[i64]>::from(posts::rank(conn, &filter)?), true),
             };
-            Ok::<_, RepoError>(PostsResult { page, total })
+            let page = posts::ranked_page(conn, &filter, &ranked, offset, limit)?;
+            // A ranking shorter than the window holds every match, so one
+            // taken on this snapshot is the count too.
+            let counted = match (count, fresh) {
+                (false, _) => None,
+                (true, true) if ranked.len() < RELEVANCE_WINDOW as usize => {
+                    Some(ranked.len() as u64)
+                }
+                (true, _) => Some(posts::count(conn, &filter)?),
+            };
+            Ok::<_, RepoError>((ranked, fresh, page, counted))
         })
     })
-    .await
+    .await?;
+    // A snapshot ranked now belongs to the state read before it; a cached
+    // one keeps its own, so its later pages find it again.
+    let snapshot = if fresh {
+        caches
+            .rankings
+            .insert(user_id, generation, rank_view, Arc::clone(&ranked));
+        generation
+    } else {
+        snapshot
+    };
+    if let Some(total) = counted {
+        caches.counts.insert(user_id, generation, count_view, total);
+    }
+    let next = page.next_cursor.and_then(|cursor| match cursor {
+        Cursor::Relevance { offset } if offset < RELEVANCE_WINDOW => {
+            Some(Position::Ranked { offset, snapshot })
+        }
+        _ => None,
+    });
+    Ok(PostsResult {
+        page,
+        next,
+        total: cached_total.or(counted),
+    })
 }
 
 #[cfg(test)]
@@ -298,17 +475,28 @@ mod tests {
     #[test]
     fn cursors_round_trip_only_with_their_filters() {
         let cursors = Cursors::new("posts", &("platform", "instagram", "newest"));
-        let position = Cursor::Newest {
+        let position = Position::Keyset(Cursor::Newest {
             sort_ts: 1_790_899_200_000,
             id: 42,
+        });
+        let ranked = Position::Ranked {
+            offset: 120,
+            snapshot: Generation {
+                instance: u64::MAX - 7,
+                counter: 3,
+            },
         };
+        for position in [position, ranked] {
+            let text = cursors.encode(&position);
+            assert!(
+                text.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+                "{text}"
+            );
+            assert!(text.len() <= MAX_CURSOR_CHARS, "{text}");
+            assert_eq!(cursors.decode(&text).unwrap(), position);
+        }
         let text = cursors.encode(&position);
-        assert!(
-            text.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
-            "{text}"
-        );
-        assert_eq!(cursors.decode(&text).unwrap(), position);
 
         let others = [
             Cursors::new("posts", &("platform", "twitter", "newest")),
@@ -318,13 +506,19 @@ mod tests {
             let err = other.decode(&text).unwrap_err();
             assert_eq!(err.code(), ErrorCode::InvalidCursor);
         }
+        let fingerprint = &cursors.fingerprint;
         let garbage = [
             String::new(),
             "not base64!".to_owned(),
             URL_SAFE_NO_PAD.encode("no-separator"),
-            URL_SAFE_NO_PAD.encode(format!("{}.n.x.y", cursors.fingerprint)),
+            URL_SAFE_NO_PAD.encode(format!("{fingerprint}.n.x.y")),
             URL_SAFE_NO_PAD.encode([0xff, 0xfe]),
             "A".repeat(MAX_CURSOR_CHARS + 1),
+            // A relevance position needs its snapshot, and only it has one.
+            URL_SAFE_NO_PAD.encode(format!("{fingerprint}.r.60")),
+            URL_SAFE_NO_PAD.encode(format!("{fingerprint}.n.1.2~1.2")),
+            URL_SAFE_NO_PAD.encode(format!("{fingerprint}.r.60~1")),
+            URL_SAFE_NO_PAD.encode(format!("{fingerprint}.r.60~x.1")),
         ];
         for text in garbage {
             let err = cursors.decode(&text).unwrap_err();

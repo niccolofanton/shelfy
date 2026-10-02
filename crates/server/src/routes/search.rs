@@ -17,13 +17,15 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
-use shelfy_core::repo::posts::{PageRequest, PostFilter, SourceBucket};
+use shelfy_core::repo::posts::PostFilter;
 use utoipa::{IntoParams, ToSchema};
 
 use super::listing::{
-    self, Cursors, MAX_QUERY_CHARS, MatchMode, PostSort, check_text, check_values, page_size,
+    self, Cursors, ListRequest, MAX_QUERY_CHARS, MatchMode, PostSort, check_text, check_values,
+    page_size,
 };
 use super::model::{Post, SearchPage};
+use super::posts::{PostSource, PostsQuery};
 use crate::conditional::{ConditionalHeaders, ETag};
 use crate::current_user::CurrentUser;
 use crate::error::ApiError;
@@ -80,20 +82,28 @@ impl SearchQuery {
         check_values("concept", &self.concept)
     }
 
-    fn filter(&self) -> PostFilter {
-        PostFilter {
+    /// The same criteria as filters of `GET /posts`: that list with these
+    /// filters ranks the same posts, and the two share cached rankings and
+    /// counts.
+    #[must_use]
+    pub fn as_posts_query(&self) -> PostsQuery {
+        PostsQuery {
             source: match self.scope.unwrap_or_default() {
                 SearchScope::All => None,
-                SearchScope::Sites => Some(SourceBucket::Web),
-                SearchScope::Social => Some(SourceBucket::Social),
+                SearchScope::Sites => Some(PostSource::Web),
+                SearchScope::Social => Some(PostSource::Social),
             },
             tags: self.tags.clone(),
-            tag_mode: self.tag_mode.unwrap_or_default().into(),
+            tag_mode: self.tag_mode,
             q: self.q.clone(),
-            concepts: self.concept.clone(),
-            concept_mode: self.concept_mode.unwrap_or_default().into(),
-            ..PostFilter::default()
+            concept: self.concept.clone(),
+            concept_mode: self.concept_mode,
+            ..PostsQuery::default()
         }
+    }
+
+    fn filter(&self) -> PostFilter {
+        self.as_posts_query().filter()
     }
 }
 
@@ -140,6 +150,21 @@ pub async fn search(
     headers: HeaderMap,
     Query(query): Query<SearchQuery>,
 ) -> Result<Response, ApiError> {
+    serve_search(&state, user.id(), &headers, query).await
+}
+
+/// Answers `GET /search` for `user_id`: the work of the route after
+/// authentication, callable in process (`admin bench`, P1-05).
+///
+/// # Errors
+///
+/// Like the route: invalid input, an invalid cursor, the database.
+pub async fn serve_search(
+    state: &AppState,
+    user_id: &str,
+    headers: &HeaderMap,
+    query: SearchQuery,
+) -> Result<Response, ApiError> {
     query.validate()?;
     let filter = query.filter();
     let sort = PostSort::effective(None, filter.has_text());
@@ -150,20 +175,22 @@ pub async fn search(
         ..query.clone()
     };
     let cursors = Cursors::new("search", &(&filters, sort));
-    let cursor = query
+    let position = query
         .cursor
         .as_deref()
         .map(|text| cursors.decode(text))
         .transpose()?;
 
-    let db = state.user_db(user.id()).await?;
+    let db = state.user_db(user_id).await?;
+    // Read before the snapshot (`crate::conditional`).
+    let generation = db.generation();
     let etag = ETag::for_view(
         "search",
-        user.id(),
-        db.generation(),
+        user_id,
+        generation,
         &(&filters, limit, &query.cursor),
     );
-    if etag.matches(&headers) {
+    if etag.matches(headers) {
         return Ok(etag.not_modified());
     }
     if !has_criteria(&filter) {
@@ -174,15 +201,18 @@ pub async fn search(
         };
         return Ok(etag.respond(Json(empty)));
     }
-    let page = PageRequest {
+    let request = ListRequest {
+        filter,
+        key: listing::cache_key(&query.as_posts_query()),
         sort: sort.into(),
         limit,
-        cursor,
+        position,
+        with_total: true,
     };
-    let result = listing::fetch(db, filter, page, true).await?;
+    let result = listing::fetch(state, user_id, db, generation, request).await?;
     let body = SearchPage {
         items: result.page.items.into_iter().map(Post::from).collect(),
-        next_cursor: result.page.next_cursor.map(|c| cursors.encode(&c)),
+        next_cursor: result.next.map(|p| cursors.encode(&p)),
         total: result.total.unwrap_or(0),
     };
     Ok(etag.respond(Json(body)))
@@ -190,6 +220,8 @@ pub async fn search(
 
 #[cfg(test)]
 mod tests {
+    use shelfy_core::repo::posts::SourceBucket;
+
     use super::*;
 
     #[test]

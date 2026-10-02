@@ -22,9 +22,11 @@
 //! end. A write that changed nothing announces nothing.
 //!
 //! **Caches** ([`LibraryCaches`]): post counts per filter (`GET
-//! /posts/count`) and the stats (`GET /stats`), keyed by `(user,
-//! generation, view)`. Values are computed on a read snapshot opened after
-//! the generation was read, the order the ETags rely on too.
+//! /posts/count`, and `total` of `GET /posts` and `GET /search`), the
+//! stats (`GET /stats`) and the relevance rankings that search results are
+//! paged through (P1-05, plan §2.14), keyed by `(user, generation, view)`.
+//! Values are computed on a read snapshot opened after the generation was
+//! read, the order the ETags rely on too.
 //!
 //! Seams: the bulk and trash routes (P1-11) write through [`write`] with
 //! their own [`ChangeReason`] (`delete`); a job that changes posts announces
@@ -52,6 +54,9 @@ use crate::state::{AppState, blocking};
 const COUNT_ENTRIES: u64 = 4_096;
 /// Cached stats, over every user.
 const STATS_ENTRIES: u64 = 1_024;
+/// Cached relevance rankings, over every user: at most 1,000 post ids each,
+/// so at most about 8 MB.
+const RANKING_ENTRIES: u64 = 1_024;
 /// An entry nobody read for this long is dropped.
 const TIME_TO_IDLE: Duration = Duration::from_secs(10 * 60);
 
@@ -178,6 +183,9 @@ pub struct LibraryCaches {
     pub counts: GenerationCache<u64>,
     /// The library counters (`GET /stats`).
     pub stats: GenerationCache<Stats>,
+    /// The relevance order of a search (`shelfy_core::repo::posts::rank`):
+    /// the snapshot its pages are cut from.
+    pub rankings: GenerationCache<Arc<[i64]>>,
 }
 
 impl LibraryCaches {
@@ -187,6 +195,7 @@ impl LibraryCaches {
         Self {
             counts: GenerationCache::new(COUNT_ENTRIES, TIME_TO_IDLE),
             stats: GenerationCache::new(STATS_ENTRIES, TIME_TO_IDLE),
+            rankings: GenerationCache::new(RANKING_ENTRIES, TIME_TO_IDLE),
         }
     }
 }

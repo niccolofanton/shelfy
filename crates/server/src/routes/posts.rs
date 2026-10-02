@@ -12,17 +12,20 @@
 //! /posts/batch-get` (≤ 200 keys) and `POST /posts/lookup` (≤ 1,000 ids as a
 //! platform's pages show them). The edit, `PATCH /posts/{key}`, is in
 //! [`super::post_edit`].
+//!
+//! The routes' work after authentication is in [`serve_list`] and
+//! [`serve_post`], which `admin bench` (P1-05) calls in process.
 
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
 use serde::{Deserialize, Serialize};
-use shelfy_core::repo::posts::{self, PageRequest, PostFilter, SourceBucket};
+use shelfy_core::repo::posts::{self, PostFilter, SourceBucket};
 use utoipa::{IntoParams, ToSchema};
 
 use super::listing::{
-    self, Cursors, MAX_QUERY_CHARS, MAX_VALUE_CHARS, MatchMode, PostSort, YesNo, check_count,
-    check_text, check_values, flag, page_size,
+    self, Cursors, ListRequest, MAX_QUERY_CHARS, MAX_VALUE_CHARS, MatchMode, PostSort, YesNo,
+    check_count, check_text, check_values, flag, page_size,
 };
 use super::model::{MediaType, Platform, Post, PostDetail, PostPage};
 use super::selector::FilterParams;
@@ -166,9 +169,11 @@ impl PostsQuery {
 
 /// One page of the library (or of the trash), newest first by default.
 ///
-/// Browsing orders page by keyset; relevance pages within the first 1,000
-/// results. The response is conditional: send the `ETag` back in
-/// `If-None-Match` and an unchanged page answers 304.
+/// Browsing orders page by keyset. Relevance pages through a snapshot of the
+/// first 1,000 results, ranked by the first page: changes to the library
+/// between pages neither repeat nor skip a result. The response is
+/// conditional: send the `ETag` back in `If-None-Match` and an unchanged
+/// page answers 304.
 #[utoipa::path(
     get,
     path = "/api/v1/posts",
@@ -198,6 +203,21 @@ pub async fn list_posts(
     headers: HeaderMap,
     Query(query): Query<PostsQuery>,
 ) -> Result<Response, ApiError> {
+    serve_list(&state, user.id(), &headers, query).await
+}
+
+/// Answers `GET /posts` for `user_id`: the work of the route after
+/// authentication, callable in process (`admin bench`, P1-05).
+///
+/// # Errors
+///
+/// Like the route: invalid input, an invalid cursor, the database.
+pub async fn serve_list(
+    state: &AppState,
+    user_id: &str,
+    headers: &HeaderMap,
+    query: PostsQuery,
+) -> Result<Response, ApiError> {
     query.validate()?;
     let filter = query.filter();
     let sort = PostSort::effective(query.sort, filter.has_text());
@@ -207,37 +227,39 @@ pub async fn list_posts(
     // request (the ETag).
     let filters = PostsQuery {
         sort: Some(sort),
-        limit: None,
-        cursor: None,
-        include_total: None,
-        ..query.clone()
+        ..listing::cache_key(&query)
     };
     let cursors = Cursors::new("posts", &filters);
-    let cursor = query
+    let position = query
         .cursor
         .as_deref()
         .map(|text| cursors.decode(text))
         .transpose()?;
 
-    let db = state.user_db(user.id()).await?;
+    let db = state.user_db(user_id).await?;
+    // Read before the snapshot (`crate::conditional`).
+    let generation = db.generation();
     let etag = ETag::for_view(
         "posts.list",
-        user.id(),
-        db.generation(),
+        user_id,
+        generation,
         &(&filters, limit, &query.cursor, include_total),
     );
-    if etag.matches(&headers) {
+    if etag.matches(headers) {
         return Ok(etag.not_modified());
     }
-    let page = PageRequest {
+    let request = ListRequest {
+        filter,
+        key: listing::cache_key(&query),
         sort: sort.into(),
         limit,
-        cursor,
+        position,
+        with_total: include_total,
     };
-    let result = listing::fetch(db, filter, page, include_total).await?;
+    let result = listing::fetch(state, user_id, db, generation, request).await?;
     let body = PostPage {
         items: result.page.items.into_iter().map(Post::from).collect(),
-        next_cursor: result.page.next_cursor.map(|c| cursors.encode(&c)),
+        next_cursor: result.next.map(|p| cursors.encode(&p)),
         total: result.total,
     };
     Ok(etag.respond(Json(body)))
@@ -276,12 +298,27 @@ pub async fn get_post(
     headers: HeaderMap,
     Path(key): Path<String>,
 ) -> Result<Response, ApiError> {
+    serve_post(&state, user.id(), &headers, key).await
+}
+
+/// Answers `GET /posts/{key}` for `user_id`: the work of the route after
+/// authentication, callable in process (`admin bench`, P1-05).
+///
+/// # Errors
+///
+/// 404 for a key of no post of `user_id`; the database.
+pub async fn serve_post(
+    state: &AppState,
+    user_id: &str,
+    headers: &HeaderMap,
+    key: String,
+) -> Result<Response, ApiError> {
     if key.len() > MAX_KEY_BYTES {
         return Err(ApiError::not_found());
     }
-    let db = state.user_db(user.id()).await?;
-    let etag = ETag::for_view("posts.get", user.id(), db.generation(), &key);
-    if etag.matches(&headers) {
+    let db = state.user_db(user_id).await?;
+    let etag = ETag::for_view("posts.get", user_id, db.generation(), &key);
+    if etag.matches(headers) {
         return Ok(etag.not_modified());
     }
     let detail = blocking(move || db.read(|conn| posts::get(conn, &key)))
@@ -343,7 +380,8 @@ pub async fn count_posts(
         return Ok(etag.not_modified());
     }
     let counts = &state.library_caches().counts;
-    let view = library::view_digest("posts.count", &query);
+    // The key `GET /posts` uses for its `total`, so both share the count.
+    let view = library::view_digest("posts.count", &listing::cache_key(&query));
     let total = if let Some(total) = counts.get(user.id(), generation, &view) {
         total
     } else {
