@@ -112,6 +112,106 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/auth/passkeys/login/finish': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Finishes a passkey sign-in.
+     * @description A valid answer from a passkey of an active account starts a session
+     *     (replacing the one the browser held). Otherwise 400: `challenge_expired`
+     *     (the ceremony is unknown, used or older than 5 minutes: start again) or
+     *     `passkey_invalid` (the detail names the reason). Limit: as for `start`.
+     */
+    post: operations['finishPasskeySignIn'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/passkeys/login/start': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Starts a username-less sign-in with a passkey.
+     * @description Pass `publicKey` to `navigator.credentials.get()`: the browser offers the
+     *     passkeys it holds for this site. Then send its answer with the
+     *     `ceremonyId` to `POST /auth/passkeys/login/finish`, within 5 minutes.
+     *     Limit: 10 sign-in requests per minute per client, shared with the other
+     *     sign-in routes. 404 when passkeys are off (see `GET /auth/methods`).
+     */
+    post: operations['startPasskeySignIn'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/reauth/finish': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Finishes re-authenticating the session, with a passkey's answer or a
+     *     re-authentication link.
+     * @description After the 204, the routes that need a recent sign-in work for 5 minutes.
+     *     A passkey answer is refused with 400 `challenge_expired` (unknown, used,
+     *     expired or another session's ceremony) or `passkey_invalid`; a link that
+     *     is unknown, used, expired, of another kind or of another account, with
+     *     400 `invalid_link`, and stays unused.
+     */
+    post: operations['finishReauth'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/auth/reauth/start': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Starts re-authenticating the session.
+     * @description `passkey`: answers the options for `navigator.credentials.get()`, which
+     *     name the account's passkeys; send the answer with the `ceremonyId` to
+     *     `POST /auth/reauth/finish` within 5 minutes. 404 when the account has no
+     *     passkey, or passkeys are off.
+     *
+     *     `email`: emails a re-authentication link to the account's address and
+     *     answers 202. 404 when email is off (`GET /auth/methods`); the operator
+     *     can mint the link instead (`admin login-link --purpose reauth`). Limit:
+     *     3 emails per hour per address, shared with sign-in emails.
+     */
+    post: operations['startReauth'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/client-errors': {
     parameters: {
       query?: never;
@@ -370,6 +470,77 @@ export interface paths {
     put?: never;
     post?: never;
     delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/passkeys': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The account's passkeys, oldest first. */
+    get: operations['listPasskeys'];
+    put?: never;
+    /**
+     * Adds a passkey to the account: finishes the registration that
+     *     `POST /me/passkeys/start` began in this session.
+     * @description 400 `challenge_expired` (unknown, used, expired or another session's
+     *     ceremony: start again) or `passkey_invalid`; 409 `conflict` when the
+     *     credential is registered already; 422 for a label over 64 characters.
+     */
+    post: operations['createPasskey'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/passkeys/start': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Starts adding a passkey to the account.
+     * @description Needs a sign-in or a re-authentication from the last 5 minutes (403
+     *     `reauth_required` otherwise). Pass `publicKey` to
+     *     `navigator.credentials.create()`, then send its answer with the
+     *     `ceremonyId` to `POST /me/passkeys`, from this session, within 5 minutes.
+     *     404 when passkeys are off.
+     */
+    post: operations['startPasskeyRegistration'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/passkeys/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    /**
+     * Removes a passkey from the account.
+     * @description Needs a sign-in or a re-authentication from the last 5 minutes (403
+     *     `reauth_required` otherwise). Another account's passkey is a 404, like a
+     *     missing one. The passkey stays in the authenticator, which can no longer
+     *     sign in with it.
+     */
+    delete: operations['deletePasskey'];
     options?: never;
     head?: never;
     patch?: never;
@@ -864,8 +1035,69 @@ export interface components {
        *     `shelfy-server admin login-link`.
        */
       emailLink: boolean;
-      /** @description Passkey sign-in (P1-13). Always false for now. */
+      /**
+       * @description Passkeys work: the public URL is an https origin or localhost, with a
+       *     domain name. Says nothing about which accounts have passkeys.
+       */
       passkeys: boolean;
+    };
+    /**
+     * @description `AuthenticationResponseJSON`: what the credential's `toJSON()` returns
+     *     after `navigator.credentials.get()`.
+     */
+    AuthenticationResponseJSON: {
+      /** @description `platform` or `cross-platform`. */
+      authenticatorAttachment?: string;
+      /** @description Extension outputs. */
+      clientExtensionResults?: Record<string, never>;
+      /** @description The credential id, base64url. */
+      id: string;
+      /** @description The credential id, base64url. */
+      rawId: string;
+      /** @description The authenticator's answer. */
+      response: components['schemas']['AuthenticatorAssertionResponseJSON'];
+      /** @description `public-key`. */
+      type: string;
+    };
+    /** @description `AuthenticatorAssertionResponseJSON`. */
+    AuthenticatorAssertionResponseJSON: {
+      /** @description The authenticator data, base64url. */
+      authenticatorData: string;
+      /** @description The client data, base64url. */
+      clientDataJSON: string;
+      /** @description The signature, base64url. */
+      signature: string;
+      /** @description The user handle, base64url: required to sign in. */
+      userHandle?: string;
+    };
+    /** @description `AuthenticatorAttestationResponseJSON`. */
+    AuthenticatorAttestationResponseJSON: {
+      /** @description The attestation object (CBOR), base64url. */
+      attestationObject: string;
+      /** @description The authenticator data, base64url. */
+      authenticatorData?: string;
+      /** @description The client data, base64url. */
+      clientDataJSON: string;
+      /** @description The public key (DER `SubjectPublicKeyInfo`), base64url. */
+      publicKey?: string;
+      /**
+       * Format: int64
+       * @description Its COSE algorithm.
+       */
+      publicKeyAlgorithm?: number;
+      /** @description How the authenticator is reached. */
+      transports?: string[];
+    };
+    /** @description `AuthenticatorSelectionCriteria`. */
+    AuthenticatorSelectionCriteria: {
+      /** @description `platform` or `cross-platform`; absent: either. */
+      authenticatorAttachment?: string;
+      /** @description `true`, the WebAuthn Level 1 form of `residentKey: required`. */
+      requireResidentKey: boolean;
+      /** @description `required`: a discoverable credential, for username-less sign-in. */
+      residentKey?: string;
+      /** @description `required`: the authenticator verifies the user. */
+      userVerification: string;
     };
     /** @description The posts to fetch. */
     BatchGetRequest: {
@@ -1019,6 +1251,8 @@ export interface components {
       | 'bad_request'
       | 'invalid_cursor'
       | 'invalid_link'
+      | 'challenge_expired'
+      | 'passkey_invalid'
       | 'unauthorized'
       | 'forbidden'
       | 'csrf_failed'
@@ -1501,6 +1735,18 @@ export interface components {
       /** @description The name, 1–200 characters once trimmed. */
       name: string;
     };
+    /** @description Body of `POST /api/v1/me/passkeys`. */
+    NewPasskey: {
+      /** @description The `ceremonyId` of `POST /me/passkeys/start`. */
+      ceremonyId: string;
+      /** @description The browser's answer: `credential.toJSON()`. */
+      credential: components['schemas']['RegistrationResponseJSON'];
+      /**
+       * @description The user's name for the passkey, up to 64 characters; trimmed, and
+       *     blank is none.
+       */
+      label?: string;
+    };
     /**
      * @description A notification: an item of `GET /notifications` and the payload of the
      *     `notification` event. It carries codes, not text: the client writes the
@@ -1556,6 +1802,61 @@ export interface components {
       ext: string;
       /** @description SHA-256 of the content, lowercase hex. */
       sha256: string;
+    };
+    /** @description A passkey of the account. */
+    Passkey: {
+      /**
+       * Format: int64
+       * @description Registration time, unix ms.
+       */
+      createdAt: number;
+      /**
+       * Format: int64
+       * @description Its id, for `DELETE /me/passkeys/{id}`.
+       */
+      id: number;
+      /** @description The user's name for it. */
+      label: string | null;
+      /**
+       * Format: int64
+       * @description Last sign-in or re-authentication with it, unix ms.
+       */
+      lastUsedAt: number | null;
+    };
+    /**
+     * @description The first answer of a sign-in or a re-authentication: the options to
+     *     sign with a passkey.
+     */
+    PasskeyAssertionStart: {
+      /**
+       * @description Names the ceremony in the call that finishes it: valid 5 minutes,
+       *     once.
+       */
+      ceremonyId: string;
+      /** @description The options for `navigator.credentials.get({publicKey})`. */
+      publicKey: components['schemas']['PublicKeyCredentialRequestOptionsJSON'];
+    };
+    /** @description The account's passkeys. */
+    PasskeyList: {
+      /** @description Oldest first. */
+      items: components['schemas']['Passkey'][];
+    };
+    /** @description The first answer of a registration: the options to create a passkey. */
+    PasskeyRegistrationStart: {
+      /**
+       * @description Names the ceremony in `POST /me/passkeys`: valid 5 minutes, once,
+       *     in this session.
+       */
+      ceremonyId: string;
+      /** @description The options for `navigator.credentials.create({publicKey})`. */
+      publicKey: components['schemas']['PublicKeyCredentialCreationOptionsJSON'];
+    };
+    /** @description Body of `POST /api/v1/auth/passkeys/login/finish`. */
+    PasskeySignIn: {
+      /** @description The `ceremonyId` of `POST /auth/passkeys/login/start`. */
+      ceremonyId: string;
+      /** @description The browser's answer: `credential.toJSON()`. */
+      credential: components['schemas']['AuthenticationResponseJSON'];
     };
     /**
      * @description Source platform of a post.
@@ -1895,6 +2196,107 @@ export interface components {
       /** @description Always `about:blank`: `code` carries the problem type. */
       type: string;
     };
+    /**
+     * @description `PublicKeyCredentialCreationOptionsJSON`: what
+     *     `navigator.credentials.create()` needs to create a passkey.
+     */
+    PublicKeyCredentialCreationOptionsJSON: {
+      /** @description `none`: no attestation is asked for. */
+      attestation?: string;
+      /** @description Attestation formats accepted. */
+      attestationFormats?: string[];
+      /** @description What kind of credential to create. */
+      authenticatorSelection?: components['schemas']['AuthenticatorSelectionCriteria'];
+      /** @description 32 random bytes, base64url. */
+      challenge: string;
+      /**
+       * @description The account's passkeys: an authenticator holding one of them does not
+       *     create another.
+       */
+      excludeCredentials?: components['schemas']['PublicKeyCredentialDescriptorJSON'][];
+      /**
+       * @description Extension inputs (`credProps`, `credentialProtectionPolicy`, `uvm`);
+       *     a browser ignores those it does not know.
+       */
+      extensions?: Record<string, never>;
+      /**
+       * @description Hints for the browser's UI (`client-device`, `security-key`,
+       *     `hybrid`).
+       */
+      hints?: string[];
+      /** @description The key types accepted, preferred first: ES256 (-7), RS256 (-257). */
+      pubKeyCredParams: components['schemas']['PublicKeyCredentialParameters'][];
+      /** @description The relying party: this server. */
+      rp: components['schemas']['PublicKeyCredentialRpEntity'];
+      /**
+       * Format: int32
+       * @description How long the ceremony may take, ms.
+       */
+      timeout?: number;
+      /** @description The account the passkey is for. */
+      user: components['schemas']['PublicKeyCredentialUserEntityJSON'];
+    };
+    /** @description `PublicKeyCredentialDescriptorJSON`: names a passkey. */
+    PublicKeyCredentialDescriptorJSON: {
+      /** @description The credential id, base64url. */
+      id: string;
+      /** @description How the authenticator is reached (`internal`, `hybrid`, `usb`…). */
+      transports?: string[];
+      /** @description `public-key`. */
+      type: string;
+    };
+    /** @description `PublicKeyCredentialParameters`. */
+    PublicKeyCredentialParameters: {
+      /**
+       * Format: int64
+       * @description A COSE algorithm: -7 (ES256) or -257 (RS256).
+       */
+      alg: number;
+      /** @description `public-key`. */
+      type: string;
+    };
+    /**
+     * @description `PublicKeyCredentialRequestOptionsJSON`: what
+     *     `navigator.credentials.get()` needs to sign with a passkey.
+     */
+    PublicKeyCredentialRequestOptionsJSON: {
+      /**
+       * @description Empty to sign in: the browser offers the passkeys it holds for the RP
+       *     ID. The account's passkeys to re-authenticate.
+       */
+      allowCredentials: components['schemas']['PublicKeyCredentialDescriptorJSON'][];
+      /** @description 32 random bytes, base64url. */
+      challenge: string;
+      /** @description Extension inputs (`uvm`); a browser ignores those it does not know. */
+      extensions?: Record<string, never>;
+      /** @description Hints for the browser's UI. */
+      hints?: string[];
+      /** @description The relying party ID: the public host name. */
+      rpId: string;
+      /**
+       * Format: int32
+       * @description How long the ceremony may take, ms.
+       */
+      timeout?: number;
+      /** @description `required`: the authenticator verifies the user (biometrics, PIN). */
+      userVerification: string;
+    };
+    /** @description `PublicKeyCredentialRpEntity`. */
+    PublicKeyCredentialRpEntity: {
+      /** @description The RP ID: the public host name. */
+      id: string;
+      /** @description `Shelfy`. */
+      name: string;
+    };
+    /** @description `PublicKeyCredentialUserEntityJSON`. */
+    PublicKeyCredentialUserEntityJSON: {
+      /** @description The account's email too. */
+      displayName: string;
+      /** @description The user handle: 16 opaque bytes, base64url, stable per account. */
+      id: string;
+      /** @description The account's email, shown in the authenticator's account picker. */
+      name: string;
+    };
     /** @description The outcome of an action on a queue. */
     QueueResult: {
       /**
@@ -1938,10 +2340,51 @@ export interface components {
        */
       succeeded: number;
     };
+    /** @description Body of `POST /api/v1/auth/reauth/finish`: the proof. */
+    ReauthFinish:
+      | {
+          /** @description The `ceremonyId` of `POST /auth/reauth/start`. */
+          ceremonyId: string;
+          /** @description The browser's answer: `credential.toJSON()`. */
+          credential: components['schemas']['AuthenticationResponseJSON'];
+          /** @enum {string} */
+          method: 'passkey';
+        }
+      | {
+          /** @enum {string} */
+          method: 'link';
+          /** @description What follows `#` in `<public url>/login/reauth#<token>`. */
+          token: string;
+        };
+    /**
+     * @description How to re-authenticate.
+     * @enum {string}
+     */
+    ReauthMethod: 'passkey' | 'email';
+    /** @description Body of `POST /api/v1/auth/reauth/start`. */
+    ReauthStart: {
+      /** @description How. */
+      method: components['schemas']['ReauthMethod'];
+    };
     /** @description Body of `POST /api/v1/auth/magic-links/redeem`. */
     RedeemRequest: {
       /** @description The link's token: what follows `#` in its URL. */
       token: string;
+    };
+    /** @description `RegistrationResponseJSON`: what the new credential's `toJSON()` returns. */
+    RegistrationResponseJSON: {
+      /** @description `platform` or `cross-platform`. */
+      authenticatorAttachment?: string;
+      /** @description Extension outputs (`credProps`). */
+      clientExtensionResults?: Record<string, never>;
+      /** @description The credential id, base64url. */
+      id: string;
+      /** @description The credential id, base64url. */
+      rawId: string;
+      /** @description The authenticator's answer. */
+      response: components['schemas']['AuthenticatorAttestationResponseJSON'];
+      /** @description `public-key`. */
+      type: string;
     };
     /** @description The `g480` renditions and ThumbHashes of the install. */
     RenditionCounts: {
@@ -2299,6 +2742,105 @@ export interface operations {
         content: {
           'application/json': components['schemas']['AuthMethods'];
         };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  finishPasskeySignIn: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['PasskeySignIn'];
+      };
+    };
+    responses: {
+      /** @description Signed in: the response sets the session cookie. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  startPasskeySignIn: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The options of the sign-in. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PasskeyAssertionStart'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  finishReauth: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ReauthFinish'];
+      };
+    };
+    responses: {
+      /** @description Re-authenticated. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  startReauth: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ReauthStart'];
+      };
+    };
+    responses: {
+      /** @description `passkey`: the options of the ceremony. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PasskeyAssertionStart'];
+        };
+      };
+      /** @description `email`: a link valid for 15 minutes is on its way. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       default: components['responses']['Problem'];
     };
@@ -2692,6 +3234,95 @@ export interface operations {
         content: {
           'application/json': components['schemas']['Me'];
         };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  listPasskeys: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The passkeys. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PasskeyList'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  createPasskey: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['NewPasskey'];
+      };
+    };
+    responses: {
+      /** @description The new passkey. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Passkey'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  startPasskeyRegistration: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The options of the registration. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PasskeyRegistrationStart'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  deletePasskey: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description The passkey's id. */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Removed. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       default: components['responses']['Problem'];
     };
