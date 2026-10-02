@@ -37,6 +37,9 @@ export default {
     addSite: 'Aggiungi un sito web come reference',
     addBookmark: 'Aggiungi un file locale (immagini, video, PDF)',
     addCollection: 'Crea una nuova cartella per organizzare i bookmark',
+    // Drawer (P1-02, under 900px)
+    openMenu: 'Apri il menu',
+    closeMenu: 'Chiudi il menu',
   },
   en: {
     sources: 'Connections',
@@ -61,5 +64,7 @@ export default {
     addSite: 'Add a website as a reference',
     addBookmark: 'Add a local file (images, videos, PDF)',
     addCollection: 'Create a new folder to organize bookmarks',
+    openMenu: 'Open menu',
+    closeMenu: 'Close menu',
   },
 } satisfies LangMessages;

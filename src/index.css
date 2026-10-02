@@ -916,3 +916,48 @@ textarea,
 [contenteditable='true'] {
   -webkit-app-region: no-drag;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   LONG-PRESS TO SELECT (P1-02, touch) — PostCard's own long-press (useLongPress)
+   enters selection; iOS Safari's native image/video long-press callout ("Save
+   Image", "Copy") would otherwise pop up over the same gesture and compete
+   with it. `onContextMenu` (PostCard) covers browsers that fire a contextmenu
+   event for a long-press; this covers Safari's callout, which doesn't.
+   ───────────────────────────────────────────────────────────────────────────── */
+[data-testid='post-card'] img,
+[data-testid='post-card'] video {
+  -webkit-touch-callout: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   POST MODAL — stacked under 900px (P1-02). PostModal.tsx (this task) owns the
+   `.postmodal-media-row` marker; MediaCarousel and MetaColumn, its two
+   children, are src/components/postmodal/** (P1-06's, not this task's) — so
+   their own `flex-1`/fixed-380px-column classes are overridden from here
+   instead of edited in those files. `!important` only where it beats a
+   same-specificity Tailwind utility generated later in the stylesheet
+   (MetaColumn's `w-[380px]`); the ≥900px (unprefixed) layout is untouched.
+   ───────────────────────────────────────────────────────────────────────────── */
+@media (max-width: 899px) {
+  .postmodal-media-row {
+    flex-direction: column;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  /* MediaCarousel's root: a bounded, content-independent height instead of
+     stretching to fill the row — so a long caption below can't squeeze or
+     crop the media. */
+  .postmodal-media-row > *:first-child {
+    flex: none !important;
+    width: 100% !important;
+    min-height: 45vh !important;
+    max-height: 55vh !important;
+  }
+  /* MetaColumn's root (its own stable testid): full width instead of its
+     fixed 380px column, with a top divider instead of a left one. */
+  [data-testid='post-modal-meta'] {
+    width: 100% !important;
+    border-left: 0 !important;
+    border-top: 1px solid #2e2e2e !important;
+  }
+}

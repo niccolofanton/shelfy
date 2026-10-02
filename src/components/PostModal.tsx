@@ -328,7 +328,7 @@ export default function PostModal({
     <>
       <div
         data-testid="post-modal"
-        className="u-backdrop-in fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6"
+        className="u-backdrop-in fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6 narrow:p-0"
         onClick={requestClose}
       >
         {/* Post navigation — outside the panel, pinned to the screen edges */}
@@ -369,7 +369,7 @@ export default function PostModal({
               : post.authorName || post.authorUsername || t('post')
           }
           tabIndex={-1}
-          className="select-text u-dialog-in bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl flex flex-col w-full max-w-5xl h-[88vh] overflow-hidden focus:outline-none"
+          className="select-text u-dialog-in bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl flex flex-col w-full max-w-5xl h-[88vh] overflow-hidden focus:outline-none narrow:max-w-none narrow:h-full narrow:rounded-none narrow:border-0"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
@@ -451,8 +451,15 @@ export default function PostModal({
             </button>
           </div>
 
-          {/* ── Two columns — media / web screenshot | written content ───────── */}
-          <div className="flex-1 min-h-0 flex overflow-hidden">
+          {/* ── Two columns — media / web screenshot | written content ─────────
+            Under 900px this stacks instead: media on top, content scrolling
+            below. MediaCarousel and MetaColumn (postmodal/**) are P1-06's, not
+            this task's, so their narrow-width overrides are plain CSS rules in
+            index.css (`.postmodal-media-row`, and MetaColumn's own existing
+            `post-modal-meta` testid as the hook) rather than edits to those
+            files — the DOM stays exactly what it is today, and the ≥900px
+            (unprefixed) layout is untouched. */}
+          <div className="postmodal-media-row flex-1 min-h-0 flex overflow-hidden">
             <MediaCarousel
               post={post}
               isWeb={isWeb}

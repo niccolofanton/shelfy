@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Construction, FileQuestion } from 'lucide-react';
 import Sidebar from './components/Sidebar';
+import BottomNav, { type BottomNavTarget } from './components/BottomNav';
 import WindowControls from './components/WindowControls';
 import Gallery from './views/Gallery';
 import AddSiteModal from './components/AddSiteModal';
@@ -197,6 +198,16 @@ function routeOfView(view: View, source: ActiveSource): AppRoute | null {
 // fully configured they show the setup wizard instead of their own content.
 const AI_VIEW_IDS: ViewId[] = ['aitags', 'aiqueue', 'aiweb', 'aisearch'];
 
+// BottomNav (P1-02, under 900px): which tab (if any) highlights for the
+// current view. Mirrors the sidebar's own grouping — the four AI sub-tabs all
+// light up the single "AI" tab, since the bar has no room for sub-tabs.
+function bottomNavTargetOfView(view: View): BottomNavTarget | null {
+  if (view === 'gallery') return 'library';
+  if (view === 'settings') return 'settings';
+  if (AI_VIEW_IDS.includes(view as ViewId)) return 'ai';
+  return null;
+}
+
 // Memo wrappers for the always-/keep-alive-mounted children: App re-renders on
 // every coalesced progress flush, so each view must only reconcile when its own
 // (stabilized) props change. Sidebar and Downloads are memoized at definition.
@@ -302,6 +313,18 @@ function AppInner(): React.JSX.Element {
       if (to) navigate(to);
     },
     [navigate],
+  );
+
+  // BottomNav (narrow only): maps its fixed tab set onto the existing views.
+  // "Search" has no view/route of its own yet (P1-04 carry-over) — the search
+  // field already lives in the gallery's own toolbar, so it opens the library.
+  const handleBottomNav = useCallback(
+    (target: BottomNavTarget): void => {
+      if (target === 'search' || target === 'library') setView('gallery');
+      else if (target === 'ai') setView('aiqueue');
+      else setView('settings');
+    },
+    [setView],
   );
   const [devBarVisible, setDevBarVisible] = useState<boolean>(false);
   const devBarMounted = useRef<boolean>(false);
@@ -849,7 +872,7 @@ function AppInner(): React.JSX.Element {
       save={saveSrc}
       web={webSrc}
     >
-      <div className="relative flex h-screen w-screen overflow-hidden bg-[#0f0f0f]">
+      <div className="relative flex narrow:flex-col h-screen w-screen overflow-hidden bg-[#0f0f0f]">
         {/* Frameless window controls — Windows/Linux only (macOS uses its native
           traffic lights). Floats over the top-right corner of the shell; the
           gallery toolbar reserves room for it (see Gallery's needsWinControls). */}
@@ -890,7 +913,7 @@ function AppInner(): React.JSX.Element {
           webTotal={webTotal}
           onActivityAction={handleActivityAction}
         />
-        <main className="flex-1 overflow-hidden relative">
+        <main className="flex-1 narrow:min-h-0 overflow-hidden relative">
           {caps.ai && <RemoteAiBanner />}
           {/* Browser is always mounted so its webviews keep syncing in the background,
             even when another view is on screen; an opaque overlay covers it meanwhile.
@@ -1046,6 +1069,14 @@ function AppInner(): React.JSX.Element {
             )}
           </div>
         </main>
+        {/* Bottom navigation (narrow only): a normal flex-column sibling of
+          `<main>`, not a floating overlay — App's `narrow:flex-col` reserves
+          its height instead of it covering the last row of content. */}
+        <BottomNav
+          active={bottomNavTargetOfView(view)}
+          onNavigate={handleBottomNav}
+          aiVisible={caps.ai}
+        />
         {collectionModal && (
           <CollectionModal
             initial={collectionModal.initial}

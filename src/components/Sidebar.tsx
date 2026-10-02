@@ -15,6 +15,8 @@ import {
   MessageSquare,
   Bookmark,
   FolderPlus,
+  Menu,
+  X,
 } from 'lucide-react';
 import PinterestIcon from './PinterestIcon';
 import Logo from './Logo';
@@ -266,6 +268,31 @@ function Sidebar({
   useEffect(() => savePersisted(LS_GROUPS_KEY, expandedGroups), [expandedGroups]);
   useEffect(() => savePersisted(LS_PLATFORMS_KEY, expandedPlatforms), [expandedPlatforms]);
 
+  // ── Drawer (P1-02, under 900px) ─────────────────────────────────────────────
+  // Under the narrow breakpoint the sidebar is an off-canvas drawer instead of
+  // a permanent column (tailwind.config.ts `narrow:` screen); at ≥900px these
+  // classes never match, so the desktop layout is untouched. Local, uncontrolled
+  // state — no other component needs to know the drawer is open.
+  const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
+  const closeDrawer = (): void => setDrawerOpen(false);
+  // Auto-close once a tap inside the drawer actually navigates (a source pick,
+  // a browser tab, Downloads/Settings/AI…), instead of wrapping every one of
+  // the many onClick call sites above: reacting to the navigation state itself
+  // is the single choke point every one of them already funnels through.
+  const prevViewRef = useRef<NavView | string>(currentView);
+  const prevSourceRef = useRef<ActiveSource | undefined>(activeSource);
+  useEffect(() => {
+    const viewChanged = prevViewRef.current !== currentView;
+    const prevSource = prevSourceRef.current;
+    const sourceChanged =
+      !!activeSource &&
+      !!prevSource &&
+      (activeSource.type !== prevSource.type || activeSource.value !== prevSource.value);
+    if (viewChanged || sourceChanged) setDrawerOpen(false);
+    prevViewRef.current = currentView;
+    prevSourceRef.current = activeSource;
+  }, [currentView, activeSource]);
+
   // Gate the staggered entrance animation to first mount + genuinely-new rows,
   // so a reload (after every assign/create/rename/delete) doesn't replay the
   // whole list's stagger. `seenIds` holds the ids present at the last commit;
@@ -382,493 +409,544 @@ function Sidebar({
   );
 
   return (
-    <aside
-      data-testid="sidebar"
-      className="flex flex-col w-[240px] min-w-[240px] h-full bg-[#111111] border-r border-[#2e2e2e] overflow-hidden select-none"
-    >
-      {/* Frameless window: on macOS reserve a draggable top strip for the native
+    <>
+      {/* Drawer trigger (narrow only): floats below the gallery's own floating
+          toolbar (~52px + a gap) so the two never overlap. Hidden while the
+          drawer is open — the panel's own close affordance takes over. */}
+      {!drawerOpen && (
+        <button
+          data-testid="sidebar-open"
+          onClick={() => setDrawerOpen(true)}
+          title={t('openMenu')}
+          aria-label={t('openMenu')}
+          className="hidden narrow:flex fixed top-16 left-3 z-40 items-center justify-center w-10 h-10 rounded-full bg-[#1c1c1e] ring-1 ring-white/10 shadow-lg text-white u-press"
+        >
+          <Menu size={18} />
+        </button>
+      )}
+      {/* Backdrop: dims the view behind the open drawer and closes it on tap.
+          The `hidden narrow:block` guard is a safety net in case the drawer was
+          left open while narrow and the viewport later widened past 900px. */}
+      {drawerOpen && (
+        <div
+          data-testid="sidebar-backdrop"
+          onClick={closeDrawer}
+          className="hidden narrow:block fixed inset-0 z-30 bg-black/60 u-fade-in"
+        />
+      )}
+      <aside
+        data-testid="sidebar"
+        className={[
+          'flex flex-col w-[240px] min-w-[240px] h-full bg-[#111111] border-r border-[#2e2e2e] overflow-hidden select-none',
+          // Off-canvas drawer under 900px: fixed over the content, sliding in
+          // from the left edge. `narrow:` never matches at ≥900px, so none of
+          // this reaches the desktop (or ≥900px web) layout above.
+          'narrow:fixed narrow:inset-y-0 narrow:left-0 narrow:z-40 narrow:shadow-2xl',
+          'narrow:transition-transform narrow:duration-[var(--dur-3)] narrow:ease-[var(--ease-emphasized)]',
+          drawerOpen ? 'narrow:translate-x-0' : 'narrow:-translate-x-full',
+        ].join(' ')}
+      >
+        {/* Close affordance (narrow only), beside the header the drawer already has. */}
+        {drawerOpen && (
+          <button
+            data-testid="sidebar-close"
+            onClick={closeDrawer}
+            title={t('closeMenu')}
+            aria-label={t('closeMenu')}
+            className="hidden narrow:flex absolute top-3 right-3 z-10 items-center justify-center w-8 h-8 rounded-md text-gray-400 hover:text-white hover:bg-[#2a2a2a] u-press"
+          >
+            <X size={16} />
+          </button>
+        )}
+        {/* Frameless window: on macOS reserve a draggable top strip for the native
           traffic lights (positioned here via trafficLightPosition in main.ts). On
           Windows/Linux the custom controls live top-right (see App), so no strip. */}
-      {caps.trafficLights && <div className="drag-region h-9 shrink-0" />}
+        {caps.trafficLights && <div className="drag-region h-9 shrink-0" />}
 
-      {/* App header — pinned above the single scrolling menu; doubles as the
+        {/* App header — pinned above the single scrolling menu; doubles as the
           window drag handle (its interactive children opt out via the global
           no-drag rule). */}
-      <div className="drag-region u-fade-in flex items-center gap-2.5 px-4 h-14 shrink-0">
-        <Logo size={20} />
-        <div className="flex flex-col leading-tight">
-          <span className="font-display text-white text-[15px] font-semibold tracking-wide">
-            SHELFY
-          </span>
-          <span className="text-gray-500 text-[11px] mt-0.5">
-            {t('postsCount', { n: formatCount(total) })}
-          </span>
+        <div className="drag-region u-fade-in flex items-center gap-2.5 px-4 h-14 shrink-0">
+          <Logo size={20} />
+          <div className="flex flex-col leading-tight">
+            <span className="font-display text-white text-[15px] font-semibold tracking-wide">
+              SHELFY
+            </span>
+            <span className="text-gray-500 text-[11px] mt-0.5">
+              {t('postsCount', { n: formatCount(total) })}
+            </span>
+          </div>
         </div>
-      </div>
 
-      {/* One single scrollable menu: Connections, Library (All posts → platforms /
+        {/* One single scrollable menu: Connections, Library (All posts → platforms /
           folders / New folder, then Downloads), AI, then the
           footer actions (Feedback / Attività / Impostazioni). Everything lives in
           the same scroll flow — when it runs out of vertical room it scrolls,
           nothing is pinned as an overlay on top. */}
-      <div
-        data-testid="sidebar-scroll"
-        className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent flex flex-col"
-      >
-        <nav className="flex flex-col gap-0.5 mt-1">
-          {/* ===================== CONNECTIONS (ex Sources/Browser) ===================== */}
-          {(() => {
-            if (!showConnections) return null;
-            const open = expandedGroups.browser;
-            return (
-              <>
-                <button
-                  data-testid="nav-browser"
-                  aria-expanded={open}
-                  onClick={() => toggleGroup('browser')}
-                  className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
-                >
-                  <Globe size={16} strokeWidth={1.75} className="shrink-0" />
-                  <span className="flex-1">{t('sources')}</span>
-                  {groupChevron(open)}
-                </button>
+        <div
+          data-testid="sidebar-scroll"
+          className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent flex flex-col"
+        >
+          <nav className="flex flex-col gap-0.5 mt-1">
+            {/* ===================== CONNECTIONS (ex Sources/Browser) ===================== */}
+            {(() => {
+              if (!showConnections) return null;
+              const open = expandedGroups.browser;
+              return (
+                <>
+                  <button
+                    data-testid="nav-browser"
+                    aria-expanded={open}
+                    onClick={() => toggleGroup('browser')}
+                    className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
+                  >
+                    <Globe size={16} strokeWidth={1.75} className="shrink-0" />
+                    <span className="flex-1">{t('sources')}</span>
+                    {groupChevron(open)}
+                  </button>
 
-                {open && (
-                  <div className="flex flex-col gap-0.5 mb-0.5">
-                    {caps.browser &&
-                      BROWSER_TABS.map((tab, i) => {
-                        const subActive = currentView === 'browser' && browserTab === tab.id;
-                        const count = newPostsAlert?.[tab.id] || 0;
-                        const syncing = !!browserSyncing?.[tab.id];
-                        const TabIcon = tab.Icon;
+                  {open && (
+                    <div className="flex flex-col gap-0.5 mb-0.5">
+                      {caps.browser &&
+                        BROWSER_TABS.map((tab, i) => {
+                          const subActive = currentView === 'browser' && browserTab === tab.id;
+                          const count = newPostsAlert?.[tab.id] || 0;
+                          const syncing = !!browserSyncing?.[tab.id];
+                          const TabIcon = tab.Icon;
+                          return (
+                            <button
+                              key={tab.id}
+                              data-testid={`browser-tab-${tab.id}`}
+                              aria-current={subActive ? 'page' : undefined}
+                              onClick={() => onSelectBrowserTab?.(tab.id)}
+                              style={{ animationDelay: i * 30 + 'ms' }}
+                              className={[
+                                'u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
+                                subActive
+                                  ? 'bg-[#1e1e1e] text-white'
+                                  : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                              ].join(' ')}
+                            >
+                              <TabIcon size={15} className="shrink-0" />
+                              <span className="flex-1">{tab.label}</span>
+                              {syncing && (
+                                <RefreshCw
+                                  size={12}
+                                  data-testid={`browser-tab-${tab.id}-syncing`}
+                                  className="shrink-0 text-amber-400 u-spin"
+                                />
+                              )}
+                              {count > 0 && (
+                                <span
+                                  data-testid={`browser-tab-${tab.id}-badge`}
+                                  className="u-pop-in flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
+                                >
+                                  {formatBadge(count)}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })}
+
+                      {/* Action row inside the Connections group: opens the "add web
+                        reference" modal (sites via URL, alongside the social tabs
+                        that import via webview). Not a view → no active state.
+                        Action rows read lighter (gray-500) than nav rows and share
+                        the Plus affordance, so they don't pass for destinations. */}
+                      {caps.websites && (
+                        <button
+                          data-testid="browser-tab-add-site"
+                          onClick={() => onAddSite?.()}
+                          title={t('addSite')}
+                          style={{ animationDelay: BROWSER_TABS.length * 30 + 'ms' }}
+                          className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
+                        >
+                          <Plus size={15} className="shrink-0" />
+                          <span className="flex-1">{t('website')}</span>
+                        </button>
+                      )}
+
+                      {/* Manual bookmark: add local files (images/videos/pdf/any) +
+                        note + tags. Sits alongside "Add website" as an add-content
+                        action; not a view → no active state. */}
+                      {caps.bookmarks && (
+                        <button
+                          data-testid="browser-tab-add-bookmark"
+                          onClick={() => onAddBookmark?.()}
+                          title={t('addBookmark')}
+                          style={{ animationDelay: (BROWSER_TABS.length + 1) * 30 + 'ms' }}
+                          className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
+                        >
+                          <Plus size={15} className="shrink-0" />
+                          <span className="flex-1">{t('manualBookmark')}</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            {/* ===================== LIBRARY (ex Bookmarks/Gallery) ===================== */}
+            {(() => {
+              const open = expandedGroups.bookmarks;
+              const allPostsOpen = expandedGroups.allposts;
+              return (
+                <div data-testid="sidebar-bookmarks" className="flex flex-col mt-2">
+                  {/* Group header: toggles the section. Adding a custom source now
+                    lives as an explicit "New folder" row at the bottom of the list
+                    (mirrors the "Add website" action in the Connections group). */}
+                  <button
+                    data-testid="nav-bookmarks"
+                    aria-expanded={open}
+                    onClick={() => toggleGroup('bookmarks')}
+                    className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
+                  >
+                    <Bookmark size={16} strokeWidth={1.75} className="shrink-0" />
+                    <span className="flex-1 truncate">{t('bookmarks')}</span>
+                    {groupChevron(open)}
+                  </button>
+
+                  {open && (
+                    <div className="flex flex-col gap-0.5 mb-0.5 mt-0.5">
+                      {/* All posts — now an expandable parent: the platform rows,
+                        custom sources and the "New folder" action all nest under it.
+                        The chevron (left gutter) toggles the subtree; clicking the
+                        label still navigates to the all-posts gallery, exactly like
+                        the platform rows below. */}
+                      <div
+                        className={[
+                          'group relative w-full flex items-center pr-2 pl-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors',
+                          isActive('platform', 'all')
+                            ? 'bg-[#1e1e1e] text-white'
+                            : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                        ].join(' ')}
+                      >
+                        {isActive('platform', 'all') && accentBar()}
+                        {/* Disclosure chevron in the left gutter (w-7 = pl-9 indent),
+                          so the All posts icon stays aligned with chevron-less rows. */}
+                        <span className="w-7 shrink-0 flex justify-center">
+                          <button
+                            data-testid="source-all-toggle"
+                            aria-expanded={allPostsOpen}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleGroup('allposts');
+                            }}
+                            title={allPostsOpen ? t('collapse') : t('expand')}
+                            className="u-press flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors"
+                          >
+                            <ChevronDown
+                              size={13}
+                              className={[
+                                'transition-transform duration-200',
+                                allPostsOpen ? '' : '-rotate-90',
+                              ].join(' ')}
+                            />
+                          </button>
+                        </span>
+                        <button
+                          data-testid="source-all"
+                          aria-current={isActive('platform', 'all') ? 'page' : undefined}
+                          onClick={() => onSelectSource?.({ type: 'platform', value: 'all' })}
+                          className="u-press flex-1 flex justify-between items-center min-w-0 text-left"
+                        >
+                          <span className="flex items-center gap-2.5 min-w-0">
+                            <Grid3X3 size={15} className="shrink-0" />
+                            <span className="truncate">{t('allPosts')}</span>
+                          </span>
+                          <span className="text-[11px] text-gray-500 tabular-nums shrink-0 ml-2">
+                            {formatCount(total)}
+                          </span>
+                        </button>
+                        {/* Empty slot so the count stays column-aligned with rows that have one. */}
+                        <span aria-hidden className="w-5 ml-1 shrink-0" />
+                      </div>
+
+                      {/* All posts subtree — indented one level (pl-3) so the nesting
+                        under All posts reads. Holds the platform rows, any custom
+                        sources, and the "New folder" action. */}
+                      {allPostsOpen && (
+                        <div
+                          data-testid="source-all-children"
+                          className="flex flex-col gap-0.5 pl-3"
+                        >
+                          {PLATFORM_STATS.map(({ id, label, key, Icon: PIcon }) => {
+                            // Brand rows carry a verbatim `label`; the localized 'web' row
+                            // resolves its label from a `sidebar` i18n key at render.
+                            const platformLabel = key ? t(key) : label;
+                            // Folder-tags belonging to this platform nest underneath it (e.g.
+                            // Instagram saved folders), turning the platform row into a dropdown.
+                            const children = collections.filter((c) => c.platform === id);
+                            const platformOpen = expandedPlatforms[id] !== false; // default expanded
+                            return (
+                              <React.Fragment key={id}>
+                                <div
+                                  className={[
+                                    'group relative w-full flex items-center pr-2 pl-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors',
+                                    isActive('platform', id)
+                                      ? 'bg-[#1e1e1e] text-white'
+                                      : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                                  ].join(' ')}
+                                >
+                                  {isActive('platform', id) && accentBar()}
+                                  {/* Disclosure chevron lives in the left gutter (w-7 = pl-9 indent),
+                                so platform icons stay aligned with chevron-less rows. */}
+                                  <span className="w-7 shrink-0 flex justify-center">
+                                    {children.length > 0 && (
+                                      <button
+                                        data-testid={`source-${id}-toggle`}
+                                        aria-expanded={platformOpen}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          togglePlatform(id);
+                                        }}
+                                        title={platformOpen ? t('collapse') : t('expand')}
+                                        className="u-press flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors"
+                                      >
+                                        <ChevronDown
+                                          size={13}
+                                          className={[
+                                            'transition-transform duration-200',
+                                            platformOpen ? '' : '-rotate-90',
+                                          ].join(' ')}
+                                        />
+                                      </button>
+                                    )}
+                                  </span>
+                                  <button
+                                    data-testid={`source-${id}`}
+                                    onClick={() =>
+                                      onSelectSource?.({ type: 'platform', value: id })
+                                    }
+                                    className="u-press flex-1 flex justify-between items-center min-w-0 text-left"
+                                  >
+                                    <span className="flex items-center gap-2.5 min-w-0">
+                                      <PIcon size={15} className="shrink-0" />
+                                      <span className="truncate">{platformLabel}</span>
+                                    </span>
+                                    <span className="text-[11px] text-gray-500 tabular-nums shrink-0 ml-2">
+                                      {formatCount(byPlatform[id] ?? 0)}
+                                    </span>
+                                  </button>
+                                  {/* Empty slot so counts stay column-aligned with rows that have one. */}
+                                  <span aria-hidden className="w-5 ml-1 shrink-0" />
+                                </div>
+                                {children.length > 0 && platformOpen && (
+                                  <div
+                                    data-testid={`source-${id}-children`}
+                                    className="flex flex-col"
+                                  >
+                                    {children.map((c, i) =>
+                                      renderCollectionRow(c, i, {
+                                        nested: true,
+                                        isLast: i === children.length - 1,
+                                      }),
+                                    )}
+                                  </div>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+
+                          {/* Custom sources: any collection not nested under a shown
+                        platform row. Covers both platform-less folders (`!platform`)
+                        and orphans whose `platform` is a value outside PLATFORM_STATS
+                        (legacy/unknown ids), so no collection is ever invisible. */}
+                          {collections.some(
+                            (c) => !PLATFORM_STATS.some((p) => p.id === c.platform),
+                          ) && (
+                            <div data-testid="custom-sources" className="mt-1.5">
+                              {collections
+                                .filter((c) => !PLATFORM_STATS.some((p) => p.id === c.platform))
+                                .map((c, i) => renderCollectionRow(c, i))}
+                            </div>
+                          )}
+
+                          {/* Action row: opens the modal to create a custom source
+                        (a "folder/label" for organising bookmarks). Not a view →
+                        no active state. Reads lighter (gray-500) like the add
+                        rows in Connections, with the same "+" affordance. */}
+                          {caps.libraryEdit && (
+                            <button
+                              data-testid="add-source-btn"
+                              onClick={onAddCollection}
+                              title={t('addCollection')}
+                              className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
+                            >
+                              <FolderPlus size={15} className="shrink-0" />
+                              <span className="flex-1">{t('newFolder')}</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Downloads — sibling row after the All posts block (collapsed
+                        or expanded, it always sits just below it). */}
+                      {caps.localFiles && (
+                        <button
+                          data-testid="nav-downloads"
+                          aria-current={currentView === 'downloads' ? 'page' : undefined}
+                          onClick={() => onNavigate('downloads')}
+                          className={[
+                            'u-press group relative w-full flex items-center pl-9 pr-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
+                            currentView === 'downloads'
+                              ? 'bg-[#1e1e1e] text-white'
+                              : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                          ].join(' ')}
+                        >
+                          {currentView === 'downloads' && accentBar()}
+                          <Download size={15} className="shrink-0 mr-2.5" />
+                          <span className="flex-1 truncate">{t('downloads')}</span>
+                          {downloadActive && (
+                            <>
+                              <Loader2
+                                size={14}
+                                data-testid="nav-downloads-active"
+                                className="shrink-0 text-[#7B5CFF] u-spin"
+                              />
+                              <span
+                                data-testid="nav-downloads-badge"
+                                className="u-pop-in ml-1.5 flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
+                              >
+                                {downloadDone}/{downloadTotal}
+                              </span>
+                            </>
+                          )}
+                          {/* Empty chevron slot so the badge/label aligns with counted rows. */}
+                          <span aria-hidden className="w-5 ml-1 shrink-0" />
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* ===================== AI ===================== */}
+            {(() => {
+              if (!caps.ai) return null;
+              const open = expandedGroups.ai;
+              return (
+                <>
+                  <button
+                    data-testid="nav-ai"
+                    aria-expanded={open}
+                    onClick={() => toggleGroup('ai')}
+                    className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 mt-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
+                  >
+                    <Sparkles size={16} strokeWidth={1.75} className="shrink-0" />
+                    <span className="flex-1">{t('ai')}</span>
+                    {groupChevron(open)}
+                  </button>
+
+                  {open && (
+                    <div className="flex flex-col gap-0.5 mb-0.5">
+                      {AI_TABS.map((tab, i) => {
+                        const subActive = currentView === tab.id;
+                        const showAnalysisOnTab = tab.id === 'aiqueue' && analysisActive;
+                        const showWebOnTab = tab.id === 'aiweb' && webActive;
                         return (
                           <button
                             key={tab.id}
-                            data-testid={`browser-tab-${tab.id}`}
+                            data-testid={`nav-${tab.id}`}
                             aria-current={subActive ? 'page' : undefined}
-                            onClick={() => onSelectBrowserTab?.(tab.id)}
+                            onClick={() => onNavigate(tab.id)}
                             style={{ animationDelay: i * 30 + 'ms' }}
                             className={[
-                              'u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
+                              'u-press u-fade-in-down flex items-center gap-2 pl-11 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
                               subActive
                                 ? 'bg-[#1e1e1e] text-white'
                                 : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
                             ].join(' ')}
                           >
-                            <TabIcon size={15} className="shrink-0" />
-                            <span className="flex-1">{tab.label}</span>
-                            {syncing && (
-                              <RefreshCw
-                                size={12}
-                                data-testid={`browser-tab-${tab.id}-syncing`}
-                                className="shrink-0 text-amber-400 u-spin"
-                              />
+                            <span className="flex-1">{t(tab.key)}</span>
+                            {showAnalysisOnTab && (
+                              <>
+                                <Sparkles
+                                  size={14}
+                                  data-testid="nav-aiqueue-analyzing"
+                                  className="shrink-0 text-[#7B5CFF] animate-pulse"
+                                />
+                                <span
+                                  data-testid="nav-aiqueue-badge"
+                                  className="u-pop-in flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
+                                >
+                                  {analysisDone}/{analysisTotal}
+                                </span>
+                              </>
                             )}
-                            {count > 0 && (
-                              <span
-                                data-testid={`browser-tab-${tab.id}-badge`}
-                                className="u-pop-in flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
-                              >
-                                {formatBadge(count)}
-                              </span>
+                            {showWebOnTab && (
+                              <>
+                                <Globe
+                                  size={14}
+                                  data-testid="nav-aiweb-active"
+                                  className="shrink-0 text-[#7B5CFF] animate-pulse"
+                                />
+                                <span
+                                  data-testid="nav-aiweb-badge"
+                                  className="u-pop-in flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
+                                >
+                                  {webDone}/{webTotal}
+                                </span>
+                              </>
                             )}
                           </button>
                         );
                       })}
-
-                    {/* Action row inside the Connections group: opens the "add web
-                        reference" modal (sites via URL, alongside the social tabs
-                        that import via webview). Not a view → no active state.
-                        Action rows read lighter (gray-500) than nav rows and share
-                        the Plus affordance, so they don't pass for destinations. */}
-                    {caps.websites && (
-                      <button
-                        data-testid="browser-tab-add-site"
-                        onClick={() => onAddSite?.()}
-                        title={t('addSite')}
-                        style={{ animationDelay: BROWSER_TABS.length * 30 + 'ms' }}
-                        className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
-                      >
-                        <Plus size={15} className="shrink-0" />
-                        <span className="flex-1">{t('website')}</span>
-                      </button>
-                    )}
-
-                    {/* Manual bookmark: add local files (images/videos/pdf/any) +
-                        note + tags. Sits alongside "Add website" as an add-content
-                        action; not a view → no active state. */}
-                    {caps.bookmarks && (
-                      <button
-                        data-testid="browser-tab-add-bookmark"
-                        onClick={() => onAddBookmark?.()}
-                        title={t('addBookmark')}
-                        style={{ animationDelay: (BROWSER_TABS.length + 1) * 30 + 'ms' }}
-                        className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
-                      >
-                        <Plus size={15} className="shrink-0" />
-                        <span className="flex-1">{t('manualBookmark')}</span>
-                      </button>
-                    )}
-                  </div>
-                )}
-              </>
-            );
-          })()}
-
-          {/* ===================== LIBRARY (ex Bookmarks/Gallery) ===================== */}
-          {(() => {
-            const open = expandedGroups.bookmarks;
-            const allPostsOpen = expandedGroups.allposts;
-            return (
-              <div data-testid="sidebar-bookmarks" className="flex flex-col mt-2">
-                {/* Group header: toggles the section. Adding a custom source now
-                    lives as an explicit "New folder" row at the bottom of the list
-                    (mirrors the "Add website" action in the Connections group). */}
-                <button
-                  data-testid="nav-bookmarks"
-                  aria-expanded={open}
-                  onClick={() => toggleGroup('bookmarks')}
-                  className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
-                >
-                  <Bookmark size={16} strokeWidth={1.75} className="shrink-0" />
-                  <span className="flex-1 truncate">{t('bookmarks')}</span>
-                  {groupChevron(open)}
-                </button>
-
-                {open && (
-                  <div className="flex flex-col gap-0.5 mb-0.5 mt-0.5">
-                    {/* All posts — now an expandable parent: the platform rows,
-                        custom sources and the "New folder" action all nest under it.
-                        The chevron (left gutter) toggles the subtree; clicking the
-                        label still navigates to the all-posts gallery, exactly like
-                        the platform rows below. */}
-                    <div
-                      className={[
-                        'group relative w-full flex items-center pr-2 pl-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors',
-                        isActive('platform', 'all')
-                          ? 'bg-[#1e1e1e] text-white'
-                          : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
-                      ].join(' ')}
-                    >
-                      {isActive('platform', 'all') && accentBar()}
-                      {/* Disclosure chevron in the left gutter (w-7 = pl-9 indent),
-                          so the All posts icon stays aligned with chevron-less rows. */}
-                      <span className="w-7 shrink-0 flex justify-center">
-                        <button
-                          data-testid="source-all-toggle"
-                          aria-expanded={allPostsOpen}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleGroup('allposts');
-                          }}
-                          title={allPostsOpen ? t('collapse') : t('expand')}
-                          className="u-press flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors"
-                        >
-                          <ChevronDown
-                            size={13}
-                            className={[
-                              'transition-transform duration-200',
-                              allPostsOpen ? '' : '-rotate-90',
-                            ].join(' ')}
-                          />
-                        </button>
-                      </span>
-                      <button
-                        data-testid="source-all"
-                        aria-current={isActive('platform', 'all') ? 'page' : undefined}
-                        onClick={() => onSelectSource?.({ type: 'platform', value: 'all' })}
-                        className="u-press flex-1 flex justify-between items-center min-w-0 text-left"
-                      >
-                        <span className="flex items-center gap-2.5 min-w-0">
-                          <Grid3X3 size={15} className="shrink-0" />
-                          <span className="truncate">{t('allPosts')}</span>
-                        </span>
-                        <span className="text-[11px] text-gray-500 tabular-nums shrink-0 ml-2">
-                          {formatCount(total)}
-                        </span>
-                      </button>
-                      {/* Empty slot so the count stays column-aligned with rows that have one. */}
-                      <span aria-hidden className="w-5 ml-1 shrink-0" />
                     </div>
+                  )}
+                </>
+              );
+            })()}
+          </nav>
 
-                    {/* All posts subtree — indented one level (pl-3) so the nesting
-                        under All posts reads. Holds the platform rows, any custom
-                        sources, and the "New folder" action. */}
-                    {allPostsOpen && (
-                      <div data-testid="source-all-children" className="flex flex-col gap-0.5 pl-3">
-                        {PLATFORM_STATS.map(({ id, label, key, Icon: PIcon }) => {
-                          // Brand rows carry a verbatim `label`; the localized 'web' row
-                          // resolves its label from a `sidebar` i18n key at render.
-                          const platformLabel = key ? t(key) : label;
-                          // Folder-tags belonging to this platform nest underneath it (e.g.
-                          // Instagram saved folders), turning the platform row into a dropdown.
-                          const children = collections.filter((c) => c.platform === id);
-                          const platformOpen = expandedPlatforms[id] !== false; // default expanded
-                          return (
-                            <React.Fragment key={id}>
-                              <div
-                                className={[
-                                  'group relative w-full flex items-center pr-2 pl-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors',
-                                  isActive('platform', id)
-                                    ? 'bg-[#1e1e1e] text-white'
-                                    : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
-                                ].join(' ')}
-                              >
-                                {isActive('platform', id) && accentBar()}
-                                {/* Disclosure chevron lives in the left gutter (w-7 = pl-9 indent),
-                                so platform icons stay aligned with chevron-less rows. */}
-                                <span className="w-7 shrink-0 flex justify-center">
-                                  {children.length > 0 && (
-                                    <button
-                                      data-testid={`source-${id}-toggle`}
-                                      aria-expanded={platformOpen}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        togglePlatform(id);
-                                      }}
-                                      title={platformOpen ? t('collapse') : t('expand')}
-                                      className="u-press flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors"
-                                    >
-                                      <ChevronDown
-                                        size={13}
-                                        className={[
-                                          'transition-transform duration-200',
-                                          platformOpen ? '' : '-rotate-90',
-                                        ].join(' ')}
-                                      />
-                                    </button>
-                                  )}
-                                </span>
-                                <button
-                                  data-testid={`source-${id}`}
-                                  onClick={() => onSelectSource?.({ type: 'platform', value: id })}
-                                  className="u-press flex-1 flex justify-between items-center min-w-0 text-left"
-                                >
-                                  <span className="flex items-center gap-2.5 min-w-0">
-                                    <PIcon size={15} className="shrink-0" />
-                                    <span className="truncate">{platformLabel}</span>
-                                  </span>
-                                  <span className="text-[11px] text-gray-500 tabular-nums shrink-0 ml-2">
-                                    {formatCount(byPlatform[id] ?? 0)}
-                                  </span>
-                                </button>
-                                {/* Empty slot so counts stay column-aligned with rows that have one. */}
-                                <span aria-hidden className="w-5 ml-1 shrink-0" />
-                              </div>
-                              {children.length > 0 && platformOpen && (
-                                <div
-                                  data-testid={`source-${id}-children`}
-                                  className="flex flex-col"
-                                >
-                                  {children.map((c, i) =>
-                                    renderCollectionRow(c, i, {
-                                      nested: true,
-                                      isLast: i === children.length - 1,
-                                    }),
-                                  )}
-                                </div>
-                              )}
-                            </React.Fragment>
-                          );
-                        })}
-
-                        {/* Custom sources: any collection not nested under a shown
-                        platform row. Covers both platform-less folders (`!platform`)
-                        and orphans whose `platform` is a value outside PLATFORM_STATS
-                        (legacy/unknown ids), so no collection is ever invisible. */}
-                        {collections.some(
-                          (c) => !PLATFORM_STATS.some((p) => p.id === c.platform),
-                        ) && (
-                          <div data-testid="custom-sources" className="mt-1.5">
-                            {collections
-                              .filter((c) => !PLATFORM_STATS.some((p) => p.id === c.platform))
-                              .map((c, i) => renderCollectionRow(c, i))}
-                          </div>
-                        )}
-
-                        {/* Action row: opens the modal to create a custom source
-                        (a "folder/label" for organising bookmarks). Not a view →
-                        no active state. Reads lighter (gray-500) like the add
-                        rows in Connections, with the same "+" affordance. */}
-                        {caps.libraryEdit && (
-                          <button
-                            data-testid="add-source-btn"
-                            onClick={onAddCollection}
-                            title={t('addCollection')}
-                            className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
-                          >
-                            <FolderPlus size={15} className="shrink-0" />
-                            <span className="flex-1">{t('newFolder')}</span>
-                          </button>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Downloads — sibling row after the All posts block (collapsed
-                        or expanded, it always sits just below it). */}
-                    {caps.localFiles && (
-                      <button
-                        data-testid="nav-downloads"
-                        aria-current={currentView === 'downloads' ? 'page' : undefined}
-                        onClick={() => onNavigate('downloads')}
-                        className={[
-                          'u-press group relative w-full flex items-center pl-9 pr-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
-                          currentView === 'downloads'
-                            ? 'bg-[#1e1e1e] text-white'
-                            : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
-                        ].join(' ')}
-                      >
-                        {currentView === 'downloads' && accentBar()}
-                        <Download size={15} className="shrink-0 mr-2.5" />
-                        <span className="flex-1 truncate">{t('downloads')}</span>
-                        {downloadActive && (
-                          <>
-                            <Loader2
-                              size={14}
-                              data-testid="nav-downloads-active"
-                              className="shrink-0 text-[#7B5CFF] u-spin"
-                            />
-                            <span
-                              data-testid="nav-downloads-badge"
-                              className="u-pop-in ml-1.5 flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
-                            >
-                              {downloadDone}/{downloadTotal}
-                            </span>
-                          </>
-                        )}
-                        {/* Empty chevron slot so the badge/label aligns with counted rows. */}
-                        <span aria-hidden className="w-5 ml-1 shrink-0" />
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* ===================== AI ===================== */}
-          {(() => {
-            if (!caps.ai) return null;
-            const open = expandedGroups.ai;
-            return (
-              <>
-                <button
-                  data-testid="nav-ai"
-                  aria-expanded={open}
-                  onClick={() => toggleGroup('ai')}
-                  className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 mt-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
-                >
-                  <Sparkles size={16} strokeWidth={1.75} className="shrink-0" />
-                  <span className="flex-1">{t('ai')}</span>
-                  {groupChevron(open)}
-                </button>
-
-                {open && (
-                  <div className="flex flex-col gap-0.5 mb-0.5">
-                    {AI_TABS.map((tab, i) => {
-                      const subActive = currentView === tab.id;
-                      const showAnalysisOnTab = tab.id === 'aiqueue' && analysisActive;
-                      const showWebOnTab = tab.id === 'aiweb' && webActive;
-                      return (
-                        <button
-                          key={tab.id}
-                          data-testid={`nav-${tab.id}`}
-                          aria-current={subActive ? 'page' : undefined}
-                          onClick={() => onNavigate(tab.id)}
-                          style={{ animationDelay: i * 30 + 'ms' }}
-                          className={[
-                            'u-press u-fade-in-down flex items-center gap-2 pl-11 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
-                            subActive
-                              ? 'bg-[#1e1e1e] text-white'
-                              : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
-                          ].join(' ')}
-                        >
-                          <span className="flex-1">{t(tab.key)}</span>
-                          {showAnalysisOnTab && (
-                            <>
-                              <Sparkles
-                                size={14}
-                                data-testid="nav-aiqueue-analyzing"
-                                className="shrink-0 text-[#7B5CFF] animate-pulse"
-                              />
-                              <span
-                                data-testid="nav-aiqueue-badge"
-                                className="u-pop-in flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
-                              >
-                                {analysisDone}/{analysisTotal}
-                              </span>
-                            </>
-                          )}
-                          {showWebOnTab && (
-                            <>
-                              <Globe
-                                size={14}
-                                data-testid="nav-aiweb-active"
-                                className="shrink-0 text-[#7B5CFF] animate-pulse"
-                              />
-                              <span
-                                data-testid="nav-aiweb-badge"
-                                className="u-pop-in flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
-                              >
-                                {webDone}/{webTotal}
-                              </span>
-                            </>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </>
-            );
-          })()}
-        </nav>
-
-        {/* Spacer: pushes the footer actions to the bottom when there's spare room,
+          {/* Spacer: pushes the footer actions to the bottom when there's spare room,
             but lets the whole column scroll once content overflows. */}
-        <div className="flex-1 min-h-[12px]" />
+          <div className="flex-1 min-h-[12px]" />
 
-        {/* Footer actions — same scroll flow, set apart by a divider. */}
-        {showFooter && (
-          <div className="pt-2 pb-3 flex flex-col gap-0.5 border-t border-[#222]">
-            {/* Feedback — apre un modal che invia una mail allo sviluppatore. */}
-            {caps.feedback && (
-              <button
-                data-testid="nav-feedback"
-                onClick={() => setFeedbackOpen(true)}
-                className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200"
-              >
-                <MessageSquare size={16} strokeWidth={1.75} className="shrink-0" />
-                <span>{t('feedback')}</span>
-              </button>
-            )}
+          {/* Footer actions — same scroll flow, set apart by a divider. */}
+          {showFooter && (
+            <div className="pt-2 pb-3 flex flex-col gap-0.5 border-t border-[#222]">
+              {/* Feedback — apre un modal che invia una mail allo sviluppatore. */}
+              {caps.feedback && (
+                <button
+                  data-testid="nav-feedback"
+                  onClick={() => setFeedbackOpen(true)}
+                  className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200"
+                >
+                  <MessageSquare size={16} strokeWidth={1.75} className="shrink-0" />
+                  <span>{t('feedback')}</span>
+                </button>
+              )}
 
-            {/* Activity center — aggregates every background task + recent events. */}
-            {caps.activity && (
-              <ActivityCenter onAction={onActivityAction} onNavigate={onNavigate} />
-            )}
+              {/* Activity center — aggregates every background task + recent events. */}
+              {caps.activity && (
+                <ActivityCenter onAction={onActivityAction} onNavigate={onNavigate} />
+              )}
 
-            {caps.settings && (
-              <button
-                data-testid="nav-settings"
-                onClick={() => onNavigate('settings')}
-                className={[
-                  'u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
-                  currentView === 'settings'
-                    ? 'bg-[#1e1e1e] text-white'
-                    : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
-                ].join(' ')}
-              >
-                <Settings size={16} strokeWidth={1.75} className="shrink-0" />
-                <span>{t('settings')}</span>
-              </button>
-            )}
-          </div>
-        )}
-      </div>
+              {caps.settings && (
+                <button
+                  data-testid="nav-settings"
+                  onClick={() => onNavigate('settings')}
+                  className={[
+                    'u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
+                    currentView === 'settings'
+                      ? 'bg-[#1e1e1e] text-white'
+                      : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                  ].join(' ')}
+                >
+                  <Settings size={16} strokeWidth={1.75} className="shrink-0" />
+                  <span>{t('settings')}</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
 
-      {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
-    </aside>
+        {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
+      </aside>
+    </>
   );
 }
 
