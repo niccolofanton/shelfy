@@ -63,6 +63,16 @@ Changes to the plan that the lead made during execution, with the reason.
 | T11 | Read API and generated TS client | T4, T7 | done | `web/t11-read-api` (fc1c3b7…9b0f643) |
 | T12 | SPA slice behind `ShelfyClient` | T10, T11 | done | `web/t12-spa` (0a54f97…a1315a0) |
 
+**P0 exit check (2026-10-02, plan §10), on the integration tip with a release build and the reference library installed by T9.**
+
+| Criterion | Result |
+|---|---|
+| The migrated reference library is browsable and searchable in the SPA | Pass. 6,138 posts installed (IG 3,997, X 2,140, web 1), 5,379 objects, 4,545 g480 renditions. Signed in through `/login/magic`, then browsed the gallery, the folder, search and the post modal. At 390×844 the layout is still the desktop one; P1-02 makes it responsive. |
+| List p95 ≤ 40 ms server time | Pass: 203 list requests (all 103 pages plus filtered views) p50 1.2 ms, p95 2.6 ms, measured end to end on localhost. Search p95 4.5 ms over 100 queries; stats p95 9.0 ms. |
+| Search passes the SPIKE-5 gate | Pass (T4, on the frozen pair). |
+| Spike notes 1, 2, 3, 5 and 10 committed with their decisions | 1, 2, 5 and 10 committed. SPIKE-3 waits for the owner run (O1); its tooling is done. |
+| Open questions for week 3 | Passkeys: P1-13 and P1-24. First osn PR: P1-16. Chrome Web Store: dropped (E3). |
+
 ### P1 — Library on the web
 
 27 tasks in 13 waves: [phases/P1.md](phases/P1.md). A task starts as soon as the tasks it needs are integrated.
