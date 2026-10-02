@@ -97,6 +97,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-05 | Search and filters complete, search-eval gate, `admin synth`/`bench` | running | `web/p1-05-search` |
 | P1-15 | Metrics, log redaction, rate limits | running | `web/p1-15-observability` |
 | P1-17 | Account API, API tokens, device-code flow | running | `web/p1-17-account` |
+| P1-02 | Responsive shell and a minimal web app manifest | running (Sonnet) | `web/p1-02-responsive` |
 | P1-16 | First osn PR, part 1: prepare (code only) | done; draft osn PR open | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` (967c83a…b5b94af) |
 | P1-22 | O2: R2 bucket and scoped token for backups | done | owner action O2 (osn `1ce0abe`) |
 
