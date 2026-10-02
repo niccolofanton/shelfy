@@ -1,8 +1,38 @@
 import React, { useEffect, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Globe } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Globe } from 'lucide-react';
 import { useT } from '../../i18n';
+import { useShelfy } from '../../api/ShelfyProvider';
 import { isHttpUrl, getVideoMutedPref, setVideoMutedPref, webPageLabel } from './helpers';
 import type { PostSlide, SlideMedia } from './helpers';
+
+// Where the desktop would show the original page live (a <webview>), a client
+// without the `webviewFallback` capability shows a placeholder that opens the
+// original outside the app instead.
+function OriginalLink({ src }: { src: string | null }): React.JSX.Element {
+  const t = useT('postModal');
+  const client = useShelfy();
+  return (
+    <div
+      data-testid="post-modal-no-media"
+      className="u-fade-in flex flex-col items-center justify-center gap-3 h-full min-h-[40vh] text-gray-600"
+    >
+      <Globe size={32} />
+      {isHttpUrl(src) && (
+        <button
+          data-testid="post-modal-open-original"
+          onClick={(e) => {
+            e.stopPropagation();
+            client.openExternal(src);
+          }}
+          className="u-press inline-flex items-center gap-2 px-3 h-8 rounded-md text-[12px] font-medium text-gray-200 bg-[#1f1f1f] hover:bg-[#272727] transition-colors"
+        >
+          <ExternalLink size={13} />
+          {t('openOriginal')}
+        </button>
+      )}
+    </div>
+  );
+}
 
 interface MediaCarouselProps {
   post: Shelfy.Post;
@@ -40,6 +70,7 @@ export default function MediaCarousel({
   onOpenLightboxKey,
 }: MediaCarouselProps) {
   const t = useT('postModal');
+  const { webviewFallback } = useShelfy().capabilities;
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // Apply the persisted mute preference once the video element is mounted.
@@ -88,6 +119,8 @@ export default function MediaCarousel({
                 className="u-fade-in max-w-full"
               />
             </div>
+          ) : !webviewFallback ? (
+            <OriginalLink src={media.src} />
           ) : isHttpUrl(media.src) ? (
             <webview
               key={`webview-${clampedSlide}`}
@@ -203,7 +236,9 @@ export default function MediaCarousel({
         />
       )}
       {media.kind === 'webview' &&
-        (isHttpUrl(media.src) ? (
+        (!webviewFallback ? (
+          <OriginalLink src={media.src} />
+        ) : isHttpUrl(media.src) ? (
           <webview
             key={`webview-${clampedSlide}`}
             src={media.src}

@@ -16,6 +16,7 @@ import { toApiFilters } from '../lib/postFilters';
 import { useDownloadPrefs } from '../hooks/useDownloadPrefs';
 import { useRangeSelect } from '../hooks/useRangeSelect';
 import { useViewMode } from '../hooks/useViewMode';
+import { useCapabilities } from '../api/ShelfyProvider';
 import { useT } from '../i18n';
 import {
   RefreshCw,
@@ -158,12 +159,9 @@ const SORT_OPTIONS: ReadonlyArray<{ value: SortOrder; labelKey: string }> = [
 
 // Frameless chrome: Windows/Linux draw their min/maximize/close cluster top-right
 // (over the floating toolbar). Reserve that width on the toolbar so its trailing
-// buttons don't slide under the controls. macOS (native lights, top-left) needs 0.
+// buttons don't slide under the controls. macOS (native lights, top-left) and the
+// web app (capability `windowControls` off) need 0.
 const WIN_CONTROLS_W = 144;
-const winControlsInset =
-  typeof window !== 'undefined' && !!window.electronAPI && window.electronAPI.platform !== 'darwin'
-    ? WIN_CONTROLS_W
-    : 0;
 
 // Apple-Maps-style floating "islands": translucent, blurred, rounded controls
 // that hover over the grid (no toolbar background). FLOAT_PILL is the capsule for
@@ -204,6 +202,10 @@ export default function Gallery({
 }: GalleryProps): React.JSX.Element {
   const t: Translate = useT('gallery');
   const tc: Translate = useT('common');
+  // What the client can do: selection and bulk actions, AI suggestions and the
+  // window chrome are hidden where it cannot back them (the web app, for now).
+  const caps = useCapabilities();
+  const winControlsInset = caps.windowControls ? WIN_CONTROLS_W : 0;
   // View mode (shared, persisted): 'grid' is the date-ordered row grid; 'canvas'
   // is the infinite pan/zoom wall where date ordering is intentionally inactive.
   const { mode: viewMode, toggle: toggleViewMode } = useViewMode();
@@ -284,7 +286,8 @@ export default function Gallery({
   const [suggestLoading, setSuggestLoading] = useState(false);
   const aiReqIdRef = useRef(0);
   // Opt-in (default OFF): spinning the local LLM on every search is expensive.
-  const { enabled: aiSuggestEnabled } = useAiSuggestions();
+  const { enabled: aiSuggestOptIn } = useAiSuggestions();
+  const aiSuggestEnabled = aiSuggestOptIn && caps.ai;
 
   useEffect(() => {
     const query = (filters.search || '').trim();
@@ -1204,15 +1207,17 @@ export default function Gallery({
                       <RefreshCw size={15} className={loading ? 'animate-spin' : undefined} />
                     </button>
 
-                    <button
-                      data-testid="select-toggle"
-                      onClick={() => setSelectMode(true)}
-                      title={t('selectTitle')}
-                      className="flex items-center gap-1.5 px-3 py-1 rounded-md text-sm text-gray-400 hover:text-white hover:bg-[#1a1a1a] u-press whitespace-nowrap shrink-0"
-                    >
-                      <CheckSquare size={15} />
-                      {t('select')}
-                    </button>
+                    {caps.bulkActions && (
+                      <button
+                        data-testid="select-toggle"
+                        onClick={() => setSelectMode(true)}
+                        title={t('selectTitle')}
+                        className="flex items-center gap-1.5 px-3 py-1 rounded-md text-sm text-gray-400 hover:text-white hover:bg-[#1a1a1a] u-press whitespace-nowrap shrink-0"
+                      >
+                        <CheckSquare size={15} />
+                        {t('select')}
+                      </button>
+                    )}
                   </>
                 }
               />
@@ -1615,7 +1620,7 @@ export default function Gallery({
                 onOpen={handleCardOpen}
                 selectable={selectMode}
                 selected={selected}
-                onQuickSelect={handleQuickSelect}
+                onQuickSelect={caps.bulkActions ? handleQuickSelect : undefined}
               />
             </div>
           ) : (
@@ -1634,7 +1639,7 @@ export default function Gallery({
                 onOpen={handleCardOpen}
                 selectable={selectMode}
                 selected={selected}
-                onQuickSelect={handleQuickSelect}
+                onQuickSelect={caps.bulkActions ? handleQuickSelect : undefined}
                 onGridMouseDownCapture={handleGridMouseDown}
                 onGridMouseOver={handleGridMouseOver}
               />

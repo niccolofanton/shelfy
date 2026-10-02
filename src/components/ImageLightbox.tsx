@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
 import { useT } from '../i18n';
+import { useShelfy } from '../api/ShelfyProvider';
 
 // Full-screen screenshot viewer used both in the Websites panel (review captures
 // live) and the gallery PostModal. Full-page screenshots are tall, so the image
@@ -30,6 +31,7 @@ export default function ImageLightbox({
   onIndexChange,
 }: ImageLightboxProps): React.ReactElement | null {
   const t = useT('lightbox');
+  const client = useShelfy();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const list = Array.isArray(images) ? images.filter((im) => im && im.src) : [];
@@ -106,7 +108,7 @@ export default function ImageLightbox({
         {cur.href && (
           <button
             onClick={() => {
-              if (cur.href) window.electronAPI?.openExternal?.(cur.href);
+              if (cur.href) client.openExternal(cur.href);
             }}
             className="u-press flex items-center gap-1.5 px-2.5 h-8 rounded-md text-xs text-gray-200 bg-white/10 hover:bg-white/15"
             title={t('openPageTitle')}

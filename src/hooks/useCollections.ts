@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useT } from '../i18n';
+import { useShelfy } from '../api/ShelfyProvider';
 import type { CreateCollectionOpts, DeleteCollectionResult } from '../../types/electron-api';
 
 export interface UseCollections {
@@ -13,9 +14,11 @@ export interface UseCollections {
 
 // Loads and manages the user's custom sources ("collections"). Kept in App so
 // the Sidebar (which lists them) and the Gallery (which assigns posts to them)
-// share a single, refreshable source of truth.
+// share a single, refreshable source of truth. The list comes through the
+// ShelfyClient; the edits are desktop-only for now (capability `libraryEdit`).
 export function useCollections(): UseCollections {
   const t = useT('collectionModal');
+  const client = useShelfy();
   const [collections, setCollections] = useState<Shelfy.Collection[]>([]);
   // Distinguishes "load failed" from "user genuinely has no collections" so the
   // Sidebar can surface an error instead of silently rendering an empty list.
@@ -23,7 +26,7 @@ export function useCollections(): UseCollections {
 
   const reload = useCallback(async (): Promise<void> => {
     try {
-      const list = await window.electronAPI.getCollections();
+      const list = await client.listCollections();
       setCollections(list || []);
       setError(null);
     } catch (e) {
@@ -32,7 +35,7 @@ export function useCollections(): UseCollections {
       console.error('useCollections: reload failed', e);
       setError((e instanceof Error ? e.message : null) || t('loadError'));
     }
-  }, [t]);
+  }, [t, client]);
 
   useEffect(() => {
     reload();

@@ -8,6 +8,7 @@ import {
   MoreVertical,
 } from 'lucide-react';
 import { useT } from '../../i18n';
+import { useShelfy } from '../../api/ShelfyProvider';
 import type { PostUpdated } from './MetaColumn';
 
 // A download:progress event for a single asset (downloader-internal runtime shape;
@@ -34,6 +35,8 @@ interface ActionsMenuProps {
 // The header "more" (⋮) menu: open file / open original / download / delete
 // local files / delete post. Owns all the per-post download + delete state —
 // nothing here is needed by the rest of the modal beyond the parent callbacks.
+// Each entry exists only where the client backs it: the web shows "open
+// original" alone for now (capabilities `localFiles` and `bulkActions`).
 export default function ActionsMenu({
   post,
   url,
@@ -45,6 +48,8 @@ export default function ActionsMenu({
   onClose,
 }: ActionsMenuProps) {
   const t = useT('postModal');
+  const client = useShelfy();
+  const { localFiles, bulkActions } = client.capabilities;
   const [deleteConfirm, setDeleteConfirm] = useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
   // Separate two-step confirm + in-flight flag for the destructive "delete whole
@@ -106,7 +111,7 @@ export default function ActionsMenu({
   // (download finished, local files removed) reflect without closing the modal.
   async function refreshPost(): Promise<void> {
     try {
-      const [updated] = await window.electronAPI.getPostsByIds([post.id]);
+      const [updated] = await client.getPostsByIds([post.id]);
       if (updated) onPostUpdated?.(post.id, updated);
     } catch {
       /* best-effort refresh */
@@ -197,11 +202,13 @@ export default function ActionsMenu({
     };
   });
   useEffect(() => {
+    // Downloads are local: nothing to follow without the capability.
+    if (!localFiles) return undefined;
     const unsub = window.electronAPI.onDownloadProgress((job) =>
       onProgressRef.current?.(asDownloadProgress(job)),
     );
     return () => unsub?.();
-  }, []);
+  }, [localFiles]);
 
   async function handleDeleteLocal(): Promise<void> {
     if (!deleteConfirm) {
@@ -253,6 +260,9 @@ export default function ActionsMenu({
     }
   }
 
+  // Nothing this client can do with the post: no menu at all.
+  if (!url && !localFiles && !bulkActions) return null;
+
   /* Actions collapsed under a "more" menu, keeping the header uncluttered.
      Toggles on click; closes on outside click (see effect above). */
   return (
@@ -275,7 +285,7 @@ export default function ActionsMenu({
             role="menu"
             className="u-fade-in-down origin-top min-w-[190px] bg-[#1f1f1f] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 flex flex-col"
           >
-            {primaryLocalPath && (
+            {localFiles && primaryLocalPath && (
               <button
                 data-testid="post-modal-openfile"
                 onClick={() => {
@@ -294,7 +304,7 @@ export default function ActionsMenu({
               <button
                 data-testid="post-modal-external"
                 onClick={() => {
-                  window.electronAPI.openExternal(url);
+                  client.openExternal(url);
                   setMenuOpen(false);
                 }}
                 className="u-press flex items-center gap-2.5 px-3 py-2 text-xs text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white text-left"
@@ -307,7 +317,7 @@ export default function ActionsMenu({
               and "delete local files" would destroy the only copy of the
               original (image/video) or leave a broken preview (pdf/file).
               Only "Elimina post" (below) applies to them. */}
-            {!hasLocalFiles && !isManual && (
+            {localFiles && !hasLocalFiles && !isManual && (
               <button
                 data-testid="post-modal-download"
                 onClick={handleDownload}
@@ -332,7 +342,7 @@ export default function ActionsMenu({
                 </span>
               </button>
             )}
-            {hasLocalFiles && !isManual && (
+            {localFiles && hasLocalFiles && !isManual && (
               <button
                 data-testid="post-modal-delete-local"
                 onClick={handleDeleteLocal}
@@ -356,30 +366,34 @@ export default function ActionsMenu({
               </button>
             )}
 
-            <div className="my-1 border-t border-[#2e2e2e]" />
+            {bulkActions && (
+              <>
+                <div className="my-1 border-t border-[#2e2e2e]" />
 
-            {/* Destructive: removes the post entirely (DB record + files). */}
-            <button
-              data-testid="post-modal-delete-post"
-              onClick={handleDeletePost}
-              disabled={deletingPost}
-              title={deletePostConfirm ? t('clickAgainToConfirm') : t('deletePostTitle')}
-              className={[
-                'u-press flex items-center gap-2.5 px-3 py-2 text-xs text-left disabled:opacity-50 transition-colors',
-                deletePostConfirm
-                  ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
-                  : 'text-red-400/90 hover:bg-red-500/10 hover:text-red-300',
-              ].join(' ')}
-            >
-              {deletingPost ? (
-                <Loader2 size={14} className="animate-spin shrink-0" />
-              ) : (
-                <Trash2 size={14} className="shrink-0" />
-              )}
-              <span key={deletePostConfirm ? 'confirm' : 'idle'} className="u-fade-in">
-                {deletePostConfirm ? t('confirmDeletePost') : t('deletePost')}
-              </span>
-            </button>
+                {/* Destructive: removes the post entirely (DB record + files). */}
+                <button
+                  data-testid="post-modal-delete-post"
+                  onClick={handleDeletePost}
+                  disabled={deletingPost}
+                  title={deletePostConfirm ? t('clickAgainToConfirm') : t('deletePostTitle')}
+                  className={[
+                    'u-press flex items-center gap-2.5 px-3 py-2 text-xs text-left disabled:opacity-50 transition-colors',
+                    deletePostConfirm
+                      ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                      : 'text-red-400/90 hover:bg-red-500/10 hover:text-red-300',
+                  ].join(' ')}
+                >
+                  {deletingPost ? (
+                    <Loader2 size={14} className="animate-spin shrink-0" />
+                  ) : (
+                    <Trash2 size={14} className="shrink-0" />
+                  )}
+                  <span key={deletePostConfirm ? 'confirm' : 'idle'} className="u-fade-in">
+                    {deletePostConfirm ? t('confirmDeletePost') : t('deletePost')}
+                  </span>
+                </button>
+              </>
+            )}
 
             {actionError && (
               <div

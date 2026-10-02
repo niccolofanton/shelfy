@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, RotateCw, Globe, Award, Cpu, Check } from 'lucide-react';
 import { useT } from '../../i18n';
+import { useShelfy } from '../../api/ShelfyProvider';
 
 // ── Web-reference shape helpers (defensive: backend shapes are loose) ────────
 // Palette entries may be hex strings OR { hex, role } objects.
@@ -111,6 +112,7 @@ export default function WebMetaPanel({
   onReanalyzeWeb,
 }: WebMetaPanelProps) {
   const t = useT('postModal');
+  const client = useShelfy();
   const palette = paletteHexes(post.webPalette);
   const fonts = fontEntries(post.webFonts);
   const tech = techList(post.webTech);
@@ -128,7 +130,7 @@ export default function WebMetaPanel({
         {siteUrl && (
           <button
             data-testid="web-open-site"
-            onClick={() => window.electronAPI.openExternal(siteUrl)}
+            onClick={() => client.openExternal(siteUrl)}
             className="u-press inline-flex items-center gap-2 px-3 h-8 rounded-md text-[12px] font-medium text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] transition-colors"
           >
             <ExternalLink size={13} />
@@ -220,7 +222,7 @@ export default function WebMetaPanel({
               return a.profileUrl ? (
                 <button
                   key={`${label}-${i}`}
-                  onClick={() => window.electronAPI.openExternal(a.profileUrl as string)}
+                  onClick={() => client.openExternal(a.profileUrl as string)}
                   title={a.evidence || t('openAwardProfile')}
                   className="u-press"
                 >

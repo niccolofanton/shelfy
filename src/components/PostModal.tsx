@@ -9,8 +9,8 @@ import {
   Globe,
   Bookmark,
 } from 'lucide-react';
-import { assetUrl, isAssetUrl } from '../lib/asset';
 import { useT } from '../i18n';
+import { useShelfy } from '../api/ShelfyProvider';
 import ImageLightbox, { LightboxImage } from './ImageLightbox';
 import PinterestIcon from './PinterestIcon';
 import CollectionModal from './CollectionModal';
@@ -57,6 +57,10 @@ export default function PostModal({
 }: PostModalProps): React.JSX.Element {
   const t = useT('postModal');
   const tc = useT('common');
+  // The backend seam: media URLs, and which actions exist (the web modal is
+  // read-only for now: no folders, downloads, local files or deletion).
+  const client = useShelfy();
+  const caps = client.capabilities;
   // Slides only change when the post itself changes; recomputing per render
   // would churn the slide-dependent effects below.
   // eslint-disable-next-line react-hooks/exhaustive-deps -- preexisting: keyed on post.id/post.media on purpose
@@ -100,9 +104,11 @@ export default function PostModal({
   );
 
   useEffect(() => {
+    // Only the folder picker reads the list.
+    if (!caps.libraryEdit) return undefined;
     let alive = true;
-    window.electronAPI
-      .getCollections()
+    client
+      .listCollections()
       .then((list) => {
         if (alive) setCollections(list || []);
       })
@@ -110,7 +116,7 @@ export default function PostModal({
     return () => {
       alive = false;
     };
-  }, []);
+  }, [client, caps.libraryEdit]);
 
   // Re-seed membership when switching to a different post.
   useEffect(() => {
@@ -252,8 +258,12 @@ export default function PostModal({
           ? 'Pinterest'
           : t('platformX');
 
-  const media = pickSlideMedia(post, current, slideCount);
-  const isLocal = media.kind === 'image' || media.kind === 'video' ? isAssetUrl(media.src) : false;
+  const media = pickSlideMedia(post, current, slideCount, client.media);
+  // "Local" badge: a copy on this machine (desktop only).
+  const isLocal =
+    caps.localFiles && (media.kind === 'image' || media.kind === 'video')
+      ? client.media.isStored(media.src)
+      : false;
 
   // Primary downloaded file to reveal/open with one click (most "complete" asset
   // first). For manual bookmarks the current slide's source_url carries the
@@ -405,18 +415,20 @@ export default function PostModal({
             )}
             <div className="flex-1" />
 
-            <CollectionsMenu
-              collections={collections}
-              assignedIds={assignedIds}
-              open={assignOpen}
-              onToggle={() => setAssignOpen((o) => !o)}
-              onRequestClose={() => setAssignOpen(false)}
-              onAssign={assignToCollection}
-              onCreateNew={() => {
-                setAssignOpen(false);
-                setShowCreateCollection(true);
-              }}
-            />
+            {caps.libraryEdit && (
+              <CollectionsMenu
+                collections={collections}
+                assignedIds={assignedIds}
+                open={assignOpen}
+                onToggle={() => setAssignOpen((o) => !o)}
+                onRequestClose={() => setAssignOpen(false)}
+                onAssign={assignToCollection}
+                onCreateNew={() => {
+                  setAssignOpen(false);
+                  setShowCreateCollection(true);
+                }}
+              />
+            )}
 
             <ActionsMenu
               post={post}
@@ -476,7 +488,7 @@ export default function PostModal({
         <ImageLightbox
           images={imageSlides.map(
             ({ s }, i): LightboxImage => ({
-              src: (s.localPath ? assetUrl(s.localPath) : s.url) || '',
+              src: (s.localPath ? client.media.file(s.localPath) : s.url) || '',
               // Web captures store tall pages as vertical chunks; match this slide's
               // page by URL and hand the lightbox the band list so it lazy-stacks them.
               chunks: isWeb
@@ -486,7 +498,7 @@ export default function PostModal({
                     );
                     return pg
                       ? pg.chunks
-                          ?.map((c) => assetUrl(c.screenshotPath ?? null))
+                          ?.map((c) => client.media.file(c.screenshotPath ?? null))
                           .filter((src): src is string => Boolean(src))
                       : undefined;
                   })()

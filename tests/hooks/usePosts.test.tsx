@@ -1,6 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, type Mock } from 'vitest';
+import type React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { usePosts, type PostFilters } from '../../src/hooks/usePosts';
+import { ShelfyProvider } from '../../src/api/ShelfyProvider';
+import { desktopCapabilities } from '../../src/api/electronClient';
+import type { PostPage, ShelfyClient } from '../../src/api/ShelfyClient';
 import type { PostSearchResult } from '../../types/electron-api';
 
 type ProgressCallback = (data: unknown) => void;
@@ -610,5 +614,117 @@ describe('usePosts — inactive view', () => {
 
     vi.runAllTimers();
     vi.useRealTimers();
+  });
+});
+
+// ─── 11. Cursor paging through a ShelfyClient (the web client's paging) ───────
+
+describe('usePosts — cursor paging through a ShelfyClient', () => {
+  // A client whose pages are keyset-style: the cursor is opaque and a later
+  // page carries no total.
+  function cursorClient(pages: PostPage[]): ShelfyClient & { listPosts: Mock } {
+    const listPosts = vi.fn();
+    for (const p of pages) listPosts.mockResolvedValueOnce(p);
+    return {
+      capabilities: desktopCapabilities('darwin'),
+      media: { file: (r) => r ?? null, tile: (r) => r ?? null, isStored: () => false },
+      listPosts,
+      getPostsByIds: vi.fn().mockResolvedValue([]),
+      getStats: vi.fn(),
+      listCollections: vi.fn().mockResolvedValue([]),
+      openExternal: vi.fn(),
+      on: vi.fn(() => () => {}),
+    };
+  }
+  const ids = (prefix: string, n: number): Shelfy.Post[] =>
+    Array.from({ length: n }, (_, i) => ({ id: `${prefix}${i}` }) as Shelfy.Post);
+  function providerOf(client: ShelfyClient) {
+    return function Provider({ children }: { children: React.ReactNode }) {
+      return <ShelfyProvider client={client}>{children}</ShelfyProvider>;
+    };
+  }
+
+  it('appends from the cursor and keeps the first page total', async () => {
+    const client = cursorClient([
+      { posts: ids('a', 50), total: 120, nextCursor: 'c1' },
+      { posts: ids('b', 50), nextCursor: 'c2' },
+    ]);
+    const { result, rerender } = renderHook((props: PostFilters) => usePosts(props), {
+      initialProps: { ...defaultFilters, limit: 50 },
+      wrapper: providerOf(client),
+    });
+    await waitFor(() => expect(result.current.posts).toHaveLength(50));
+    expect(client.listPosts).toHaveBeenLastCalledWith(
+      expect.objectContaining({ platform: undefined }),
+      expect.objectContaining({ limit: 50, cursor: null }),
+    );
+
+    rerender({ ...defaultFilters, limit: 100 });
+    await waitFor(() => expect(result.current.posts).toHaveLength(100));
+    expect(client.listPosts).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ limit: 50, cursor: 'c1' }),
+    );
+    // The append came without a total: the first page's stays.
+    expect(result.current.total).toBe(120);
+  });
+
+  it('sizes an append from the rows served, not from the rendered list', async () => {
+    // The rendered list can be shorter than the rows served (an append drops
+    // rows it already shows) or lag behind them (it renders in a transition).
+    // Sized from it, an append would not match its cursor: it overshoots the
+    // window, and the next scroll finds nothing left to fetch.
+    const client = cursorClient([
+      { posts: ids('a', 50), total: 1000, nextCursor: 'c1' },
+      { posts: [...ids('a', 50).slice(40), ...ids('b', 240)], nextCursor: 'c2' },
+      { posts: ids('c', 250), nextCursor: 'c3' },
+    ]);
+    const { result, rerender } = renderHook((props: PostFilters) => usePosts(props), {
+      initialProps: { ...defaultFilters, limit: 50 },
+      wrapper: providerOf(client),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    rerender({ ...defaultFilters, limit: 300 });
+    await waitFor(() => expect(client.listPosts).toHaveBeenCalledTimes(2));
+    expect(client.listPosts.mock.calls[1][1]).toMatchObject({ limit: 250, cursor: 'c1' });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await waitFor(() => expect(result.current.posts).toHaveLength(290));
+    rerender({ ...defaultFilters, limit: 550 });
+    await waitFor(() => expect(client.listPosts).toHaveBeenCalledTimes(3));
+    expect(client.listPosts.mock.calls[2][1]).toMatchObject({ limit: 250, cursor: 'c2' });
+    await waitFor(() => expect(result.current.posts).toHaveLength(540));
+  });
+
+  it('stops appending after the last page', async () => {
+    const client = cursorClient([{ posts: ids('a', 10), total: 10, nextCursor: null }]);
+    const { result, rerender } = renderHook((props: PostFilters) => usePosts(props), {
+      initialProps: { ...defaultFilters, limit: 50 },
+      wrapper: providerOf(client),
+    });
+    await waitFor(() => expect(result.current.posts).toHaveLength(10));
+    rerender({ ...defaultFilters, limit: 300 });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(client.listPosts).toHaveBeenCalledTimes(1);
+    expect(result.current.loading).toBe(false);
+  });
+
+  it('cancels a superseded request through its signal', async () => {
+    let firstSignal: AbortSignal | undefined;
+    const client = cursorClient([]);
+    client.listPosts
+      .mockImplementationOnce((_query: unknown, page: { signal?: AbortSignal }) => {
+        firstSignal = page.signal;
+        return new Promise(() => {});
+      })
+      .mockResolvedValueOnce({ posts: ids('b', 3), total: 3, nextCursor: null });
+    const { result, rerender } = renderHook((props: PostFilters) => usePosts(props), {
+      initialProps: { ...defaultFilters, limit: 50 },
+      wrapper: providerOf(client),
+    });
+    rerender({ ...defaultFilters, platform: 'twitter', limit: 50 });
+    await waitFor(() => expect(result.current.posts).toHaveLength(3));
+    expect(firstSignal?.aborted).toBe(true);
   });
 });

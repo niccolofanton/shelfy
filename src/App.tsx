@@ -25,6 +25,7 @@ import { AnalysisProvider, useAnalysis, analysisSummary } from './hooks/useAnaly
 import { ActivityProvider } from './hooks/useActivity';
 import type { SourceSyncApi, SyncTarget } from './hooks/useSourceSync';
 import { useT, useLang, localeTag } from './i18n';
+import { useShelfy } from './api/ShelfyProvider';
 import { buildTime } from 'virtual:build-time';
 
 // The non-browser view identifiers, in render order.
@@ -126,12 +127,6 @@ const VIEW_IDS: ViewId[] = [
 // fully configured they show the setup wizard instead of their own content.
 const AI_VIEW_IDS: ViewId[] = ['aitags', 'aiqueue', 'aiweb', 'aisearch'];
 
-// Frameless chrome: Windows/Linux get custom min/maximize/close buttons; macOS
-// uses its native traffic lights (so no custom cluster there). Platform is fixed
-// for the process lifetime, so resolve it once at module load.
-const customWindowControls =
-  typeof window !== 'undefined' && !!window.electronAPI && window.electronAPI.platform !== 'darwin';
-
 // Memo wrappers for the always-/keep-alive-mounted children: App re-renders on
 // every coalesced progress flush, so each view must only reconcile when its own
 // (stabilized) props change. Sidebar and Downloads are memoized at definition.
@@ -163,6 +158,10 @@ export default function App(): React.JSX.Element {
 function AppInner(): React.JSX.Element {
   const t = useT('app');
   const { lang } = useLang();
+  // The backend seam: what this client can do decides which surfaces exist
+  // (the web app has no browser, downloads, AI… yet; see ShelfyCapabilities).
+  const client = useShelfy();
+  const caps = client.capabilities;
   const [view, setView] = useState<View>('gallery');
   // First-run legal gate: blocks the app until the current disclaimer version is
   // acknowledged (see DISCLAIMER.md). It keeps appearing at launch until the user
@@ -224,9 +223,9 @@ function AppInner(): React.JSX.Element {
   const aiGateSkipped = useRef<boolean>(false);
   useEffect(() => {
     // A working remote AI node replaces the local setup: never show the wizard.
-    if (aiSetup.status?.remoteReady) setAiGate(false);
+    if (!caps.ai || aiSetup.status?.remoteReady) setAiGate(false);
     else if (!aiGateSkipped.current && aiSetup.status && !aiSetup.complete) setAiGate(true);
-  }, [aiSetup.status, aiSetup.complete]);
+  }, [caps.ai, aiSetup.status, aiSetup.complete]);
   const dismissAiGate = (skip: boolean): void => {
     if (skip) aiGateSkipped.current = true;
     setAiGate(false);
@@ -321,15 +320,18 @@ function AppInner(): React.JSX.Element {
   // Carries a tag from a clicked chip in the global AI modal over to the Tags
   // Explorer; the bumped nonce lets that view re-apply it even for the same tag.
   const [aiTagsInitial, setAiTagsInitial] = useState<AiTagsInitial>({ tag: null, nonce: 0 });
-  const openAiPost = useCallback(async (postId: string): Promise<void> => {
-    if (!postId) return;
-    try {
-      const [post] = await window.electronAPI.getPostsByIds([postId]);
-      if (post) setAiModalPost(post);
-    } catch (e) {
-      console.error('[App] openAiPost failed:', e);
-    }
-  }, []);
+  const openAiPost = useCallback(
+    async (postId: string): Promise<void> => {
+      if (!postId) return;
+      try {
+        const [post] = await client.getPostsByIds([postId]);
+        if (post) setAiModalPost(post);
+      } catch (e) {
+        console.error('[App] openAiPost failed:', e);
+      }
+    },
+    [client],
+  );
   const openAddSite = useCallback(() => setShowAddSite(true), []);
   const openAddBookmark = useCallback(() => setShowAddBookmark(true), []);
 
@@ -380,7 +382,14 @@ function AppInner(): React.JSX.Element {
   } = downloads;
   const { cancelJob: cancelWebJob, retryJob: retryWebJob } = webJobs;
 
-  const refreshStats = useCallback(() => window.electronAPI.getStats().then(setStats), []);
+  const refreshStats = useCallback(
+    () =>
+      client
+        .getStats()
+        .then(setStats)
+        .catch((e) => console.error('[App] getStats failed:', e)),
+    [client],
+  );
 
   // From a web post's modal: jump to the Websites panel, optionally re-running
   // the whole capture+analysis with overwrite so the bad screenshots/data are
@@ -574,20 +583,19 @@ function AppInner(): React.JSX.Element {
         );
       }
     };
-    const unsub = window.electronAPI.onNewPosts((data: unknown) => {
+    const unsub = client.on('posts.changed', (event) => {
       bumpStats();
       // Questo canale è riusato come segnale generico di refresh della lista (es.
       // backfill blur 'thumb-blur', placeholder web): tali payload non hanno un
       // count numerico valido e non devono toccare il badge. bumpStats() sopra
       // ricarica comunque la gallery; qui usciamo senza alterare newPostsAlert.
-      const payload = (data ?? {}) as { count?: unknown; platform?: unknown };
-      const n = Number(payload.count);
+      const n = event.count ?? NaN;
       if (!Number.isFinite(n) || n <= 0) return;
       // Solo le tre piattaforme browser hanno un badge in sidebar. Altre sorgenti
       // (es. 'web' dalla pipeline di cattura sito, 'manual') non devono inquinare
       // newPostsAlert con una chiave illimitata e mai azzerata. Niente default a
       // 'instagram': un segnale non etichettato non deve mai incrementare il badge.
-      const platform = payload.platform;
+      const platform = event.platform;
       if (platform !== 'instagram' && platform !== 'twitter' && platform !== 'pinterest') {
         return;
       }
@@ -601,9 +609,9 @@ function AppInner(): React.JSX.Element {
     });
     return () => {
       if (statsTimer) clearTimeout(statsTimer);
-      if (typeof unsub === 'function') unsub();
+      unsub();
     };
-  }, [refreshStats]);
+  }, [client, refreshStats]);
 
   // ActiveSource.value is the shared string|number slot, but the discriminant
   // fixes which it is at runtime: a 'platform' source always carries a string id
@@ -661,7 +669,7 @@ function AppInner(): React.JSX.Element {
         {/* Frameless window controls — Windows/Linux only (macOS uses its native
           traffic lights). Floats over the top-right corner of the shell; the
           gallery toolbar reserves room for it (see Gallery's needsWinControls). */}
-        {customWindowControls && (
+        {caps.windowControls && (
           <div className="absolute top-0 right-0 z-50 no-drag">
             <WindowControls />
           </div>
@@ -699,24 +707,26 @@ function AppInner(): React.JSX.Element {
           onActivityAction={handleActivityAction}
         />
         <main className="flex-1 overflow-hidden relative">
-          <RemoteAiBanner />
+          {caps.ai && <RemoteAiBanner />}
           {/* Browser is always mounted so its webviews keep syncing in the background,
             even when another view is on screen; an opaque overlay covers it meanwhile.
             zIndex:0 makes this an isolated stacking context so the Browser's own
             loading bar (zIndex:10) can't poke through the overlay (zIndex:2) below. */}
-          <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
-            <BrowserMemo
-              activeTab={browserTab}
-              onSyncingChange={setBrowserSyncing}
-              onSavingChange={setSaving}
-              onSaved={handleBrowserSaved}
-              collections={collections}
-              onCreateCollection={createCollection}
-              onCollectionsChanged={handleCollectionsChanged}
-              registerSourceSyncApi={registerSourceSyncApi}
-              onSourceSyncJobs={setSourceSyncJobs as (jobs: unknown) => void}
-            />
-          </div>
+          {caps.browser && (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 0 }}>
+              <BrowserMemo
+                activeTab={browserTab}
+                onSyncingChange={setBrowserSyncing}
+                onSavingChange={setSaving}
+                onSaved={handleBrowserSaved}
+                collections={collections}
+                onCreateCollection={createCollection}
+                onCollectionsChanged={handleCollectionsChanged}
+                registerSourceSyncApi={registerSourceSyncApi}
+                onSourceSyncJobs={setSourceSyncJobs as (jobs: unknown) => void}
+              />
+            </div>
+          )}
           {/* Keep-alive: every visited (non-browser) view stays mounted in its own
             layer and is shown/hidden via `visibility` instead of being unmounted.
             Switching back is instant — no re-fetch, no skeleton, preserved scroll
@@ -768,10 +778,10 @@ function AppInner(): React.JSX.Element {
                       onCreateCollection={handleCreateCollection}
                       onAssigned={reloadCollections}
                       onStatsChanged={refreshStats}
-                      onOpenInWebsites={goOpenInWebsites}
-                      onReanalyzeWeb={goReanalyzeWeb}
+                      onOpenInWebsites={caps.websites ? goOpenInWebsites : undefined}
+                      onReanalyzeWeb={caps.websites ? goReanalyzeWeb : undefined}
                       sourceSyncJobs={sourceSyncJobs}
-                      onSyncSource={handleSyncSource}
+                      onSyncSource={caps.browser ? handleSyncSource : undefined}
                     />
                   )}
                   {v === 'downloads' && <Downloads downloads={downloads} />}

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, startTransition } from 'react';
 import { useT } from '../i18n';
 import { toApiFilters } from '../lib/postFilters';
+import { useShelfy } from '../api/ShelfyProvider';
 
 // UI-side filter bag accepted by the Gallery surfaces. Mirrors the fields
 // toApiFilters reads; pagination `limit` is the only window control here.
@@ -34,16 +35,6 @@ export interface UsePostsResult {
   error: string | null;
   total: number;
   reload: () => void;
-}
-
-// The db:getPosts handler resolves to a page envelope; the renderer narrows the
-// IPC result to this shape (defensively, since a malformed payload must not set
-// posts to undefined). Returned as a window of rows + the unpaged total.
-// The push channels carry runtime job records; usePatch only reads the job's
-// status, postId and (for the membership decision) nothing else.
-interface ProgressJob {
-  status?: string;
-  postId?: string | null;
 }
 
 // Deep value equality limited to the JSON-shaped data a post row carries
@@ -109,6 +100,7 @@ export function reconcilePosts(prev: Shelfy.Post[], next: Shelfy.Post[]): Shelfy
 export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): UsePostsResult {
   const active = options.active !== false;
   const t = useT('errors');
+  const client = useShelfy();
   const [posts, setPosts] = useState<Shelfy.Post[]>([]);
   // `loading` covers user-driven fetches (initial load, filter changes, manual
   // reload, infinite-scroll pages); `refreshing` covers background live reloads
@@ -122,7 +114,15 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
   const [reloadCounter, setReloadCounter] = useState<number>(0);
 
   // Track the AbortController for any in-flight request so we can cancel it.
-  const abortRef = useRef<{ aborted: boolean } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Where the next page starts: the cursor of the last page fetched (null once
+  // the last page is loaded: an append then has nothing to fetch), and how many
+  // rows the backend has served for the current query. Both are server-side
+  // positions, updated as soon as a page lands: the rendered list catches up
+  // later (startTransition), and sizing an append from it would overshoot.
+  const nextCursorRef = useRef<string | null>(null);
+  const fetchedRef = useRef<number>(0);
 
   // Set true for the *next* fetch only when it's triggered by a background
   // live-update (download/analyze/newPosts), so that fetch reports through
@@ -130,8 +130,6 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
   const liveReloadRef = useRef<boolean>(false);
 
   // Mirrors read by the once-only subscription effect below.
-  const postsRef = useRef<Shelfy.Post[]>(posts);
-  postsRef.current = posts;
   const filtersRef = useRef<PostFilters>(filters);
   filtersRef.current = filters;
   const activeRef = useRef<boolean>(active);
@@ -174,20 +172,14 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
 
   // -----------------------------------------------------------------------
   // Core fetch effect. Three kinds of run:
-  //   • replace — filters changed / manual reload: fetch the window from 0.
+  //   • replace — filters changed / manual reload: fetch the window from the start.
   //   • append  — only `limit` grew (infinite scroll): fetch just the missing
-  //     page at `offset: loaded` and concatenate, instead of re-querying (and
-  //     re-transferring) the whole already-loaded window on every scroll step.
+  //     page after the last one (its cursor) and concatenate, instead of
+  //     re-querying (and re-transferring) the whole already-loaded window on
+  //     every scroll step.
   //   • live    — background event: replace + reconcile by id under `refreshing`.
   // -----------------------------------------------------------------------
   useEffect(() => {
-    // Signal to cancel any previous in-flight request.
-    if (abortRef.current) {
-      abortRef.current.aborted = true;
-    }
-    const thisRequest = { aborted: false };
-    abortRef.current = thisRequest;
-
     const limit = filters.limit || 50;
     const sigChanged = filtersSig !== prevSigRef.current;
     const reloadBumped = reloadCounter !== prevReloadRef.current;
@@ -201,14 +193,27 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
     const isLive = liveReloadRef.current && !sigChanged && !limitGrew;
     liveReloadRef.current = false;
 
-    const loaded = postsRef.current.length;
-    const isAppend = !sigChanged && !reloadBumped && limitGrew && loaded > 0;
+    const fetched = fetchedRef.current;
+    const isAppend = !sigChanged && !reloadBumped && limitGrew && fetched > 0;
 
-    const base = toApiFilters(filters);
-    const apiFilters = isAppend
-      ? { ...base, limit: limit - loaded, offset: loaded }
-      : { ...base, limit, offset: 0 };
-    if (isAppend && apiFilters.limit <= 0) return undefined;
+    const query = toApiFilters(filters);
+    const pageLimit = isAppend ? limit - fetched : limit;
+    const cursor = isAppend ? nextCursorRef.current : null;
+    // Nothing more to append (the last page is loaded): leave any in-flight
+    // request alone.
+    if (isAppend && (pageLimit <= 0 || !cursor)) return;
+
+    // Cancel any previous in-flight request; the client drops its fetch.
+    abortRef.current?.abort();
+    const thisRequest = new AbortController();
+    abortRef.current = thisRequest;
+    // A new query: until this run lands, an append has nothing valid to
+    // continue from. (A live reload keeps the shown list, and its position,
+    // until it lands.)
+    if (!isAppend && !isLive) {
+      nextCursorRef.current = null;
+      fetchedRef.current = 0;
+    }
 
     const setBusy = isLive ? setRefreshing : setLoading;
     // This run just aborted any in-flight request of the other kind; clear its
@@ -221,16 +226,21 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
       if (!isLive) setError(null);
 
       try {
-        const result = await window.electronAPI.getPosts(apiFilters);
+        const result = await client.listPosts(query, {
+          limit: pageLimit,
+          cursor,
+          signal: thisRequest.signal,
+        });
 
         // Bail out if a newer request has started since this one was fired.
-        if (thisRequest.aborted) return;
+        if (thisRequest.signal.aborted) return;
 
-        // Defensive: a malformed / empty IPC result (undefined, or missing
-        // `posts`) must not set posts to undefined — that crashes downstream
-        // consumers (posts.map / posts.length) at render time, which the awaited
-        // try/catch can't recover.
+        // Defensive: a malformed result must not set posts to undefined — that
+        // crashes downstream consumers (posts.map / posts.length) at render
+        // time, which the awaited try/catch can't recover.
         const page = Array.isArray(result?.posts) ? result.posts : [];
+        nextCursorRef.current = result.nextCursor;
+        fetchedRef.current = (isAppend ? fetched : 0) + page.length;
         // startTransition: a page landing (infinite scroll) or a live refresh is a
         // non-urgent list update — marking it lets React keep an in-progress scroll
         // responsive instead of blocking a frame on the reconciliation/commit.
@@ -247,25 +257,25 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
         } else {
           startTransition(() => setPosts((prev) => reconcilePosts(prev, page)));
         }
-        setTotal(result?.total ?? 0);
+        // A later page may come without the total: keep the first page's.
+        if (typeof result.total === 'number') setTotal(result.total);
       } catch (err) {
-        if (thisRequest.aborted) return;
+        if (thisRequest.signal.aborted) return;
         console.error('[usePosts] fetch error:', err);
         if (!isLive) setError((err instanceof Error ? err.message : null) ?? t('loadPosts'));
       } finally {
-        if (!thisRequest.aborted) {
+        if (!thisRequest.signal.aborted) {
           setBusy(false);
         }
       }
     })();
-
-    return () => {
-      // Mark the request as aborted so any already-dispatched async call
-      // ignores its result.
-      thisRequest.aborted = true;
-    };
+    // No cleanup: the next run that fetches cancels this request (see above),
+    // and the unmount effect below cancels it on unmount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersSig, filters.limit, reloadCounter, t]);
+  }, [filtersSig, filters.limit, reloadCounter, t, client]);
+
+  // Unmount: drop the in-flight request so its result is ignored.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   // Reactivation of a kept-alive view: if live events were deferred while the
   // view was hidden, reconcile once now.
@@ -278,15 +288,16 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
   }, [active]);
 
   // -----------------------------------------------------------------------
-  // Keep the grid live while background work runs. Three push channels feed it:
-  //   • interceptor:newPosts — scraping / sync / web placeholders insert rows
-  //   • download:progress    — a completed download writes the local asset path
-  //   • analyze:progress     — a completed analysis writes ai_tags / ai_status
+  // Keep the grid live while background work runs. Three client events feed it
+  // (on the desktop: interceptor:newPosts, download:progress, analyze:progress):
+  //   • posts.changed — scraping / sync / web placeholders insert rows
+  //   • post.stored   — a post's media landed (local asset path written)
+  //   • post.analyzed — a completed analysis wrote ai_tags / ai_status
   // so the gallery reflects new media and tags as they land, not only at the end.
   //
-  // Completed download/analyze jobs carry the post id, so when the active
-  // filters can't change the row's membership in the result set we patch that
-  // single row in place (getPostsByIds) instead of re-fetching the whole window.
+  // Finished jobs carry the post id, so when the active filters can't change
+  // the row's membership in the result set we patch that single row in place
+  // (getPostsByIds) instead of re-fetching the whole window.
   // Everything else funnels into a coalesced reload: a plain trailing debounce
   // would *never* fire during a continuous burst (each event resets the timer),
   // so we add a maxWait — the reload still coalesces a flurry of events (QUIET
@@ -319,7 +330,7 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
 
     const patchPost = async (postId: string): Promise<void> => {
       try {
-        const rows = await window.electronAPI.getPostsByIds([postId]);
+        const rows = await client.getPostsByIds([postId]);
         const fresh = Array.isArray(rows) ? rows[0] : null;
         if (!fresh) return;
         setPosts((prev) => {
@@ -335,13 +346,10 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
       }
     };
 
-    const api = window.electronAPI;
-    const offNew = api.onNewPosts(() => schedule());
-    // Only completed jobs change what getPosts returns; mid-progress ticks would
-    // just thrash the grid, so we ignore everything but the terminal 'done'.
-    const offDownload = api.onDownloadProgress?.((data) => {
-      const job = data as ProgressJob;
-      if (job?.status !== 'done') return;
+    const offNew = client.on('posts.changed', () => schedule());
+    // Only finished jobs change what listPosts returns (the client drops the
+    // mid-progress ticks, which would just thrash the grid).
+    const offDownload = client.on('post.stored', (job) => {
       if (!activeRef.current) {
         dirtyRef.current = true;
         return;
@@ -356,9 +364,7 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
         schedule();
       }
     });
-    const offAnalyze = api.onAnalyzeProgress?.((data) => {
-      const job = data as ProgressJob;
-      if (job?.status !== 'done') return;
+    const offAnalyze = client.on('post.analyzed', (job) => {
       if (!activeRef.current) {
         dirtyRef.current = true;
         return;
@@ -383,11 +389,11 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
     return () => {
       if (quietTimer) clearTimeout(quietTimer);
       if (maxTimer) clearTimeout(maxTimer);
-      offNew?.();
-      offDownload?.();
-      offAnalyze?.();
+      offNew();
+      offDownload();
+      offAnalyze();
     };
-  }, []); // intentionally empty — we only subscribe once
+  }, [client]); // the client is stable: we only subscribe once
 
   return { posts, loading, refreshing, error, total, reload };
 }

@@ -9,6 +9,7 @@ import React, {
   type ReactNode,
 } from 'react';
 import type { AnalyzePostResult, QueuedResult } from '../../types/electron-api';
+import { useCapabilities } from '../api/ShelfyProvider';
 
 // The analyzer's runtime job record (analyze:getJobs → onAnalyzeProgress). It has
 // no Shelfy.* domain type (it's an analyzer-internal shape, not the persisted
@@ -555,9 +556,11 @@ interface AnalysisProviderProps {
 }
 
 // Mounts a single shared analysis instance and exposes it to all descendants,
-// so App and PostModal share the same jobs/modelStatus/subscriptions.
+// so App and PostModal share the same jobs/modelStatus/subscriptions. A client
+// without the `ai` capability gets a dormant instance (no jobs, no model).
 export function AnalysisProvider({ children }: AnalysisProviderProps): React.JSX.Element {
-  const value = useAnalysisStandalone();
+  const { ai } = useCapabilities();
+  const value = useAnalysisStandalone(ai);
   return createElement(AnalysisContext.Provider, { value }, children);
 }
 
@@ -565,8 +568,9 @@ export function AnalysisProvider({ children }: AnalysisProviderProps): React.JSX
 // falls back to a standalone instance otherwise (keeps renderHook tests working).
 export function useAnalysis(): AnalysisInstance {
   const ctx = useContext(AnalysisContext);
+  const { ai } = useCapabilities();
   // The standalone instance is only active (subscribes/loads) when no provider
   // supplies the shared one — keeps hook order stable without double work.
-  const standalone = useAnalysisStandalone(ctx == null);
+  const standalone = useAnalysisStandalone(ctx == null && ai);
   return ctx ?? standalone;
 }

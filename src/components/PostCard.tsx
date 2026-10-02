@@ -12,12 +12,14 @@ import {
   Award,
   FileText,
 } from 'lucide-react';
-import { assetThumbUrl, assetUrl } from '../lib/asset';
+import type { MediaUrls } from '../api/ShelfyClient';
+import { useShelfy } from '../api/ShelfyProvider';
 
 // Target box for grid-tile images. Local files are often full-resolution
 // originals (multi-MB); the asset protocol serves a cached fit-in-640px copy
-// instead so a scroll-burst of tiles doesn't stall on huge decodes. The modal
-// still loads the original. Keep in sync with main.js PREWARM_TILE_WIDTH.
+// instead so a scroll-burst of tiles doesn't stall on huge decodes (the web
+// serves its 480px rendition). The modal still loads the original. Keep in
+// sync with main.js PREWARM_TILE_WIDTH.
 const TILE_WIDTH = 640;
 import SourceIcon, { PLATFORM_COLORS } from './SourceIcon';
 import { useT, useLang, localeTag } from '../i18n';
@@ -323,11 +325,11 @@ function formatTimestamp(timestamp: string | null, locale: string): string {
 
 // The ordered image sources to cycle through on hover. Prefers the downloaded
 // file for each carousel slide, falling back to its remote URL.
-function buildSlideshowImages(post: Shelfy.Post): string[] {
+function buildSlideshowImages(post: Shelfy.Post, media: MediaUrls): string[] {
   if (!Array.isArray(post.media)) return [];
   return post.media
     .filter((m): m is Shelfy.PostMedia => !!m && m.type === 'image')
-    .map((m) => (m.localPath ? assetThumbUrl(m.localPath, TILE_WIDTH) : m.url))
+    .map((m) => (m.localPath ? media.tile(m.localPath, TILE_WIDTH) : m.url))
     .filter((src): src is string => Boolean(src));
 }
 
@@ -350,10 +352,13 @@ function PostCard({
 }: PostCardProps): React.JSX.Element {
   const t = useT('postCard');
   const { lang } = useLang();
+  // Local file references resolve through the client (asset:// on the desktop,
+  // /media on the web).
+  const { media, capabilities } = useShelfy();
   const isWeb = post.platform === 'web';
   const isManual = post.platform === 'manual';
   const localImage = post.thumbnailPath || post.imagePath || post.previewPath;
-  const imageSrc = localImage ? assetThumbUrl(localImage, TILE_WIDTH) : post.thumbnailUrl || null;
+  const imageSrc = localImage ? media.tile(localImage, TILE_WIDTH) : post.thumbnailUrl || null;
   const isDownloaded = !!(post.thumbnailPath || post.imagePath || post.videoPath);
 
   // Web-only extras — all render-conditional so a freshly-added (raw) site that
@@ -399,13 +404,13 @@ function PostCard({
 
   // Hover preview: a downloaded single-video post autoplays muted; a multi-image
   // carousel runs a slideshow; a single image does nothing.
-  const localVideoSrc = post.videoPath ? assetUrl(post.videoPath) : null;
+  const localVideoSrc = post.videoPath ? media.file(post.videoPath) : null;
   // Depend on a stable key (id + media length) rather than the whole post object,
   // so a new post reference with unchanged media doesn't rebuild the array.
   const slideshowImages = useMemo<string[]>(
-    () => buildSlideshowImages(post),
+    () => buildSlideshowImages(post, media),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [post.id, Array.isArray(post.media) ? post.media.length : 0],
+    [post.id, Array.isArray(post.media) ? post.media.length : 0, media],
   );
 
   const [hovering, setHovering] = useState<boolean>(false);
@@ -655,7 +660,8 @@ function PostCard({
             // back to the informative block instead of the browser broken-image glyph.
             onError={() => {
               setImageFailed(true);
-              if (!isWeb && !isManual && post.thumbnailUrl) {
+              // The desktop re-fetches the preview into its local cache.
+              if (capabilities.localFiles && !isWeb && !isManual && post.thumbnailUrl) {
                 void window.electronAPI?.repairPreview?.(post.id)?.catch(() => {});
               }
             }}

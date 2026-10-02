@@ -1,6 +1,7 @@
 import React from 'react';
 import { HardDriveDownload } from 'lucide-react';
 import { useT, useLang, localeTag } from '../../i18n';
+import { useCapabilities } from '../../api/ShelfyProvider';
 import { formatTimestamp, MEDIA_TYPE_KEY } from './helpers';
 import WebMetaPanel from './WebMetaPanel';
 import AiPanel from './AiPanel';
@@ -38,6 +39,8 @@ export default function MetaColumn({
 }: MetaColumnProps) {
   const t = useT('postModal');
   const { lang } = useLang();
+  // Links to the files on this machine (desktop only).
+  const { localFiles } = useCapabilities();
 
   // Secondary facts, rendered as one quiet byline so they recede behind the caption.
   const dateStr = formatTimestamp(post.timestamp, localeTag(lang));
@@ -49,13 +52,15 @@ export default function MetaColumn({
     dateStr,
   ].filter((v): v is string => Boolean(v));
 
-  const localAssets: Array<[string, string]> = (
-    [
-      [post.thumbnailPath, t('assetThumbnail')],
-      [post.imagePath, t('assetImage')],
-      [post.videoPath, t('assetVideo')],
-    ] as Array<[string | null, string]>
-  ).filter((entry): entry is [string, string] => Boolean(entry[0]));
+  const localAssets: Array<[string, string]> = localFiles
+    ? (
+        [
+          [post.thumbnailPath, t('assetThumbnail')],
+          [post.imagePath, t('assetImage')],
+          [post.videoPath, t('assetVideo')],
+        ] as Array<[string | null, string]>
+      ).filter((entry): entry is [string, string] => Boolean(entry[0]))
+    : [];
 
   if (isWeb) {
     /* ── Web reference: caption / metadata / AI / facts ─────────────────────── */

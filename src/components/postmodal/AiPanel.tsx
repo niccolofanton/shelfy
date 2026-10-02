@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useT } from '../../i18n';
 import { useAnalysis } from '../../hooks/useAnalysis';
+import { useCapabilities } from '../../api/ShelfyProvider';
 import Popover from '../Popover';
 import type { ApplyAiFilter, PostUpdated } from './MetaColumn';
 
@@ -84,6 +85,9 @@ function Section({ children, action }: SectionProps) {
 interface UserLayerProps {
   note: string;
   manualTags: string[];
+  // Shows the tags and the note without the editing affordances (a client
+  // without the `libraryEdit` capability).
+  readOnly?: boolean;
   onApplyAiFilter?: ApplyAiFilter;
   onChangeNote: (text: string) => Promise<void>;
   onChangeManualTags: (next: string[]) => Promise<void>;
@@ -99,6 +103,7 @@ interface UserLayerProps {
 function UserLayer({
   note,
   manualTags,
+  readOnly = false,
   onApplyAiFilter,
   onChangeNote,
   onChangeManualTags,
@@ -161,6 +166,46 @@ function UserLayer({
       setSavingNote(false);
     }
   };
+
+  if (readOnly) {
+    if (!tags.length && !note) return null;
+    return (
+      <div className="space-y-3 pt-2.5 mt-0.5 border-t border-[#242424]">
+        {tags.length > 0 && (
+          <div className="space-y-1.5">
+            <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#6a6a6a]">
+              <Tags size={11} className="text-emerald-400/80" /> {t('yourTags')}
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {tags.map((tag) => (
+                <button
+                  key={tag}
+                  onClick={() => onApplyAiFilter?.({ tag: tag })}
+                  title={t('filterByTag')}
+                  className="u-pop-in u-press px-2 py-0.5 rounded-full bg-emerald-500/12 text-emerald-300 text-[11px] hover:text-emerald-100"
+                >
+                  #{tag}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {note && (
+          <div className="space-y-1.5">
+            <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#6a6a6a]">
+              <StickyNote size={11} className="text-emerald-400/80" /> {t('note')}
+            </span>
+            <p
+              data-testid="post-modal-note"
+              className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-[#d8d8d8]"
+            >
+              {note}
+            </p>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3 pt-2.5 mt-0.5 border-t border-[#242424]">
@@ -280,6 +325,9 @@ export default function AiPanel({
 }: AiPanelProps) {
   const t = useT('postModal');
   const tc = useT('common');
+  // `ai`: analyze / regenerate. `libraryEdit`: manual AI edits, tags and note.
+  // Without them the panel only shows what the post already carries.
+  const { ai, libraryEdit } = useCapabilities();
   const {
     jobFor,
     modelStatus,
@@ -542,8 +590,13 @@ export default function AiPanel({
   // but never offer the analyze/regenerate action for it.
   const videoNeedsDownload = post.mediaType === 'video' && !post.videoPath;
 
-  if (!hasLocalAsset && !hasExistingAnalysis) return null;
-  if (videoNeedsDownload && !hasExistingAnalysis) return null;
+  const hasUserContent = !!userNote || manualTags.length > 0;
+  if (ai) {
+    if (!hasLocalAsset && !hasExistingAnalysis) return null;
+    if (videoNeedsDownload && !hasExistingAnalysis) return null;
+  } else if (!hasExistingAnalysis && !hasUserContent && !libraryEdit) {
+    return null;
+  }
 
   const handleAnalyze = async (): Promise<void> => {
     // Drop any manual-edit/description-delete override so the regenerated analysis
@@ -695,87 +748,93 @@ export default function AiPanel({
     return (
       <Section
         action={
-          <div className="flex items-center gap-0.5">
-            <button
-              data-testid="post-modal-edit"
-              onClick={startEditing}
-              title={t('editAi')}
-              className="u-press flex items-center justify-center w-6 h-6 rounded-md text-[#8a8a8a] hover:text-white hover:bg-[#2a2a2a]"
-            >
-              <Pencil size={13} />
-            </button>
-            {(description || (tags?.length ?? 0) > 0) && (
-              <div ref={moreRef}>
-                <button
-                  data-testid="post-modal-ai-more"
-                  onClick={() => (moreOpen ? closeMore() : setMoreOpen(true))}
-                  aria-haspopup="menu"
-                  aria-expanded={moreOpen}
-                  title={t('moreActions')}
-                  className="u-press flex items-center justify-center w-6 h-6 rounded-md text-[#8a8a8a] hover:text-white hover:bg-[#2a2a2a]"
-                >
-                  <MoreHorizontal size={15} />
-                </button>
-                <Popover
-                  anchorRef={moreRef}
-                  open={moreOpen}
-                  onRequestClose={closeMore}
-                  align="right"
-                  placement="bottom"
-                  className="min-w-[210px] bg-[#1f1f1f] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 flex flex-col"
-                >
-                  <div role="menu" data-testid="post-modal-ai-menu">
-                    {description && (
-                      <button
-                        data-testid="post-modal-delete-description"
-                        onClick={() =>
-                          confirmDeleteDesc ? handleDeleteDescription() : setConfirmDeleteDesc(true)
-                        }
-                        disabled={deletingDesc}
-                        className={[
-                          menuItemBase,
-                          'w-full',
-                          confirmDeleteDesc
-                            ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25'
-                            : 'text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white',
-                        ].join(' ')}
-                      >
-                        {deletingDesc ? (
-                          <Loader2 size={14} className="animate-spin shrink-0" />
-                        ) : (
-                          <Trash2 size={14} className="shrink-0" />
-                        )}
-                        {confirmDeleteDesc ? t('confirmDeleteDescription') : t('deleteDescription')}
-                      </button>
-                    )}
-                    {(tags?.length ?? 0) > 0 && (
-                      <button
-                        data-testid="post-modal-clear-tags"
-                        onClick={() =>
-                          confirmDeleteTags ? handleClearAiTags() : setConfirmDeleteTags(true)
-                        }
-                        disabled={deletingTags}
-                        className={[
-                          menuItemBase,
-                          'w-full',
-                          confirmDeleteTags
-                            ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25'
-                            : 'text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white',
-                        ].join(' ')}
-                      >
-                        {deletingTags ? (
-                          <Loader2 size={14} className="animate-spin shrink-0" />
-                        ) : (
-                          <Tags size={14} className="shrink-0" />
-                        )}
-                        {confirmDeleteTags ? t('confirmRemoveAiTags') : t('removeAiTags')}
-                      </button>
-                    )}
-                  </div>
-                </Popover>
-              </div>
-            )}
-          </div>
+          libraryEdit && (
+            <div className="flex items-center gap-0.5">
+              <button
+                data-testid="post-modal-edit"
+                onClick={startEditing}
+                title={t('editAi')}
+                className="u-press flex items-center justify-center w-6 h-6 rounded-md text-[#8a8a8a] hover:text-white hover:bg-[#2a2a2a]"
+              >
+                <Pencil size={13} />
+              </button>
+              {(description || (tags?.length ?? 0) > 0) && (
+                <div ref={moreRef}>
+                  <button
+                    data-testid="post-modal-ai-more"
+                    onClick={() => (moreOpen ? closeMore() : setMoreOpen(true))}
+                    aria-haspopup="menu"
+                    aria-expanded={moreOpen}
+                    title={t('moreActions')}
+                    className="u-press flex items-center justify-center w-6 h-6 rounded-md text-[#8a8a8a] hover:text-white hover:bg-[#2a2a2a]"
+                  >
+                    <MoreHorizontal size={15} />
+                  </button>
+                  <Popover
+                    anchorRef={moreRef}
+                    open={moreOpen}
+                    onRequestClose={closeMore}
+                    align="right"
+                    placement="bottom"
+                    className="min-w-[210px] bg-[#1f1f1f] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 flex flex-col"
+                  >
+                    <div role="menu" data-testid="post-modal-ai-menu">
+                      {description && (
+                        <button
+                          data-testid="post-modal-delete-description"
+                          onClick={() =>
+                            confirmDeleteDesc
+                              ? handleDeleteDescription()
+                              : setConfirmDeleteDesc(true)
+                          }
+                          disabled={deletingDesc}
+                          className={[
+                            menuItemBase,
+                            'w-full',
+                            confirmDeleteDesc
+                              ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25'
+                              : 'text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white',
+                          ].join(' ')}
+                        >
+                          {deletingDesc ? (
+                            <Loader2 size={14} className="animate-spin shrink-0" />
+                          ) : (
+                            <Trash2 size={14} className="shrink-0" />
+                          )}
+                          {confirmDeleteDesc
+                            ? t('confirmDeleteDescription')
+                            : t('deleteDescription')}
+                        </button>
+                      )}
+                      {(tags?.length ?? 0) > 0 && (
+                        <button
+                          data-testid="post-modal-clear-tags"
+                          onClick={() =>
+                            confirmDeleteTags ? handleClearAiTags() : setConfirmDeleteTags(true)
+                          }
+                          disabled={deletingTags}
+                          className={[
+                            menuItemBase,
+                            'w-full',
+                            confirmDeleteTags
+                              ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25'
+                              : 'text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white',
+                          ].join(' ')}
+                        >
+                          {deletingTags ? (
+                            <Loader2 size={14} className="animate-spin shrink-0" />
+                          ) : (
+                            <Tags size={14} className="shrink-0" />
+                          )}
+                          {confirmDeleteTags ? t('confirmRemoveAiTags') : t('removeAiTags')}
+                        </button>
+                      )}
+                    </div>
+                  </Popover>
+                </div>
+              )}
+            </div>
+          )
         }
       >
         {description && (
@@ -834,7 +893,7 @@ export default function AiPanel({
           </p>
         )}
 
-        {!videoNeedsDownload && (
+        {ai && !videoNeedsDownload && (
           <div className="flex items-center gap-3 pt-0.5">
             <button
               data-testid="post-modal-regenerate"
@@ -849,6 +908,7 @@ export default function AiPanel({
         <UserLayer
           note={userNote}
           manualTags={manualTags}
+          readOnly={!libraryEdit}
           onApplyAiFilter={onApplyAiFilter}
           onChangeNote={handleChangeNote}
           onChangeManualTags={handleChangeManualTags}
@@ -859,28 +919,31 @@ export default function AiPanel({
 
   return (
     <Section>
-      {status === 'error' && job?.error && (
+      {ai && status === 'error' && job?.error && (
         <p className="text-[11px] text-red-400/90 break-words">
           {t('errorPrefix', { error: job.error })}
         </p>
       )}
-      <button
-        data-testid="post-modal-analyze"
-        onClick={status === 'error' ? () => job && retryJob(job.key) : handleAnalyze}
-        className="u-press flex items-center gap-1.5 px-2.5 h-8 rounded-md text-xs bg-violet-500/15 text-violet-200 hover:bg-violet-500/25"
-      >
-        {modelReady ? <Sparkles size={14} /> : <Download size={14} />}
-        {status === 'error'
-          ? tc('retry')
-          : modelReady
-            ? t('analyzePost')
-            : t('downloadModelAndAnalyze')}
-      </button>
+      {ai && (
+        <button
+          data-testid="post-modal-analyze"
+          onClick={status === 'error' ? () => job && retryJob(job.key) : handleAnalyze}
+          className="u-press flex items-center gap-1.5 px-2.5 h-8 rounded-md text-xs bg-violet-500/15 text-violet-200 hover:bg-violet-500/25"
+        >
+          {modelReady ? <Sparkles size={14} /> : <Download size={14} />}
+          {status === 'error'
+            ? tc('retry')
+            : modelReady
+              ? t('analyzePost')
+              : t('downloadModelAndAnalyze')}
+        </button>
+      )}
 
       {/* Manual tags + personal note are available even before any AI analysis. */}
       <UserLayer
         note={userNote}
         manualTags={manualTags}
+        readOnly={!libraryEdit}
         onApplyAiFilter={onApplyAiFilter}
         onChangeNote={handleChangeNote}
         onChangeManualTags={handleChangeManualTags}

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useCapabilities } from '../api/ShelfyProvider';
 
 // Runtime download-job record as pushed by onDownloadProgress / returned by
 // getDownloadStatus (electron/downloader.ts DownloadJobRecord, not the DB row).
@@ -59,7 +60,10 @@ const FLUSH_WINDOW = 100;
 // refresh into at most one call per window (same policy as onNewPosts in App).
 const STATS_WINDOW = 800;
 
+// The queue lives on this machine: a client without the `localFiles`
+// capability (the web app) gets an empty, idle queue.
 export function useDownloads(): UseDownloads {
+  const { localFiles: enabled } = useCapabilities();
   const [jobs, setJobs] = useState<DownloadJobRecord[]>([]);
   const [stats, setStats] = useState<DownloadStats>({
     total: 0,
@@ -151,6 +155,7 @@ export function useDownloads(): UseDownloads {
   }, [syncJobs]);
 
   useEffect(() => {
+    if (!enabled) return undefined;
     refreshJobs();
     refreshStats();
     window.electronAPI.getDownloadIsPaused?.().then(setIsPaused);
@@ -175,7 +180,7 @@ export function useDownloads(): UseDownloads {
         statsTimerRef.current = null;
       }
     };
-  }, [refreshJobs, refreshStats, scheduleFlush, bumpStats]);
+  }, [enabled, refreshJobs, refreshStats, scheduleFlush, bumpStats]);
 
   // Stats polling: getStats runs several COUNT(*) aggregations, so only poll
   // while the queue is actually active. The 'done' progress handler already

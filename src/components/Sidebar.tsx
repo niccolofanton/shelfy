@@ -21,10 +21,7 @@ import Logo from './Logo';
 import ActivityCenter from './ActivityCenter';
 import FeedbackModal from './FeedbackModal';
 import { useT } from '../i18n';
-
-// Frameless chrome: macOS keeps native traffic lights (top-left), so the sidebar
-// reserves a draggable strip for them. Other platforms put controls top-right.
-const isMacChrome = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin';
+import { useCapabilities } from '../api/ShelfyProvider';
 
 // Translator returned by useT — namespaced key + optional interpolation vars.
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
@@ -232,6 +229,11 @@ function Sidebar({
   onActivityAction,
 }: SidebarProps): React.JSX.Element {
   const t: Translate = useT('sidebar');
+  // Each group and row exists only where the client can back it: the web app
+  // shows the library (all posts, platforms, folders) and nothing else yet.
+  const caps = useCapabilities();
+  const showConnections = caps.browser || caps.websites || caps.bookmarks;
+  const showFooter = caps.feedback || caps.activity || caps.settings;
   const total = stats?.total ?? 0;
   const byPlatform: Partial<Record<string, number>> = stats?.byPlatform ?? {};
 
@@ -341,18 +343,25 @@ function Sidebar({
           }}
         />
         <span className="ml-2.5 flex-1 truncate">{c.name}</span>
-        <button
-          data-testid={`edit-collection-${c.id}`}
-          onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
-            e.stopPropagation();
-            onEditCollection?.(c);
-          }}
-          title={t('editSource')}
-          className="u-press u-fade-in hidden group-hover:flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-white transition-colors"
+        {caps.libraryEdit && (
+          <button
+            data-testid={`edit-collection-${c.id}`}
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+              e.stopPropagation();
+              onEditCollection?.(c);
+            }}
+            title={t('editSource')}
+            className="u-press u-fade-in hidden group-hover:flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-white transition-colors"
+          >
+            <Pencil size={13} />
+          </button>
+        )}
+        <span
+          className={[
+            'ml-1.5 text-[11px] text-gray-500 tabular-nums',
+            caps.libraryEdit ? 'group-hover:hidden' : '',
+          ].join(' ')}
         >
-          <Pencil size={13} />
-        </button>
-        <span className="ml-1.5 text-[11px] text-gray-500 tabular-nums group-hover:hidden">
           {formatCount(c.count ?? 0)}
         </span>
         {/* Keeps the count aligned in the same column as rows that DO have a chevron. */}
@@ -380,7 +389,7 @@ function Sidebar({
       {/* Frameless window: on macOS reserve a draggable top strip for the native
           traffic lights (positioned here via trafficLightPosition in main.ts). On
           Windows/Linux the custom controls live top-right (see App), so no strip. */}
-      {isMacChrome && <div className="drag-region h-9 shrink-0" />}
+      {caps.trafficLights && <div className="drag-region h-9 shrink-0" />}
 
       {/* App header — pinned above the single scrolling menu; doubles as the
           window drag handle (its interactive children opt out via the global
@@ -409,6 +418,7 @@ function Sidebar({
         <nav className="flex flex-col gap-0.5 mt-1">
           {/* ===================== CONNECTIONS (ex Sources/Browser) ===================== */}
           {(() => {
+            if (!showConnections) return null;
             const open = expandedGroups.browser;
             return (
               <>
@@ -425,75 +435,80 @@ function Sidebar({
 
                 {open && (
                   <div className="flex flex-col gap-0.5 mb-0.5">
-                    {BROWSER_TABS.map((tab, i) => {
-                      const subActive = currentView === 'browser' && browserTab === tab.id;
-                      const count = newPostsAlert?.[tab.id] || 0;
-                      const syncing = !!browserSyncing?.[tab.id];
-                      const TabIcon = tab.Icon;
-                      return (
-                        <button
-                          key={tab.id}
-                          data-testid={`browser-tab-${tab.id}`}
-                          aria-current={subActive ? 'page' : undefined}
-                          onClick={() => onSelectBrowserTab?.(tab.id)}
-                          style={{ animationDelay: i * 30 + 'ms' }}
-                          className={[
-                            'u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
-                            subActive
-                              ? 'bg-[#1e1e1e] text-white'
-                              : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
-                          ].join(' ')}
-                        >
-                          <TabIcon size={15} className="shrink-0" />
-                          <span className="flex-1">{tab.label}</span>
-                          {syncing && (
-                            <RefreshCw
-                              size={12}
-                              data-testid={`browser-tab-${tab.id}-syncing`}
-                              className="shrink-0 text-amber-400 u-spin"
-                            />
-                          )}
-                          {count > 0 && (
-                            <span
-                              data-testid={`browser-tab-${tab.id}-badge`}
-                              className="u-pop-in flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
-                            >
-                              {formatBadge(count)}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
+                    {caps.browser &&
+                      BROWSER_TABS.map((tab, i) => {
+                        const subActive = currentView === 'browser' && browserTab === tab.id;
+                        const count = newPostsAlert?.[tab.id] || 0;
+                        const syncing = !!browserSyncing?.[tab.id];
+                        const TabIcon = tab.Icon;
+                        return (
+                          <button
+                            key={tab.id}
+                            data-testid={`browser-tab-${tab.id}`}
+                            aria-current={subActive ? 'page' : undefined}
+                            onClick={() => onSelectBrowserTab?.(tab.id)}
+                            style={{ animationDelay: i * 30 + 'ms' }}
+                            className={[
+                              'u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
+                              subActive
+                                ? 'bg-[#1e1e1e] text-white'
+                                : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                            ].join(' ')}
+                          >
+                            <TabIcon size={15} className="shrink-0" />
+                            <span className="flex-1">{tab.label}</span>
+                            {syncing && (
+                              <RefreshCw
+                                size={12}
+                                data-testid={`browser-tab-${tab.id}-syncing`}
+                                className="shrink-0 text-amber-400 u-spin"
+                              />
+                            )}
+                            {count > 0 && (
+                              <span
+                                data-testid={`browser-tab-${tab.id}-badge`}
+                                className="u-pop-in flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
+                              >
+                                {formatBadge(count)}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
 
                     {/* Action row inside the Connections group: opens the "add web
                         reference" modal (sites via URL, alongside the social tabs
                         that import via webview). Not a view → no active state.
                         Action rows read lighter (gray-500) than nav rows and share
                         the Plus affordance, so they don't pass for destinations. */}
-                    <button
-                      data-testid="browser-tab-add-site"
-                      onClick={() => onAddSite?.()}
-                      title={t('addSite')}
-                      style={{ animationDelay: BROWSER_TABS.length * 30 + 'ms' }}
-                      className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
-                    >
-                      <Plus size={15} className="shrink-0" />
-                      <span className="flex-1">{t('website')}</span>
-                    </button>
+                    {caps.websites && (
+                      <button
+                        data-testid="browser-tab-add-site"
+                        onClick={() => onAddSite?.()}
+                        title={t('addSite')}
+                        style={{ animationDelay: BROWSER_TABS.length * 30 + 'ms' }}
+                        className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
+                      >
+                        <Plus size={15} className="shrink-0" />
+                        <span className="flex-1">{t('website')}</span>
+                      </button>
+                    )}
 
                     {/* Manual bookmark: add local files (images/videos/pdf/any) +
                         note + tags. Sits alongside "Add website" as an add-content
                         action; not a view → no active state. */}
-                    <button
-                      data-testid="browser-tab-add-bookmark"
-                      onClick={() => onAddBookmark?.()}
-                      title={t('addBookmark')}
-                      style={{ animationDelay: (BROWSER_TABS.length + 1) * 30 + 'ms' }}
-                      className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
-                    >
-                      <Plus size={15} className="shrink-0" />
-                      <span className="flex-1">{t('manualBookmark')}</span>
-                    </button>
+                    {caps.bookmarks && (
+                      <button
+                        data-testid="browser-tab-add-bookmark"
+                        onClick={() => onAddBookmark?.()}
+                        title={t('addBookmark')}
+                        style={{ animationDelay: (BROWSER_TABS.length + 1) * 30 + 'ms' }}
+                        className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
+                      >
+                        <Plus size={15} className="shrink-0" />
+                        <span className="flex-1">{t('manualBookmark')}</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </>
@@ -675,52 +690,56 @@ function Sidebar({
                         (a "folder/label" for organising bookmarks). Not a view →
                         no active state. Reads lighter (gray-500) like the add
                         rows in Connections, with the same "+" affordance. */}
-                        <button
-                          data-testid="add-source-btn"
-                          onClick={onAddCollection}
-                          title={t('addCollection')}
-                          className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
-                        >
-                          <FolderPlus size={15} className="shrink-0" />
-                          <span className="flex-1">{t('newFolder')}</span>
-                        </button>
+                        {caps.libraryEdit && (
+                          <button
+                            data-testid="add-source-btn"
+                            onClick={onAddCollection}
+                            title={t('addCollection')}
+                            className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
+                          >
+                            <FolderPlus size={15} className="shrink-0" />
+                            <span className="flex-1">{t('newFolder')}</span>
+                          </button>
+                        )}
                       </div>
                     )}
 
                     {/* Downloads — sibling row after the All posts block (collapsed
                         or expanded, it always sits just below it). */}
-                    <button
-                      data-testid="nav-downloads"
-                      aria-current={currentView === 'downloads' ? 'page' : undefined}
-                      onClick={() => onNavigate('downloads')}
-                      className={[
-                        'u-press group relative w-full flex items-center pl-9 pr-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
-                        currentView === 'downloads'
-                          ? 'bg-[#1e1e1e] text-white'
-                          : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
-                      ].join(' ')}
-                    >
-                      {currentView === 'downloads' && accentBar()}
-                      <Download size={15} className="shrink-0 mr-2.5" />
-                      <span className="flex-1 truncate">{t('downloads')}</span>
-                      {downloadActive && (
-                        <>
-                          <Loader2
-                            size={14}
-                            data-testid="nav-downloads-active"
-                            className="shrink-0 text-[#7B5CFF] u-spin"
-                          />
-                          <span
-                            data-testid="nav-downloads-badge"
-                            className="u-pop-in ml-1.5 flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
-                          >
-                            {downloadDone}/{downloadTotal}
-                          </span>
-                        </>
-                      )}
-                      {/* Empty chevron slot so the badge/label aligns with counted rows. */}
-                      <span aria-hidden className="w-5 ml-1 shrink-0" />
-                    </button>
+                    {caps.localFiles && (
+                      <button
+                        data-testid="nav-downloads"
+                        aria-current={currentView === 'downloads' ? 'page' : undefined}
+                        onClick={() => onNavigate('downloads')}
+                        className={[
+                          'u-press group relative w-full flex items-center pl-9 pr-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
+                          currentView === 'downloads'
+                            ? 'bg-[#1e1e1e] text-white'
+                            : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                        ].join(' ')}
+                      >
+                        {currentView === 'downloads' && accentBar()}
+                        <Download size={15} className="shrink-0 mr-2.5" />
+                        <span className="flex-1 truncate">{t('downloads')}</span>
+                        {downloadActive && (
+                          <>
+                            <Loader2
+                              size={14}
+                              data-testid="nav-downloads-active"
+                              className="shrink-0 text-[#7B5CFF] u-spin"
+                            />
+                            <span
+                              data-testid="nav-downloads-badge"
+                              className="u-pop-in ml-1.5 flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#7B5CFF] text-white text-[10px] font-semibold leading-none tabular-nums"
+                            >
+                              {downloadDone}/{downloadTotal}
+                            </span>
+                          </>
+                        )}
+                        {/* Empty chevron slot so the badge/label aligns with counted rows. */}
+                        <span aria-hidden className="w-5 ml-1 shrink-0" />
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -729,6 +748,7 @@ function Sidebar({
 
           {/* ===================== AI ===================== */}
           {(() => {
+            if (!caps.ai) return null;
             const open = expandedGroups.ai;
             return (
               <>
@@ -809,34 +829,42 @@ function Sidebar({
         <div className="flex-1 min-h-[12px]" />
 
         {/* Footer actions — same scroll flow, set apart by a divider. */}
-        <div className="pt-2 pb-3 flex flex-col gap-0.5 border-t border-[#222]">
-          {/* Feedback — apre un modal che invia una mail allo sviluppatore. */}
-          <button
-            data-testid="nav-feedback"
-            onClick={() => setFeedbackOpen(true)}
-            className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200"
-          >
-            <MessageSquare size={16} strokeWidth={1.75} className="shrink-0" />
-            <span>{t('feedback')}</span>
-          </button>
+        {showFooter && (
+          <div className="pt-2 pb-3 flex flex-col gap-0.5 border-t border-[#222]">
+            {/* Feedback — apre un modal che invia una mail allo sviluppatore. */}
+            {caps.feedback && (
+              <button
+                data-testid="nav-feedback"
+                onClick={() => setFeedbackOpen(true)}
+                className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200"
+              >
+                <MessageSquare size={16} strokeWidth={1.75} className="shrink-0" />
+                <span>{t('feedback')}</span>
+              </button>
+            )}
 
-          {/* Activity center — aggregates every background task + recent events. */}
-          <ActivityCenter onAction={onActivityAction} onNavigate={onNavigate} />
+            {/* Activity center — aggregates every background task + recent events. */}
+            {caps.activity && (
+              <ActivityCenter onAction={onActivityAction} onNavigate={onNavigate} />
+            )}
 
-          <button
-            data-testid="nav-settings"
-            onClick={() => onNavigate('settings')}
-            className={[
-              'u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
-              currentView === 'settings'
-                ? 'bg-[#1e1e1e] text-white'
-                : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
-            ].join(' ')}
-          >
-            <Settings size={16} strokeWidth={1.75} className="shrink-0" />
-            <span>{t('settings')}</span>
-          </button>
-        </div>
+            {caps.settings && (
+              <button
+                data-testid="nav-settings"
+                onClick={() => onNavigate('settings')}
+                className={[
+                  'u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
+                  currentView === 'settings'
+                    ? 'bg-[#1e1e1e] text-white'
+                    : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                ].join(' ')}
+              >
+                <Settings size={16} strokeWidth={1.75} className="shrink-0" />
+                <span>{t('settings')}</span>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}

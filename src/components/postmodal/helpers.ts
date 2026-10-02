@@ -1,14 +1,14 @@
 // Shared pure helpers for the PostModal shell and its subcomponents — slide
 // building, media picking, URL/label utilities and small persisted prefs.
 
-import { assetUrl } from '../../lib/asset';
+import type { MediaUrls } from '../../api/ShelfyClient';
 
 // Translator returned by useT — namespaced key + optional interpolation vars.
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
 
 // What pickSlideMedia decides to render for a single slide: a local/remote image,
-// a video, or the authenticated webview fallback. `src` is null only when assetUrl
-// is handed a null path (guarded against at the call sites).
+// a video, or the authenticated webview fallback. `src` is null only when the
+// media resolver is handed a null path (guarded against at the call sites).
 export type SlideMediaKind = 'image' | 'video' | 'webview';
 export interface SlideMedia {
   kind: SlideMediaKind;
@@ -153,20 +153,23 @@ export function buildSlides(post: Shelfy.Post): PostSlide[] {
 
 // Decide what to render for a single slide. Local downloads win; otherwise show
 // the remote image directly, falling back to the live page only when there's
-// nothing else (e.g. carousel videos we don't download per-slide).
+// nothing else (e.g. carousel videos we don't download per-slide). `media`
+// resolves the local file references (the client's MediaUrls).
 export function pickSlideMedia(
   post: Shelfy.Post,
   slide: PostSlide | undefined,
   slideCount: number,
+  media: MediaUrls,
 ): SlideMedia {
   if (!slide) return { kind: 'webview', src: resolveUrl(post) };
   if (slide.type === 'video') {
     // Per-slide video isn't downloaded; only a single-video post has a local file.
-    if (post.videoPath && slideCount === 1) return { kind: 'video', src: assetUrl(post.videoPath) };
-    if (slide.localPath) return { kind: 'video', src: assetUrl(slide.localPath) };
+    if (post.videoPath && slideCount === 1)
+      return { kind: 'video', src: media.file(post.videoPath) };
+    if (slide.localPath) return { kind: 'video', src: media.file(slide.localPath) };
     return { kind: 'webview', src: resolveUrl(post) };
   }
-  if (slide.localPath) return { kind: 'image', src: assetUrl(slide.localPath) };
+  if (slide.localPath) return { kind: 'image', src: media.file(slide.localPath) };
   if (slide.url) return { kind: 'image', src: slide.url };
   return { kind: 'webview', src: resolveUrl(post) };
 }
