@@ -8,7 +8,7 @@ Live status of [IMPLEMENTATION-PLAN.md](IMPLEMENTATION-PLAN.md). The plan is the
 - **Lanes:** one task per lane. A lane is a Claude Code subagent in its own git worktree, on branch `web/<task>-<slug>`, started from the tip of `web/foundations`.
 - **Lead:** one session plans the waves, reviews each lane (diff, checks, and an independent reviewer for substantive tasks), integrates it and updates this file.
 - **Concurrency:** a new lane starts only while 8 GB of local disk stay free. Even with line tables only in dev builds (7ba4ea2), a Rust lane's target dir reaches 3.5–6 GB, 1.3–2.5 GB of it incremental, so lanes started after 2026-10-02 18:10 build with `CARGO_INCREMENTAL=0`.
-- **Budget:** the lanes and the lead share the owner's Max plan. The lead starts no new lane once the weekly all-models limit passes 80 %; lanes already running finish, and new work resumes after the weekly reset. New lanes use Opus for security, data, backups and architecture, and Sonnet for UI and for fixes already specified in detail; reviews and tests check both the same way. The owner can change either rule.
+- **Budget:** the lanes and the lead share the owner's Max plan. The lead starts no new lane once the weekly all-models limit passes 80 %; lanes already running finish, and new work resumes after the weekly reset. New lanes use Opus for security, data, backups and architecture, and Sonnet for UI and for fixes already specified in detail; reviews and tests check both the same way. The owner can change either rule. On 2026-10-03 the owner asked for as many lanes in parallel as possible; the 80 % rule still applies.
 - **Restarts:** lanes run inside the lead's process. Anything that restarts it, such as a permission-mode change, stops every running lane. Worktrees and transcripts survive: the lead resumes each lane with a message, as on 2026-10-02 at 18:05.
 
 ## Lane rules
@@ -50,6 +50,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | L7 | 2026-10-02 | Passkeys use webauthn-rs 0.5.5 with a vendored, statically linked OpenSSL 3. Tests use our own software authenticator in `tests/support/passkey.rs`. | §2.21's "no OpenSSL" | The only pure-Rust webauthn-rs is a 0.6 pre-release whose `rsa` dependency fails cargo-deny (RUSTSEC-2023-0071). Other pure-Rust relying-party crates are young or unmaintained. Vendoring needs no system OpenSSL at runtime, and cargo-deny tracks the OpenSSL version. |
 | L8 | 2026-10-02 | Passkeys require user verification and discoverable credentials. Adding a passkey, like removing one, needs a sign-in or re-auth from the last 5 minutes. Registration is `POST /me/passkeys/start` then `POST /me/passkeys`. | UV "preferred" (card and §2.11); recent auth only for removal; §2.9's `/auth/passkeys/register/{start,finish}` | webauthn-rs's passkey API enforces UV, so re-auth really checks the user, and every P1-24 platform verifies the user anyway. Adding a sign-in credential deserves the same check as removing one. |
 | L9 | 2026-10-02 | `POST /auth/device/poll` is exempt from the shared sign-in limit (10/min per client) and capped at 20 polls a minute per device code. `start` and `poll` are exempt from CSRF, read no cookie, and are listed in `CSRF_EXEMPT_ROUTES`, where a test checks that every route is public. | P1-15's single `/api/v1/auth/*` sign-in limit | The CLI and the approving browser usually share an IP, so polling would use the whole budget and the browser's re-auth and approval would get 429. The CLI sends no `Origin`. |
+| L10 | 2026-10-03 | Lanes that change the HTTP API may run at the same time. The later lane rebases, unions the registry additions, takes the next free migration number and regenerates `openapi.json` and the TS client with the tools. | P1 lane rule 2, "no wave pairs two such lanes" | The owner asked for maximum parallelism, and fast-forward integration already makes every lane rebase on the tip before it lands. |
 | L4 | 2026-10-02 | P1-04 creates `web/playwright.config.ts` for its deep-link smoke test; P1-02 extends it. | P1-02 owns the file "if T12 left none" | T12 left none, and P1-04 runs before P1-02 because both edit `src/App.tsx`. |
 
 ## Status
@@ -120,8 +121,8 @@ Work that a review or a later finding added to an integrated task.
 | F4 | Fix the P1-12 review findings. **High:** `restore-db` can be written to or corrupted through handles that reopen a locked library (H1); a backup job killed by a signal records success (H2). **Medium:** concurrent opens run a migration twice (M1); locked users' jobs fail during a restore (M2, = F3); a migration install writes into a locked library (M3); a full restore accepts a snapshot without a user's library (M4); rollback writes are never reconciled (M5, latent: record and document only). **Low:** L1–L7. | independent review of P1-12 | done | `web/f4-backup-fixes` (6c68126…ed5eb34) |
 | F5 | Passkey row ids can be reused after the newest passkey is deleted (`INTEGER PRIMARY KEY` without AUTOINCREMENT), which makes audit ids ambiguous. It needs a control-schema change. | P1-13 report | done in P1-17: control schema v3 rebuilds `passkeys` with AUTOINCREMENT, above every id used before | `web/p1-17-account` (47bbab0) |
 | F6 | Fix the P1-03 review findings L1–L6: a write racing an explicit eviction leaves a stale 304 and stale cached stats (L1); a request dropped mid-write commits but never announces (L2); an orphan generation cell can come back after a restore (L3); an identical PATCH still bumps every ETag (L4); manual AI edits keep the old provider (L5); the text caps can exceed the body limit (L6). F6 also fixes P1-10's property test "merging a batch twice equals merging it once", which fails when one key appears twice in a batch with `overwrite_ai`. Review M1 (a misspelled selector filter field selects the whole library) went to P1-05, which owns `FilterParams`. | independent review of P1-03 | done | `web/f6-writes-fixes` (c970498…f823b12) |
-| F7 | Latent race in `useDownloadPrefs` (desktop): the hook writes localStorage inside its state updater, so a second toggle can be lost when the hook is moved. P1-20 kept the hook in `Settings`, which avoids the race for now. | P1-20 report | todo | |
-| F2 | Fix the 7 desktop e2e failures that predate the port: 6 in "Downloads – job list" (the spec expects `download-job` rows; the view now groups jobs per post) and 1 in "Browser – URL bar shows Twitter bookmarks URL after switching tab". CI does not run e2e, so nothing caught them. | T12 (reproduced on `7ba4ea2`) | todo | |
+| F7 | Latent race in `useDownloadPrefs` (desktop): the hook writes localStorage inside its state updater, so a second toggle can be lost when the hook is moved. P1-20 kept the hook in `Settings`, which avoids the race for now. | P1-20 report | running (Sonnet), in one lane with F2 | `web/f2-f7-desktop-fixes` |
+| F2 | Fix the 7 desktop e2e failures that predate the port: 6 in "Downloads – job list" (the spec expects `download-job` rows; the view now groups jobs per post) and 1 in "Browser – URL bar shows Twitter bookmarks URL after switching tab". CI does not run e2e, so nothing caught them. | T12 (reproduced on `7ba4ea2`) | running (Sonnet), in one lane with F7 | `web/f2-f7-desktop-fixes` |
 
 ### Carry-over notes
 
@@ -179,7 +180,16 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 
 ### P2–P6
 
-Each phase is broken down into tasks when the previous one is close to done.
+On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelism. P2, P3 and P4 are broken down at once and will run concurrently with the rest of P1; P5 and P6 are broken down later.
+
+| Lane | What | Status | Branch |
+|---|---|---|---|
+| P2 plan | Break P2 down into tasks: `phases/P2.md` | running (Opus) | `web/p2-plan` |
+| P3 plan | Break P3 down into tasks: `phases/P3.md` | running (Opus) | `web/p3-plan` |
+| P4 plan | Break P4 down into tasks: `phases/P4.md` | running (Opus) | `web/p4-plan` |
+| SPIKE-9 | On-demand video and link hydration from the VPS (E1): IG video URL lifetime, anonymous routes and yt-dlp, hydration endpoints | running (Opus) | `web/spike9-video` |
+| SPIKE-4, SPIKE-11 | Chromium sandbox and Smokescreen egress with the SSRF probes, then the capture v2 cost in a 1.5 GiB / 1.5 CPU container, on the VPS (E1) | running (Opus) | `web/spike4-11-capture` |
+| P1-26 prep | Live-check tooling: session and token helpers, the SSE probe on the real API, the §6.2 budget queries | running (Sonnet) | `web/p1-26-tooling` |
 
 ## Spike outcomes
 
