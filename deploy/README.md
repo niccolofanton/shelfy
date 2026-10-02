@@ -232,25 +232,35 @@ shelfy-server admin bench --user "$USER_ID" [--requests 400] [--strict]
 
 ## Moving a desktop library
 
-`shelfy-migrate run` uploads a desktop library to the server (plan §4.1) and installs it into
-an empty web library. It takes an API token with the `migrate` scope, valid 7 days. The server
-side of the CLI's own sign-in is in place (P1-17): a device flow (RFC 8628) whose code the owner
-approves on the web app's `/device` page after a re-authentication, and whose token the CLI gets
-once. Until `shelfy-migrate login` drives it (P1-19), the operator mints the token:
+`shelfy-migrate` moves a desktop library to the server (plan §4.1). It signs in with the device
+flow (RFC 8628): `login` shows a code, which the owner approves on the web app's `/device` page
+(after a sign-in or re-authentication in the last 5 minutes), and saves the `migrate` token,
+valid 7 days, to `~/.config/shelfy-migrate/token` with mode 0600. While Cloudflare Access guards
+the host, every command takes the Access service token as `--header` (G2); `--header @FILE` reads
+the headers from a file, so the secret stays out of the shell history.
 
 ```sh
-shelfy-server admin migrate-token --email you@example.com > migrate-token   # keep it private
-shelfy-migrate plan --db "<userData>/shelfy.sqlite" --redact                  # dry run first
+# Quit the desktop app first: plan and run refuse while it holds the library (exit status 4).
+shelfy-migrate login "$SHELFY_PUBLIC_URL" --header @access.headers
+shelfy-migrate plan --db "<userData>/shelfy.sqlite" --server "$SHELFY_PUBLIC_URL" \
+  --header @access.headers --redact                    # dry run, settings and quota check
 shelfy-migrate run --db "<userData>/shelfy.sqlite" --server "$SHELFY_PUBLIC_URL" \
-  --token-file migrate-token --work-dir <scratch dir>
+  --header @access.headers --work-dir <scratch dir>    # add --merge if the web library has posts
 ```
 
+`access.headers` holds two lines, `CF-Access-Client-Id: …` and `CF-Access-Client-Secret: …`.
 `<userData>` is the desktop app's data directory (`~/Library/Application Support/Shelfy` on
 macOS); `--media-root` points at it when the library file was copied elsewhere. The desktop data
-is only read. With Shelfy open, `run` reads a snapshot. Kept videos stay behind unless
-`--with-videos` is given. An interrupted run continues where it stopped when run again with the
-same `--work-dir`. The run ends with a reconciliation of desktop, bundle and installed counts;
-the server keeps the previous web library next to the new one as `library.prev-<id>.sqlite`.
+is only read; `--allow-open` reads a snapshot while the app runs. Kept videos stay behind unless
+`--with-videos` is given. An interrupted run, even a killed one, continues where it stopped when
+run again with the same `--work-dir`. The server installs the bundle as a `migrate` job (2
+tries, a 60-minute lease; `job.updated` on the web app): it replaces an empty web library
+atomically, or merges into one with posts (`--merge`, the duplicate policy of plan §4.2). The run
+ends with a reconciliation of desktop, bundle and installed counts, also stored as a
+notification. The server keeps the library as it was before the install as
+`library.prev-<job id>.sqlite` for 7 days. Without `login` (no browser at hand), the operator can
+mint the token into a private file, `(umask 077; shelfy-server admin migrate-token --email … >
+token)`, and pass `--token-file token`: the CLI refuses a token file others can read.
 
 ## Backups and restores
 

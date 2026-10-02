@@ -311,6 +311,23 @@ Taken while building the reader. They follow the plan, and the points the plan l
 | OI-10 | Settings are not read. The install keeps the web library's own settings. | Language and asset preferences from the desktop. |
 | OI-11 | `run --list-orphans` prints the orphan files relative to `assets/`, for the owner only. | — |
 
+**Status after P1-19 (migration complete).** Every open item is closed: done in code, or decided with the phase that acts on it.
+
+| # | Closed by | How |
+|---|---|---|
+| OI-1 | decision (P1-19) | No facet table in P1. `posts.ai_web_json` is carried verbatim, and the rebuild rule is ported (`legacy::web::derived_facets`); `plan` fails if a desktop facet row cannot be rebuilt. The design-facet filters arrive with the site captures (P4), which add the index, filled by that rule on install and on every AI write. |
+| OI-2 | T9 | A hero is a `screenshot` object plus `web_captures.hero_object`; a video preview is `preview`; a poster is `poster`. The role list is unchanged. |
+| OI-3 | T9 | `status = 'done'` (the desktop keeps finished captures only); `partial` when `meta.capture.skipped` is non-empty; `engine` and `viewport` from `meta.capture`. |
+| OI-4 | T3, P1-19 | `UserDb` connections and the bundle builder set `foreign_keys = ON` explicitly. A bundle with a broken foreign key is refused, by the CLI and by the server, and a merge writes through `UserDb` with the keys enforced. |
+| OI-5 | T9 | A text post keeps `media_count` 1, the desktop default (the insert stores at least 1). `tag_alias.created_at` is the bundle's build time. |
+| OI-6 | T9 | A missing kept video is "video not kept": `video_object_id` stays NULL and the run counts it (`repairs.videosMissing`). |
+| OI-7 | T9, P2 | Each post records its archive state and its cover URL's expiry; the install report counts valid and expired Instagram covers. The archive drain (valid Instagram covers first, by soonest expiry) and the extension's `refresh_media` tasks are P2's. Covers whose signature expires before P2 lands become extension tasks. |
+| OI-8 | P1-19 | `plan` and `run` refuse while another process holds the library open (exit status 4): on Unix the kernel is asked, with `F_GETLK`, for the read locks every open WAL connection holds on the database file and on its `-shm`; elsewhere a `-wal` file stands for one. `--allow-open` reads a snapshot taken with the online backup API. |
+| OI-9 | decision (P1-19) | The migration keeps the full-shortcode decode of §2.8: a long private shortcode never merges wrongly, at worst it misses a merge. `plan` counts such rows (`identity.igLongShortcodes`); the reference library has 0. Matching the extension's `igsc_` aliases is P2's sanitizer's job, and needs O1's private-account sample. |
+| OI-10 | P1-19 | The desktop's language (`app:language`) and asset types (`download:assetTypes`) are read from its localStorage, with a read-only LevelDB reader that never opens the database the LevelDB way. They become the library's `language` and `archiveAssetTypes` settings; settings the web library already has win. |
+| OI-11 | T9 | `run --list-orphans` prints the orphan files relative to `assets/`, for the owner only. |
+| OI-12 | P1-19 (no port change) | A desktop issue. The migration handles both cases: orphan site files are counted and not migrated; a stale `video_path` is OI-6. |
+
 ## Deviations and assumptions
 
 - **CLI.** The dry run follows the task:
