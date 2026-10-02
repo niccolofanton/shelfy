@@ -11,7 +11,13 @@
 #     curl -s http://127.0.0.1:9464/metrics
 #   docker compose -f deploy/compose.dev.yml exec shelfy-api \
 #     shelfy-server admin create-owner --email you@example.com
+#   docker compose -f deploy/compose.dev.yml exec shelfy-api \
+#     shelfy-server admin login-link --email you@example.com   # open the printed link
 #   docker compose -f deploy/compose.dev.yml down        # add -v to drop the data
+#
+# Sign-in emails land as .eml files in /data/shelfy/dev-mailbox/ (SHELFY_DEV_MAILBOX).
+# To read them in a catcher such as mailpit, replace SHELFY_DEV_MAILBOX with
+# SHELFY_SMTP_HOST=<catcher>:1025, SHELFY_SMTP_TLS=none and SHELFY_SMTP_FROM.
 #
 # Differences from production (§3.2): the container runs as root from the Rust
 # image with a writable root filesystem, logs are text, and no limits apply.
@@ -33,6 +39,7 @@ services:
       SHELFY_METRICS_ADDR: 0.0.0.0:9464
       SHELFY_PUBLIC_URL: http://localhost:8080
       SHELFY_LOG_FORMAT: text
+      SHELFY_DEV_MAILBOX: "true"
       RUST_LOG: info
       CARGO_TARGET_DIR: /cargo-target
       PATH: /cargo-target/debug:/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
