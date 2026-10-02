@@ -36,6 +36,12 @@ pub const IDEMPOTENCY_KEY: &str = "Idempotency-Key";
 
 /// Time limit of one request; uploads send at most one chunk per request.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+/// Times a request refused by the server's rate limit (429) is sent again,
+/// each after its `Retry-After`. The limit per user (20 a second, 60 at
+/// once) paces an upload of many small objects.
+const RATE_LIMIT_RETRIES: u32 = 100;
+/// The longest `Retry-After` honored at once.
+const MAX_RETRY_AFTER: u64 = 60;
 
 /// An extra request header (`--header "Name: value"`). Its value is never
 /// printed.
@@ -494,16 +500,40 @@ impl Client {
         request
     }
 
+    /// Sends the request that `build` makes; one the server's rate limit
+    /// refuses (429) is sent again after its `Retry-After`, up to
+    /// [`RATE_LIMIT_RETRIES`] times. The limit answers before the handler
+    /// runs, so the request did nothing and sending it again is safe.
+    fn send(
+        &self,
+        build: impl Fn() -> Result<Response<ureq::Body>, ureq::Error>,
+    ) -> anyhow::Result<Response<ureq::Body>> {
+        let mut tries = 0;
+        loop {
+            let response = build().context("cannot reach the server")?;
+            if response.status() != StatusCode::TOO_MANY_REQUESTS || tries >= RATE_LIMIT_RETRIES {
+                return Ok(response);
+            }
+            tries += 1;
+            let wait = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.trim().parse::<u64>().ok())
+                .unwrap_or(1)
+                .clamp(1, MAX_RETRY_AFTER);
+            std::thread::sleep(Duration::from_secs(wait));
+        }
+    }
+
     /// What the web library looks like: empty or not, and its quota.
     ///
     /// # Errors
     ///
     /// The request failed.
     pub fn preflight(&self) -> anyhow::Result<Preflight> {
-        let response = self
-            .authorized(self.agent.get(self.url("/api/v1/migrations/preflight")?))
-            .call()
-            .context("cannot reach the server")?;
+        let url = self.url("/api/v1/migrations/preflight")?;
+        let response = self.send(|| self.authorized(self.agent.get(&url)).call())?;
         json(response)
     }
 
@@ -535,13 +565,16 @@ impl Client {
         idempotency_key: Option<&str>,
     ) -> anyhow::Result<Response<ureq::Body>> {
         let bytes = serde_json::to_vec(body)?;
-        let mut request = self
-            .authorized(self.agent.post(self.url(path)?))
-            .content_type("application/json");
-        if let Some(key) = idempotency_key {
-            request = request.header(IDEMPOTENCY_KEY, key);
-        }
-        request.send(&bytes[..]).context("cannot reach the server")
+        let url = self.url(path)?;
+        self.send(|| {
+            let mut request = self
+                .authorized(self.agent.post(&url))
+                .content_type("application/json");
+            if let Some(key) = idempotency_key {
+                request = request.header(IDEMPOTENCY_KEY, key);
+            }
+            request.send(&bytes[..])
+        })
     }
 
     /// Creates an upload of `length` bytes; returns its URL.
@@ -555,13 +588,14 @@ impl Client {
             .map(|(key, value)| format!("{key} {}", STANDARD.encode(value)))
             .collect::<Vec<_>>()
             .join(",");
-        let response = self
-            .authorized(self.agent.post(self.url("/api/v1/uploads")?))
-            .header("Tus-Resumable", TUS_VERSION)
-            .header("Upload-Length", length.to_string())
-            .header("Upload-Metadata", metadata)
-            .send_empty()
-            .context("cannot reach the server")?;
+        let url = self.url("/api/v1/uploads")?;
+        let response = self.send(|| {
+            self.authorized(self.agent.post(&url))
+                .header("Tus-Resumable", TUS_VERSION)
+                .header("Upload-Length", length.to_string())
+                .header("Upload-Metadata", metadata.as_str())
+                .send_empty()
+        })?;
         if response.status() != StatusCode::CREATED {
             return Err(problem(response).into());
         }
@@ -580,11 +614,12 @@ impl Client {
     ///
     /// The request failed.
     pub fn upload_state(&self, url: &str) -> anyhow::Result<Option<UploadState>> {
-        let response = self
-            .authorized(self.agent.head(self.url(url)?))
-            .header("Tus-Resumable", TUS_VERSION)
-            .call()
-            .context("cannot reach the server")?;
+        let url = self.url(url)?;
+        let response = self.send(|| {
+            self.authorized(self.agent.head(&url))
+                .header("Tus-Resumable", TUS_VERSION)
+                .call()
+        })?;
         match response.status() {
             StatusCode::NOT_FOUND | StatusCode::GONE => Ok(None),
             status if status.is_success() => Ok(Some(UploadState {
@@ -612,12 +647,15 @@ impl Client {
     ///
     /// The request failed or the server refused the chunk.
     pub fn append(&self, url: &str, offset: u64, chunk: &[u8]) -> anyhow::Result<u64> {
+        let url = self.url(url)?;
         let response = self
-            .authorized(self.agent.patch(self.url(url)?))
-            .header("Tus-Resumable", TUS_VERSION)
-            .header("Upload-Offset", offset.to_string())
-            .content_type(OFFSET_OCTET_STREAM)
-            .send(chunk)
+            .send(|| {
+                self.authorized(self.agent.patch(&url))
+                    .header("Tus-Resumable", TUS_VERSION)
+                    .header("Upload-Offset", offset.to_string())
+                    .content_type(OFFSET_OCTET_STREAM)
+                    .send(chunk)
+            })
             .context("the upload was interrupted")?;
         if response.status() != StatusCode::NO_CONTENT {
             return Err(problem(response).into());
@@ -632,11 +670,12 @@ impl Client {
     ///
     /// The request failed.
     pub fn delete_upload(&self, url: &str) -> anyhow::Result<bool> {
-        let response = self
-            .authorized(self.agent.delete(self.url(url)?))
-            .header("Tus-Resumable", TUS_VERSION)
-            .call()
-            .context("cannot reach the server")?;
+        let url = self.url(url)?;
+        let response = self.send(|| {
+            self.authorized(self.agent.delete(&url))
+                .header("Tus-Resumable", TUS_VERSION)
+                .call()
+        })?;
         match response.status() {
             StatusCode::NO_CONTENT => Ok(true),
             StatusCode::NOT_FOUND => Ok(false),
@@ -674,13 +713,8 @@ impl Client {
     ///
     /// The request failed.
     pub fn migration(&self, id: &str) -> anyhow::Result<MigrationStatus> {
-        let response = self
-            .authorized(
-                self.agent
-                    .get(self.url(&format!("/api/v1/migrations/{id}"))?),
-            )
-            .call()
-            .context("cannot reach the server")?;
+        let url = self.url(&format!("/api/v1/migrations/{id}"))?;
+        let response = self.send(|| self.authorized(self.agent.get(&url)).call())?;
         json(response)
     }
 
@@ -690,24 +724,24 @@ impl Client {
     ///
     /// The request failed.
     pub fn device_start(&self) -> anyhow::Result<DeviceAuthorization> {
-        let response = self
-            .authorized(self.agent.post(self.url("/api/v1/auth/device/start")?))
-            .send_empty()
-            .context("cannot reach the server")?;
+        let url = self.url("/api/v1/auth/device/start")?;
+        let response = self.send(|| self.authorized(self.agent.post(&url)).send_empty())?;
         json(response)
     }
 
-    /// Polls the device sign-in of `device_code`.
+    /// Polls the device sign-in of `device_code`. A 429 is an answer here
+    /// ([`DevicePoll::Limited`]): `login` waits and tells the user.
     ///
     /// # Errors
     ///
     /// The request failed, or the server answered an unexpected error.
     pub fn device_poll(&self, device_code: &str) -> anyhow::Result<DevicePoll> {
-        let response = self.post_json(
-            "/api/v1/auth/device/poll",
-            &PollRequest { device_code },
-            None,
-        )?;
+        let body = serde_json::to_vec(&PollRequest { device_code })?;
+        let response = self
+            .authorized(self.agent.post(self.url("/api/v1/auth/device/poll")?))
+            .content_type("application/json")
+            .send(&body[..])
+            .context("cannot reach the server")?;
         if response.status().is_success() {
             return Ok(match json::<PollAnswer>(response)? {
                 PollAnswer::Pending { interval } => DevicePoll::Pending { interval },
@@ -783,6 +817,36 @@ fn header_u64(response: &Response<ureq::Body>, name: &str) -> anyhow::Result<u64
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::scripted;
+
+    #[test]
+    fn a_rate_limited_request_is_sent_again_after_its_retry_after() {
+        let limited = r#"{"code":"rate_limited","status":429}"#.to_owned();
+        let (origin, server) = scripted(vec![
+            (429, "Retry-After: 1\r\n", limited.clone()),
+            (429, "Retry-After: 1\r\n", limited),
+            (
+                200,
+                "",
+                r#"{"libraryEmpty":true,"posts":0,"quotaBytes":0,"usedBytes":4096,
+                   "maxObjectBytes":1,"maxDatabaseBytes":1}"#
+                    .to_owned(),
+            ),
+        ]);
+        let started = std::time::Instant::now();
+        let headers = [Header::parse("CF-Access-Client-Id: id").unwrap()];
+        let client = Client::with_headers(&origin, Some("shx_token"), &headers).unwrap();
+        let preflight = client.preflight().unwrap();
+        assert!(preflight.library_empty);
+        assert_eq!(preflight.used_bytes, 4096);
+        assert!(started.elapsed() >= Duration::from_secs(2), "it waited");
+        let seen = server.join().unwrap();
+        assert_eq!(seen.len(), 3);
+        for request in &seen {
+            assert_eq!(request.line, "GET /api/v1/migrations/preflight HTTP/1.1");
+            assert!(request.has("authorization") && request.has("cf-access-client-id"));
+        }
+    }
 
     #[test]
     fn urls_stay_on_the_server() {

@@ -33,3 +33,5 @@ pub mod report;
 pub mod run;
 pub mod settings;
 pub mod snapshot;
+#[cfg(test)]
+mod testing;

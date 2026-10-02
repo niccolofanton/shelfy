@@ -115,9 +115,7 @@ fn main() -> anyhow::Result<()> {
 /// Instagram post `i`: its pk and shortcode.
 fn ig(i: u32) -> (String, String) {
     let pk = (3_191_575_067_010_950_169_u64 + u64::from(i) * 7_919).to_string();
-    let shortcode = MediaPk::parse_decimal(&pk)
-        .expect("a pk")
-        .to_shortcode();
+    let shortcode = MediaPk::parse_decimal(&pk).expect("a pk").to_shortcode();
     (pk, shortcode)
 }
 
@@ -136,7 +134,10 @@ fn library_a(w: &Writer, posts: u32) -> anyhow::Result<()> {
             &format!("thumbnails/instagram-{i}.jpg"),
             &jpeg(1080, 1350, i),
         );
-        let slide1 = w.asset(&format!("images/instagram-{i}-1.jpg"), &jpeg(1080, 1350, i + 500));
+        let slide1 = w.asset(
+            &format!("images/instagram-{i}-1.jpg"),
+            &jpeg(1080, 1350, i + 500),
+        );
         let analyzed = i % 5 == 0;
         c.execute(
             "INSERT INTO posts (id, platform, shortcode, post_url, author_username, text,
@@ -205,7 +206,13 @@ fn library_a(w: &Writer, posts: u32) -> anyhow::Result<()> {
          VALUES ('1800000000000000002', 'twitter', 'text', 'Only words', ?1)",
         [NOW_S],
     )?;
-    site(w, "https://studio.example.test/", "Home", NOW_S - 86_400, 902)?;
+    site(
+        w,
+        "https://studio.example.test/",
+        "Home",
+        NOW_S - 86_400,
+        902,
+    )?;
     write(
         &w.root,
         &[
@@ -241,7 +248,10 @@ fn library_b(w: &Writer, posts: u32) -> anyhow::Result<()> {
     // Its own posts.
     for i in 0..posts / 2 {
         let id = (1_800_000_000_000_000_100_u64 + u64::from(i)).to_string();
-        let cover = w.asset(&format!("thumbnails/twitter-{i}.jpg"), &jpeg(1200, 800, 2000 + i));
+        let cover = w.asset(
+            &format!("thumbnails/twitter-{i}.jpg"),
+            &jpeg(1200, 800, 2000 + i),
+        );
         c.execute(
             "INSERT INTO posts (id, platform, media_type, thumbnail_path, image_path, imported_at,
                text)

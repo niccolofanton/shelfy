@@ -232,72 +232,8 @@ pub fn read_token(path: &Path) -> anyhow::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{BufRead as _, BufReader, Read as _};
-    use std::net::TcpListener;
-
     use super::*;
-
-    /// One request the scripted server saw: its request line and headers.
-    #[derive(Debug)]
-    struct Seen {
-        line: String,
-        headers: Vec<(String, String)>,
-    }
-
-    /// A server that answers each connection with the next scripted
-    /// response (`status`, extra headers, JSON body) and closes it.
-    fn scripted(
-        script: Vec<(u16, &'static str, String)>,
-    ) -> (String, thread::JoinHandle<Vec<Seen>>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let handle = thread::spawn(move || {
-            let mut seen = Vec::new();
-            for (status, extra, body) in script {
-                let (stream, _) = listener.accept().unwrap();
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                let mut headers = Vec::new();
-                let mut length = 0usize;
-                loop {
-                    let mut header = String::new();
-                    reader.read_line(&mut header).unwrap();
-                    let header = header.trim_end();
-                    if header.is_empty() {
-                        break;
-                    }
-                    let (name, value) = header.split_once(':').unwrap();
-                    let (name, value) = (name.trim().to_ascii_lowercase(), value.trim().to_owned());
-                    if name == "content-length" {
-                        length = value.parse().unwrap();
-                    }
-                    headers.push((name, value));
-                }
-                let mut request_body = vec![0u8; length];
-                reader.read_exact(&mut request_body).unwrap();
-                seen.push(Seen {
-                    line: line.trim_end().to_owned(),
-                    headers,
-                });
-                let content_type = if status >= 400 {
-                    "application/problem+json"
-                } else {
-                    "application/json"
-                };
-                let response = format!(
-                    "HTTP/1.1 {status} X\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n\
-                     Connection: close\r\n{extra}\r\n{body}",
-                    body.len()
-                );
-                let mut stream = stream;
-                stream.write_all(response.as_bytes()).unwrap();
-                stream.flush().unwrap();
-            }
-            seen
-        });
-        (origin, handle)
-    }
+    use crate::testing::scripted;
 
     fn started(code: &str) -> String {
         format!(
@@ -365,12 +301,11 @@ mod tests {
         let seen = server.join().unwrap();
         assert_eq!(seen.len(), 7);
         for request in &seen {
-            let has = |name: &str| request.headers.iter().any(|(n, _)| n == name);
             // The device routes take no cookie, no CSRF headers, no token.
             for absent in ["cookie", "origin", "x-shelfy-client", "authorization"] {
-                assert!(!has(absent), "{absent} in {request:?}");
+                assert!(!request.has(absent), "{absent} in {request:?}");
             }
-            assert!(has("cf-access-client-id"), "{request:?}");
+            assert!(request.has("cf-access-client-id"), "{request:?}");
         }
         assert_eq!(seen[0].line, "POST /api/v1/auth/device/start HTTP/1.1");
         assert_eq!(seen[1].line, "POST /api/v1/auth/device/poll HTTP/1.1");
