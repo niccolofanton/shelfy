@@ -51,6 +51,11 @@ Changes to the plan that the lead made during execution, with the reason.
 | L8 | 2026-10-02 | Passkeys require user verification and discoverable credentials. Adding a passkey, like removing one, needs a sign-in or re-auth from the last 5 minutes. Registration is `POST /me/passkeys/start` then `POST /me/passkeys`. | UV "preferred" (card and §2.11); recent auth only for removal; §2.9's `/auth/passkeys/register/{start,finish}` | webauthn-rs's passkey API enforces UV, so re-auth really checks the user, and every P1-24 platform verifies the user anyway. Adding a sign-in credential deserves the same check as removing one. |
 | L9 | 2026-10-02 | `POST /auth/device/poll` is exempt from the shared sign-in limit (10/min per client) and capped at 20 polls a minute per device code. `start` and `poll` are exempt from CSRF, read no cookie, and are listed in `CSRF_EXEMPT_ROUTES`, where a test checks that every route is public. | P1-15's single `/api/v1/auth/*` sign-in limit | The CLI and the approving browser usually share an IP, so polling would use the whole budget and the browser's re-auth and approval would get 429. The CLI sends no `Origin`. |
 | L10 | 2026-10-03 | Lanes that change the HTTP API may run at the same time. The later lane rebases, unions the registry additions, takes the next free migration number and regenerates `openapi.json` and the TS client with the tools. | P1 lane rule 2, "no wave pairs two such lanes" | The owner asked for maximum parallelism, and fast-forward integration already makes every lane rebase on the tip before it lands. |
+| L11 | 2026-10-03 | P2-04 owns the one outbound HTTP client, in `crates/server/src/outbound/`, and absorbs P4-01: purpose-based clients, `SHELFY_EGRESS_PROXY` when set, `internal()` for the capture service only, the redirect policy (≤ 5 hops, http(s), ports 80 and 443), byte caps, ≤ 64 requests in flight, no cookies, the test that refuses a `reqwest` client built elsewhere, and `shelfy_egress_requests_total{purpose,outcome}`. Without a proxy, its resolver refuses private, loopback, link-local, CGNAT, ULA and multicast addresses. P4-02 builds the proxy and the SSRF suite on it. | P4-01 as a separate `egress.rs` | Both plans defined the same client; one module avoids two egress paths. |
+| L12 | 2026-10-03 | P4-08 owns tus uploads with sessions, the `uploads` scope and the purpose registry. P2-14 adds the extension purposes and needs P4-08. | P2-14 building its own upload access | One upload path. |
+| L13 | 2026-10-03 | P4-07 owns quotas and reservations. P2-10's archive drain reserves through it and leaves an item `link_only` when refused, so P2-10 needs P4-07. | P2-10 without quotas | The archive is the largest writer of media. |
+| L14 | 2026-10-03 | P4-09 (Jobs view) owns the jobs seam, hook and `jobs` messages, and lands before P2-08 (Activity center), which reuses them. | P2-08 and P4-09 in parallel | Both read jobs; parallel lanes would write two seams. |
+| L15 | 2026-10-03 | The owner's AI node is P3's test target and the owner's default provider: an OpenAI-compatible endpoint (`ornith-1.5-35b-a3b`) and a whisper.cpp server on the owner's PC, reached over Tailscale from the VPS and the Mac. The server defines it from env (osn SOPS), never shows its key, and allowlists exactly that host and port; user-entered base URLs keep the strict SSRF rules. Shelfy uses it gently (1–2 requests at a time, a breaker) because Hermes shares it, and never wakes it. | §2.15 BYOK only; SPIKE-6 on cloud providers | Owner decision, 2026-10-03: "use my custom AI endpoint on the remote node for all the tests and pre-configure it". Cloud keys become optional. |
 | L4 | 2026-10-02 | P1-04 creates `web/playwright.config.ts` for its deep-link smoke test; P1-02 extends it. | P1-02 owns the file "if T12 left none" | T12 left none, and P1-04 runs before P1-02 because both edit `src/App.tsx`. |
 
 ## Status
@@ -103,7 +108,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-18 | First osn PR, part 2: apply stage 1 (services) | done on 2026-10-02 at 23:20: [osn PR #29](https://github.com/niccolofanton/osn/pull/29) merged, `server-v0.1.0-rc.1` (fa3b286) deployed. `shelfy-api` is healthy and `refs` answers through the edge, behind Access. The edge subnet is `10.91.0.0/24` and equals `SHELFY_TRUSTED_PROXIES`. `up{job="shelfy"}` is 1. A restart is healthy within 1 s. Owner created, and the owner signed in through Access and a sign-in link. Hermes is unchanged: same start time, 0 restarts, 2 GiB / 2 CPU, node status online. Backups are still off. | osn `main` fa2066e |
 | P1-19 | Migration tool and install job complete | done | `web/p1-19-migration` (517c139…668dfc7) |
 | P1-20 | Sign-in, re-auth, device approval, Settings | done | `web/p1-20-auth-ui` (rebased onto P1-02 by the lead; typecheck, lint, vitest and web Playwright 33/33 pass after the rebase) |
-| P1-11 | Trash and bulk by selector | running | `web/p1-11-trash-bulk` |
+| P1-11 | Trash and bulk by selector | done; an independent review is running | `web/p1-11-trash-bulk` (f44eb36, 7cb89a9) |
 | P1-23 | First osn PR, part 3: apply stage 2 (DNS, Access, backups) | done on 2026-10-03, except the live SSE measurements (moved to P1-26, see below): `server-v0.1.0-rc.2` deployed; control schema upgraded to v3 and libraries to v2; Hermes unchanged. Backups are on. The first db and media snapshots are saved in `restic/shelfy`, the restore drill verified 2 databases with 0 problems, and `shelfy_backup_last_success` is 1. The Access service token `shelfy-refs-clients` was created by `just cf-apply` after O5 (the user token "Scope Minimo Token" needed Access: Service Tokens Edit) and is stored in SOPS. `/health` answers 200 through Access with it, and 302 without. | osn 44926e5, e65a777 |
 | P1-06 | Post modal, folders and Sidebar on the seam | running (Sonnet) | `web/p1-06-modal-folders` |
 | P1-08 | Gallery performance and the JS budget | running (Sonnet) | `web/p1-08-gallery-perf` |
@@ -122,6 +127,9 @@ Work that a review or a later finding added to an integrated task.
 | F5 | Passkey row ids can be reused after the newest passkey is deleted (`INTEGER PRIMARY KEY` without AUTOINCREMENT), which makes audit ids ambiguous. It needs a control-schema change. | P1-13 report | done in P1-17: control schema v3 rebuilds `passkeys` with AUTOINCREMENT, above every id used before | `web/p1-17-account` (47bbab0) |
 | F6 | Fix the P1-03 review findings L1–L6: a write racing an explicit eviction leaves a stale 304 and stale cached stats (L1); a request dropped mid-write commits but never announces (L2); an orphan generation cell can come back after a restore (L3); an identical PATCH still bumps every ETag (L4); manual AI edits keep the old provider (L5); the text caps can exceed the body limit (L6). F6 also fixes P1-10's property test "merging a batch twice equals merging it once", which fails when one key appears twice in a batch with `overwrite_ai`. Review M1 (a misspelled selector filter field selects the whole library) went to P1-05, which owns `FilterParams`. | independent review of P1-03 | done | `web/f6-writes-fixes` (c970498…f823b12) |
 | F7 | Latent race in `useDownloadPrefs` (desktop): the hook writes localStorage inside its state updater, so a second toggle can be lost when the hook is moved. P1-20 kept the hook in `Settings`, which avoids the race for now. | P1-20 report | running (Sonnet), in one lane with F2 | `web/f2-f7-desktop-fixes` |
+| F8 | `GET /media/{file}`'s duration histogram has no `variant` label, so the §6.2 "rendition p95 ≤ 5 ms" budget cannot isolate `g480` from metrics. | P1-26 tooling | todo | |
+| F9 | `POST /me/tokens` mints tokens with no server-side TTL (`ttl: None`). Offer an expiry, and check §2.11 for the default. | P1-26 tooling | todo | |
+| F10 | On `/device`, clicking Approve while a re-auth is required spends the sign-in limit: the owner got 429 "Too many attempts" after a few clicks on 2026-10-03. Disable Approve until the re-auth completes, and do not count `reauth_required` answers against the limit. | owner, P1-25 | todo | |
 | F2 | Fix the 7 desktop e2e failures that predate the port: 6 in "Downloads – job list" (the spec expects `download-job` rows; the view now groups jobs per post) and 1 in "Browser – URL bar shows Twitter bookmarks URL after switching tab". CI does not run e2e, so nothing caught them. | T12 (reproduced on `7ba4ea2`) | running (Sonnet), in one lane with F7 | `web/f2-f7-desktop-fixes` |
 
 ### Carry-over notes
@@ -176,6 +184,9 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P1-21 | The real-server suite is in `web/e2e/server/`. It needs the release binary and the `sqlite3` CLI, configured through `SHELFY_E2E_*`. An old sign-in is simulated by editing `sessions.reauth_at` before the server first reads the session, which it caches for 60 s. Traces are off, because they would keep link tokens. | P1-20 |
 | P1-26 | Also measure P1-23's SSE checks on the live host: write → SSE p95 ≤ 300 ms over ≥ 50 events, one stream ≥ 5 min with an idle gap over 100 s, a lossless `Last-Event-ID` resume, and no challenge for bearer calls with the extension, Shortcut and CLI User-Agents. `scripts/spikes/sse-probe.mjs` targets the SPIKE-10 test server (`/api/v1/emit`), so first adapt it to the real API: writes through `POST /collections`, and a short-lived session that the lead mints and revokes after the probe (lane rule 8). `SPIKE_HEADERS` carries the service token. | P1-23 |
 | P1-21 | The CSP blocks the inline `<style>` in `src/views/Browser.tsx`, a desktop-only view. | P1-09 |
+| P1-14 | P1-11's API: `POST /posts/bulk {selector, action, params?}` answers 200 `BulkResult` (≤ 500 posts) or 202 with a job. `GET /trash` lists newest delete first with `total` and `retentionDays: 30`. `POST /trash/restore` takes `{selector}` (a filter must say `trash: true`) or `{deletedAt}`; undo is restore by the `deletedAt` a delete returned, also for job deletes and `withPosts`. `POST /trash/empty` answers 202. Select-all in the trash is `{filter: {trash: true}, exceptKeys}`. Hide `analyze`, `fetchMedia` and `removeStoredMedia`, which answer 422 `not_available`. `CollectionDeleted` gained `deletedAt`, so mocks need it. | P1-11 |
+| P4 | The purge marks objects `unreferenced_since`; the GC (P4-12) deletes files and rows. To add `removeStoredMedia`, add a variant to `shelfy_core::bulk::Action` and drop its `not_available` arm in `BulkAction::resolve`. File-touching actions must always run as jobs; `start()` picks inline or job by count only. | P1-11 |
+| P2, P3 | `fetchMedia` (P2) and `analyze` (P3) plug into P1-11's bulk the same way; the job payload `{action, params, selection, at}` is generic. `analyze` may instead delegate to `POST /ai/analyze` and its confirm step. | P1-11 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
 
 ### P2–P6
@@ -184,12 +195,30 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 
 | Lane | What | Status | Branch |
 |---|---|---|---|
-| P2 plan | Break P2 down into tasks: `phases/P2.md` | running (Opus) | `web/p2-plan` |
+| P2 plan | Break P2 down into tasks: [phases/P2.md](phases/P2.md), 19 lane tasks in 5 waves | done | `web/p2-plan` |
 | P3 plan | Break P3 down into tasks: `phases/P3.md` | running (Opus) | `web/p3-plan` |
-| P4 plan | Break P4 down into tasks: `phases/P4.md` | running (Opus) | `web/p4-plan` |
+| P4 plan | Break P4 down into tasks: [phases/P4.md](phases/P4.md), 28 lane tasks in 5 waves (P4-01 folded into P2-04, L11) | done | `web/p4-plan` |
 | SPIKE-9 | On-demand video and link hydration from the VPS (E1): IG video URL lifetime, anonymous routes and yt-dlp, hydration endpoints | running (Opus) | `web/spike9-video` |
 | SPIKE-4, SPIKE-11 | Chromium sandbox and Smokescreen egress with the SSRF probes, then the capture v2 cost in a 1.5 GiB / 1.5 CPU container, on the VPS (E1) | running (Opus) | `web/spike4-11-capture` |
-| P1-26 prep | Live-check tooling: session and token helpers, the SSE probe on the real API, the §6.2 budget queries | running (Sonnet) | `web/p1-26-tooling` |
+| P1-26 prep | Live-check tooling: session and token helpers, the SSE probe on the real API, the §6.2 budget queries | done: `scripts/live/` and its runbook | `web/p1-26-tooling` (75ee458) |
+
+**P2 and P4 lanes.** Task cards are in the phase files; this table is the status.
+
+| Task | What | Status | Branch |
+|---|---|---|---|
+| P2-02 | Ingest sanitizer and archive-state rule in the core | running (Opus) | `web/p2-02-ingest-core` |
+| P2-03 | Pairing, extension config, kill switches, extension status | running (Opus) | `web/p2-03-pairing` |
+| P2-04 | Outbound HTTP client, CDN fetcher, host limits, breaker (with P4-01, L11) | running (Opus) | `web/p2-04-outbound` |
+| P2-05 | Parser: direct video URLs and an IG REST entry | running (Opus) | `web/p2-05-parser-video` |
+| P2-06 | Extension core: build, pairing, API client, offline queue, passive capture | running (Opus) | `web/p2-06-extension-core` |
+| P2-07 | PWA, Android share target, `/share` page, bookmarklet | running (Sonnet) | `web/p2-07-pwa-share` |
+| P4-04 | Core: web captures, versions, delete modes | running (Opus) | `web/p4-04-web-captures` |
+| P4-06 | Media: yt-dlp and ffmpeg tools | running (Opus) | `web/p4-06-video-tools` |
+| P4-07 | Quotas, usage accounting, limits | running (Opus) | `web/p4-07-quotas` |
+| P4-08 | Web tus uploads: sessions, `uploads` scope, purposes | running (Opus) | `web/p4-08-uploads` |
+| P4-09 | Jobs view (replaces Downloads on the web) | running (Sonnet) | `web/p4-09-jobs-view` |
+
+Held back: P4-02 and P4-03 wait for the SPIKE-4/11 note; P2-08 waits for P4-09 (L14); P4-05, P4-10, P4-11 and P4-12 start as slots free up.
 
 ## Spike outcomes
 
