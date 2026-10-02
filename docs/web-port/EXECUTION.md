@@ -39,12 +39,12 @@ These owner decisions override the plan where they conflict.
 
 | Task | What | Needs | Status | Branch |
 |---|---|---|---|---|
-| T1 | Cargo workspace, pinned toolchain, `deny.toml`, `deploy/` skeleton, CI `rust` job | — | running | `web/t1-workspace` |
-| T2 | SPIKE-1: legacy reader, canonical keys, `shelfy-migrate plan` | T1 | todo | |
-| T3 | Schema v1, `UserDb`, repositories, FTS maintenance, golden harness | T1 | todo | |
+| T1 | Cargo workspace, pinned toolchain, `deny.toml`, `deploy/` skeleton, CI `rust` job | — | done | `web/t1-workspace` (b0baaf5…bad7139) |
+| T2 | SPIKE-1: legacy reader, canonical keys, `shelfy-migrate plan` | T1 | running | `web/t2-legacy-reader` |
+| T3 | Schema v1, `UserDb`, repositories, FTS maintenance, golden harness | T1 | running | `web/t3-schema-v1` |
 | T4 | SPIKE-5: FTS relevance against `search-eval` | T3 | todo | |
 | T5 | SPIKE-3 build: minimal MV3 extension and comparison tooling | — | running | `web/t5-extension-spike` |
-| T6 | SPIKE-2 and SPIKE-10 on the osn VPS (E1) | — | todo | |
+| T6 | SPIKE-2 and SPIKE-10 on the osn VPS (E1) | — | running | `web/t6-spikes-vps` |
 | T7 | `crates/server`: axum app, config, health, metrics, errors, OpenAPI, admin CLI | T3 | todo | |
 | T8 | `crates/media`: CAS, renditions, ThumbHash, `/media/*` | T7 | todo | |
 | T9 | Migration v0 and the reference library installed locally | T2, T3, T8 | todo | |
