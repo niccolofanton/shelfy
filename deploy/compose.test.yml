@@ -1,0 +1,86 @@
+# Test stack for Shelfy Web (plan §3.8): shelfy-api from a local image, on its
+# own data, configured like production (§3.2) but reached on the loopback.
+# P1-21 runs the web e2e suite on it. The mock AI provider, the fixture CDN
+# and Smokescreen (allowing only the fixture subnet) join in P2–P4.
+#
+#   pnpm run web:build
+#   docker build -f deploy/docker/shelfy-api.Dockerfile -t shelfy-api:local .
+#   docker compose -f deploy/compose.test.yml up -d --wait
+#   curl http://127.0.0.1:8081/health
+#   deploy/restart-check.sh          # a restart is healthy again within 3 s
+#   docker compose -f deploy/compose.test.yml exec shelfy-api \
+#     /app/shelfy-server admin create-owner --email owner@example.test
+#   docker compose -f deploy/compose.test.yml exec shelfy-api \
+#     /app/shelfy-server admin login-link --email owner@example.test
+#   docker compose -f deploy/compose.test.yml down -v      # -v drops the data
+#
+# Settings, from the environment of `docker compose`:
+#
+#   SHELFY_TEST_IMAGE  the image (default shelfy-api:local). It is never
+#                      pulled: build it, or `docker pull` a release first.
+#   SHELFY_TEST_PORT   the API's loopback port (default 8081). The public URL
+#                      is http://localhost:<port>: open the app there.
+#   SHELFY_TEST_DATA   the data: the named volume shelfy-test-data (default),
+#                      or an absolute host path for a bind mount. On Linux a
+#                      host path must be writable by uid 10100.
+#
+# Email is optional (E4). By default sign-in emails land as .eml files in
+# /data/shelfy/dev-mailbox/ (the dev mailbox). To catch them in mailpit
+# instead (web UI on http://127.0.0.1:8025):
+#
+#   SHELFY_TEST_DEV_MAILBOX=false SHELFY_TEST_SMTP_HOST=mailpit:1025 \
+#     docker compose -f deploy/compose.test.yml --profile mail up -d --wait
+#
+# Differences from production: the API is published on the loopback, emails
+# stay local, and no edge, tunnel or monitoring sits in front.
+
+name: shelfy-test
+
+services:
+  shelfy-api:
+    image: ${SHELFY_TEST_IMAGE:-shelfy-api:local}
+    pull_policy: never
+    restart: unless-stopped
+    user: "10100:10100"
+    read_only: true
+    tmpfs: ["/tmp:size=256m,mode=1777"]
+    environment:
+      SHELFY_PUBLIC_URL: http://localhost:${SHELFY_TEST_PORT:-8081}
+      SHELFY_DATA_DIR: /data/shelfy
+      SHELFY_DEV_MAILBOX: ${SHELFY_TEST_DEV_MAILBOX:-true}
+      SHELFY_SMTP_HOST: ${SHELFY_TEST_SMTP_HOST:-}
+      SHELFY_SMTP_TLS: none # only used with SHELFY_TEST_SMTP_HOST: mailpit takes plain SMTP
+      SHELFY_SMTP_FROM: Shelfy <shelfy@example.test>
+      RUST_LOG: ${SHELFY_TEST_RUST_LOG:-info}
+    volumes:
+      - ${SHELFY_TEST_DATA:-shelfy-test-data}:/data/shelfy
+    ports:
+      # The API, on the loopback only.
+      - "127.0.0.1:${SHELFY_TEST_PORT:-8081}:8080"
+    # Metrics stay unpublished: as on the VPS, only the compose network
+    # reaches :9464.
+    expose:
+      - "9464"
+    mem_limit: 768m
+    memswap_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "/app/shelfy-server", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  mailpit:
+    profiles: [mail]
+    image: axllent/mailpit:v1.31.3@sha256:ed9b00c609e77e99c79b93f1178255ebc271868920f2c69a8d166bd5634ed10d
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SHELFY_TEST_MAILPIT_PORT:-8025}:8025"
+
+volumes:
+  shelfy-test-data:
