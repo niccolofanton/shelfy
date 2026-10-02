@@ -124,6 +124,61 @@ pub fn post(uri: &str) -> Request<Body> {
     Request::post(uri).body(Body::empty()).expect("request")
 }
 
+/// A read-write connection to the control database of `t`, beside the
+/// server's.
+pub fn control_db(t: &TestState) -> rusqlite::Connection {
+    let conn = rusqlite::Connection::open(t.data_dir().control_db()).expect("control database");
+    conn.busy_timeout(Duration::from_secs(5))
+        .expect("busy timeout");
+    conn
+}
+
+/// The `meta_json` of every audit row with `action`, oldest first.
+pub fn audit_rows(conn: &rusqlite::Connection, action: &str) -> Vec<serde_json::Value> {
+    let mut statement = conn
+        .prepare("SELECT meta_json FROM audit_log WHERE action = ?1 ORDER BY id")
+        .expect("audit query");
+    statement
+        .query_map([action], |row| row.get::<_, String>(0))
+        .expect("audit rows")
+        .map(|meta| serde_json::from_str(&meta.expect("meta")).expect("JSON meta"))
+        .collect()
+}
+
+/// Makes every session's last proof of identity 6 minutes old, so routes
+/// that need a recent sign-in refuse it, and drops the cached lookups.
+pub fn make_sessions_stale(t: &TestState) {
+    control_db(t)
+        .execute(
+            "UPDATE sessions SET reauth_at = ?1",
+            [shelfy_server::ids::now_ms() - 6 * 60_000],
+        )
+        .expect("stale sessions");
+    t.state.auth().forget_all_sessions();
+}
+
+/// Adds an active member with `email`; returns its id.
+pub fn add_member(t: &TestState, email: &str) -> String {
+    let id = shelfy_server::ids::new_ulid();
+    control_db(t)
+        .execute(
+            "INSERT INTO users (id, email, role, quota_bytes, created_at) \
+             VALUES (?1, ?2, 'member', 0, 0)",
+            [&id, email],
+        )
+        .expect("member");
+    id
+}
+
+/// Signs in the account with `email` with a fresh link; returns the session
+/// cookie.
+pub async fn sign_in_as(app: &Router, t: &TestState, email: &str) -> String {
+    let token = link_token(t, email);
+    let response = send(app, redeem_request(t, &token)).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT, "sign-in");
+    session_cookie(&response).expect("the sign-in sets the session cookie")
+}
+
 /// The dev mailbox directory of `t`.
 pub fn mailbox_dir(t: &TestState) -> PathBuf {
     t.data_dir().root().join(DEV_MAILBOX_DIR)

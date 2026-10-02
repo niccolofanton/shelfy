@@ -6,6 +6,7 @@
 pub mod auth;
 pub mod jobs;
 pub mod library;
+pub mod passkey;
 pub mod sse;
 
 use axum::Router;
