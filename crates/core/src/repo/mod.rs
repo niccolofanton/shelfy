@@ -18,6 +18,7 @@ pub mod collections;
 pub mod media;
 pub mod notifications;
 pub mod posts;
+pub mod settings;
 pub mod stats;
 pub(crate) mod tags;
 
