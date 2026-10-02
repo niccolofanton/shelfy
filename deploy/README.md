@@ -5,24 +5,25 @@ this directory.
 
 The plan of record is [docs/web-port/IMPLEMENTATION-PLAN.md](../docs/web-port/IMPLEMENTATION-PLAN.md):
 §2.4 fixes what lives here and §3 how it runs on the VPS. Each item lands with the task that
-needs it; so far only `compose.dev.yml` exists.
+needs it; the last column says when.
 
 | Item | Contents | Added in |
 | --- | --- | --- |
 | `compose.dev.yml` | Local stack, used until the osn PRs land (§3): `shelfy-api` built and run from the working tree in `rust:1.99.0-bookworm`, API on `127.0.0.1:8080`, metrics on the compose network only | P0 (T7) |
-| Dockerfile for `shelfy-api` | Multi-stage build (`cargo-chef`, pinned `rust:*-bookworm`) into `debian:bookworm-slim` with `ca-certificates`, `tini`, Debian `ffmpeg`, the pinned `yt-dlp_linux` (SHA-256 checked), the server binary and `web/dist` (§3.2) | P1 |
+| `docker/shelfy-api.Dockerfile` (with `shelfy-api.Dockerfile.dockerignore`) | The `shelfy-api` image (§3.2): `cargo-chef` on `rust:1.99.0-bookworm` into `debian:bookworm-slim`, both pinned by digest, with `ca-certificates`, `tini`, Debian `ffmpeg`, yt-dlp 2026.08.19 (the unpacked `yt-dlp_linux.zip` build, SHA-256 checked per architecture), the server binary and `web/dist` with brotli and gzip siblings. Runs as uid 10100 on a read-only root. [Building and running the image](#building-and-running-the-image) | P1-09 |
 | nginx snippet | `refs.niccolofanton.dev` server block for the osn edge nginx (§3.3, E5). It already exists in osn and proxies to `shelfy-api:8080` | P1 |
 | `osn/` | osn patch set, landed as two osn PRs (Appendix B). PR 1: `shelfy-api` service, edge route, DNS and Access, secrets, backups, scrape config, Grafana dashboard `03-shelfy.json` and alert rules (§3.5, §3.6). PR 2: `shelfy-capture` and `shelfy-egress` services, seccomp profile and Smokescreen settings, capture alerts and panels | PR 1 in P1, PR 2 in P4 |
 | `osn/shelfy/backup/` | The four backup jobs of §3.5 as scripts and systemd units for the osn role `shelfy`: hourly database snapshot and restic backup, daily media backup, weekly retention, prune and check, monthly restore drill, each writing textfile metrics. See [Backups and restores](#backups-and-restores) | P1-12; installed by P1-16, enabled after O2 in P1-23 |
 | `rehearse-backups.sh` | Local rehearsal of the backups and of both restore runbooks on synthetic data, with restic in a container and a local repository | P1-12 |
-| `compose.test.yml` | CI web e2e stack: mock AI provider, fixture CDN, Smokescreen that allows only the fixture subnet (§3.8) | With the first web e2e suite (no phase fixed in the plan) |
+| `compose.test.yml` | Test stack (§3.8): `shelfy-api` from a local image with its own data (a named volume, or a host path), production's user, read-only root, limits and healthcheck, API on `127.0.0.1:8081`. Optional `mail` profile with mailpit (E4). The mock AI provider, the fixture CDN and Smokescreen allowing only the fixture subnet join in P2–P4; P1-21 runs the web e2e suite on it | P1-09 |
+| `restart-check.sh` | Restarts `shelfy-api` in the test stack and fails unless `/health` answers 200 within 3 s (§6.2) | P1-09 |
 | Dockerfile for `shelfy-capture` | `node:24-bookworm-slim`, pinned `playwright-core` with `chromium-headless-shell`, Debian `ffmpeg`, Noto and Liberation fonts (§2.18) | P4 |
 | Dockerfile for `shelfy-egress` | Smokescreen built from a pinned commit on `golang`, shipped on `distroless/static` (§3.2) | P4 |
 | Smokescreen ACL | Egress policy: public destinations only, ports 80 and 443, extra deny ranges (§2.18) | P4 (SPIKE-4) |
 | `osn/shelfy/chromium-seccomp.json` | Chromium seccomp profile mounted into `shelfy-capture` (§3.2) | P4 (SPIKE-4) |
 
-The images will be built by `.github/workflows/release-server.yml` on `server-v*` tags and
-pushed to GHCR (§3.8).
+`.github/workflows/release-server.yml` builds the image on `server-v*` tags and pushes it to GHCR
+(§3.8): see [Releases](#releases).
 
 ## Server configuration
 
@@ -45,6 +46,7 @@ validated at start: a bad one stops the process with a message.
 | `SHELFY_SMTP_USER`, `SHELFY_SMTP_PASSWORD` | none | SMTP credentials, set together. The password is a secret (§3.4: `RESEND_API_KEY`) |
 | `SHELFY_SMTP_FROM` | none | Sender, `address` or `Name <address>`; required with `SHELFY_SMTP_HOST` |
 | `SHELFY_DEV_MAILBOX` | `false` | Write emails as `.eml` files to `<data>/dev-mailbox/` instead of sending them. Local runs and tests only: refused together with `SHELFY_SMTP_HOST`, and unless `SHELFY_PUBLIC_URL` is loopback (`localhost`) |
+| `SHELFY_WEB_DIR` | none (`/app/web` in the image) | The built web app (`web/dist`) to serve. Its `index.html` answers every path that no route takes and that is not under `/api`, `/media`, `/health` or `/.well-known`; files under `/assets/` are immutable. The directory must hold `index.html`, or the start fails. Unset: the API only |
 
 Empty values count as unset, so a compose file may pass `SHELFY_SMTP_HOST=` when email is off.
 Later tasks add the master key, the capture and egress endpoints and the media budgets (§3.2,
@@ -74,6 +76,73 @@ curl -i -X POST "$SHELFY_PUBLIC_URL/api/v1/auth/magic-links/redeem" \
 
 Every route needs a signed-in session unless it is listed as public (or open to API tokens) in
 `crates/server/src/routes/mod.rs`.
+
+## Building and running the image
+
+The image takes the web app as built, so build `web/dist` first. BuildKit is required (the
+default of current Docker). A local build targets the host's architecture; releases are
+linux/amd64.
+
+```sh
+pnpm install --frozen-lockfile
+pnpm run web:build
+docker build -f deploy/docker/shelfy-api.Dockerfile -t shelfy-api:local .
+```
+
+| Path in the image | Contents |
+| --- | --- |
+| `/app/shelfy-server` | The server. `ENTRYPOINT ["/usr/bin/tini", "--", "/app/shelfy-server"]` and `CMD ["serve"]`, so `docker exec <container> /app/shelfy-server admin …` runs the operator commands |
+| `/app/web` | `web/dist`, plus `.br` and `.gz` siblings of its text files over 1 KiB, sent to clients that accept them |
+| `/usr/bin/ffmpeg`, `/usr/local/bin/yt-dlp` | Debian's ffmpeg; yt-dlp unpacked in `/opt/yt-dlp`, so it runs with a `noexec` `/tmp` |
+| `/data/shelfy` | The data directory, owned by 10100 with mode 0750: mount the volume here. A new named volume takes this ownership |
+
+The image sets `SHELFY_DATA_DIR=/data/shelfy`, `SHELFY_WEB_DIR=/app/web`,
+`SHELFY_LISTEN_ADDR=0.0.0.0:8080` and `SHELFY_METRICS_ADDR=0.0.0.0:9464`, and runs as
+`10100:10100`. A deployment adds `SHELFY_PUBLIC_URL`, `SHELFY_TRUSTED_PROXIES` (the edge
+network) and, if email is on, the SMTP settings. It also gives the container a read-only root,
+a tmpfs on `/tmp` and the limits of §3.2; `compose.test.yml` does the same locally. Most of the
+image's size is Debian's ffmpeg and the libraries it pulls in.
+
+```sh
+docker run -d --name shelfy-api --read-only --tmpfs /tmp:size=256m \
+  -v shelfy-data:/data/shelfy -p 127.0.0.1:8080:8080 \
+  -e SHELFY_PUBLIC_URL=http://localhost:8080 shelfy-api:local
+docker exec shelfy-api /app/shelfy-server admin create-owner --email you@example.com
+```
+
+`shelfy-server healthcheck` is the container's health probe (the image's `HEALTHCHECK` and the
+compose healthcheck). It asks `GET /health` of `SHELFY_LISTEN_ADDR` (an unspecified address is
+probed on the loopback) and exits 0 only on a 200 with `"status": "ok"`, 1 otherwise, within
+`--timeout` seconds (default 4).
+
+Every response of the API listener carries the content security policy of plan §7.1 (media
+answers add `sandbox`), `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`.
+With an https `SHELFY_PUBLIC_URL` it also carries `Strict-Transport-Security: max-age=31536000`,
+for that host only. `index.html` is `Cache-Control: no-cache` with an `ETag`; `/assets/*` is
+`public, max-age=31536000, immutable`.
+
+## Releases
+
+`.github/workflows/release-server.yml` runs on tags `server-vX.Y.Z-rc.N` (a release candidate,
+on `web/foundations` or `main`) and `server-vX.Y.Z` (on `main` only); `X.Y.Z` must be the
+workspace version in `Cargo.toml`. It pushes `ghcr.io/niccolofanton/shelfy-api:vX.Y.Z[-rc.N]` and
+`:sha-<7 hex>` for linux/amd64, signs the image with cosign (keyless) and creates a GitHub
+release with `shelfy-migrate` for macOS arm64 and x64, Windows x64 and Linux x64, the image's
+SBOM (`shelfy-api.spdx.json`, syft) and `SHA256SUMS`. A server release is a pre-release (rc) or
+is created with `--latest=false`: it never becomes the "Latest" release that the desktop
+updater reads.
+
+```sh
+git tag server-v0.1.0-rc.1 origin/web/foundations
+git push origin server-v0.1.0-rc.1
+# Then check the signature of the digest the release notes give:
+cosign verify ghcr.io/niccolofanton/shelfy-api@sha256:<digest> \
+  --certificate-identity-regexp '^https://github.com/niccolofanton/shelfy/\.github/workflows/release-server\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+The GHCR package starts private. Until it is public or the VPS has a pull token, the image goes
+to the VPS with `docker save` and `docker load` under the same tag (P1 assumption G4).
 
 ## Moving a desktop library
 
