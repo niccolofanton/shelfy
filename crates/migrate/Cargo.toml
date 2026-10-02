@@ -7,5 +7,16 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shelfy-core = { path = "../core" }
+
+[dev-dependencies]
+rusqlite.workspace = true
+tempfile.workspace = true
+
 [lints]
 workspace = true

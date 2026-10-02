@@ -18,6 +18,20 @@ license = "Apache-2.0"
 repository = "https://github.com/niccolofanton/shelfy"
 publish = false
 
+[workspace.dependencies]
+# Shared by the workspace crates; a crate opts in with `<name>.workspace = true`.
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+proptest = "1.11.0"
+# No default features: they only add the wasm32 SQLite backend. `cache` is `prepare_cached`.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha1 = "0.11.0"
+tempfile = "3.27.0"
+thiserror = "2.0.21"
+url = "2.5.8"
+
 [workspace.lints.rust]
 # Unsafe code is opt-in per item (`#[allow(unsafe_code)]`) and needs a `// SAFETY:` comment.
 unsafe_code = "deny"
