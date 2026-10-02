@@ -175,7 +175,7 @@ export function ReauthDialog({
               <Terminal size={13} className="shrink-0" /> {t('reauthOperatorTitle')}
             </p>
             <p className="text-[12px] leading-relaxed text-gray-500">{t('reauthOperator')}</p>
-            <code className="block select-all break-all rounded bg-[#1c1c1c] px-2 py-1.5 font-mono text-[11px] text-gray-300">
+            <code className="block select-all break-words rounded bg-[#1c1c1c] px-2 py-1.5 font-mono text-[11px] text-gray-300">
               {REAUTH_COMMAND}
             </code>
           </div>

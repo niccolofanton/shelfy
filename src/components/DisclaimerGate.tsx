@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Scale, AlertTriangle, Check, ChevronDown, ChevronUp, Loader } from 'lucide-react';
 import disclaimerText from '../../DISCLAIMER.md?raw';
 import {
@@ -92,6 +92,12 @@ export default function DisclaimerGate({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isReview, onClose]);
+
+  // The privacy notice opens below the fold of the scrolling body: bring it in.
+  const privacyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (showPrivacy) privacyRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
+  }, [showPrivacy]);
 
   const handleAccept = async (): Promise<void> => {
     if (!checked || recording) return;
@@ -206,7 +212,10 @@ export default function DisclaimerGate({
                 {showPrivacy ? t('hidePrivacy') : t('showPrivacy', { version: PRIVACY_VERSION })}
               </button>
               {showPrivacy && (
-                <div className="u-fade-in mt-3 max-h-72 overflow-y-auto rounded-lg bg-[#111] border border-[#262626] p-3">
+                <div
+                  ref={privacyRef}
+                  className="u-fade-in mt-3 max-h-72 overflow-y-auto rounded-lg bg-[#111] border border-[#262626] p-3"
+                >
                   <PrivacyNotice showTitle={false} />
                 </div>
               )}
