@@ -99,6 +99,8 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-15 | Metrics, log redaction, rate limits | done | `web/p1-15-observability` (8ef7557…3ce52ee) |
 | P1-17 | Account API, API tokens, device-code flow | done | `web/p1-17-account` (47bbab0…64b9241) |
 | P1-02 | Responsive shell and a minimal web app manifest | running (Sonnet) | `web/p1-02-responsive` |
+| P1-19 | Migration tool and install job complete | running | `web/p1-19-migration` |
+| P1-20 | Sign-in, re-auth, device approval, Settings | running | `web/p1-20-auth-ui` |
 | P1-16 | First osn PR, part 1: prepare (code only) | done; draft [osn PR #29](https://github.com/niccolofanton/osn/pull/29) | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` (967c83a…b5b94af) |
 | P1-22 | O2: R2 bucket and scoped token for backups | done | owner action O2 (osn `1ce0abe`) |
 
