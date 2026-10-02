@@ -79,3 +79,12 @@ unsafe_code = "deny"
 [workspace.lints.clippy]
 dbg_macro = "warn"
 undocumented_unsafe_blocks = "warn"
+
+# Dev and test builds keep line tables only, so backtraces still show file and line. With
+# full debug info, each worktree's target dir grew to 5–7 GB, most of it in the
+# integration-test binaries.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
