@@ -5,6 +5,7 @@
 
 pub mod auth;
 pub mod library;
+pub mod sse;
 
 use axum::Router;
 use axum::body::{Body, Bytes};

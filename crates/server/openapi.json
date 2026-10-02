@@ -154,6 +154,32 @@
         "security": [{}]
       }
     },
+    "/api/v1/client-errors": {
+      "post": {
+        "tags": ["platform"],
+        "summary": "Reports an error caught by the web app.",
+        "description": "The report is logged for the operator; nothing is stored. Unknown fields\nare refused: a report carries no post content.",
+        "operationId": "reportClientError",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientErrorReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "The report was logged."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/collections": {
       "get": {
         "tags": ["library"],
@@ -216,11 +242,45 @@
       "get": {
         "tags": ["platform"],
         "summary": "The realtime stream of the signed-in user.",
-        "description": "A `text/event-stream`: the `hello` event (data: `HelloEvent`), then a\ncomment line every 20 s. The stream ends when the server shuts down;\nreconnect with backoff.",
+        "description": "A `text/event-stream`. Every frame's `data:` is one line of JSON; the\n`ServerEvent` schema maps each event name to its payload:\n\n| `event:` | `data:` |\n|---|---|\n| `hello` | `HelloEvent`, first on every stream |\n| `resync` | `ResyncEvent`: events were lost, reload everything |\n| `posts.changed` | `PostsChangedEvent` |\n| `stats.changed` | `StatsChangedEvent` |\n| `job.updated` | `JobUpdatedEvent` |\n| `notification` | `Notification` |\n\nPublished events carry an `id:`. To resume after a disconnection, send the\nlast one received as `Last-Event-ID` (`EventSource` does it when it\nreconnects by itself) or as `lastEventId`: the missed events follow\n`hello`, or `resync` when they are no longer kept (256 events, 5 minutes).\nA fresh stream's `hello` carries the current position as its `id:`; a\nresuming stream's `hello` has none. Keep the last non-empty\n`lastEventId` seen.\n\nA comment line comes after 20 s without a frame. The stream ends when the\nserver shuts down, and within 20 s of the end of its session (sign-out,\nexpiry); reconnect with backoff, and sign in again on 401.",
         "operationId": "streamEvents",
+        "parameters": [
+          {
+            "name": "topics",
+            "in": "query",
+            "description": "Only these events. Repeatable. Default: every topic.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/EventTopic"
+              }
+            },
+            "style": "form",
+            "explode": true
+          },
+          {
+            "name": "lastEventId",
+            "in": "query",
+            "description": "Resume after this event id, like `Last-Event-ID`; for clients that\nreconnect with a new `EventSource`. The header wins when both are sent.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "description": "The id of the last event received; `EventSource` sends it when it\nreconnects by itself.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "Server-sent events: `hello` first, then a heartbeat comment every 20 s.",
+            "description": "Server-sent events: `hello`, the missed events or `resync` when resuming, then live events; a heartbeat comment after 20 s without a frame.",
             "headers": {
               "Cache-Control": {
                 "schema": {
@@ -261,6 +321,119 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Me"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/notifications": {
+      "get": {
+        "tags": ["platform"],
+        "summary": "The user's notifications, newest first, with the unread count.",
+        "description": "The response is conditional: send the `ETag` back in `If-None-Match` and\nan unchanged page answers 304.",
+        "operationId": "listNotifications",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1–200 (larger values are clamped). Default 60.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "`nextCursor` of the previous page.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of notifications.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`private, no-cache`."
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Weak ETag of this page of this library state."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPage"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The page is unchanged since the ETag in `If-None-Match`; no body.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The same ETag."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/notifications/read": {
+      "post": {
+        "tags": ["platform"],
+        "summary": "Marks notifications read.",
+        "description": "Give `ids`, or `upTo` to mark everything up to the newest notification\nshown. Repeating a call changes nothing.",
+        "operationId": "markNotificationsRead",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkReadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "How many changed, and what is left unread.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkReadResult"
                 }
               }
             }
@@ -829,6 +1002,36 @@
         }
       }
     },
+    "/api/v1/version": {
+      "get": {
+        "tags": ["platform"],
+        "summary": "The server's versions.",
+        "operationId": "getVersion",
+        "responses": {
+          "200": {
+            "description": "The versions.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`no-store`."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionInfo"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": ["platform"],
@@ -885,10 +1088,56 @@
           }
         }
       },
+      "ChangeReason": {
+        "type": "string",
+        "description": "What changed posts (plan §2.10).",
+        "enum": ["ingest", "archive", "ai", "edit", "delete", "capture", "import"]
+      },
       "CheckStatus": {
         "type": "string",
         "description": "Result of one check.",
         "enum": ["ok", "fail"]
+      },
+      "ClientErrorReport": {
+        "type": "object",
+        "description": "An error caught by an error boundary of the web app.",
+        "required": ["view", "message"],
+        "properties": {
+          "clientVersion": {
+            "type": "string",
+            "description": "The web app's build version: at most 64 characters of letters,\ndigits, `.`, `+`, `-`, `_`."
+          },
+          "componentStack": {
+            "type": "string",
+            "description": "React's component stack; the first 8,000 characters are kept."
+          },
+          "message": {
+            "type": "string",
+            "description": "The error's message; the first 1,000 characters are kept. Never put\npost content in it."
+          },
+          "name": {
+            "type": "string",
+            "description": "The error's name (`TypeError`); the first 100 characters are kept."
+          },
+          "occurredAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it happened, by the client's clock (unix ms)."
+          },
+          "route": {
+            "type": "string",
+            "description": "The route pattern of the view (`/p/:key`), never the URL: at most 200\ncharacters, starting with `/`, without `?` or `#`."
+          },
+          "stack": {
+            "type": "string",
+            "description": "The JavaScript stack; the first 8,000 characters are kept."
+          },
+          "view": {
+            "type": "string",
+            "description": "The view whose boundary caught the error (`gallery`, `postModal`,\n`settings`): 1–64 characters of letters, digits, `.`, `_`, `-`, `:`."
+          }
+        },
+        "additionalProperties": false
       },
       "Collection": {
         "type": "object",
@@ -996,6 +1245,11 @@
           "timeout"
         ]
       },
+      "EventTopic": {
+        "type": "string",
+        "description": "The name of a published event; the `topics` filter selects by it.\n\n`hello` and `resync` are not topics: every stream gets them.",
+        "enum": ["posts.changed", "stats.changed", "job.updated", "notification"]
+      },
       "FieldError": {
         "type": "object",
         "description": "One field that failed validation.",
@@ -1043,8 +1297,8 @@
       },
       "HelloEvent": {
         "type": "object",
-        "description": "The `data` of the `hello` event, the first event of every stream.",
-        "required": ["version", "heartbeatMs"],
+        "description": "`hello`, the first event of every stream.",
+        "required": ["version", "heartbeatMs", "lastEventId"],
         "properties": {
           "heartbeatMs": {
             "type": "integer",
@@ -1052,9 +1306,55 @@
             "description": "Milliseconds between two heartbeat comments. A stream silent for much\nlonger is dead: reconnect.",
             "minimum": 0
           },
+          "lastEventId": {
+            "type": "string",
+            "description": "The id of the newest event of your stream when it opened: resume from\nit (`Last-Event-ID` or `lastEventId`) to miss nothing after this point."
+          },
           "version": {
             "type": "string",
             "description": "Version of the server build; a change means a new deploy."
+          }
+        }
+      },
+      "JobState": {
+        "type": "string",
+        "description": "State of a job (plan §2.6 `jobs.state`).",
+        "enum": ["queued", "running", "succeeded", "failed", "cancelled"]
+      },
+      "JobUpdatedEvent": {
+        "type": "object",
+        "description": "`job.updated`: the latest state of a job, at most every 250 ms per job.",
+        "required": ["id", "kind", "state", "progress", "stage", "postKey", "errorCode"],
+        "properties": {
+          "errorCode": {
+            "type": ["string", "null"],
+            "description": "Why the job failed (`failed`), or its last error before a retry."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Job id."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Job kind (`archive.drain`, `capture.site`, …)."
+          },
+          "postKey": {
+            "type": ["string", "null"],
+            "description": "The post the job works on, if one."
+          },
+          "progress": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Progress from 0 to 1, when known."
+          },
+          "stage": {
+            "type": ["string", "null"],
+            "description": "Current stage, a code, when the job has stages."
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState",
+            "description": "State."
           }
         }
       },
@@ -1066,6 +1366,45 @@
           "email": {
             "type": "string",
             "description": "The account's email address."
+          }
+        }
+      },
+      "MarkReadRequest": {
+        "type": "object",
+        "description": "Which notifications to mark read: exactly one of `ids` and `upTo`.",
+        "properties": {
+          "ids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "description": "These notifications, at most 200. Ids that do not exist are skipped."
+          },
+          "upTo": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Every notification up to this id, included: \"mark all read\" with the\nnewest id shown, which leaves alone any that arrived since."
+          }
+        },
+        "additionalProperties": false
+      },
+      "MarkReadResult": {
+        "type": "object",
+        "description": "The outcome of `POST /notifications/read`.",
+        "required": ["updated", "unreadCount"],
+        "properties": {
+          "unreadCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unread notifications left.",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Notifications that went from unread to read.",
+            "minimum": 0
           }
         }
       },
@@ -1145,6 +1484,72 @@
         "type": "string",
         "description": "Kind of post (`posts.media_type`).",
         "enum": ["image", "images", "carousel", "video", "text", "website", "file"]
+      },
+      "Notification": {
+        "type": "object",
+        "description": "A notification: an item of `GET /notifications` and the payload of the\n`notification` event. It carries codes, not text: the client writes the\nmessage from `kind`, `code` and `params`.",
+        "required": ["id", "kind", "code", "params", "target", "createdAt", "readAt"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "What happened (`job.failed`, …), stable like an error code."
+          },
+          "createdAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it was created."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Id; newer notifications have larger ids."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Area (`job`, `migration`, `quota`, …)."
+          },
+          "params": {
+            "type": "object",
+            "description": "Values for the message; `{}` when there are none.",
+            "additionalProperties": {},
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "readAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "When it was marked read; `null` while unread."
+          },
+          "target": {
+            "type": ["string", "null"],
+            "description": "Where the notification leads: a post key or an app route."
+          }
+        }
+      },
+      "NotificationPage": {
+        "type": "object",
+        "description": "One page of notifications, newest first.",
+        "required": ["items", "nextCursor", "unreadCount"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Notification"
+            },
+            "description": "The notifications of this page."
+          },
+          "nextCursor": {
+            "type": ["string", "null"],
+            "description": "Pass it as `cursor` to get the next page; `null` on the last page."
+          },
+          "unreadCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unread notifications, over all pages.",
+            "minimum": 0
+          }
+        }
       },
       "Platform": {
         "type": "string",
@@ -1644,6 +2049,24 @@
           }
         }
       },
+      "PostsChangedEvent": {
+        "type": "object",
+        "description": "`posts.changed`: reload the views that show these posts.",
+        "required": ["keys", "reason"],
+        "properties": {
+          "keys": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "The posts that changed, at most 200. `null` when more changed, or the\nchange was not about listed posts: reload the whole view."
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ChangeReason",
+            "description": "What changed them."
+          }
+        }
+      },
       "Problem": {
         "type": "object",
         "description": "An error body: RFC 9457 problem details plus the stable `code`.",
@@ -1691,6 +2114,22 @@
           }
         }
       },
+      "ResyncEvent": {
+        "type": "object",
+        "description": "`resync`: events were lost. Reload every view (posts, stats, jobs,\nnotifications), then carry on with the stream.",
+        "required": ["reason"],
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/ResyncReason",
+            "description": "Why; the reaction is the same for every reason."
+          }
+        }
+      },
+      "ResyncReason": {
+        "type": "string",
+        "description": "Why a stream asks the client to reload everything.",
+        "enum": ["expired", "unknown", "lagged"]
+      },
       "SearchPage": {
         "type": "object",
         "description": "One page of `GET /api/v1/search`.",
@@ -1719,6 +2158,101 @@
         "type": "string",
         "description": "Which posts a search covers.",
         "enum": ["all", "sites", "social"]
+      },
+      "ServerEvent": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "First event of every stream.",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/HelloEvent",
+                "description": "First event of every stream."
+              },
+              "event": {
+                "type": "string",
+                "enum": ["hello"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Events were lost: reload everything.",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ResyncEvent",
+                "description": "Events were lost: reload everything."
+              },
+              "event": {
+                "type": "string",
+                "enum": ["resync"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Posts changed.",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/PostsChangedEvent",
+                "description": "Posts changed."
+              },
+              "event": {
+                "type": "string",
+                "enum": ["posts.changed"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The counters changed.",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/StatsChangedEvent",
+                "description": "The counters changed."
+              },
+              "event": {
+                "type": "string",
+                "enum": ["stats.changed"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A job moved on.",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/JobUpdatedEvent",
+                "description": "A job moved on."
+              },
+              "event": {
+                "type": "string",
+                "enum": ["job.updated"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A new notification.",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/Notification",
+                "description": "A new notification."
+              },
+              "event": {
+                "type": "string",
+                "enum": ["notification"]
+              }
+            }
+          }
+        ],
+        "description": "Every event of `GET /api/v1/events`: `event` is the SSE event name and\n`data` the JSON of its `data:` line. A type for clients; no response sends\nthis object as such."
       },
       "SlideKind": {
         "type": "string",
@@ -1770,6 +2304,10 @@
           }
         }
       },
+      "StatsChangedEvent": {
+        "type": "object",
+        "description": "`stats.changed`: reload `GET /stats`. No payload: `{}`."
+      },
       "StoredByKind": {
         "type": "object",
         "description": "Posts with a stored object of each kind.",
@@ -1804,6 +2342,21 @@
         "type": "string",
         "description": "What a user may do on the instance.",
         "enum": ["owner", "member"]
+      },
+      "VersionInfo": {
+        "type": "object",
+        "description": "Versions of the server.",
+        "required": ["version", "apiVersion"],
+        "properties": {
+          "apiVersion": {
+            "type": "string",
+            "description": "Major version of the API: the `1` of `/api/v1`."
+          },
+          "version": {
+            "type": "string",
+            "description": "Version of the server build."
+          }
+        }
       },
       "WebCapture": {
         "type": "object",
@@ -1935,7 +2488,7 @@
   "tags": [
     {
       "name": "platform",
-      "description": "Health, the API description and the realtime stream."
+      "description": "Health, the API description, the realtime stream, notifications, client error reports and the version."
     },
     {
       "name": "auth",

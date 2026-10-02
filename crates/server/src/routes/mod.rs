@@ -6,8 +6,8 @@
 //!
 //! | Group | Limits | Routes |
 //! |---|---|---|
-//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library |
-//! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (T11 stub, P1-01), `POST /api/v1/search/chat` (P3) |
+//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01) |
+//! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
 //! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
 //! | ingest, uploads, STT | [`RouteLimits::INGEST`], [`RouteLimits::UPLOAD_CHUNK`], [`RouteLimits::STT`] | added with their routes (P2, T9, P3) |
 //!
@@ -15,7 +15,11 @@
 //! [`search`], [`stats`] and [`collections`], all behind
 //! [`CurrentUser`](crate::current_user::CurrentUser) and conditional
 //! ([`crate::conditional`]); their JSON shapes are in [`model`] and the shared
-//! paging in [`listing`]. [`events`] is the SSE stub.
+//! paging in [`listing`].
+//!
+//! The platform routes (P1-01): [`events`] (the SSE stream of
+//! [`crate::events`]), [`notifications`], [`client_errors`] and [`version`],
+//! all behind [`CurrentUser`](crate::current_user::CurrentUser).
 //!
 //! The committed copy of the document, `crates/server/openapi.json`, is what
 //! the TypeScript client is generated from (T11). After changing a route,
@@ -25,6 +29,7 @@
 //! fail while a committed copy is stale.
 
 pub mod auth;
+pub mod client_errors;
 pub mod collections;
 pub mod docs;
 pub mod events;
@@ -33,9 +38,11 @@ pub mod listing;
 pub mod me;
 pub mod media;
 pub mod model;
+pub mod notifications;
 pub mod posts;
 pub mod search;
 pub mod stats;
+pub mod version;
 
 use utoipa::OpenApi;
 use utoipa::openapi::path::Operation;
@@ -47,6 +54,7 @@ use utoipa_axum::routes;
 
 use crate::auth::openapi::SecuritySchemes;
 use crate::error::{ErrorCode, FieldError, PROBLEM_JSON, Problem};
+use crate::events::model as event;
 use crate::limits::RouteLimits;
 use crate::state::AppState;
 
@@ -68,12 +76,22 @@ const PROBLEM_RESPONSE: &str = "Problem";
                        `code` is stable; clients map it to their own messages."
     ),
     // Responses register their schemas; types used only by parameters (the
-    // filter enums) and event payloads are listed here.
+    // filter enums) and the event payloads of the stream are listed here.
     components(schemas(
         Problem,
         ErrorCode,
         FieldError,
-        events::HelloEvent,
+        event::ServerEvent,
+        event::EventTopic,
+        event::HelloEvent,
+        event::ResyncEvent,
+        event::ResyncReason,
+        event::PostsChangedEvent,
+        event::ChangeReason,
+        event::StatsChangedEvent,
+        event::JobUpdatedEvent,
+        event::JobState,
+        event::Notification,
         listing::MatchMode,
         listing::PostSort,
         listing::YesNo,
@@ -82,7 +100,8 @@ const PROBLEM_RESPONSE: &str = "Problem";
     )),
     modifiers(&SecuritySchemes),
     tags(
-        (name = "platform", description = "Health, the API description and the realtime stream."),
+        (name = "platform", description = "Health, the API description, the realtime stream, \
+                                           notifications, client error reports and the version."),
         (name = "auth", description = "Sign-in links, sessions and sign-out."),
         (name = "account", description = "The signed-in user."),
         (name = "library", description = "The signed-in user's posts, stats and collections."),
@@ -102,6 +121,10 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(search::search))
         .routes(routes!(stats::get_stats))
         .routes(routes!(collections::list_collections))
+        .routes(routes!(notifications::list_notifications))
+        .routes(routes!(notifications::mark_notifications_read))
+        .routes(routes!(client_errors::report_client_error))
+        .routes(routes!(version::get_version))
         .merge(auth::router())
         .merge(me::router());
     // Streams end when the shutdown token fires instead of on a timer.
