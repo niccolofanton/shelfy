@@ -17,7 +17,7 @@ use shelfy_server::mail::MailConfig;
 use shelfy_server::telemetry::http::REQUEST_ID_HEADER;
 use shelfy_server::telemetry::json_layer;
 use support::auth::{
-    LINK_PATH, OWNER_EMAIL, link_in, mailbox, owner, post, session_cookie, spa, token_of,
+    OWNER_EMAIL, link_in, mailbox, owner, post, redeem_request, session_cookie, spa, token_of,
     with_session,
 };
 use support::{TestState, get, post_json, send};
@@ -77,7 +77,7 @@ async fn logs_name_the_user_but_never_tokens_or_addresses() {
     let email_id = request_id(&response);
     let link = link_in(&mailbox(&t).await[0]);
     let link_token = token_of(&link);
-    let response = send(&app, get(&format!("{LINK_PATH}{link_token}"))).await;
+    let response = send(&app, redeem_request(&t, &link_token)).await;
     let open_id = request_id(&response);
     let cookie = session_cookie(&response).unwrap();
     let response = send(&app, with_session(get("/api/v1/me"), &cookie)).await;

@@ -9,9 +9,9 @@ pub mod sse;
 
 use axum::Router;
 use axum::body::{Body, Bytes};
-use axum::http::{Request, Response, StatusCode, header};
+use axum::http::{HeaderValue, Request, Response, StatusCode, header};
 use http_body_util::BodyExt as _;
-use shelfy_server::config::{Config, DataDir};
+use shelfy_server::config::{Config, DEFAULT_PUBLIC_URL, DataDir};
 use shelfy_server::error::{PROBLEM_JSON, Problem};
 use shelfy_server::state::AppState;
 use tempfile::TempDir;
@@ -62,12 +62,25 @@ pub fn get(uri: &str) -> Request<Body> {
     Request::get(uri).body(Body::empty()).expect("request")
 }
 
-/// A `POST` with a JSON body.
+/// A `POST` with a JSON body, as the web app sends it ([`from_app`]).
 pub fn post_json(uri: &str, body: impl Into<Body>) -> Request<Body> {
-    Request::post(uri)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(body.into())
-        .expect("request")
+    from_app(
+        Request::post(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(body.into())
+            .expect("request"),
+    )
+}
+
+/// `request` with the headers the web app sends on every state-changing
+/// request, which the CSRF guard checks: `Origin` (the default public URL),
+/// `Sec-Fetch-Site: same-origin` and `X-Shelfy-Client: web`.
+pub fn from_app(mut request: Request<Body>) -> Request<Body> {
+    let headers = request.headers_mut();
+    headers.insert(header::ORIGIN, HeaderValue::from_static(DEFAULT_PUBLIC_URL));
+    headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
+    headers.insert("x-shelfy-client", HeaderValue::from_static("web"));
+    request
 }
 
 /// The whole body.

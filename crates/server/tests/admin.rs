@@ -351,8 +351,8 @@ fn login_link_prints_a_one_time_link_on_stdout_only() {
     let token = lines
         .next()
         .unwrap()
-        .strip_prefix("https://shelfy.example.test/api/v1/auth/magic/")
-        .expect("a sign-in link on the public origin")
+        .strip_prefix("https://shelfy.example.test/login/magic#")
+        .expect("a sign-in page link on the public origin, the token in the fragment")
         .to_owned();
     assert_eq!(token.len(), 43);
     assert_eq!(lines.next(), None);
@@ -391,7 +391,7 @@ fn login_link_prints_a_one_time_link_on_stdout_only() {
         .unwrap();
     let url = stdout(&output).lines().nth(1).unwrap().to_owned();
     assert!(
-        url.starts_with("http://localhost:18090/api/v1/auth/magic/"),
+        url.starts_with("http://localhost:18090/login/magic#"),
         "{url}"
     );
 

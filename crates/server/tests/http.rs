@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::body::{Body, Bytes};
-use axum::http::{Request, StatusCode, header};
+use axum::http::{Method, Request, StatusCode, header};
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 use shelfy_core::db::{ControlDbConfig, DbError};
@@ -21,7 +21,8 @@ use shelfy_server::state::AppState;
 use shelfy_server::telemetry::http::REQUEST_ID_HEADER;
 use shelfy_server::telemetry::metrics;
 use shelfy_server::{app, routes};
-use support::{TestState, body, get as get_req, is_ulid, json, post_json, problem, send};
+use support::auth::{sign_in, spa};
+use support::{TestState, body, from_app, get as get_req, is_ulid, json, post_json, problem, send};
 use utoipa_axum::router::OpenApiRouter;
 
 const KIB: usize = 1024;
@@ -62,7 +63,8 @@ async fn busy() -> Result<(), ApiError> {
     Err(DbError::ReaderTimeout.into())
 }
 
-/// The real application plus test routes in the real limit groups.
+/// The real application plus test routes in the real limit groups, public
+/// (routes need a session unless declared otherwise).
 fn app_with_test_routes(state: &AppState) -> Router {
     let standard = OpenApiRouter::new()
         .route("/test/echo", post(echo))
@@ -81,7 +83,14 @@ fn app_with_test_routes(state: &AppState) -> Router {
             }
             .apply(short),
         );
-    app::build(state.clone(), routes)
+    let access = routes::access()
+        .public(Method::POST, "/test/echo")
+        .public(Method::GET, "/test/query")
+        .public(Method::GET, "/test/panic")
+        .public(Method::GET, "/test/busy")
+        .public(Method::POST, "/test/ingest")
+        .public(Method::GET, "/test/slow");
+    app::build_with_access(state.clone(), routes, access)
 }
 
 /// A JSON body `{"name": "aaa…"}` of exactly `len` bytes.
@@ -162,12 +171,13 @@ async fn unknown_routes_answer_a_not_found_problem() {
 
 #[tokio::test]
 async fn wrong_methods_answer_a_problem_with_allow() {
+    // A method the route does not serve needs a session like any other
+    // (deny by default); signed in, it is the router's 405.
     let t = TestState::new();
-    let response = send(
-        &t.app(),
-        Request::delete("/health").body(Body::empty()).unwrap(),
-    )
-    .await;
+    let app = t.app();
+    let cookie = sign_in(&app, &t).await;
+    let request = Request::delete("/health").body(Body::empty()).unwrap();
+    let response = send(&app, spa(&t, request, &cookie)).await;
     let allow = response.headers()[header::ALLOW]
         .to_str()
         .unwrap()
@@ -205,11 +215,13 @@ async fn bodies_over_the_route_limit_are_refused() {
 
     // Announced by Content-Length: refused before the handler runs.
     let oversized = named_body(limit + 1);
-    let request = Request::post("/test/echo")
-        .header(header::CONTENT_TYPE, "application/json")
-        .header(header::CONTENT_LENGTH, oversized.len())
-        .body(Body::from(oversized.clone()))
-        .unwrap();
+    let request = from_app(
+        Request::post("/test/echo")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::CONTENT_LENGTH, oversized.len())
+            .body(Body::from(oversized.clone()))
+            .unwrap(),
+    );
     let problem_body = problem(send(&app, request).await, StatusCode::PAYLOAD_TOO_LARGE).await;
     assert_eq!(problem_body.code, ErrorCode::PayloadTooLarge);
 
@@ -227,15 +239,19 @@ async fn bodies_over_the_route_limit_are_refused() {
     );
 
     // The ingest group allows 8 MiB.
-    let request = Request::post("/test/ingest")
-        .body(Body::from(vec![b'x'; MIB]))
-        .unwrap();
+    let request = from_app(
+        Request::post("/test/ingest")
+            .body(Body::from(vec![b'x'; MIB]))
+            .unwrap(),
+    );
     let response = send(&app, request).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(body(response).await, MIB.to_string());
-    let request = Request::post("/test/ingest")
-        .body(Body::from(vec![b'x'; RouteLimits::INGEST.body_bytes + 1]))
-        .unwrap();
+    let request = from_app(
+        Request::post("/test/ingest")
+            .body(Body::from(vec![b'x'; RouteLimits::INGEST.body_bytes + 1]))
+            .unwrap(),
+    );
     problem(send(&app, request).await, StatusCode::PAYLOAD_TOO_LARGE).await;
 }
 
@@ -260,10 +276,12 @@ async fn rejected_extractors_answer_problems() {
     assert_eq!(syntax.code, ErrorCode::BadRequest);
     assert!(syntax.detail.is_some());
 
-    let request = Request::post("/test/echo")
-        .header(header::CONTENT_TYPE, "text/plain")
-        .body(Body::from(r#"{"name":"a"}"#))
-        .unwrap();
+    let request = from_app(
+        Request::post("/test/echo")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from(r#"{"name":"a"}"#))
+            .unwrap(),
+    );
     let media = problem(
         send(&app, request).await,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,

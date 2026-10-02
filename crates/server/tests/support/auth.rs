@@ -10,20 +10,24 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, Response, StatusCode, header};
+use axum::http::{HeaderValue, Request, Response, StatusCode, header};
+use serde_json::json;
 use shelfy_server::admin::login_link::create_login_link;
 use shelfy_server::admin::owner::create_owner;
 use shelfy_server::auth::cookie::SESSION_COOKIE;
 use shelfy_server::auth::csrf::{CLIENT_HEADER, CLIENT_WEB};
 use shelfy_server::mail::DEV_MAILBOX_DIR;
 
-use super::{TestState, get, send};
+use super::{TestState, send};
 
 /// Email of the test owner.
 pub const OWNER_EMAIL: &str = "owner@example.test";
 
-/// Path of a sign-in link, before the token.
-pub const LINK_PATH: &str = "/api/v1/auth/magic/";
+/// The SPA page a sign-in link opens; the token follows `#`.
+pub const LINK_PAGE: &str = "/login/magic#";
+
+/// The route that redeems a link's token.
+pub const REDEEM: &str = "/api/v1/auth/magic-links/redeem";
 
 /// Creates the owner (idempotent); returns its id.
 pub fn owner(t: &TestState) -> String {
@@ -46,20 +50,28 @@ pub fn link_token(t: &TestState, email: &str) -> String {
     token_of(link.url.expose())
 }
 
-/// The token at the end of a link URL.
+/// The token of a link URL: what follows `#`.
 pub fn token_of(url: &str) -> String {
-    let (_, token) = url.split_once(LINK_PATH).expect("a sign-in link URL");
+    let (_, token) = url.split_once(LINK_PAGE).expect("a sign-in link URL");
     token.to_owned()
 }
 
-/// Signs the owner in with a fresh link; returns the session cookie's value.
-/// Creates the owner if needed.
+/// The request the sign-in page sends to redeem `token`, as the SPA sends it.
+pub fn redeem_request(t: &TestState, token: &str) -> Request<Body> {
+    let request = Request::post(REDEEM)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "token": token }).to_string()))
+        .expect("request");
+    from_spa(t, request)
+}
+
+/// Signs the owner in with a fresh link, redeemed as the sign-in page does;
+/// returns the session cookie's value. Creates the owner if needed.
 pub async fn sign_in(app: &Router, t: &TestState) -> String {
     owner(t);
     let token = link_token(t, OWNER_EMAIL);
-    let response = send(app, get(&format!("{LINK_PATH}{token}"))).await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER, "sign-in redirect");
-    assert_eq!(response.headers()[header::LOCATION], "/");
+    let response = send(app, redeem_request(t, &token)).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT, "sign-in");
     session_cookie(&response).expect("the sign-in sets the session cookie")
 }
 
@@ -87,18 +99,24 @@ pub fn with_session(mut request: Request<Body>, value: &str) -> Request<Body> {
     request
 }
 
-/// `request` as the SPA sends it: the session cookie, `Origin` (the public
-/// URL of `t`), `Sec-Fetch-Site: same-origin` and `X-Shelfy-Client: web`.
-pub fn spa(t: &TestState, request: Request<Body>, value: &str) -> Request<Body> {
-    let mut request = with_session(request, value);
+/// `request` with the headers the SPA sends on a state-changing request:
+/// `Origin` (the public URL of `t`), `Sec-Fetch-Site: same-origin` and
+/// `X-Shelfy-Client: web`.
+pub fn from_spa(t: &TestState, mut request: Request<Body>) -> Request<Body> {
     let headers = request.headers_mut();
     headers.insert(
         header::ORIGIN,
         t.state.config().public_url.as_str().parse().unwrap(),
     );
-    headers.insert("sec-fetch-site", "same-origin".parse().unwrap());
-    headers.insert(CLIENT_HEADER, CLIENT_WEB.parse().unwrap());
+    headers.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
+    headers.insert(CLIENT_HEADER, HeaderValue::from_static(CLIENT_WEB));
     request
+}
+
+/// `request` as the SPA sends it when signed in: [`from_spa`] plus the
+/// session cookie `value`.
+pub fn spa(t: &TestState, request: Request<Body>, value: &str) -> Request<Body> {
+    with_session(from_spa(t, request), value)
 }
 
 /// An empty `POST`.
@@ -131,7 +149,7 @@ pub async fn mailbox(t: &TestState) -> Vec<String> {
 pub fn link_in(message: &str) -> String {
     message
         .split_whitespace()
-        .find(|word| word.contains(LINK_PATH))
+        .find(|word| word.contains(LINK_PAGE))
         .expect("a sign-in link in the message")
         .to_owned()
 }

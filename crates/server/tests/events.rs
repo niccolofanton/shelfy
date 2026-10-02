@@ -27,7 +27,9 @@ use shelfy_server::events::{
 use shelfy_server::ids::now_ms;
 use shelfy_server::routes::events::{HEARTBEAT, HelloEvent};
 use shelfy_server::tokens::hash_token;
-use support::auth::{LINK_PATH, OWNER_EMAIL, link_token, owner, post, sign_in, spa, with_session};
+use support::auth::{
+    OWNER_EMAIL, link_token, owner, post, redeem_request, sign_in, spa, with_session,
+};
 use support::library::{ALICE, BOB, NOW};
 use support::sse::{Stream, assert_event_schema};
 use support::{TestState, get, problem, send};
@@ -511,9 +513,9 @@ async fn signed_in_stream(app: &Router, t: &TestState) -> (Stream, String) {
     (stream, cookie)
 }
 
-// Each session below ends before its stream's first check. (A check already
-// in flight when its session ends could cache the session again: the T10
-// hardening, F1, closes that race in the session cache.)
+// Each session below ends before its stream's first check. (A check in
+// flight when its session ends cannot cache the session again: the session
+// cache counts revocations, see `AuthState::cache_session`.)
 #[tokio::test(start_paused = true)]
 async fn a_stream_ends_within_a_heartbeat_of_its_session() {
     let t = TestState::new();
@@ -534,9 +536,9 @@ async fn a_stream_ends_within_a_heartbeat_of_its_session() {
     // Replaced: the same browser signs in again.
     let (mut replaced, cookie) = signed_in_stream(&app, &t).await;
     let started = Instant::now();
-    let link = format!("{LINK_PATH}{}", link_token(&t, OWNER_EMAIL));
-    let response = send(&app, with_session(get(&link), &cookie)).await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    let token = link_token(&t, OWNER_EMAIL);
+    let response = send(&app, with_session(redeem_request(&t, &token), &cookie)).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
     ends_within_a_heartbeat(&mut replaced, started).await;
 
     // Expired, once the 60 s session cache lets go of it.

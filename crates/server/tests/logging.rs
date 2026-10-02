@@ -8,7 +8,7 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
-use axum::http::{Request, StatusCode, header};
+use axum::http::{Method, Request, StatusCode, header};
 use axum::routing::post;
 use serde_json::Value;
 use shelfy_server::error::ApiError;
@@ -65,9 +65,10 @@ async fn request_logs_carry_the_route_but_no_request_data() {
 
     let t = TestState::new();
     let failing = OpenApiRouter::new().route("/test/fail", post(fail));
-    let app = app::build(
+    let app = app::build_with_access(
         t.state.clone(),
         routes::router().merge(RouteLimits::STANDARD.apply(failing)),
+        routes::access().public(Method::POST, "/test/fail"),
     );
 
     let planted = [
@@ -89,10 +90,12 @@ async fn request_logs_carry_the_route_but_no_request_data() {
         .unwrap()
         .to_owned();
 
-    let request = Request::post("/test/fail?q=query-secret-1")
-        .header(header::CONTENT_TYPE, "text/plain")
-        .body(Body::from("body-secret-4"))
-        .unwrap();
+    let request = support::from_app(
+        Request::post("/test/fail?q=query-secret-1")
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from("body-secret-4"))
+            .unwrap(),
+    );
     let failed = send(&app, request).await;
     assert_eq!(failed.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let failed_id = failed.headers()[REQUEST_ID_HEADER]

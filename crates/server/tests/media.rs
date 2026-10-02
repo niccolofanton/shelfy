@@ -26,7 +26,7 @@ use shelfy_server::tokens::{SecretToken, hash_token};
 use shelfy_server::{app, routes};
 use support::auth::{owner, sign_in, with_session};
 use support::library::{ALICE, BOB};
-use support::{TestState, body, get as plain_get, problem, send};
+use support::{TestState, body, from_app, get as plain_get, problem, send};
 
 const TEST_USER: &str = "x-test-user";
 
@@ -43,12 +43,11 @@ async fn test_auth(mut request: Request, next: Next) -> Response {
     next.run(request).await
 }
 
-/// The real routes and stack, plus the test authentication.
+/// The real routes and stack, wrapped in the test authentication: it must
+/// sit outside the application, because the access gate runs before any
+/// layer inside the router.
 fn app(t: &TestState) -> Router {
-    app::build(
-        t.state.clone(),
-        routes::router().layer(middleware::from_fn(test_auth)),
-    )
+    app::build(t.state.clone(), routes::router()).layer(middleware::from_fn(test_auth))
 }
 
 fn media_of(t: &TestState, user: &str) -> UserMedia {
@@ -507,7 +506,9 @@ async fn other_methods_are_refused() {
     let t = TestState::new();
     let (_, url) = store(&t, ALICE, &jpeg_like(16));
     for method in [Method::POST, Method::PUT, Method::DELETE] {
-        let response = send(&app(&t), request(method.clone(), &url, Some(ALICE), &[])).await;
+        // With the web app's headers, so the CSRF guard lets them through.
+        let unsafe_request = from_app(request(method.clone(), &url, Some(ALICE), &[]));
+        let response = send(&app(&t), unsafe_request).await;
         let allow = header_str(&response, &header::ALLOW).to_owned();
         assert!(
             allow.contains("GET") && allow.contains("HEAD"),

@@ -8,6 +8,7 @@ mod support;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use axum::http::Method;
 use axum::routing::get;
 use shelfy_core::repo::collections::{self, NewCollection};
 use shelfy_server::limits::RouteLimits;
@@ -67,9 +68,10 @@ async fn listeners_serve_disjoint_routes_and_shut_down_gracefully() {
     assert!(std::fs::metadata(&library_wal).unwrap().len() > 0);
 
     let slow_routes = OpenApiRouter::new().route("/test/slow", get(slow));
-    let application = app::build(
+    let application = app::build_with_access(
         state.clone(),
         routes::router().merge(RouteLimits::STANDARD.apply(slow_routes)),
+        routes::access().public(Method::GET, "/test/slow"),
     );
     let api_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let metrics_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

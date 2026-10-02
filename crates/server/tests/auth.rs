@@ -1,39 +1,47 @@
 //! Owner sign-in through the real middleware stack (plan §2.11, §7.1, E4):
 //! email links end to end (dev mailbox and SMTP), `admin login-link`,
-//! sessions (cookie flags, expiry, rotation, sign-out), the CSRF guard,
-//! bearer requests, re-authentication, rate limits, no account enumeration,
-//! and a 401 for every protected route without a session. The logs are
-//! checked in `auth_logs.rs`.
+//! redemption by `POST` only, sessions (cookie flags, expiry, rotation,
+//! sign-out, the miss cache), the CSRF guard on every unsafe request, rate
+//! limits keyed by the TCP peer or a trusted proxy's header, API tokens,
+//! re-authentication, no account enumeration, and deny-by-default access on
+//! every route. The logs are checked in `auth_logs.rs`.
 
 mod support;
 
 use std::collections::BTreeSet;
-use std::time::Duration;
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::Body;
+use axum::extract::ConnectInfo;
 use axum::http::{HeaderName, HeaderValue, Method, Request, StatusCode, header};
 use axum::routing::{get as get_route, post as post_route};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use shelfy_server::auth::RecentAuth;
-use shelfy_server::auth::bearer::{TokenUser, scopes};
+use shelfy_server::auth::access::{Access, AccessPolicy};
+use shelfy_server::auth::bearer::{Scope, TokenUser, scopes};
 use shelfy_server::config::Config;
 use shelfy_server::current_user::CurrentUser;
 use shelfy_server::error::ErrorCode;
 use shelfy_server::ids::{new_ulid, now_ms};
 use shelfy_server::limits::RouteLimits;
 use shelfy_server::mail::{MailConfig, SmtpConfig, SmtpTls};
+use shelfy_server::net::TrustedProxies;
+use shelfy_server::serve::Server;
 use shelfy_server::telemetry::http::REQUEST_ID_HEADER;
+use shelfy_server::telemetry::metrics;
 use shelfy_server::tokens::{SecretToken, hash_token};
 use shelfy_server::{app, routes};
 use support::auth::{
-    LINK_PATH, OWNER_EMAIL, link_in, link_token, mailbox, mailbox_dir, owner, post, session_cookie,
-    sign_in, spa, with_session,
+    OWNER_EMAIL, REDEEM, from_spa, link_in, link_token, mailbox, mailbox_dir, owner, post,
+    redeem_request, session_cookie, sign_in, spa, token_of, with_session,
 };
 use support::{TestState, body, get, json, post_json, problem, send};
-use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
-use tokio::net::TcpListener;
+use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::oneshot;
 use utoipa_axum::router::OpenApiRouter;
 
 const DAY_MS: i64 = 86_400_000;
@@ -74,7 +82,17 @@ async fn me(app: &Router, cookie: &str) -> StatusCode {
         .status()
 }
 
-fn with_ip(mut request: Request<Body>, ip: &str) -> Request<Body> {
+/// `request` as if it came over TCP from `peer`.
+fn from_peer(mut request: Request<Body>, peer: &str) -> Request<Body> {
+    let ip = peer.parse().unwrap();
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::new(ip, 40_000)));
+    request
+}
+
+/// `request` with `CF-Connecting-IP: ip`.
+fn claiming(mut request: Request<Body>, ip: &str) -> Request<Body> {
     request
         .headers_mut()
         .insert("cf-connecting-ip", ip.parse().unwrap());
@@ -115,17 +133,15 @@ async fn the_owner_signs_in_with_an_emailed_link() {
         "{message}"
     );
     assert!(message.contains("expires in 15 minutes"), "{message}");
+    // The token travels in the fragment of the SPA's sign-in page.
     let url = link_in(message);
-    let path = url
-        .strip_prefix(t.state.config().public_url.as_str())
-        .expect("the link is on the public URL");
-    assert!(path.starts_with(LINK_PATH), "{path}");
+    let public = t.state.config().public_url.as_str();
+    let token = token_of(&url);
+    assert_eq!(url, format!("{public}/login/magic#{token}"));
 
-    let response = send(&app, get(path)).await;
-    assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(response.headers()[header::LOCATION], "/");
+    let response = send(&app, redeem_request(&t, &token)).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
     assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-    assert_eq!(response.headers()[header::REFERRER_POLICY], "no-referrer");
     let cookie = session_cookie(&response).expect("a session cookie");
 
     let response = send(&app, with_session(get("/api/v1/me"), &cookie)).await;
@@ -151,6 +167,30 @@ async fn the_owner_signs_in_with_an_emailed_link() {
         "SELECT COUNT(*) FROM magic_links WHERE used_at IS NOT NULL",
     );
     assert_eq!(used, 1);
+}
+
+#[tokio::test]
+async fn the_email_goes_to_the_stored_address() {
+    let t = with_mailbox();
+    let app = t.app();
+    // An address stored with capitals (older data, or another normalization):
+    // the lookup ignores case, the email uses the stored spelling.
+    control(&t)
+        .execute(
+            "INSERT INTO users (id, email, role, quota_bytes, created_at) \
+             VALUES ('01MIXED0000000000000000000', 'Mixed.Case@Example.test', 'owner', 0, 0)",
+            [],
+        )
+        .unwrap();
+    let response = send(&app, email_request("mixed.case@example.test")).await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let messages = mailbox(&t).await;
+    assert_eq!(messages.len(), 1);
+    assert!(
+        messages[0].contains("To: Mixed.Case@Example.test"),
+        "{}",
+        messages[0]
+    );
 }
 
 #[tokio::test]
@@ -184,10 +224,10 @@ async fn the_session_cookie_is_host_only_secure_and_stored_as_a_hash() {
     let app = t.app();
     owner(&t);
     let token = link_token(&t, OWNER_EMAIL);
-    let request = Request::get(format!("{LINK_PATH}{token}"))
-        .header(header::USER_AGENT, "TestBrowser/1.0")
-        .body(Body::empty())
-        .unwrap();
+    let mut request = redeem_request(&t, &token);
+    request
+        .headers_mut()
+        .insert(header::USER_AGENT, "TestBrowser/1.0".parse().unwrap());
     let response = send(&app, request).await;
     let set_cookies: Vec<&str> = response
         .headers()
@@ -242,57 +282,60 @@ async fn the_session_cookie_is_host_only_secure_and_stored_as_a_hash() {
         .unwrap();
     assert_eq!(expires - created, 90 * DAY_MS);
     assert_eq!((seen, reauth), (created, created));
+
+    // A non-ASCII cookie in the same header does not hide the session.
+    let mut request = get("/api/v1/me");
+    request.headers_mut().insert(
+        header::COOKIE,
+        HeaderValue::from_bytes(
+            format!("note=caf\u{e9}; __Host-shelfy_session={value}").as_bytes(),
+        )
+        .unwrap(),
+    );
+    assert!(request.headers()[header::COOKIE].to_str().is_err());
+    assert_eq!(send(&app, request).await.status(), StatusCode::OK);
 }
 
 #[tokio::test]
-async fn a_link_works_once_and_head_does_not_use_it() {
+async fn a_link_works_once_and_nothing_redeems_it_on_get() {
     let t = TestState::new();
     let app = t.app();
     owner(&t);
     let token = link_token(&t, OWNER_EMAIL);
-    let path = format!("{LINK_PATH}{token}");
 
-    // Link checkers probe with HEAD.
-    let head = Request::head(&path).body(Body::empty()).unwrap();
-    let response = send(&app, head).await;
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert!(session_cookie(&response).is_none());
+    // Scanners and prefetchers fetch links: no GET or HEAD uses one up.
+    for path in [
+        format!("/api/v1/auth/magic/{token}"),
+        "/login/magic".to_owned(),
+    ] {
+        for method in [Method::GET, Method::HEAD] {
+            let request = Request::builder()
+                .method(method.clone())
+                .uri(&path)
+                .body(Body::empty())
+                .unwrap();
+            let response = send(&app, request).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {path}");
+            assert!(session_cookie(&response).is_none());
+        }
+    }
+    assert_eq!(
+        count(
+            &control(&t),
+            "SELECT COUNT(*) FROM magic_links WHERE used_at IS NULL"
+        ),
+        1,
+        "still unused"
+    );
 
-    let first = send(&app, get(&path)).await;
-    assert_eq!(first.headers()[header::LOCATION], "/");
+    let first = send(&app, redeem_request(&t, &token)).await;
+    assert_eq!(first.status(), StatusCode::NO_CONTENT);
     assert!(session_cookie(&first).is_some());
 
-    let second = send(&app, get(&path)).await;
-    assert_eq!(second.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        second.headers()[header::LOCATION],
-        "/login?error=invalid_link"
-    );
+    let second = send(&app, redeem_request(&t, &token)).await;
     assert!(session_cookie(&second).is_none());
-
-    let redeem = post_json(
-        "/api/v1/auth/magic-links/redeem",
-        json!({ "token": token }).to_string(),
-    );
-    let refused = problem(send(&app, redeem).await, StatusCode::BAD_REQUEST).await;
+    let refused = problem(second, StatusCode::BAD_REQUEST).await;
     assert_eq!(refused.code, ErrorCode::InvalidLink);
-}
-
-#[tokio::test]
-async fn a_page_can_redeem_a_link_with_post() {
-    let t = TestState::new();
-    let app = t.app();
-    owner(&t);
-    let token = link_token(&t, OWNER_EMAIL);
-    let redeem = post_json(
-        "/api/v1/auth/magic-links/redeem",
-        json!({ "token": token }).to_string(),
-    );
-    let response = send(&app, redeem).await;
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
-    let cookie = session_cookie(&response).expect("a session cookie");
-    assert_eq!(me(&app, &cookie).await, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -314,21 +357,52 @@ async fn expired_unknown_and_malformed_links_are_refused() {
         too_long.as_str(),
         padded.as_str(),
     ] {
-        let response = send(&app, get(&format!("{LINK_PATH}{token}"))).await;
-        assert_eq!(
-            response.headers()[header::LOCATION],
-            "/login?error=invalid_link",
-            "{token}"
-        );
+        let response = send(&app, redeem_request(&t, token)).await;
         assert!(session_cookie(&response).is_none());
+        let refused = problem(response, StatusCode::BAD_REQUEST).await;
+        assert_eq!(refused.code, ErrorCode::InvalidLink, "{token}");
     }
-    let redeem = post_json(
-        "/api/v1/auth/magic-links/redeem",
-        json!({ "token": expired }).to_string(),
-    );
-    let refused = problem(send(&app, redeem).await, StatusCode::BAD_REQUEST).await;
-    assert_eq!(refused.code, ErrorCode::InvalidLink);
     assert_eq!(count(&control(&t), "SELECT COUNT(*) FROM sessions"), 0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unknown_links_never_wait_for_the_writer() {
+    let t = TestState::new();
+    let app = t.app();
+    owner(&t);
+
+    // Another connection holds the control database's write lock.
+    let path = t.data_dir().control_db();
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let mut conn = Connection::open(path).unwrap();
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .unwrap();
+        held_tx.send(()).unwrap();
+        release_rx.recv().unwrap();
+        tx.rollback().unwrap();
+    });
+    held_rx.recv().unwrap();
+
+    // An unknown token is refused on a reader, at once.
+    let started = Instant::now();
+    let unknown = SecretToken::generate();
+    let response = send(&app, redeem_request(&t, unknown.expose())).await;
+    let elapsed = started.elapsed();
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    let refused = problem(response, StatusCode::BAD_REQUEST).await;
+    assert_eq!(refused.code, ErrorCode::InvalidLink);
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "took {elapsed:?}: the writer's busy timeout is 5 s"
+    );
+
+    // A real link still signs in once the writer is free.
+    let cookie = sign_in(&app, &t).await;
+    assert_eq!(me(&app, &cookie).await, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -374,19 +448,18 @@ async fn link_requests_do_not_reveal_whether_an_account_exists() {
 }
 
 #[tokio::test]
-async fn link_requests_are_rate_limited_per_address_and_per_client() {
+async fn link_requests_are_limited_per_address_whoever_asks() {
     let t = with_mailbox();
     let app = t.app();
     owner(&t);
 
-    // Per address: 3 an hour, whichever client asks, known address or not.
-    for (i, ip) in ["192.0.2.1", "192.0.2.2", "192.0.2.3"].iter().enumerate() {
-        let response = send(&app, with_ip(email_request("nobody@example.test"), ip)).await;
+    for (i, peer) in ["192.0.2.1", "192.0.2.2", "192.0.2.3"].iter().enumerate() {
+        let response = send(&app, from_peer(email_request("nobody@example.test"), peer)).await;
         assert_eq!(response.status(), StatusCode::ACCEPTED, "request {i}");
     }
     let response = send(
         &app,
-        with_ip(email_request("Nobody@Example.test"), "192.0.2.4"),
+        from_peer(email_request("Nobody@Example.test"), "192.0.2.4"),
     )
     .await;
     let retry_after: u32 = response.headers()[header::RETRY_AFTER]
@@ -397,48 +470,155 @@ async fn link_requests_are_rate_limited_per_address_and_per_client() {
     assert!((3000..=3600).contains(&retry_after), "{retry_after}");
     let limited = problem(response, StatusCode::TOO_MANY_REQUESTS).await;
     assert_eq!(limited.code, ErrorCode::RateLimited);
-    let other = send(&app, with_ip(email_request(OWNER_EMAIL), "192.0.2.4")).await;
+    let other = send(&app, from_peer(email_request(OWNER_EMAIL), "192.0.2.4")).await;
     assert_eq!(other.status(), StatusCode::ACCEPTED, "other addresses pass");
-
-    // Per client: 10 a minute across the sign-in routes.
-    for i in 0..10 {
-        let request = if i % 2 == 0 {
-            email_request(&format!("user{i}@example.test"))
-        } else {
-            get(&format!("{LINK_PATH}{}", SecretToken::generate().expose()))
-        };
-        let response = send(&app, with_ip(request, "198.51.100.7")).await;
-        assert_ne!(
-            response.status(),
-            StatusCode::TOO_MANY_REQUESTS,
-            "request {i}"
-        );
-    }
-    let response = send(
-        &app,
-        with_ip(email_request("late@example.test"), "198.51.100.7"),
-    )
-    .await;
-    problem(response, StatusCode::TOO_MANY_REQUESTS).await;
-    let link = get(&format!("{LINK_PATH}{}", SecretToken::generate().expose()));
-    problem(
-        send(&app, with_ip(link, "198.51.100.7")).await,
-        StatusCode::TOO_MANY_REQUESTS,
-    )
-    .await;
-    let response = send(
-        &app,
-        with_ip(email_request("late@example.test"), "198.51.100.8"),
-    )
-    .await;
     assert_eq!(
-        response.status(),
-        StatusCode::ACCEPTED,
-        "other clients pass"
+        mailbox(&t).await.len(),
+        1,
+        "only the owner's request sent one"
     );
+}
 
-    // Only the owner's request sent anything.
-    assert_eq!(mailbox(&t).await.len(), 1);
+/// Numbers the addresses of [`passed_before_429`], so its link requests never
+/// meet the per-address limit.
+static ADDRESSES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Sends sign-in requests (link requests and redemptions, alternately) until
+/// one is refused; returns how many passed, at most `max`.
+async fn passed_before_429(
+    app: &Router,
+    t: &TestState,
+    max: u32,
+    edit: impl Fn(Request<Body>) -> Request<Body>,
+) -> u32 {
+    for i in 0..max {
+        let request = if i % 2 == 0 {
+            let n = ADDRESSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            email_request(&format!("user{n}@example.test"))
+        } else {
+            redeem_request(t, SecretToken::generate().expose())
+        };
+        let response = send(app, edit(request)).await;
+        if response.status() == StatusCode::TOO_MANY_REQUESTS {
+            assert!(response.headers().contains_key(header::RETRY_AFTER));
+            return i;
+        }
+    }
+    max
+}
+
+#[tokio::test]
+async fn without_a_trusted_proxy_the_tcp_peer_is_the_client() {
+    let t = TestState::new();
+    let app = t.app();
+
+    // A client that varies CF-Connecting-IP still counts as its peer.
+    let n = std::sync::atomic::AtomicU32::new(0);
+    let passed = passed_before_429(&app, &t, 12, |request| {
+        let i = n.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        from_peer(claiming(request, &format!("203.0.113.{i}")), "198.51.100.7")
+    })
+    .await;
+    assert_eq!(passed, 10, "10 a minute per client, the header ignored");
+
+    // Another peer has its own budget.
+    let other = passed_before_429(&app, &t, 3, |request| from_peer(request, "198.51.100.8")).await;
+    assert_eq!(other, 3);
+
+    // An IPv6 client counts by its /64: changing the host part does not help.
+    let n = std::sync::atomic::AtomicU32::new(0);
+    let passed = passed_before_429(&app, &t, 12, |request| {
+        let i = n.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        from_peer(request, &format!("2001:db8:1:2::{:x}", i + 1))
+    })
+    .await;
+    assert_eq!(passed, 10, "one /64, one budget");
+    let next_block =
+        passed_before_429(&app, &t, 3, |request| from_peer(request, "2001:db8:1:3::1")).await;
+    assert_eq!(next_block, 3);
+}
+
+#[tokio::test]
+async fn a_trusted_proxy_names_the_client() {
+    let t = TestState::with_config(|config| {
+        config.trusted_proxies = TrustedProxies::parse("172.18.0.0/16").unwrap();
+    });
+    let app = t.app();
+
+    // Through the trusted proxy, each CF-Connecting-IP has its own budget.
+    let n = std::sync::atomic::AtomicU32::new(0);
+    let passed = passed_before_429(&app, &t, 12, |request| {
+        let i = n.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        from_peer(claiming(request, &format!("203.0.113.{i}")), "172.18.0.2")
+    })
+    .await;
+    assert_eq!(passed, 12, "every request named another client");
+
+    // One client behind the proxy is limited...
+    let passed = passed_before_429(&app, &t, 12, |request| {
+        from_peer(claiming(request, "203.0.113.200"), "172.18.0.2")
+    })
+    .await;
+    assert_eq!(passed, 10);
+    // ...and a peer outside the trusted block cannot borrow another's name.
+    let passed = passed_before_429(&app, &t, 12, |request| {
+        from_peer(claiming(request, "203.0.113.201"), "198.51.100.9")
+    })
+    .await;
+    assert_eq!(passed, 10, "keyed by the untrusted peer");
+    let peer_spent = passed_before_429(&app, &t, 3, |request| {
+        from_peer(claiming(request, "203.0.113.202"), "198.51.100.9")
+    })
+    .await;
+    assert_eq!(peer_spent, 0, "the same peer, whatever it claims");
+}
+
+/// A raw HTTP/1.1 `POST` of `body` with the web app's headers; the status.
+async fn raw_post(addr: SocketAddr, path: &str, body: &str, extra: &str) -> u16 {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\
+         Origin: http://localhost:8080\r\nX-Shelfy-Client: web\r\n{extra}\r\n{body}",
+        body.len()
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).await.unwrap();
+    let text = String::from_utf8_lossy(&raw);
+    text.split(' ').nth(1).unwrap().parse().unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_server_hands_the_tcp_peer_to_the_limits() {
+    let TestState { dir: _dir, state } = TestState::new();
+    let api = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let metrics_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let server = Server::new(
+        state.clone(),
+        app::app(state),
+        api,
+        metrics_listener,
+        metrics::install(),
+    );
+    let addr = server.api_addr().unwrap();
+    let (stop_tx, stop_rx) = oneshot::channel::<()>();
+    let running = tokio::spawn(server.run(async {
+        let _ = stop_rx.await;
+    }));
+
+    // Every request comes from 127.0.0.1, whatever it claims.
+    let mut statuses = Vec::new();
+    for i in 0..11 {
+        let body = json!({ "email": format!("user{i}@example.test") }).to_string();
+        let claim = format!("CF-Connecting-IP: 203.0.113.{i}\r\n");
+        statuses.push(raw_post(addr, "/api/v1/auth/magic-links", &body, &claim).await);
+    }
+    assert_eq!(statuses[..10], [202; 10]);
+    assert_eq!(statuses[10], 429, "keyed by the TCP peer");
+
+    stop_tx.send(()).unwrap();
+    running.await.unwrap().unwrap();
 }
 
 #[tokio::test]
@@ -490,6 +670,36 @@ async fn sessions_end_when_idle_or_past_their_lifetime() {
 }
 
 #[tokio::test]
+async fn cookies_that_sign_nobody_in_are_remembered_briefly() {
+    let t = TestState::with_config(|config| {
+        config.auth.session_miss_ttl = Duration::from_millis(300);
+    });
+    let app = t.app();
+    let owner_id = owner(&t);
+    let forged = SecretToken::generate();
+    assert_eq!(me(&app, forged.expose()).await, StatusCode::UNAUTHORIZED);
+
+    // A row with that hash appears behind the server's back: the remembered
+    // miss still answers, without a database read...
+    control(&t)
+        .execute(
+            "INSERT INTO sessions (id_hash, user_id, created_at, expires_at, last_seen_at) \
+             VALUES (?1, ?2, ?3, ?4, ?3)",
+            params![
+                hash_token(forged.expose()).as_slice(),
+                owner_id,
+                now_ms(),
+                now_ms() + DAY_MS
+            ],
+        )
+        .unwrap();
+    assert_eq!(me(&app, forged.expose()).await, StatusCode::UNAUTHORIZED);
+    // ...until the miss expires.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(me(&app, forged.expose()).await, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn signing_in_rotates_the_session_the_browser_held() {
     let t = TestState::new();
     let app = t.app();
@@ -497,11 +707,7 @@ async fn signing_in_rotates_the_session_the_browser_held() {
     assert_eq!(me(&app, &first).await, StatusCode::OK); // now cached
 
     let token = link_token(&t, OWNER_EMAIL);
-    let response = send(
-        &app,
-        with_session(get(&format!("{LINK_PATH}{token}")), &first),
-    )
-    .await;
+    let response = send(&app, with_session(redeem_request(&t, &token), &first)).await;
     let second = session_cookie(&response).expect("a new session");
     assert_ne!(first, second);
     assert_eq!(me(&app, &first).await, StatusCode::UNAUTHORIZED);
@@ -542,11 +748,16 @@ async fn logout_ends_the_session_and_clears_the_cookie() {
         [json!({ "scope": "current", "count": 1 })]
     );
 
-    // Signing out again, or without a session, is harmless.
+    // Signing out again clears the stale cookie; without one, nothing is set.
     let response = send(&app, spa(&t, post("/api/v1/auth/logout"), &cookie)).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
-    let response = send(&app, post("/api/v1/auth/logout")).await;
+    assert_eq!(session_cookie(&response).as_deref(), Some(""));
+    let response = send(&app, from_spa(&t, post("/api/v1/auth/logout"))).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(
+        response.headers().get(header::SET_COOKIE).is_none(),
+        "no cookie to clear"
+    );
     assert_eq!(audit(&conn, "session.delete").len(), 1);
 }
 
@@ -578,14 +789,26 @@ async fn logout_all_ends_every_session_of_the_user() {
     assert_eq!(refused.code, ErrorCode::Unauthorized);
 }
 
+/// `request` with `headers` added.
+fn with_headers(mut request: Request<Body>, headers: &[(&str, &str)]) -> Request<Body> {
+    for (name, value) in headers {
+        request.headers_mut().insert(
+            HeaderName::from_bytes(name.as_bytes()).unwrap(),
+            HeaderValue::from_str(value).unwrap(),
+        );
+    }
+    request
+}
+
 #[tokio::test]
-async fn cookie_requests_that_change_state_must_come_from_the_app() {
-    let t = TestState::new();
+async fn every_state_changing_request_must_come_from_the_app() {
+    let t = with_mailbox();
     let app = t.app();
     let cookie = sign_in(&app, &t).await;
     let public = t.state.config().public_url.as_str().to_owned();
 
-    let forged: [(&str, Vec<(&str, &str)>); 6] = [
+    let forged: [(&str, Vec<(&str, &str)>); 7] = [
+        ("a cross-site form", vec![]),
         ("no client header", vec![("origin", public.as_str())]),
         (
             "foreign origin",
@@ -616,36 +839,54 @@ async fn cookie_requests_that_change_state_must_come_from_the_app() {
             ],
         ),
     ];
-    for uri in ["/api/v1/auth/logout", "/api/v1/auth/logout-all"] {
+    let token = link_token(&t, OWNER_EMAIL);
+    let bodies = [
+        ("/api/v1/auth/logout", String::new()),
+        ("/api/v1/auth/logout-all", String::new()),
+        (
+            "/api/v1/auth/magic-links",
+            json!({ "email": OWNER_EMAIL }).to_string(),
+        ),
+        (REDEEM, json!({ "token": token }).to_string()),
+    ];
+    for (uri, json_body) in &bodies {
         for (case, headers) in &forged {
-            let mut request = with_session(post(uri), &cookie);
-            for (name, value) in headers {
-                request.headers_mut().insert(
-                    HeaderName::from_bytes(name.as_bytes()).unwrap(),
-                    HeaderValue::from_str(value).unwrap(),
-                );
+            let make = || {
+                let request = Request::post(*uri)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json_body.clone()))
+                    .unwrap();
+                with_headers(request, headers)
+            };
+            // With the session cookie, and without: logout CSRF, login CSRF.
+            for request in [with_session(make(), &cookie), make()] {
+                let refused = problem(send(&app, request).await, StatusCode::FORBIDDEN).await;
+                assert_eq!(refused.code, ErrorCode::CsrfFailed, "{uri}: {case}");
+                assert!(refused.detail.is_some());
             }
-            let refused = problem(send(&app, request).await, StatusCode::FORBIDDEN).await;
-            assert_eq!(refused.code, ErrorCode::CsrfFailed, "{uri}: {case}");
-            assert!(refused.detail.is_some());
-            assert_eq!(me(&app, &cookie).await, StatusCode::OK, "{uri}: {case}");
         }
     }
+    // Nothing happened: still signed in, the link unused, no email sent.
+    assert_eq!(me(&app, &cookie).await, StatusCode::OK);
+    assert_eq!(
+        count(
+            &control(&t),
+            "SELECT COUNT(*) FROM magic_links WHERE used_at IS NULL"
+        ),
+        1
+    );
+    assert!(mailbox(&t).await.is_empty());
 
     // Safe methods are not checked.
-    let mut cross_site_read = with_session(get("/api/v1/me"), &cookie);
-    cross_site_read
-        .headers_mut()
-        .insert("sec-fetch-site", "cross-site".parse().unwrap());
+    let cross_site_read = with_headers(
+        with_session(get("/api/v1/me"), &cookie),
+        &[("sec-fetch-site", "cross-site")],
+    );
     assert_eq!(send(&app, cross_site_read).await.status(), StatusCode::OK);
-    // Cookieless requests are not checked (their bodies are JSON).
-    let mut cookieless = email_request(OWNER_EMAIL);
-    cookieless
-        .headers_mut()
-        .insert("origin", "https://evil.example.test".parse().unwrap());
-    assert_eq!(send(&app, cookieless).await.status(), StatusCode::ACCEPTED);
 
-    // The app's own request passes.
+    // The app's own requests pass.
+    let response = send(&app, redeem_request(&t, &token)).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
     let response = send(&app, spa(&t, post("/api/v1/auth/logout"), &cookie)).await;
     assert_eq!(response.status(), StatusCode::NO_CONTENT);
 }
@@ -670,10 +911,10 @@ fn api_token(t: &TestState, user_id: &str, scopes: &str) -> String {
 }
 
 async fn token_route(user: TokenUser<scopes::Lookup>) -> String {
-    user.id().to_owned()
+    format!("{}:{}", user.id(), user.token_id().len())
 }
 
-async fn cookie_route(user: CurrentUser) -> String {
+async fn user_route(user: CurrentUser) -> String {
     user.id().to_owned()
 }
 
@@ -681,14 +922,32 @@ async fn sensitive_route(RecentAuth(user): RecentAuth) -> String {
     user.id().to_owned()
 }
 
+async fn open_route() -> &'static str {
+    "anyone"
+}
+
+/// The real routes plus test routes:
+/// - `POST /test/token`: tokens with `lookup` only;
+/// - `POST /test/either`: a `lookup` token or a session;
+/// - `POST /test/cookie`, `GET /test/sensitive`: a session (the default);
+/// - `GET /test/public`: anyone, declared public;
+/// - `GET /test/unlisted`: no extractor and no rule, so a session.
 fn app_with_test_routes(t: &TestState) -> Router {
     let routes = OpenApiRouter::new()
         .route("/test/token", post_route(token_route))
-        .route("/test/cookie", post_route(cookie_route))
-        .route("/test/sensitive", get_route(sensitive_route));
-    app::build(
+        .route("/test/either", post_route(user_route))
+        .route("/test/cookie", post_route(user_route))
+        .route("/test/sensitive", get_route(sensitive_route))
+        .route("/test/public", get_route(open_route))
+        .route("/test/unlisted", get_route(open_route));
+    let access = routes::access()
+        .token(Method::POST, "/test/token", Scope::Lookup, false)
+        .token(Method::POST, "/test/either", Scope::Lookup, true)
+        .public(Method::GET, "/test/public");
+    app::build_with_access(
         t.state.clone(),
         routes::router().merge(RouteLimits::STANDARD.apply(routes)),
+        access,
     )
 }
 
@@ -701,7 +960,54 @@ fn bearer(mut request: Request<Body>, token: &str) -> Request<Body> {
 }
 
 #[tokio::test]
-async fn token_requests_skip_the_cookie_check_but_never_use_cookies() {
+async fn routes_need_a_session_unless_declared_otherwise() {
+    let t = TestState::new();
+    let app = app_with_test_routes(&t);
+    let cookie = sign_in(&app, &t).await;
+
+    // A route without an extractor or a rule is still closed.
+    problem(
+        send(&app, get("/test/unlisted")).await,
+        StatusCode::UNAUTHORIZED,
+    )
+    .await;
+    let response = send(&app, with_session(get("/test/unlisted"), &cookie)).await;
+    assert_eq!(body(response).await, "anyone");
+    // A declared public route is open, HEAD included.
+    assert_eq!(body(send(&app, get("/test/public")).await).await, "anyone");
+    let head = Request::head("/test/public").body(Body::empty()).unwrap();
+    assert_eq!(send(&app, head).await.status(), StatusCode::OK);
+
+    // Public covers the declared method only: an anonymous DELETE /health
+    // is a session request (401); signed in, it is the router's 405.
+    let response = send(
+        &app,
+        from_spa(&t, Request::delete("/health").body(Body::empty()).unwrap()),
+    )
+    .await;
+    problem(response, StatusCode::UNAUTHORIZED).await;
+    let response = send(
+        &app,
+        spa(
+            &t,
+            Request::delete("/health").body(Body::empty()).unwrap(),
+            &cookie,
+        ),
+    )
+    .await;
+    assert!(
+        response.headers()[header::ALLOW]
+            .to_str()
+            .unwrap()
+            .contains("GET")
+    );
+    problem(response, StatusCode::METHOD_NOT_ALLOWED).await;
+    // Unknown paths are 404 for everyone.
+    problem(send(&app, get("/test/nope")).await, StatusCode::NOT_FOUND).await;
+}
+
+#[tokio::test]
+async fn tokens_reach_token_routes_only_and_skip_the_cookie_check() {
     let t = TestState::new();
     let app = app_with_test_routes(&t);
     let owner_id = owner(&t);
@@ -710,48 +1016,64 @@ async fn token_requests_skip_the_cookie_check_but_never_use_cookies() {
 
     // A cross-site request with a token and the cookie: the CSRF check is
     // skipped, the token authenticates.
-    let mut request = bearer(with_session(post("/test/token"), &cookie), &token);
-    request
-        .headers_mut()
-        .insert("origin", "https://evil.example.test".parse().unwrap());
-    request
-        .headers_mut()
-        .insert("sec-fetch-site", "cross-site".parse().unwrap());
+    let request = with_headers(
+        bearer(with_session(post("/test/token"), &cookie), &token),
+        &[
+            ("origin", "https://evil.example.test"),
+            ("sec-fetch-site", "cross-site"),
+        ],
+    );
     let response = send(&app, request).await;
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(body(response).await, owner_id);
+    assert_eq!(body(response).await, format!("{owner_id}:26"));
 
-    // A token never reaches cookie routes, even with a valid cookie beside it.
-    for uri in ["/test/cookie", "/api/v1/auth/logout-all"] {
-        let mut request = bearer(with_session(post(uri), &cookie), &token);
-        request
-            .headers_mut()
-            .insert("origin", "https://evil.example.test".parse().unwrap());
+    // A token never reaches a session route, even beside a valid cookie.
+    for request in [
+        bearer(with_session(post("/test/cookie"), &cookie), &token),
+        bearer(
+            with_session(post("/api/v1/auth/logout-all"), &cookie),
+            &token,
+        ),
+        bearer(with_session(get("/api/v1/me"), &cookie), &token),
+        bearer(with_session(get("/test/sensitive"), &cookie), &token),
+        bearer(
+            with_session(get(&format!("/media/{}.jpg", "a".repeat(64))), &cookie),
+            &token,
+        ),
+    ] {
+        let uri = request.uri().to_string();
         let refused = problem(send(&app, request).await, StatusCode::UNAUTHORIZED).await;
         assert_eq!(refused.code, ErrorCode::Unauthorized, "{uri}");
     }
-    let response = send(
-        &app,
-        bearer(with_session(get("/api/v1/me"), &cookie), &token),
+    assert_eq!(me(&app, &cookie).await, StatusCode::OK, "still signed in");
+
+    // A token-only route refuses the session; a token-or-session one takes both.
+    let response = send(&app, spa(&t, post("/test/token"), &cookie)).await;
+    assert_eq!(response.headers()[header::WWW_AUTHENTICATE], "Bearer");
+    problem(response, StatusCode::UNAUTHORIZED).await;
+    let response = send(&app, spa(&t, post("/test/either"), &cookie)).await;
+    assert_eq!(body(response).await, owner_id);
+    let response = send(&app, bearer(post("/test/either"), &token)).await;
+    assert_eq!(body(response).await, owner_id);
+    problem(
+        send(&app, from_spa(&t, post("/test/either"))).await,
+        StatusCode::UNAUTHORIZED,
     )
     .await;
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(me(&app, &cookie).await, StatusCode::OK, "still signed in");
 
     // Token checks: scheme, prefix, scope, revocation.
     let missing_scope = api_token(&t, &owner_id, "ingest");
     let response = send(&app, bearer(post("/test/token"), &missing_scope)).await;
-    assert_eq!(
-        problem(response, StatusCode::FORBIDDEN).await.code,
-        ErrorCode::Forbidden
-    );
+    let refused = problem(response, StatusCode::FORBIDDEN).await;
+    assert_eq!(refused.code, ErrorCode::Forbidden);
+    assert!(refused.detail.unwrap().contains("lookup"));
     let unprefixed = token.trim_start_matches("shx_").to_owned();
     for bad in [unprefixed.as_str(), "shx_short", "shx_"] {
         let response = send(&app, bearer(post("/test/token"), bad)).await;
         assert_eq!(response.headers()[header::WWW_AUTHENTICATE], "Bearer");
         problem(response, StatusCode::UNAUTHORIZED).await;
     }
-    let response = send(&app, post("/test/token")).await;
+    let response = send(&app, from_spa(&t, post("/test/token"))).await;
     assert_eq!(response.headers()[header::WWW_AUTHENTICATE], "Bearer");
     control(&t)
         .execute("UPDATE api_tokens SET revoked_at = 1", [])
@@ -786,19 +1108,6 @@ async fn sensitive_actions_need_a_sign_in_from_the_last_five_minutes() {
     );
 }
 
-/// Operations that work without a session. The document must declare
-/// exactly these as public (`security(())`); every other operation inherits
-/// the session requirement.
-const PUBLIC: &[(&str, &str)] = &[
-    ("get", "/health"),
-    ("get", "/api/v1/openapi.json"),
-    ("get", "/api/v1/auth/methods"),
-    ("post", "/api/v1/auth/magic-links"),
-    ("get", "/api/v1/auth/magic/{token}"),
-    ("post", "/api/v1/auth/magic-links/redeem"),
-    ("post", "/api/v1/auth/logout"),
-];
-
 /// One operation of the OpenAPI document.
 struct Operation {
     method: String,
@@ -818,10 +1127,24 @@ impl Operation {
         })
     }
 
-    fn accepts(&self, scheme: &str) -> bool {
+    /// The scopes of the `bearer` requirement, if the operation takes tokens.
+    fn bearer_scopes(&self) -> Option<Vec<String>> {
+        self.security.iter().find_map(|requirement| {
+            requirement.get("bearer").map(|scopes| {
+                scopes
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|s| s.as_str().unwrap().to_owned())
+                    .collect()
+            })
+        })
+    }
+
+    fn accepts_session(&self) -> bool {
         self.security
             .iter()
-            .any(|requirement| requirement.get(scheme).is_some())
+            .any(|requirement| requirement.get("session").is_some())
     }
 }
 
@@ -846,8 +1169,12 @@ fn operations() -> Vec<Operation> {
     operations
 }
 
-/// A concrete request for `path`, its parameters filled with placeholders.
-fn request_for(method: &str, path: &str) -> Request<Body> {
+/// Routes outside the OpenAPI document; every one needs a session.
+const UNDOCUMENTED: &[(&str, &str)] = &[("get", "/media/{file}"), ("head", "/media/{file}")];
+
+/// A concrete request for `path`, its parameters filled with placeholders, as
+/// the SPA sends it (so the CSRF guard lets it through).
+fn request_for(t: &TestState, method: &str, path: &str) -> Request<Body> {
     let uri: String = path
         .split('/')
         .map(|segment| {
@@ -865,13 +1192,75 @@ fn request_for(method: &str, path: &str) -> Request<Body> {
     if with_body {
         builder = builder.header(header::CONTENT_TYPE, "application/json");
     }
-    builder
+    let request = builder
         .body(if with_body {
             Body::from("{}")
         } else {
             Body::empty()
         })
-        .unwrap()
+        .unwrap();
+    from_spa(t, request)
+}
+
+#[tokio::test]
+async fn the_access_policy_matches_the_document() {
+    let operations = operations();
+    let lower = |method: &Method| method.as_str().to_ascii_lowercase();
+
+    let documented: BTreeSet<(String, String)> = operations
+        .iter()
+        .filter(|op| op.is_public())
+        .map(|op| (op.method.clone(), op.path.clone()))
+        .collect();
+    let policy = routes::access();
+    let declared: BTreeSet<(String, String)> = policy
+        .rules()
+        .iter()
+        .filter(|rule| rule.access == Access::Public)
+        .map(|rule| (lower(&rule.method), rule.path.clone()))
+        .collect();
+    assert_eq!(
+        documented, declared,
+        "public operations (security(())) and routes::PUBLIC_ROUTES differ"
+    );
+
+    let documented: BTreeSet<(String, String, Vec<String>, bool)> = operations
+        .iter()
+        .filter_map(|op| {
+            let scopes = op.bearer_scopes()?;
+            Some((
+                op.method.clone(),
+                op.path.clone(),
+                scopes,
+                op.accepts_session(),
+            ))
+        })
+        .collect();
+    let declared: BTreeSet<(String, String, Vec<String>, bool)> = policy
+        .rules()
+        .iter()
+        .filter_map(|rule| match rule.access {
+            Access::Token { scope, session } => Some((
+                lower(&rule.method),
+                rule.path.clone(),
+                vec![scope.as_str().to_owned()],
+                session,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        documented, declared,
+        "token operations (security bearer) and routes::TOKEN_ROUTES differ"
+    );
+    for op in operations.iter().filter(|op| !op.is_public()) {
+        assert!(
+            op.accepts_session() || op.bearer_scopes().is_some(),
+            "{} {} names no security scheme",
+            op.method,
+            op.path
+        );
+    }
 }
 
 #[tokio::test]
@@ -887,46 +1276,36 @@ async fn every_protected_route_answers_401_without_a_session() {
     );
     let unknown = SecretToken::generate();
 
-    let operations = operations();
-    let public: BTreeSet<(String, String)> = operations
-        .iter()
-        .filter(|op| op.is_public())
-        .map(|op| (op.method.clone(), op.path.clone()))
+    let mut routes: Vec<(String, String, bool)> = operations()
+        .into_iter()
+        .filter(|op| !op.is_public())
+        .map(|op| {
+            let takes_tokens = op.bearer_scopes().is_some();
+            (op.method, op.path, takes_tokens)
+        })
         .collect();
-    let expected: BTreeSet<(String, String)> = PUBLIC
-        .iter()
-        .map(|(method, path)| ((*method).to_owned(), (*path).to_owned()))
-        .collect();
-    assert_eq!(
-        public, expected,
-        "the document's public operations (security(())) differ from PUBLIC"
+    routes.extend(
+        UNDOCUMENTED
+            .iter()
+            .map(|(method, path)| ((*method).to_owned(), (*path).to_owned(), false)),
     );
-
-    let mut protected = 0;
-    for op in operations.iter().filter(|op| !op.is_public()) {
-        protected += 1;
-        let (method, path) = (op.method.as_str(), op.path.as_str());
+    for (method, path, takes_tokens) in &routes {
         let route = format!("{} {path}", method.to_ascii_uppercase());
-        assert!(
-            op.accepts("session"),
-            "{route} is neither public nor behind the session"
-        );
-
         let mut attempts = vec![
-            ("no credentials", request_for(method, path)),
+            ("no credentials", request_for(&t, method, path)),
             (
                 "a malformed cookie",
-                spa(&t, request_for(method, path), "garbage"),
+                with_session(request_for(&t, method, path), "garbage"),
             ),
             (
                 "an unknown session",
-                spa(&t, request_for(method, path), unknown.expose()),
+                with_session(request_for(&t, method, path), unknown.expose()),
             ),
         ];
-        if !op.accepts("bearer") {
+        if !takes_tokens {
             attempts.push((
                 "an API token beside a valid cookie",
-                bearer(spa(&t, request_for(method, path), &cookie), &token),
+                bearer(with_session(request_for(&t, method, path), &cookie), &token),
             ));
         }
         for (what, request) in attempts {
@@ -934,15 +1313,17 @@ async fn every_protected_route_answers_401_without_a_session() {
             assert_eq!(
                 response.status(),
                 StatusCode::UNAUTHORIZED,
-                "{route} with {what}: take CurrentUser as the first extractor, or declare the route public"
+                "{route} with {what}"
             );
-            let refused = problem(response, StatusCode::UNAUTHORIZED).await;
-            assert_eq!(refused.code, ErrorCode::Unauthorized, "{route}");
+            if method != "head" {
+                let refused = problem(response, StatusCode::UNAUTHORIZED).await;
+                assert_eq!(refused.code, ErrorCode::Unauthorized, "{route}");
+            }
         }
     }
     assert!(
-        protected >= 8,
-        "the read API and the account routes are protected"
+        routes.len() >= 10,
+        "the read API, account and media routes are protected"
     );
     assert_eq!(me(&app, &cookie).await, StatusCode::OK, "still signed in");
 }
@@ -1061,12 +1442,25 @@ async fn smtp_delivers_the_link_through_a_relay() {
         "{message}"
     );
     assert!(message.contains("To: owner@example.test"), "{message}");
-    let link = link_in(&message);
-    let path = link
-        .strip_prefix(t.state.config().public_url.as_str())
-        .unwrap();
-    let response = send(&app, get(path)).await;
-    assert_eq!(response.headers()[header::LOCATION], "/");
+    let token = token_of(&link_in(&message));
+    let response = send(&app, redeem_request(&t, &token)).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
     let cookie = session_cookie(&response).unwrap();
     assert_eq!(me(&app, &cookie).await, StatusCode::OK);
+}
+
+#[test]
+fn the_policy_api_is_what_routes_use() {
+    // A route opened to tokens by a later task looks like this.
+    let policy: AccessPolicy =
+        routes::access().token(Method::POST, "/api/v1/migrations", Scope::Migrate, false);
+    assert_eq!(
+        policy.access(&Method::POST, "/api/v1/migrations"),
+        Access::Token {
+            scope: Scope::Migrate,
+            session: false
+        }
+    );
+    assert_eq!(policy.access(&Method::GET, "/api/v1/me"), Access::Session);
+    assert_eq!(policy.access(&Method::HEAD, "/health"), Access::Public);
 }
