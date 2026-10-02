@@ -997,8 +997,8 @@ export interface paths {
     head?: never;
     /**
      * Edits a post's note and tags, or its AI fields (a manual edit: the AI
-     *     status becomes `done` and the model `manual`). Trashed posts can be
-     *     edited too.
+     *     status becomes `done` and the model `manual`, and the provider, error
+     *     and schema version are cleared). Trashed posts can be edited too.
      */
     patch: operations['updatePost'];
     trace?: never;
@@ -2523,33 +2523,34 @@ export interface components {
     };
     /**
      * @description Changes to a post. Every field is optional: absent fields are left
-     *     alone, and `null` clears one.
+     *     alone, and `null` clears one. Caps count bytes of UTF-8; the whole body
+     *     is at most 64 KiB.
      */
     PostPatch: {
-      /** @description Manual AI edit: the category, at most 200 characters. */
+      /** @description Manual AI edit: the category, at most 200 bytes of UTF-8. */
       aiCategory?: string | null;
-      /** @description Manual AI edit: the content type, at most 200 characters. */
+      /** @description Manual AI edit: the content type, at most 200 bytes of UTF-8. */
       aiContentType?: string | null;
-      /** @description Manual AI edit: the description, at most 20,000 characters. */
+      /** @description Manual AI edit: the description, at most 20,000 bytes of UTF-8. */
       aiDescription?: string | null;
-      /** @description Manual AI edit: the entities (at most 100, of at most 200 characters). */
+      /** @description Manual AI edit: the entities (at most 100, of at most 200 bytes each). */
       aiEntities?: string[] | null;
-      /** @description Manual AI edit: the keywords (at most 100, of at most 200 characters). */
+      /** @description Manual AI edit: the keywords (at most 100, of at most 200 bytes each). */
       aiKeywords?: string[] | null;
-      /** @description Manual AI edit: the language, at most 200 characters. */
+      /** @description Manual AI edit: the language, at most 200 bytes of UTF-8. */
       aiLanguage?: string | null;
-      /** @description Manual AI edit: why the post was saved, at most 20,000 characters. */
+      /** @description Manual AI edit: why the post was saved, at most 20,000 bytes of UTF-8. */
       aiSaveReason?: string | null;
       /**
        * @description Manual AI edit: the AI tags, replacing the old ones (at most 100, of
-       *     at most 200 characters).
+       *     at most 200 bytes each).
        */
       aiTags?: string[] | null;
-      /** @description The user's note, at most 20,000 characters, stored as given. */
+      /** @description The user's note, at most 20,000 bytes of UTF-8, stored as given. */
       userNote?: string | null;
       /**
        * @description The user's tags, replacing the old ones: at most 100, of at most 200
-       *     characters. `null` clears them, like `[]`.
+       *     bytes each. `null` clears them, like `[]`.
        */
       userTags?: string[] | null;
     };
