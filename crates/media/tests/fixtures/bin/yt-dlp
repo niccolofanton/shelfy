@@ -1,0 +1,165 @@
+#!/bin/sh
+# A fake yt-dlp for crates/media/tests/video.rs: no network, ever. What it does
+# is picked by the last path segment of the post URL (`https://x.com/i/status/ok`).
+# Each test copies it into a private directory, where it keeps shared state
+# under `state/`. Every run records its argv, environment, niceness and working
+# directory next to its output.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+state="$here/state"
+mkdir -p "$state"
+
+if [ "${1:-}" = "--version" ]; then
+  echo "2026.08.19"
+  exit 0
+fi
+
+out=""
+url=""
+prev=""
+after_dashes=0
+for arg in "$@"; do
+  if [ "$after_dashes" = 1 ]; then url=$arg; fi
+  if [ "$arg" = "--" ] && [ "$after_dashes" = 0 ]; then after_dashes=1; fi
+  if [ "$prev" = "-o" ]; then out=$arg; fi
+  prev=$arg
+done
+dir=$(dirname "$out")
+scenario=${url##*/}
+scenario=${scenario%%\?*}
+
+printf '%s\n' "$@" > "$dir/argv.txt"
+env | sort > "$dir/env.txt"
+ps -o nice= -p $$ | tr -d ' ' > "$dir/nice.txt"
+pwd > "$dir/cwd.txt"
+echo $$ > "$state/ytdlp.pid"
+
+# How many tool runs are alive right now, this one included.
+touch "$state/run.$$"
+ls "$state" | grep -c '^run\.' >> "$state/concurrency.log"
+finish() {
+  rm -f "$state/run.$$"
+  exit "$1"
+}
+
+# An MP4 of $2 KiB (plus its 24-byte `ftyp` box) at $1.
+mp4() {
+  printf '\000\000\000\030ftypisom\000\000\002\000isomiso2' > "$1"
+  dd if=/dev/zero bs=1024 count="$2" 2>/dev/null >> "$1"
+}
+
+case "$scenario" in
+  ok)
+    echo "[info] 1: Downloading 1 format(s): 0"
+    echo "shelfy-progress downloading 1024 4120 NA"
+    echo "shelfy-progress downloading 4120 4120 NA"
+    echo "shelfy-progress finished 4120 4120 NA"
+    mp4 "$dir/video.mp4" 4
+    finish 0
+    ;;
+  slowok)
+    sleep 1
+    mp4 "$dir/video.mp4" 1
+    finish 0
+    ;;
+  faststart)
+    # `ftyp`, then an (empty) `moov` before a 1 KiB `mdat`: ready as it is.
+    printf '\000\000\000\030ftypisom\000\000\002\000isomiso2' > "$dir/video.mp4"
+    printf '\000\000\000\010moov\000\000\004\010mdat' >> "$dir/video.mp4"
+    dd if=/dev/zero bs=1024 count=1 2>/dev/null >> "$dir/video.mp4"
+    finish 0
+    ;;
+  merged)
+    echo "shelfy-progress downloading 0 1000 NA"
+    echo "shelfy-progress downloading 1000 1000 NA"
+    echo "shelfy-progress finished 1000 1000 NA"
+    sleep 1
+    echo "shelfy-progress downloading 50 100 NA"
+    echo "shelfy-progress finished 100 100 NA"
+    echo "[Merger] Merging formats into \"$dir/video.mp4\""
+    mp4 "$dir/video.mp4" 1
+    finish 0
+    ;;
+  webm)
+    printf '\032\105\337\243\243\102\202\204webm' > "$dir/video.webm"
+    dd if=/dev/zero bs=1024 count=1 2>/dev/null >> "$dir/video.webm"
+    finish 0
+    ;;
+  login)
+    echo "WARNING: [twitter] Unable to extract something optional" >&2
+    echo "ERROR: [twitter] 1790000000000000001: NSFW tweet requires authentication. Use --cookies, --cookies-from-browser, --username and --password, --netrc-cmd, or --netrc (twitter) to provide account credentials. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies" >&2
+    finish 1
+    ;;
+  ratelimited)
+    echo "ERROR: [twitter] 1790000000000000001: Unable to download JSON metadata: HTTP Error 429: Too Many Requests (caused by <HTTPError 429: Too Many Requests>)" >&2
+    finish 1
+    ;;
+  noout)
+    finish 0
+    ;;
+  notvideo)
+    echo "<!doctype html><title>login</title>" > "$dir/video.mp4"
+    finish 0
+    ;;
+  two)
+    mp4 "$dir/video.mp4" 1
+    mp4 "$dir/video.mov" 1
+    finish 0
+    ;;
+  symlink)
+    mp4 "$state/elsewhere.mp4" 1
+    ln -s "$state/elsewhere.mp4" "$dir/video.mp4"
+    finish 0
+    ;;
+  big)
+    # Grows by 512 KiB every 20 ms until stopped.
+    i=0
+    while [ "$i" -lt 2000 ]; do
+      dd if=/dev/zero bs=65536 count=8 2>/dev/null >> "$dir/video.f137.mp4.part"
+      sleep 0.02
+      i=$((i + 1))
+    done
+    finish 0
+    ;;
+  announce)
+    echo "shelfy-progress downloading 1024 999999999999 NA"
+    sleep 30
+    finish 0
+    ;;
+  grow)
+    # HLS-like: no total, 1 MiB more every 50 ms, nothing written.
+    i=1
+    while [ "$i" -lt 1000 ]; do
+      echo "shelfy-progress downloading $((i * 1048576)) NA NA"
+      sleep 0.05
+      i=$((i + 1))
+    done
+    finish 0
+    ;;
+  slow)
+    # Stops on SIGTERM, and says so outside its run directory. The sleep runs
+    # in the background so that `wait` returns as soon as the signal arrives.
+    trap 'echo term > "$state/term.$$"; finish 143' TERM
+    dd if=/dev/zero bs=1024 count=64 2>/dev/null > "$dir/video.f137.mp4.part"
+    sleep 30 &
+    echo "shelfy-progress downloading 65536 1000000 NA"
+    wait $!
+    finish 0
+    ;;
+  stubborn)
+    # Ignores SIGTERM, and so does the grandchild it leaves running.
+    trap '' TERM
+    sleep 60 &
+    echo $! > "$state/grandchild.pid"
+    echo "shelfy-progress downloading 1 1000000 NA"
+    while :; do sleep 1; done
+    ;;
+  hang)
+    sleep 30
+    finish 0
+    ;;
+  *)
+    echo "ERROR: Unsupported URL: $url" >&2
+    finish 1
+    ;;
+esac

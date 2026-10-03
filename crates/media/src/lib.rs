@@ -1,5 +1,5 @@
-//! Shelfy media: each user's content-addressed store (CAS) and the image
-//! pipeline (plan D3, D4, §2.5, §2.13).
+//! Shelfy media: each user's content-addressed store (CAS), the image
+//! pipeline and the video tools (plan D3, D4, §2.5, §2.13).
 //!
 //! | Module | Contents |
 //! |---|---|
@@ -10,6 +10,7 @@
 //! | [`refs`] | `media_objects` rows, references and reference counting |
 //! | [`render`] | decode, resize, WebP renditions and ThumbHash |
 //! | [`pool`] | the dedicated 2-thread pool the pipeline runs on |
+//! | [`video`] | the yt-dlp and ffmpeg tools: on-demand videos, remux, posters, keyframes |
 //!
 //! The usual flow, for an image fetched by the archive worker (P2):
 //!
@@ -47,8 +48,6 @@
 //! # Ok(())
 //! # }
 //! ```
-//!
-//! The `ffmpeg` and `yt-dlp` wrappers of §2.4 join in P4.
 
 pub mod digest;
 pub mod kind;
@@ -57,6 +56,7 @@ pub mod pool;
 pub mod refs;
 pub mod render;
 pub mod store;
+pub mod video;
 
 pub use digest::Digest;
 pub use kind::MediaKind;

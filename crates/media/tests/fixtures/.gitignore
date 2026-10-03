@@ -1,0 +1,3 @@
+# The fake yt-dlp and ffmpeg of tests/video.rs are test fixtures, not the downloaded
+# sidecar binaries that the root .gitignore's `bin/` keeps out.
+!bin/

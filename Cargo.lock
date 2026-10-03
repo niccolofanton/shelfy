@@ -2679,9 +2679,11 @@ version = "0.1.0"
 dependencies = [
  "fast_image_resize",
  "image",
+ "libc",
  "metrics",
  "proptest",
  "rayon",
+ "regex",
  "rusqlite",
  "sha2",
  "shelfy-core",
@@ -2689,6 +2691,8 @@ dependencies = [
  "thiserror 2.0.21",
  "thumbhash",
  "tokio",
+ "tokio-util",
+ "url",
  "webp",
 ]
 

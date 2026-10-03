@@ -1,0 +1,59 @@
+#!/bin/sh
+# A fake ffmpeg for crates/media/tests/video.rs. What it does is picked by the
+# 4 bytes after the input's 24-byte `ftyp` box: SLOW (1 s), HANG (30 s),
+# FAIL (exit 1); anything else succeeds. It prints a stream dump, copies the
+# input to the output, and records its argv, environment and niceness under
+# `state/` next to itself.
+set -u
+here=$(cd "$(dirname "$0")" && pwd)
+state="$here/state"
+mkdir -p "$state"
+
+if [ "${1:-}" = "-hide_banner" ] && [ "${2:-}" = "-version" ]; then
+  echo "ffmpeg version 5.1.6-0+deb12u1 Copyright (c) 2000-2024 the FFmpeg developers"
+  exit 0
+fi
+
+input=""
+prev=""
+last=""
+for arg in "$@"; do
+  if [ "$prev" = "-i" ]; then input=${arg#file:}; fi
+  prev=$arg
+  last=$arg
+done
+output=${last#file:}
+
+printf '%s\n' "$@" > "$state/argv.ffmpeg.$$"
+env | sort > "$state/env.ffmpeg.$$"
+ps -o nice= -p $$ | tr -d ' ' > "$state/nice.ffmpeg.$$"
+
+# How many tool runs are alive right now, this one included.
+touch "$state/run.$$"
+ls "$state" | grep -c '^run\.' >> "$state/concurrency.log"
+finish() {
+  rm -f "$state/run.$$"
+  exit "$1"
+}
+
+marker=$(dd if="$input" bs=1 skip=24 count=4 2>/dev/null)
+case "$marker" in
+  SLOW) sleep 1 ;;
+  HANG) sleep 30 ;;
+  FAIL)
+    echo "Invalid data found when processing input" >&2
+    finish 1
+    ;;
+esac
+
+cat >&2 <<DUMP
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'file:$input':
+  Duration: 00:00:04.00, start: 0.000000, bitrate: 100 kb/s
+  Stream #0:0(und): Video: h264 (High) (avc1 / 0x31637661), yuv420p, 640x360 [SAR 1:1 DAR 16:9], 90 kb/s, 30 fps (default)
+  Stream #0:1(und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 10 kb/s (default)
+Stream mapping:
+DUMP
+if [ "$output" != "-" ]; then
+  cp "$input" "$output"
+fi
+finish 0

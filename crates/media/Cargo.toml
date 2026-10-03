@@ -15,14 +15,26 @@ image = { workspace = true, features = ["gif", "jpeg", "png", "webp"] }
 # The size of each rendition written (`shelfy_rendition_bytes`), for the server's exporter.
 metrics.workspace = true
 rayon.workspace = true
+# The video tools' error classifier and ffmpeg's stream dump.
+regex.workspace = true
 rusqlite.workspace = true
 sha2.workspace = true
 shelfy-core = { path = "../core" }
 tempfile.workspace = true
 thiserror.workspace = true
 thumbhash.workspace = true
-tokio = { workspace = true, features = ["io-util", "rt"] }
+# `process`: the video tools run yt-dlp and ffmpeg as children.
+tokio = { workspace = true, features = ["io-util", "process", "rt"] }
+# The cancellation token the job system hands its workers.
+tokio-util.workspace = true
+# Post URLs and the egress proxy URL of the video tools.
+url.workspace = true
 webp.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# nice(2) and killpg(2) for the video tools' children, and O_NOFOLLOW. Already in
+# Cargo.lock through tokio: no new crate.
+libc = "0.2.189"
 
 [dev-dependencies]
 proptest.workspace = true
