@@ -72,6 +72,42 @@ it('maps tokens and allowlisted groups, sends scope/CSRF/cookie and selected pro
   });
   expect(fetch.mock.calls.filter((c) => c[0].endsWith('/chat'))).toHaveLength(1);
 });
+it('sends the displayed configured BYOK on an unset route without granting consent', async () => {
+  const fetch = vi.fn(async (url: string) =>
+    url.endsWith('/providers')
+      ? Response.json([{ id: 'byok', label: 'My BYOK', configured: true, models: { text: 'm' } }])
+      : url.endsWith('/settings')
+        ? Response.json({ aiRouting: {} })
+        : sse(
+            answer({ ...terminal, modelUsed: false, replyCode: 'suggestions' } as typeof terminal),
+          ),
+  );
+  const api = createAiSearchApi(createHttp({ fetch: fetch as typeof globalThis.fetch }), events);
+  expect(await api.getProviders()).toEqual([{ id: 'byok', name: 'My BYOK', selected: true }]);
+  expect((await api.chat([{ role: 'user', content: 'lamp' }])).modelUsed).toBe(false);
+  const [, options] = fetch.mock.calls.at(-1)! as unknown as [string, RequestInit];
+  expect(JSON.parse(options.body as string).providerId).toBe('byok');
+  expect(
+    fetch.mock.calls.filter(([url]) => !url.endsWith('/providers') && !url.endsWith('/settings')),
+  ).toHaveLength(1);
+});
+it('prefers the supported operator when routing is unset and sends that displayed route', async () => {
+  const fetch = vi.fn(async (url: string) =>
+    url.endsWith('/providers')
+      ? Response.json([
+          { id: 'byok', label: 'My BYOK', configured: true, models: { text: 'm' } },
+          { id: 'operator', label: 'Node', configured: true, models: { text: 'm' } },
+        ])
+      : url.endsWith('/settings')
+        ? Response.json({ aiRouting: {} })
+        : sse(answer()),
+  );
+  const api = createAiSearchApi(createHttp({ fetch: fetch as typeof globalThis.fetch }), events);
+  expect((await api.getProviders()).find((p) => p.selected)?.id).toBe('operator');
+  await api.chat([{ role: 'user', content: 'lamp' }]);
+  const [, options] = fetch.mock.calls.at(-1)! as unknown as [string, RequestInit];
+  expect(JSON.parse(options.body as string).providerId).toBe('operator');
+});
 it('falls back by replyCode and discards partial model prose', async () => {
   const fetch = vi.fn(async () =>
     sse(answer({ ...terminal, modelUsed: false, replyCode: 'suggestions' } as typeof terminal)),

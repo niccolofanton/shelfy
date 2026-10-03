@@ -80,6 +80,7 @@ export default {
     newlineHint: 'Shift+↵ per andare a capo',
     // Mic button
     micStop: 'Ferma la dettatura',
+    micCancel: 'Annulla dettatura',
     micStart: 'Dettatura vocale',
     micModelUnavailable: 'Modello vocale non disponibile',
     // Results toolbar — source scope
@@ -165,6 +166,7 @@ export default {
     sendTitle: 'Send (Enter)',
     newlineHint: 'Shift+↵ for a new line',
     micStop: 'Stop dictation',
+    micCancel: 'Cancel dictation',
     micStart: 'Voice dictation',
     micModelUnavailable: 'Voice model unavailable',
     sourceAll: 'All',

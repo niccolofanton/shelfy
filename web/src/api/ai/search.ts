@@ -127,7 +127,14 @@ export function createAiSearchApi(http: Http, events: Pick<EventStream, 'on'>): 
       http.get<Schemas['Settings']>('/api/v1/me/settings'),
     ]);
     const available = rows.filter((p) => p.configured && p.models.text);
-    const chosen = selected ?? settings.aiRouting.chat ?? available[0]?.id;
+    const chosen =
+      selected ??
+      settings.aiRouting.chat ??
+      available.find((p) => p.id === 'operator')?.id ??
+      available[0]?.id;
+    // The displayed account route is also the request override. Consent remains
+    // enforced by the server; reading provider summaries never grants it.
+    selected = available.some((p) => p.id === chosen) ? chosen : undefined;
     return available.map((p) => ({ id: p.id, name: p.label, selected: p.id === chosen }));
   }
   const api: AiSearchApi = {

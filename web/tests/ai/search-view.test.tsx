@@ -78,6 +78,7 @@ function send(text = 'lamp') {
 afterEach(() => {
   cleanup();
   voice.cancel.mockClear();
+  voice.toggle.mockClear();
   voice.interimNoticeRequired = false;
   voice.status = 'idle';
   voice.isActive = false;
@@ -230,6 +231,7 @@ describe('web conversation and filter state', () => {
         <AiSearch />
       </ShelfyProvider>,
     );
+    await act(async () => {});
     voice.interimNoticeRequired = true;
     rendered.rerender(
       <ShelfyProvider client={c}>
@@ -249,6 +251,25 @@ describe('web conversation and filter state', () => {
     );
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(voice.cancel).toHaveBeenCalled();
+  });
+  it('lets the web mic cancel requesting or transcribing without a prior conversation', () => {
+    const c = client(api());
+    const ready = { ...c, capabilities: { ...c.capabilities, dictation: true } };
+    for (const status of ['requesting', 'transcribing']) {
+      voice.status = status;
+      voice.isActive = true;
+      const rendered = render(
+        <ShelfyProvider client={ready}>
+          <AiSearch />
+        </ShelfyProvider>,
+      );
+      const mic = screen.getByTestId('chat-mic-btn');
+      expect(mic).toBeEnabled();
+      expect(mic).toHaveAccessibleName('Annulla dettatura');
+      fireEvent.click(mic);
+      rendered.unmount();
+    }
+    expect(voice.toggle).toHaveBeenCalledTimes(2);
   });
   it('clears the conversation and filters immediately when the session ends', async () => {
     const search = api();

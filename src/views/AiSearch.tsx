@@ -422,6 +422,7 @@ interface MicButtonProps {
   isRecording: boolean;
   isBusyDict: boolean;
   micDisabled: boolean;
+  cancelBusyLabel?: string;
   modelReadyForVoice: boolean;
 }
 
@@ -434,6 +435,7 @@ function MicButton({
   isRecording,
   isBusyDict,
   micDisabled,
+  cancelBusyLabel,
   modelReadyForVoice,
 }: MicButtonProps): React.JSX.Element {
   const t = useT('aiSearch');
@@ -447,6 +449,8 @@ function MicButton({
     return dictation.subscribeAudioLevel?.((l) => setLevel(l));
   }, [isRecording, dictation]);
 
+  const actionLabel =
+    isBusyDict && cancelBusyLabel ? cancelBusyLabel : isRecording ? t('micStop') : t('micStart');
   const spread = isRecording ? Math.round(Math.min(7, level * 45)) : 0;
   const glowAlpha = isRecording ? Math.min(0.5, level * 3).toFixed(2) : '0';
   const iconScale = isRecording ? (1 + Math.min(0.4, level * 2)).toFixed(2) : '1';
@@ -456,13 +460,15 @@ function MicButton({
       data-testid="chat-mic-btn"
       onClick={dictation.toggle}
       disabled={micDisabled}
-      aria-label={isRecording ? t('micStop') : t('micStart')}
+      aria-label={actionLabel}
       title={
-        !modelReadyForVoice && !isRecording
-          ? t('micModelUnavailable')
-          : isRecording
-            ? t('micStop')
-            : t('micStart')
+        isBusyDict && cancelBusyLabel
+          ? cancelBusyLabel
+          : !modelReadyForVoice && !isRecording
+            ? t('micModelUnavailable')
+            : isRecording
+              ? t('micStop')
+              : t('micStart')
       }
       className={[
         'shrink-0 flex items-center justify-center w-7 h-7 rounded-lg disabled:opacity-30 u-press',
@@ -976,9 +982,9 @@ export default function AiSearch({
   const modelReadyForVoice = !!dictation.modelStatus?.ready;
   const micDisabled =
     !client.capabilities.dictation ||
-    chatLoading ||
-    isBusyDict ||
-    (!isRecording && !modelReadyForVoice);
+    (chatLoading && !(isWeb && (isRecording || isBusyDict))) ||
+    (!isWeb && isBusyDict) ||
+    (!isRecording && !isBusyDict && !modelReadyForVoice);
   // While recording OR transcribing, overlay the live text so the content
   // never disappears during the gap between stop and handleDictationResult firing.
   // Newlines from whisper are collapsed to spaces.
@@ -1033,6 +1039,11 @@ export default function AiSearch({
               }
               className="min-w-0 max-w-[160px] bg-[#1a1a1a] text-xs text-gray-200 min-h-9 rounded px-1"
             >
+              {!activeRemoteProvider && (
+                <option value="" disabled>
+                  {t('providerFallback')}
+                </option>
+              )}
               {searchProviders.map((provider) => (
                 <option key={provider.id} value={provider.id}>
                   {provider.name}
@@ -1238,6 +1249,7 @@ export default function AiSearch({
                 isRecording={isRecording}
                 isBusyDict={isBusyDict}
                 micDisabled={micDisabled}
+                cancelBusyLabel={isWeb ? t('micCancel') : undefined}
                 modelReadyForVoice={modelReadyForVoice}
               />
 
