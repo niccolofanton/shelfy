@@ -27,12 +27,59 @@ function clientIp(): string {
   return `203.0.113.${clients}`;
 }
 
-export async function newContext(browser: Browser): Promise<BrowserContext> {
-  return browser.newContext({
-    baseURL: E2E.origin,
+// P1-21: every real-server test gets this for free (no per-test wiring) —
+// zero third-party requests and zero CSP violations, asserted when the
+// context closes (every test below already ends with `context.close()`, the
+// same hook Playwright's own teardown uses on anything left open). The CSP
+// violation listener is a `securitypolicyviolation` DOM event bridged out via
+// `exposeFunction`, not `page.on('console')`: Chromium logs CSP violations
+// through the Log domain, which is not a `console.*()` call and so never
+// reaches Playwright's `console` event.
+let violationSeq = 0;
+
+async function withViolationTracking(
+  context: BrowserContext,
+  homeOrigin: string,
+): Promise<BrowserContext> {
+  const violations: string[] = [];
+  const report = `__e2eViolation${(violationSeq += 1)}`;
+  await context.exposeFunction(report, (detail: string) => violations.push(detail));
+  await context.addInitScript((fnName: string) => {
+    document.addEventListener('securitypolicyviolation', (event) => {
+      (window as unknown as Record<string, (detail: string) => void>)[fnName](
+        `CSP ${event.violatedDirective} blocked ${event.blockedURI}`,
+      );
+    });
+  }, report);
+  // Third-party *network* requests (sendBeacon included: it still goes
+  // through the browser's network stack and shows up here).
+  context.on('request', (request) => {
+    const url = request.url();
+    if (!url.startsWith(homeOrigin) && !url.startsWith('data:') && !url.startsWith('blob:')) {
+      violations.push(`third-party request: ${request.method()} ${url}`);
+    }
+  });
+  const rawClose = context.close.bind(context);
+  context.close = (async (options?: Parameters<BrowserContext['close']>[0]) => {
+    expect(violations, 'third-party requests or CSP violations').toEqual([]);
+    return rawClose(options);
+  }) as BrowserContext['close'];
+  return context;
+}
+
+// `homeOrigin` defaults to the SPA's own origin (E2E.origin, behind vite
+// preview); sse-latency.spec.ts passes E2E.apiUrl instead, since it talks to
+// shelfy-server directly and never loads the SPA.
+export async function newContext(
+  browser: Browser,
+  homeOrigin = E2E.origin,
+): Promise<BrowserContext> {
+  const context = await browser.newContext({
+    baseURL: homeOrigin,
     locale: 'en-US',
     extraHTTPHeaders: { 'CF-Connecting-IP': clientIp() },
   });
+  return withViolationTracking(context, homeOrigin);
 }
 
 // Runs `shelfy-server admin …` on the suite's data directory; its stdout.
@@ -46,8 +93,8 @@ export function admin(...args: string[]): string {
 
 // A one-time link from the operator (`admin login-link`), as a path of the
 // web app: `/login/magic#…` or `/login/reauth#…`.
-export function loginLink(purpose: 'login' | 'reauth' = 'login'): string {
-  const out = admin('login-link', '--email', E2E.ownerEmail, '--purpose', purpose);
+export function loginLink(purpose: 'login' | 'reauth' = 'login', email = E2E.ownerEmail): string {
+  const out = admin('login-link', '--email', email, '--purpose', purpose);
   const url = out
     .split('\n')
     .map((line) => line.trim())
@@ -85,8 +132,8 @@ export async function addPasskey(page: Page, label: string): Promise<void> {
 }
 
 // Signs the page's context in with an operator's link, through the link page.
-export async function signInWithLink(page: Page): Promise<void> {
-  await page.goto(loginLink('login'));
+export async function signInWithLink(page: Page, email = E2E.ownerEmail): Promise<void> {
+  await page.goto(loginLink('login', email));
   await page.getByTestId('magic-sign-in').click();
   await acceptConsentIfAsked(page);
 }

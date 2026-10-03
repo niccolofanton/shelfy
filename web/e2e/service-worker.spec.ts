@@ -8,6 +8,10 @@ import { test, expect } from './api';
 
 test.use({ serviceWorkers: 'allow' });
 
+test.afterEach(({ api }) => {
+  expect(api.thirdParty, 'requests outside the app').toEqual([]);
+});
+
 const G480_CACHE = 'shelfy-media-g480';
 
 test('registers and reaches the active state', async ({ page }) => {

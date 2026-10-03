@@ -9,6 +9,10 @@ import type { Route } from '@playwright/test';
 import type { components } from '../src/api/schema';
 import { test, expect } from './api';
 
+test.afterEach(({ api }) => {
+  expect(api.thirdParty, 'requests outside the app').toEqual([]);
+});
+
 type LinkAnswer = components['schemas']['LinkCreated'] & { status: 200 | 201 };
 
 async function mockLinks(
