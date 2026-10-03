@@ -94,6 +94,7 @@ pub mod device;
 pub mod docs;
 pub mod events;
 pub mod extension;
+pub mod facets;
 pub mod health;
 pub mod imports;
 pub mod ingest;
@@ -116,6 +117,7 @@ pub mod stats;
 pub mod sync_runs;
 pub mod tag_aliases;
 pub mod tag_clusters;
+pub mod tags;
 pub mod trash;
 pub mod uploads;
 pub mod version;
@@ -188,6 +190,7 @@ const PROBLEM_RESPONSE: &str = "Problem";
         search::SearchScope,
         collections::CollectionDeleteMode,
         tag_aliases::ReviewStatus,
+        tags::TagTier,
     )),
     modifiers(&SecuritySchemes),
     tags(
@@ -545,6 +548,16 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(bulk::bulk_posts))
         .routes(routes!(posts::get_post, post_edit::update_post))
         .routes(routes!(search::search))
+        .routes(routes!(tags::overview))
+        .routes(routes!(tags::list))
+        .routes(routes!(tags::entities))
+        .routes(routes!(tags::related))
+        .routes(routes!(tags::health))
+        .routes(routes!(tags::suggestions))
+        .routes(routes!(tags::rename))
+        .routes(routes!(tags::merge))
+        .routes(routes!(tags::post_keys))
+        .routes(routes!(facets::get))
         .routes(routes!(tag_clusters::list_clusters))
         .routes(routes!(tag_clusters::regenerate_clusters))
         .routes(routes!(

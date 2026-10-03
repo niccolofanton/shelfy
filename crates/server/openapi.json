@@ -843,6 +843,62 @@
         ]
       }
     },
+    "/api/v1/entities": {
+      "get": {
+        "tags": ["ai"],
+        "operationId": "getEntityStats",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Case-insensitive entities with their most frequent form; default 60, maximum 500.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EntityStats"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/events": {
       "get": {
         "tags": ["platform"],
@@ -1217,6 +1273,53 @@
                 }
               }
             }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/facets": {
+      "get": {
+        "tags": ["library"],
+        "operationId": "getFacets",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Category, content type, status (NULL as none), language values and counts of live posts.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Facets"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged."
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -4252,6 +4355,368 @@
         }
       }
     },
+    "/api/v1/tags": {
+      "get": {
+        "tags": ["ai"],
+        "operationId": "getTagStats",
+        "parameters": [
+          {
+            "name": "tier",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TagTier"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tags by distinct live posts; default 200, maximum 500.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagStats"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/health": {
+      "get": {
+        "tags": ["ai"],
+        "operationId": "getTagHealth",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rare and orphan tags, unanalyzed and analyzed untagged posts.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagHealth"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/merge": {
+      "post": {
+        "tags": ["ai"],
+        "operationId": "mergeTags",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MergeTags"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Atomic merge of up to 500 sources into one target.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagsMerged"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/merge-suggestions": {
+      "get": {
+        "tags": ["ai"],
+        "operationId": "getTagMergeSuggestions",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Accent-folded and edit-distance merge groups; default 30, maximum 100. Cached per library generation.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MergeSuggestions"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/overview": {
+      "get": {
+        "tags": ["ai"],
+        "operationId": "getTagOverview",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Live library AI and tag counters.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagOverview"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/post-keys": {
+      "post": {
+        "tags": ["ai"],
+        "operationId": "getPostKeysByTags",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagsToKeys"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Live post keys for AND/OR tags, capped at 10000. Bulk clients should submit a filter selector instead.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagPostKeys"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/rename": {
+      "post": {
+        "tags": ["ai"],
+        "operationId": "renameTag",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameTag"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Atomic JSON, tag rows, membership, aliases and index rewrite.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TagsMerged"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tags/{tag}/related": {
+      "get": {
+        "tags": ["ai"],
+        "operationId": "getRelatedTags",
+        "parameters": [
+          {
+            "name": "tag",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Top 12 co-occurring tags, resolving accepted aliases.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RelatedTags"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/trash": {
       "get": {
         "tags": ["library"],
@@ -5501,6 +5966,20 @@
           }
         }
       },
+      "CategoryCount": {
+        "type": "object",
+        "required": ["category", "count"],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "ChangeReason": {
         "type": "string",
         "description": "What changed posts (plan §2.10).",
@@ -5842,6 +6321,20 @@
         },
         "additionalProperties": false
       },
+      "ContentTypeCount": {
+        "type": "object",
+        "required": ["contentType", "count"],
+        "properties": {
+          "contentType": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "CreatedApiToken": {
         "type": "object",
         "description": "A new API token.",
@@ -5988,6 +6481,32 @@
           "deviceCode": {
             "type": "string",
             "description": "The `deviceCode` of `POST /auth/device/start`."
+          }
+        }
+      },
+      "EntityStat": {
+        "type": "object",
+        "required": ["entity", "count"],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "entity": {
+            "type": "string"
+          }
+        }
+      },
+      "EntityStats": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EntityStat"
+            }
           }
         }
       },
@@ -6395,6 +6914,50 @@
           "waiting": {
             "$ref": "#/components/schemas/Waiting",
             "description": "Every task that waits, per platform, leased ones included."
+          }
+        }
+      },
+      "Facet": {
+        "type": "object",
+        "required": ["value", "count"],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "Facets": {
+        "type": "object",
+        "required": ["category", "contentType", "status", "language"],
+        "properties": {
+          "category": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Facet"
+            }
+          },
+          "contentType": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Facet"
+            }
+          },
+          "language": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Facet"
+            }
+          },
+          "status": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Facet"
+            }
           }
         }
       },
@@ -7084,6 +7647,20 @@
         "description": "A language of the app's interface.",
         "enum": ["it", "en"]
       },
+      "LanguageCount": {
+        "type": "object",
+        "required": ["language", "count"],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "language": {
+            "type": "string"
+          }
+        }
+      },
       "LinkCreate": {
         "type": "object",
         "description": "A link to save (contract C7).",
@@ -7455,6 +8032,54 @@
             "minimum": 0
           }
         }
+      },
+      "MergeSuggestion": {
+        "type": "object",
+        "required": ["canonical", "variants", "totalCount"],
+        "properties": {
+          "canonical": {
+            "type": "string"
+          },
+          "totalCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "MergeSuggestions": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MergeSuggestion"
+            }
+          }
+        }
+      },
+      "MergeTags": {
+        "type": "object",
+        "required": ["sources", "target"],
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "MergedPosts": {
         "type": "object",
@@ -9379,6 +10004,45 @@
           }
         }
       },
+      "RelatedTag": {
+        "type": "object",
+        "required": ["tag", "count"],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "tag": {
+            "type": "string"
+          }
+        }
+      },
+      "RelatedTags": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelatedTag"
+            }
+          }
+        }
+      },
+      "RenameTag": {
+        "type": "object",
+        "required": ["from", "to"],
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "RenditionCounts": {
         "type": "object",
         "description": "The `g480` renditions and ThumbHashes of the install.",
@@ -10330,10 +10994,179 @@
           }
         }
       },
+      "TagHealth": {
+        "type": "object",
+        "required": ["orphanTags", "rareTags", "unanalyzedPosts", "untaggedPosts"],
+        "properties": {
+          "orphanTags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RelatedTag"
+            }
+          },
+          "rareTags": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "unanalyzedPosts": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "untaggedPosts": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "TagMatch": {
+        "type": "string",
+        "enum": ["and", "or"]
+      },
+      "TagOverview": {
+        "type": "object",
+        "required": [
+          "total",
+          "analyzed",
+          "unanalyzed",
+          "byCategory",
+          "byContentType",
+          "languages",
+          "uniqueTags",
+          "taggedPosts"
+        ],
+        "properties": {
+          "analyzed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "byCategory": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CategoryCount"
+            }
+          },
+          "byContentType": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentTypeCount"
+            }
+          },
+          "languages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LanguageCount"
+            }
+          },
+          "taggedPosts": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "unanalyzed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "uniqueTags": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "TagPostKeys": {
+        "type": "object",
+        "required": ["keys", "truncated"],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
       "TagSource": {
         "type": "string",
         "description": "Origin of a tag.",
         "enum": ["ai", "manual"]
+      },
+      "TagStat": {
+        "type": "object",
+        "required": ["tag", "count", "categories"],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CategoryCount"
+            }
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "lastUsed": {
+            "type": ["integer", "null"],
+            "format": "int64"
+          },
+          "tag": {
+            "type": "string"
+          }
+        }
+      },
+      "TagStats": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagStat"
+            }
+          }
+        }
+      },
+      "TagTier": {
+        "type": "string",
+        "enum": ["general", "specific", "manual", "all"]
+      },
+      "TagsMerged": {
+        "type": "object",
+        "required": ["updated"],
+        "properties": {
+          "updated": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "TagsToKeys": {
+        "type": "object",
+        "required": ["tags"],
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/TagMatch"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "TaskCompletion": {
         "type": "object",

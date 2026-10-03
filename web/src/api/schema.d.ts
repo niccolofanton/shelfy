@@ -477,6 +477,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/entities': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['getEntityStats'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/events': {
     parameters: {
       query?: never;
@@ -650,6 +666,22 @@ export interface paths {
      *     disconnected until the extension's next request.
      */
     get: operations['getExtensionStatus'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/facets': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['getFacets'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1786,6 +1818,134 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/tags': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['getTagStats'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tags/health': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['getTagHealth'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tags/merge': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['mergeTags'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tags/merge-suggestions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['getTagMergeSuggestions'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tags/overview': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['getTagOverview'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tags/post-keys': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['getPostKeysByTags'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tags/rename': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['renameTag'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tags/{tag}/related': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['getRelatedTags'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/trash': {
     parameters: {
       query?: never;
@@ -2388,6 +2548,11 @@ export interface components {
       /** @description Videos fetched on demand (P4). */
       'video.onDemand': boolean;
     };
+    CategoryCount: {
+      category: string;
+      /** Format: int64 */
+      count: number;
+    };
     /**
      * @description What changed posts (plan §2.10).
      * @enum {string}
@@ -2589,6 +2754,11 @@ export interface components {
       /** @description The version of the privacy notice the app showed (`1`), alike. */
       privacyVersion: string;
     };
+    ContentTypeCount: {
+      contentType: string;
+      /** Format: int64 */
+      count: number;
+    };
     /** @description A new API token. */
     CreatedApiToken: {
       /** @description The token as the list shows it. */
@@ -2670,6 +2840,14 @@ export interface components {
     DevicePollRequest: {
       /** @description The `deviceCode` of `POST /auth/device/start`. */
       deviceCode: string;
+    };
+    EntityStat: {
+      /** Format: int64 */
+      count: number;
+      entity: string;
+    };
+    EntityStats: {
+      items: components['schemas']['EntityStat'][];
     };
     /**
      * @description Stable, machine-readable error codes. Each one has a fixed HTTP status.
@@ -2959,6 +3137,17 @@ export interface components {
       tasks: components['schemas']['ExtensionTask'][];
       /** @description Every task that waits, per platform, leased ones included. */
       waiting: components['schemas']['Waiting'];
+    };
+    Facet: {
+      /** Format: int64 */
+      count: number;
+      value: string;
+    };
+    Facets: {
+      category: components['schemas']['Facet'][];
+      contentType: components['schemas']['Facet'][];
+      language: components['schemas']['Facet'][];
+      status: components['schemas']['Facet'][];
     };
     /** @description One field that failed validation. */
     FieldError: {
@@ -3378,6 +3567,11 @@ export interface components {
      * @enum {string}
      */
     Language: 'it' | 'en';
+    LanguageCount: {
+      /** Format: int64 */
+      count: number;
+      language: string;
+    };
     /** @description A link to save (contract C7). */
     LinkCreate: {
       /**
@@ -3641,6 +3835,19 @@ export interface components {
        * @default 0
        */
       unchanged: number;
+    };
+    MergeSuggestion: {
+      canonical: string;
+      /** Format: int64 */
+      totalCount: number;
+      variants: string[];
+    };
+    MergeSuggestions: {
+      items: components['schemas']['MergeSuggestion'][];
+    };
+    MergeTags: {
+      sources: string[];
+      target: string;
     };
     /** @description The bundle's posts of one platform. */
     MergedPosts: {
@@ -4726,6 +4933,18 @@ export interface components {
       /** @description Its index in the request batch. */
       index: number;
     };
+    RelatedTag: {
+      /** Format: int64 */
+      count: number;
+      tag: string;
+    };
+    RelatedTags: {
+      items: components['schemas']['RelatedTag'][];
+    };
+    RenameTag: {
+      from: string;
+      to: string;
+    };
     /** @description The `g480` renditions and ThumbHashes of the install. */
     RenditionCounts: {
       /**
@@ -5276,11 +5495,60 @@ export interface components {
       tags: string[];
       topTag: string;
     };
+    TagHealth: {
+      orphanTags: components['schemas']['RelatedTag'][];
+      rareTags: number;
+      /** Format: int64 */
+      unanalyzedPosts: number;
+      /** Format: int64 */
+      untaggedPosts: number;
+    };
+    /** @enum {string} */
+    TagMatch: 'and' | 'or';
+    TagOverview: {
+      /** Format: int64 */
+      analyzed: number;
+      byCategory: components['schemas']['CategoryCount'][];
+      byContentType: components['schemas']['ContentTypeCount'][];
+      languages: components['schemas']['LanguageCount'][];
+      /** Format: int64 */
+      taggedPosts: number;
+      /** Format: int64 */
+      total: number;
+      /** Format: int64 */
+      unanalyzed: number;
+      /** Format: int64 */
+      uniqueTags: number;
+    };
+    TagPostKeys: {
+      keys: string[];
+      truncated: boolean;
+    };
     /**
      * @description Origin of a tag.
      * @enum {string}
      */
     TagSource: 'ai' | 'manual';
+    TagStat: {
+      categories: components['schemas']['CategoryCount'][];
+      /** Format: int64 */
+      count: number;
+      /** Format: int64 */
+      lastUsed?: number | null;
+      tag: string;
+    };
+    TagStats: {
+      items: components['schemas']['TagStat'][];
+    };
+    /** @enum {string} */
+    TagTier: 'general' | 'specific' | 'manual' | 'all';
+    TagsMerged: {
+      updated: number;
+    };
+    TagsToKeys: {
+      mode?: components['schemas']['TagMatch'];
+      tags: string[];
+    };
     /** @description How a task ended (contract C6). */
     TaskCompletion: {
       /**
@@ -6119,6 +6387,44 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  getEntityStats: {
+    parameters: {
+      query?: {
+        limit?: number;
+      };
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Case-insensitive entities with their most frequent form; default 60, maximum 500. */
+      200: {
+        headers: {
+          'Cache-Control'?: string;
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['EntityStats'];
+        };
+      };
+      /** @description Unchanged. */
+      304: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   streamEvents: {
     parameters: {
       query?: {
@@ -6392,6 +6698,42 @@ export interface operations {
         content: {
           'application/json': components['schemas']['ExtensionStatusEvent'];
         };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getFacets: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Category, content type, status (NULL as none), language values and counts of live posts. */
+      200: {
+        headers: {
+          'Cache-Control'?: string;
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Facets'];
+        };
+      };
+      /** @description Unchanged. */
+      304: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       default: components['responses']['Problem'];
     };
@@ -8322,6 +8664,268 @@ export interface operations {
         content: {
           'application/json': components['schemas']['ClusterTagRemoved'];
         };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getTagStats: {
+    parameters: {
+      query?: {
+        tier?: components['schemas']['TagTier'];
+        limit?: number;
+      };
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Tags by distinct live posts; default 200, maximum 500. */
+      200: {
+        headers: {
+          'Cache-Control'?: string;
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TagStats'];
+        };
+      };
+      /** @description Unchanged. */
+      304: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getTagHealth: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Rare and orphan tags, unanalyzed and analyzed untagged posts. */
+      200: {
+        headers: {
+          'Cache-Control'?: string;
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TagHealth'];
+        };
+      };
+      /** @description Unchanged. */
+      304: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  mergeTags: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['MergeTags'];
+      };
+    };
+    responses: {
+      /** @description Atomic merge of up to 500 sources into one target. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TagsMerged'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getTagMergeSuggestions: {
+    parameters: {
+      query?: {
+        limit?: number;
+      };
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Accent-folded and edit-distance merge groups; default 30, maximum 100. Cached per library generation. */
+      200: {
+        headers: {
+          'Cache-Control'?: string;
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['MergeSuggestions'];
+        };
+      };
+      /** @description Unchanged. */
+      304: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getTagOverview: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Live library AI and tag counters. */
+      200: {
+        headers: {
+          'Cache-Control'?: string;
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TagOverview'];
+        };
+      };
+      /** @description Unchanged. */
+      304: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getPostKeysByTags: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['TagsToKeys'];
+      };
+    };
+    responses: {
+      /** @description Live post keys for AND/OR tags, capped at 10000. Bulk clients should submit a filter selector instead. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TagPostKeys'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  renameTag: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RenameTag'];
+      };
+    };
+    responses: {
+      /** @description Atomic JSON, tag rows, membership, aliases and index rewrite. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TagsMerged'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getRelatedTags: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path: {
+        tag: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Top 12 co-occurring tags, resolving accepted aliases. */
+      200: {
+        headers: {
+          'Cache-Control'?: string;
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['RelatedTags'];
+        };
+      };
+      /** @description Unchanged. */
+      304: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       default: components['responses']['Problem'];
     };

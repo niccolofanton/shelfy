@@ -181,6 +181,7 @@ async fn the_rest_of_the_admin_cli_takes_a_member_too() {
             posts: 50,
             profile: Profile::Reference,
             seed: 7,
+            ai_share: 0.0,
         },
     )
     .unwrap();

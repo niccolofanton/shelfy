@@ -10,6 +10,7 @@ mod golden_ai;
 mod golden_chat;
 mod golden_merge;
 mod golden_tag_search;
+mod golden_tags;
 mod golden_taxonomy;
 mod golden_taxonomy_prompt;
 
@@ -40,6 +41,7 @@ const CHECKED: &[&str] = &[
     "ai/aliases/",
     "ai/chat/",
     "ai/taxonomy-prompts/",
+    "ai/tags/",
     "edits",
     "extract-content-terms",
     "hosts",

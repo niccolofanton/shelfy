@@ -196,6 +196,10 @@ pub fn view_digest(view: &str, params: &impl Serialize) -> ViewDigest {
 
 /// Values computed from one state of a user's library.
 pub struct LibraryCaches {
+    /// Serialized taxonomy GETs; 64 entries, each capped at 1 MiB by the reader.
+    pub tag_views: GenerationCache<axum::body::Bytes>,
+    /// Merge suggestions, expensive union-find, per user and library generation.
+    pub tag_merges: GenerationCache<Arc<Vec<shelfy_core::tags::merge::Suggestion>>>,
     /// Posts matching a filter (`GET /posts/count`).
     pub counts: GenerationCache<u64>,
     /// The library counters (`GET /stats`).
@@ -211,6 +215,8 @@ impl LibraryCaches {
     pub fn new() -> Self {
         Self {
             counts: GenerationCache::new(COUNT_ENTRIES, TIME_TO_IDLE),
+            tag_merges: GenerationCache::new(64, TIME_TO_IDLE),
+            tag_views: GenerationCache::new(64, TIME_TO_IDLE),
             stats: GenerationCache::new(STATS_ENTRIES, TIME_TO_IDLE),
             rankings: GenerationCache::new(RANKING_ENTRIES, TIME_TO_IDLE),
         }

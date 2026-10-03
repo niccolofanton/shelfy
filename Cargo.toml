@@ -104,6 +104,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 # brings) and webpki roots, no async runtime in a CLI. The server's own outbound HTTP is
 # `reqwest` (§2.21, P2-04).
 ureq = { version = "3.4.2", default-features = false, features = ["json", "rustls"] }
+unicode-normalization = "0.1.25"
 url = "2.5.8"
 utoipa = "6.0.0"
 utoipa-axum = "0.3.0"

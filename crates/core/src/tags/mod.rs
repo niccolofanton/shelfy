@@ -3,7 +3,11 @@
 pub mod aliases;
 pub mod clusters;
 pub mod embeddings;
+pub mod explore;
+pub mod facets;
 pub mod graph;
+pub mod health;
+pub mod merge;
 
 use crate::repo::Result;
 use crate::search::terms::js_trim;

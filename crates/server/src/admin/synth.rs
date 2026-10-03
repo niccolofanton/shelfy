@@ -98,6 +98,10 @@ pub struct SynthArgs {
     /// Seed of the generator: the same seed and count give the same library.
     #[arg(long, value_name = "SEED", default_value_t = DEFAULT_SEED)]
     pub seed: u64,
+
+    /// Share of posts with deterministic topic-based AI data (0 keeps reference profile).
+    #[arg(long, default_value_t = 0.0, value_parser = parse_ai_share)]
+    pub ai_share: f64,
 }
 
 /// The shape of a synthetic library.
@@ -118,7 +122,7 @@ impl Profile {
 }
 
 /// What to synthesize.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SynthOptions {
     /// Posts to create.
     pub posts: u32,
@@ -126,6 +130,8 @@ pub struct SynthOptions {
     pub profile: Profile,
     /// Seed of the generator.
     pub seed: u64,
+    /// 0 retains the reference AI mix; otherwise the analyzed topic-data share.
+    pub ai_share: f64,
 }
 
 /// Aggregate counts of a synthesized library.
@@ -171,6 +177,7 @@ pub fn run(data: &DataDir, args: &SynthArgs, out: &mut dyn Write) -> anyhow::Res
         posts: args.posts,
         profile: args.profile,
         seed: args.seed,
+        ai_share: args.ai_share,
     };
     let report = synth(data, &user_id, &options)?;
     print_report(out, &user_id, &options, &report)?;
@@ -211,6 +218,10 @@ pub fn resolve_user(
 ///
 /// The library is locked or not empty, or writing failed.
 pub fn synth(data: &DataDir, user_id: &str, options: &SynthOptions) -> anyhow::Result<SynthReport> {
+    anyhow::ensure!(
+        options.ai_share.is_finite() && (0.0..=1.0).contains(&options.ai_share),
+        "ai share must be between 0 and 1"
+    );
     let started = Instant::now();
     let users_dir = data.users_dir();
     if is_library_locked(&users_dir, user_id)? {
@@ -410,6 +421,7 @@ fn plan(options: &SynthOptions) -> Plan {
     let mut rng = Rng::new(options.seed);
     let vocab = Vocab::new(&mut rng);
     let n = options.posts as usize;
+    let mut ai_rng = Rng::new(options.seed ^ 0xA170_51A4_E202_6004);
     // One website in about 6,000 posts, at least one, spread out.
     let websites = n.div_ceil(6_138);
     let stride = (n / websites).max(1);
@@ -417,11 +429,15 @@ fn plan(options: &SynthOptions) -> Plan {
     let mut objects = Vec::new();
     let mut last_time = NEWEST;
     for i in 0..n {
-        let post = if i % stride == stride / 2 && i / stride < websites {
+        let mut post = if i % stride == stride / 2 && i / stride < websites {
             website(&mut rng, i)
         } else {
             social(&mut rng, &vocab, i, &mut objects, &mut last_time)
         };
+        if options.ai_share > 0.0 {
+            post.post.ai =
+                (ai_rng.unit() < options.ai_share).then(|| topic_ai_layer(&mut ai_rng, &vocab));
+        }
         posts.push(post);
     }
     Plan {
@@ -857,6 +873,35 @@ fn caption(rng: &mut Rng, vocab: &Vocab, instagram: bool, text_post: bool) -> St
         out.push_str(&format!(" @{}", author(rng)));
     }
     out
+}
+
+fn parse_ai_share(s: &str) -> Result<f64, String> {
+    let value: f64 = s
+        .parse()
+        .map_err(|_| "expected a fraction from 0 to 1".to_owned())?;
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err("expected a finite fraction from 0 to 1".to_owned());
+    }
+    Ok(value)
+}
+fn topic_ai_layer(rng: &mut Rng, vocab: &Vocab) -> AiLayer {
+    let topic = vocab.topic(rng);
+    let general = vec![
+        vocab.topics[topic][0].clone(),
+        vocab.topics[topic][1].clone(),
+    ];
+    let specific = vec![
+        vocab.topics[topic][2 + rng.index(TOPIC_WORDS)].clone(),
+        vocab.topics[topic][2 + rng.index(TOPIC_WORDS)].clone(),
+    ];
+    let mut layer = ai_layer(rng);
+    layer.tags = general.iter().chain(&specific).cloned().collect();
+    layer.general_tags = Some(general);
+    layer.specific_tags = Some(specific);
+    layer.entities = vec![format!("Studio {topic}")];
+    layer.keywords = vec![vocab.topic_word(rng, topic).to_owned()];
+    layer.language = Some(rng.pick(&["it", "en", "fr", "es"]).to_owned());
+    layer
 }
 
 fn ai_layer(rng: &mut Rng) -> AiLayer {
@@ -1368,11 +1413,52 @@ mod tests {
     }
 
     #[test]
+    fn topic_ai_share_is_deterministic_and_preserves_base_posts() {
+        let options = SynthOptions {
+            posts: 1000,
+            profile: Profile::Reference,
+            seed: 7,
+            ai_share: 0.0,
+        };
+        let reference = plan(&options);
+        let topic = plan(&SynthOptions {
+            ai_share: 0.7,
+            ..options
+        });
+        let again = plan(&SynthOptions {
+            ai_share: 0.7,
+            ..options
+        });
+        let analyzed = topic.posts.iter().filter(|p| p.post.ai.is_some()).count();
+        assert!((650..750).contains(&analyzed));
+        for ((r, t), a) in reference.posts.iter().zip(&topic.posts).zip(&again.posts) {
+            assert_eq!(t.post.ai, a.post.ai);
+            assert_eq!(r.post.key, t.post.key);
+            assert_eq!(r.post.caption, t.post.caption);
+            assert_eq!(r.post.media, t.post.media);
+            if let Some(ai) = &t.post.ai {
+                assert_eq!(ai.status.as_deref(), Some("done"));
+                assert!(!ai.general_tags.as_ref().unwrap().is_empty());
+                assert!(!ai.specific_tags.as_ref().unwrap().is_empty());
+                assert!(!ai.entities.is_empty());
+                assert!(!ai.keywords.is_empty());
+                assert!(
+                    ai.category.is_some() && ai.content_type.is_some() && ai.language.is_some()
+                );
+            }
+        }
+        for bad in ["-1", "1.1", "NaN", "inf"] {
+            assert!(parse_ai_share(bad).is_err());
+        }
+    }
+
+    #[test]
     fn the_plan_follows_the_reference_mix() {
         let plan = plan(&SynthOptions {
             posts: 6_138,
             profile: Profile::Reference,
             seed: 1,
+            ai_share: 0.0,
         });
         let count = |f: &dyn Fn(&PostPlan) -> bool| plan.posts.iter().filter(|p| f(p)).count();
         let share = |n: usize| n as f64 / plan.posts.len() as f64;

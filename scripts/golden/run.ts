@@ -58,11 +58,13 @@ const { default: aiClusterSets } = await import('./ai-clusters');
 const { default: aiAliasSets } = await import('./ai-aliases');
 const { default: aiChatSets } = await import('./ai-chat');
 const { default: taxonomyPromptSets } = await import('./ai-taxonomy-prompts');
+const { default: aiTagSets } = await import('./ai-tags');
 const SETS: GoldenSet[] = [
   ...taxonomyPromptSets,
   ...aiClusterSets,
   ...aiAliasSets,
   ...importSets,
+  ...aiTagSets,
   extractContentTerms,
   edits,
   tagSearch,

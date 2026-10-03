@@ -33,6 +33,7 @@ fn options(posts: u32) -> SynthOptions {
         posts,
         profile: Profile::Reference,
         seed: 7,
+        ai_share: 0.0,
     }
 }
 
