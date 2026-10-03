@@ -114,7 +114,7 @@ jobs:
           curl --fail --silent --show-error --noproxy '' \
             --proxy http://127.0.0.1:4750 --max-time 2 \
             --retry 10 --retry-connrefused --retry-all-errors --retry-delay 1 \
-            http://allowed.fixture.test/ | rg --fixed-strings --line-regexp 'shelfy ssrf fixture ok'
+            http://allowed.fixture.test/ | grep -Fx 'shelfy ssrf fixture ok'
       - name: Run the SSRF suite against the real proxy
         env:
           SHELFY_SSRF_PROXY: http://127.0.0.1:4750
