@@ -1,1 +1,2 @@
-npx lint-staged
+# Worktrees share the Git stash; keep hooks within the current checkout.
+npx lint-staged --no-stash
