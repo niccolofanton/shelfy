@@ -444,3 +444,11 @@ Tasks the owner added on 2026-10-03, in the order they run. X1 can start before 
 - Future P4-12 GC must coordinate taxonomy.run ai_cache plans with control jobs: cancelled/failed plans may still be retryable; completed markers remain until corresponding job retention permits removal.
 - OSN f2d209d configures the Ornyth operator endpoint/key, exact egress origins and concurrency1; no apply. Private81-cover bundle passed local validation only; live dry-run/apply still required.
 - Full40 X1 evaluation remains in progress on Ornyth. No production AI run has started; rc.5 remains the recorded production version.
+
+### Candidate preparation at 3a03d2c
+
+- Integrated P2-17 3e44bef after independent account-switch review (including unbound legacy queue and passive capture), P3-19 6157709, P4-10 2406d9d, X1 902c44b, P3-04 3a03d2c. Current phase inventory:66 integrated,48 open,1 dropped out of115; live acceptance remains separate.
+- Pre-push on970959a:1731 tests pass; CI37146987723 running. Full combined Rust/typecheck checks started after X1/tag-data integration.
+- X1 full40 finished serially on Ornyth:38 valid+2 gated, zero errors; controlled8 improvement passes. Production queue has not started.
+- Backup DB/media live both succeed (metric timestamps1791054349/1791054356). Hermes running, restarts0, started2026-10-02T10:11:58Z unchanged.
+- Current lanes: P2-18, P3-11, P3-14, P3-20, P3-24, P3-26, P3-27, P4-12, P4-13, P4-14. P3-27 must also preserve the richer desktop design catalogue, not silently replace facets/evidence with the simpler shared web schema.
