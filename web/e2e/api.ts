@@ -25,6 +25,7 @@ export interface MockApi {
   // `/queues/*` (jobs.spec.ts). Mutated in place by the route handlers below,
   // so a spec can read `api.jobs` afterwards to assert on the result.
   jobs: Schemas['Job'][];
+  notifications: Schemas['Notification'][];
   pausedKinds: Set<string>;
   // P2-12: the account's API tokens, for `/me/tokens*` (connections.spec.ts).
   tokens: Schemas['ApiToken'][];
@@ -685,6 +686,36 @@ async function answer(api: MockApi, route: Route): Promise<void> {
     return route.fulfill({ status: 204 });
   }
 
+  if (path === '/api/v1/notifications' && method === 'GET') {
+    const before = query.get('cursor') ? Number(query.get('cursor')) : Infinity;
+    const limit = Number(query.get('limit')) || 60;
+    const matching = api.notifications.filter((n) => n.id < before).sort((a, b) => b.id - a.id);
+    const items = matching.slice(0, limit);
+    return route.fulfill({
+      json: {
+        items,
+        nextCursor: matching.length > limit ? String(items.at(-1)?.id) : null,
+        unreadCount: api.notifications.filter((n) => n.readAt == null).length,
+      },
+    });
+  }
+  if (path === '/api/v1/notifications/read' && method === 'POST') {
+    const selector = body as { ids?: number[]; upTo?: number };
+    let updated = 0;
+    for (const n of api.notifications) {
+      if (
+        n.readAt == null &&
+        (selector.upTo != null ? n.id <= selector.upTo : selector.ids?.includes(n.id))
+      ) {
+        n.readAt = Date.now();
+        updated += 1;
+      }
+    }
+    return route.fulfill({
+      json: { updated, unreadCount: api.notifications.filter((n) => n.readAt == null).length },
+    });
+  }
+
   // ── Jobs (P4-09) ─────────────────────────────────────────────────────────
   if (path === '/api/v1/jobs' && method === 'GET') {
     const matching = api.jobs.filter((j) => jobMatches(j, query)).sort((a, b) => b.id - a.id);
@@ -772,6 +803,7 @@ export async function mockApi(page: Page, origin: string): Promise<MockApi> {
     signedIn: true,
     ...library(),
     jobs: [],
+    notifications: [],
     pausedKinds: new Set(),
     tokens: [],
     streams: [],

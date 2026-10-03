@@ -1,3 +1,4 @@
+import { createActivityApi } from './activity';
 // The web ShelfyClient: the HTTP API of shelfy-server (`/api/v1`), typed by
 // the generated OpenAPI types (./schema.d.ts), and its realtime stream.
 import type {
@@ -114,6 +115,7 @@ export function webCapabilities(me: Schemas['Me'] | null | undefined): ShelfyCap
     settings: true,
     links: true,
     jobs: true,
+    activity: true,
   });
 }
 
@@ -183,6 +185,7 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
           account: createAccountApi(http, me, { events }),
           links: createLinksApi(http),
           jobs: createJobsApi(http, { events }),
+          activity: createActivityApi(http, events),
         }
       : {}),
 

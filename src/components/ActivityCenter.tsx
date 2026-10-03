@@ -1,3 +1,5 @@
+import { useShelfy } from '../api/ShelfyProvider';
+import { withMessages } from '../i18n';
 import React, { useRef, useState } from 'react';
 import {
   Activity,
@@ -19,6 +21,10 @@ import Popover from './Popover';
 import { useActivity } from '../hooks/useActivity';
 import { useT } from '../i18n';
 import { formatEta } from '../lib/duration';
+
+const WebActivityCenter = React.lazy(
+  withMessages(() => import('./activity/WebActivityCenter'), 'jobs'),
+);
 
 // Translator returned by useT — namespaced key + optional interpolation vars.
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
@@ -336,16 +342,14 @@ function LogRow({ entry, index = 0, onOpen, onDismiss, t }: LogRowProps): React.
 }
 
 interface ActivityCenterProps {
+  onOpen?: () => void;
   onAction?: (id: string, item?: ActivityActionItem) => void;
   onNavigate?: (view: NavView, params?: NavParams) => void;
 }
 
 // Strip in fondo alla sidebar + popover del Centro Attività. Allineata al
 // pulsante Impostazioni (gap-3 px-4 py-2.5, icona 16px).
-export default function ActivityCenter({
-  onAction,
-  onNavigate,
-}: ActivityCenterProps): React.JSX.Element {
+function DesktopActivityCenter({ onAction, onNavigate }: ActivityCenterProps): React.JSX.Element {
   const t: Translate = useT('activity');
   // The activity hook aggregates several parallel IPC subscriptions; its exact
   // surface is consumed here through the local activity shapes (LiveItem/LogEntry
@@ -553,5 +557,16 @@ export default function ActivityCenter({
         </div>
       </Popover>
     </div>
+  );
+}
+
+export default function ActivityCenter(props: ActivityCenterProps): React.JSX.Element {
+  const client = useShelfy();
+  return client.activity ? (
+    <React.Suspense fallback={null}>
+      <WebActivityCenter onOpen={props.onOpen} />
+    </React.Suspense>
+  ) : (
+    <DesktopActivityCenter {...props} />
   );
 }

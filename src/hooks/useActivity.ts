@@ -1,3 +1,4 @@
+import { useShelfy } from '../api/ShelfyProvider';
 import {
   useState,
   useEffect,
@@ -7,6 +8,7 @@ import {
   createContext,
   useContext,
   createElement,
+  Fragment,
 } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { analysisSummary } from './useAnalysis';
@@ -1134,7 +1136,7 @@ interface ActivityProviderProps extends ActivitySources {
   children: ReactNode;
 }
 
-export function ActivityProvider({ children, ...sources }: ActivityProviderProps): ReactElement {
+function DesktopActivityProvider({ children, ...sources }: ActivityProviderProps): ReactElement {
   const value = useActivityCore(sources);
   return createElement(ActivityContext.Provider, { value }, children);
 }
@@ -1143,4 +1145,12 @@ export function useActivity(): ActivityContextValue {
   const ctx = useContext(ActivityContext);
   if (!ctx) throw new Error('useActivity must be used within an ActivityProvider');
   return ctx;
+}
+
+// Web work comes from the account APIs; do not mount desktop IPC sources.
+export function ActivityProvider(props: ActivityProviderProps): ReactElement {
+  const client = useShelfy();
+  return client.activity
+    ? createElement(Fragment, null, props.children)
+    : createElement(DesktopActivityProvider, props);
 }

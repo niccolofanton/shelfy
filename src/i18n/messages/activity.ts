@@ -20,6 +20,22 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    webTitleCenter: 'Centro notifiche',
+    markAllRead: 'Segna tutte come lette',
+    markRead: 'Segna come letta',
+    loading: 'Caricamento…',
+    loadError: 'Impossibile aggiornare le notifiche o eseguire l’azione.',
+    loadMore: 'Carica altre',
+    queues: 'Code',
+    activeCount: '{count} attività in corso',
+    unreadCount: '{count} notifiche non lette',
+    notificationGeneric: 'Aggiornamento: {kind}',
+    'notif.quota.exceeded': 'Spazio esaurito: {usedBytes} di {quotaBytes} byte utilizzati.',
+    'notif.job.failed': 'Attività non riuscita.',
+    'notif.job.succeeded': 'Attività completata.',
+    'notif.migration.installed': 'Migrazione completata.',
+    'notif.ai.provider_key_invalid':
+      'La chiave del provider AI non è valida. Aggiornala nelle impostazioni.',
     // ── strip / popover header & chrome (ActivityCenter.jsx) ──
     title: 'Attività',
     empty: 'Nessuna attività in background.',
@@ -151,6 +167,21 @@ export default {
     logSyncStopped: 'Sincronizzazione {platform} interrotta',
   },
   en: {
+    webTitleCenter: 'Notification center',
+    markAllRead: 'Mark all read',
+    markRead: 'Mark read',
+    loading: 'Loading…',
+    loadError: 'Could not refresh notifications or complete the action.',
+    loadMore: 'Load more',
+    queues: 'Queues',
+    activeCount: '{count} active jobs',
+    unreadCount: '{count} unread notifications',
+    notificationGeneric: 'Update: {kind}',
+    'notif.quota.exceeded': 'Storage full: {usedBytes} of {quotaBytes} bytes used.',
+    'notif.job.failed': 'Job failed.',
+    'notif.job.succeeded': 'Job completed.',
+    'notif.migration.installed': 'Migration completed.',
+    'notif.ai.provider_key_invalid': 'Your AI provider key is invalid. Update it in settings.',
     // ── strip / popover header & chrome (ActivityCenter.jsx) ──
     title: 'Activity',
     empty: 'No background activity.',

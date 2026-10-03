@@ -1050,7 +1050,11 @@ function Sidebar({
 
               {/* Activity center — aggregates every background task + recent events. */}
               {caps.activity && (
-                <ActivityCenter onAction={onActivityAction} onNavigate={onNavigate} />
+                <ActivityCenter
+                  onAction={onActivityAction}
+                  onNavigate={onNavigate}
+                  onOpen={onCloseDrawer}
+                />
               )}
 
               {caps.settings && (

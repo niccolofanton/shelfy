@@ -7,6 +7,7 @@
 // need, in transport-neutral terms. Posts keep the desktop shape
 // (Shelfy.Post): the web client maps the API's posts onto it, with the post
 // `key` as `id` and same-origin `/media` URLs as the local file references.
+import type { ActivityApi } from './activity';
 import type { AccountApi } from './account';
 import type { AiApi } from './ai';
 import type { JobsApi } from './jobs';
@@ -323,6 +324,7 @@ export interface ShelfyClient {
   // one: the web client's. The desktop keeps its own Downloads queue instead
   // (ShelfyCapabilities.jobs) and leaves this undefined.
   readonly jobs?: JobsApi;
+  readonly activity?: ActivityApi;
 
   // One page of the library (or of a folder, a search…).
   listPosts(query: PostQuery, page: PageRequest): Promise<PostPage>;
