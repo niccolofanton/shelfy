@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "note": "Stable snake_case codes for capture events, stages and failures (P4 lane rule 10). The capture service streams codes + scalar params only (never UI prose); the desktop and the SPA render the it/en strings, interpolating {param} placeholders. Shared by electron/webcap/codes.ts (desktop) and the web app (P4-09/P4-14).",
+  "events": {
+    "site.opening": { "kind": "read", "it": "Apertura di {url}", "en": "Opening {url}" },
+    "antibot.waiting": {
+      "kind": "info",
+      "it": "Verifica anti-bot ({vendor}) su {path}: attendo che si risolva…",
+      "en": "Anti-bot check ({vendor}) on {path}: waiting for it to clear…"
+    },
+    "consent.optout": {
+      "kind": "info",
+      "it": "Consenso cookie: {cmp} → rifiutato ({result})",
+      "en": "Cookie consent: {cmp} → rejected ({result})"
+    },
+    "preloader.waited": {
+      "kind": "info",
+      "it": "Attesa preloader: {seconds}s",
+      "en": "Waited for preloader: {seconds}s"
+    },
+    "hero.retry": {
+      "kind": "info",
+      "it": "Prima schermata \"{status}\" su {path}: attendo e riprovo",
+      "en": "First screen \"{status}\" on {path}: waiting and retrying"
+    },
+    "video.recorded": {
+      "kind": "info",
+      "it": "Video di scroll: {frames} fotogrammi",
+      "en": "Scroll video: {frames} frames"
+    },
+    "video.failed": {
+      "kind": "info",
+      "it": "Video di scroll non riuscito: {detail}",
+      "en": "Scroll video failed: {detail}"
+    },
+    "video.encode_failed": {
+      "kind": "info",
+      "it": "Codifica video non riuscita: {detail}",
+      "en": "Video encode failed: {detail}"
+    },
+    "band.failed": {
+      "kind": "info",
+      "it": "Banda {band} non catturata: {detail}",
+      "en": "Band {band} not captured: {detail}"
+    },
+    "page.primary_captured": {
+      "kind": "artifact",
+      "it": "Pagina principale: hero {hero}, {bands} bande, {sections} sezioni{video}",
+      "en": "Main page: hero {hero}, {bands} bands, {sections} sections{video}"
+    },
+    "pages.selected": {
+      "kind": "info",
+      "it": "Pagine scelte: {pages}",
+      "en": "Pages chosen: {pages}"
+    },
+    "page.captured": {
+      "kind": "artifact",
+      "it": "{path}: {bands} bande, {sections} sezioni",
+      "en": "{path}: {bands} bands, {sections} sections"
+    },
+    "page.skipped": {
+      "kind": "info",
+      "it": "Pagina saltata: {path} ({reason})",
+      "en": "Page skipped: {path} ({reason})"
+    },
+    "engine.fallback": {
+      "kind": "info",
+      "it": "Browser di cattura non disponibile ({detail}): uso il motore Electron",
+      "en": "Capture browser unavailable ({detail}): using the Electron engine"
+    }
+  },
+  "stages": {
+    "discovering": { "it": "Apertura del sito…", "en": "Opening the site…" },
+    "primary": { "it": "Cattura della pagina principale…", "en": "Capturing the main page…" },
+    "pages": { "it": "Cattura delle pagine interne…", "en": "Capturing inner pages…" },
+    "extracting": {
+      "it": "Analisi di colori, font e tecnologie…",
+      "en": "Analysing colours, fonts and tech…"
+    },
+    "analyzing": { "it": "Analisi AI in coda…", "en": "AI analysis queued…" }
+  },
+  "failures": {
+    "capture_blocked": {
+      "it": "Il sito ha mostrato una verifica anti-bot",
+      "en": "The site presented an anti-bot check"
+    },
+    "navigation": {
+      "it": "Pagina non raggiungibile",
+      "en": "Page unreachable"
+    },
+    "timeout": {
+      "it": "Tempo di cattura scaduto",
+      "en": "Capture timed out"
+    },
+    "empty": {
+      "it": "Nessuna immagine prodotta",
+      "en": "No image produced"
+    },
+    "internal": {
+      "it": "Errore interno della cattura",
+      "en": "Internal capture error"
+    },
+    "partial": {
+      "it": "Cattura parziale (budget del sito esaurito)",
+      "en": "Partial capture (site budget exhausted)"
+    }
+  },
+  "skipReasons": {
+    "budget_exceeded": { "it": "budget del sito esaurito", "en": "site budget exhausted" }
+  }
+}

@@ -24,8 +24,10 @@
 
 import * as db from './db';
 import * as jobstore from './jobstore';
-import * as webcapture from './webcapture';
+import { discoverPages, fetchImageToWebp } from './webcap/sitefetch';
 import { captureSite, BlockedError, type CapturedPage, type SiteCapture } from './webcap/capture';
+import { assembleSite, pickIcon } from './webcap/assemble';
+import { formatCaptureEvent } from './webcap/codes';
 import type { SiteSession } from './webcap/driver';
 import * as meta from './webcap/metadata';
 import { ElectronSession } from './webcap/electron-driver';
@@ -328,8 +330,19 @@ async function captureWebReference(
       video: true,
       signal,
       session,
+      // On the desktop a Playwright launch failure falls back to a hidden Electron
+      // window (the service passes no fallback, so it fails instead).
+      fallbackSession: () => ElectronSession.create({ visible: false }),
       hooks: {
-        onEvent: (e) => pushEvent(key, e.kind === 'error' ? 'error' : e.kind, e.text, e.data),
+        // The pipeline now emits stable codes + params (P4 lane rule 10); render
+        // the Italian narration the Websites panel shows from the shared contract.
+        onEvent: (e) =>
+          pushEvent(
+            key,
+            e.kind === 'error' ? 'error' : e.kind,
+            formatCaptureEvent(e.code, e.params),
+            e.params,
+          ),
         onStage: (stage, frac) => {
           if (stage === 'primary')
             report('discovering', 0.5, { stage: 'Cattura della pagina principale…' });
@@ -375,99 +388,75 @@ async function captureWebReference(
     pages: pages.map(toJobPageV2),
   });
 
-  // ── Phase 3: design metadata ───────────────────────────────────────────────
+  // ── Phase 3: design metadata (shared with the capture service via assemble.ts) ─
   report('extracting', 0, { stage: 'Analisi di colori, font e tecnologie…' });
   const head = (primary.probe.head || {}) as ProbeHead;
-  const jsonld = meta.parseJsonLd(Array.isArray(head.jsonld) ? head.jsonld : []);
-  const siteName =
-    head.ogSiteName ||
-    jsonld.organization?.name ||
-    head.applicationName ||
-    titleCase(domain.split('.').slice(0, -1).join('.') || domain);
-  const palette = await meta.computePalette(pages, signal).catch(() => null);
-  report('extracting', 0.4);
-  const typo = meta.computeTypography(pages, domain);
-  const tech = meta.computeTech(pages);
-  const awards = meta.computeAwards(pages, domain, siteName);
-  const traits = meta.computeTraits(pages, tech);
-  const awardTE = meta.awardTags(awards);
-  const digests = pages.map((p, i) => meta.pageDigest(p, i === 0 ? 1600 : 700));
-  const probeOf = (p: CapturedPage): ProbeExtras => p.probe as ProbeExtras;
+  // og:image + favicon fetch (network): feed the assembly's cover choice and meta.
   const ogLocal = head.ogImage
-    ? await webcapture
-        .fetchImageToWebp(head.ogImage, { pageUrl: finalUrl, stamp: captureStamp, signal })
-        .catch(() => null)
+    ? await fetchImageToWebp(head.ogImage, {
+        pageUrl: finalUrl,
+        stamp: captureStamp,
+        signal,
+      }).catch(() => null)
     : null;
+  report('extracting', 0.4);
   const iconUrl = pickIcon(head.icons || [], finalUrl);
   const faviconLocal = iconUrl
-    ? await webcapture
-        .fetchImageToWebp(iconUrl, { pageUrl: finalUrl, stamp: captureStamp, quality: 92, signal })
-        .catch(() => null)
+    ? await fetchImageToWebp(iconUrl, {
+        pageUrl: finalUrl,
+        stamp: captureStamp,
+        quality: 92,
+        signal,
+      }).catch(() => null)
     : null;
   signal?.throwIfAborted?.();
-  const title =
-    meta.cleanTitle(head.ogTitle || head.title || primary.title || siteName, siteName) || siteName;
-  const description =
-    head.description || head.ogDescription || jsonld.organization?.description || '';
-  const lang = (head.lang || '').split('-')[0].toLowerCase() || null;
-  const languages = Array.from(
-    new Set(
-      (head.hreflang || [])
-        .map((h) => String(h.lang || '').toLowerCase())
-        .filter((l) => l && l !== 'x-default'),
-    ),
-  ).slice(0, 20);
-  const fontsLegacy = typo.fonts;
-  const techNames = tech.filter((t) => t.confidence >= 0.8).map((t) => t.name);
+
+  // The pure, deterministic site assembly — palette, typography, tech, awards,
+  // digests and the site meta — shared with the P4 capture service (parity).
+  const assembly = await assembleSite(site, {
+    ogImageUrl: head.ogImage,
+    ogFetched: !!ogLocal,
+    singlePage,
+    signal,
+  });
+  const title = assembly.title;
+  const description = assembly.description;
+  const lang = assembly.lang;
   const video = primary.video;
+
   pushEvent(
     key,
     'branding',
-    `Design: ${palette?.swatches.length || 0} colori (${palette?.scheme || '—'}), ${typo.fonts.length} font, ${tech.length} tecnologie`,
-    { palette: palette?.swatches || [], fonts: typo.fonts, techStack: techNames },
+    `Design: ${assembly.palette.length} colori (${assembly.scheme || '—'}), ${assembly.fonts.length} font, ${assembly.meta.tech.length} tecnologie`,
+    { palette: assembly.palette, fonts: assembly.fonts, techStack: assembly.techNames },
   );
   patchJob(key, {
     title,
     lang,
-    palette: (palette?.swatches || []) as unknown as WebPalette,
-    fonts: fontsLegacy as unknown as WebFonts,
-    techStack: techNames,
-    awards: awards as unknown as Shelfy.WebAward[],
+    palette: assembly.palette as unknown as WebPalette,
+    fonts: assembly.fonts as unknown as WebFonts,
+    techStack: assembly.techNames,
+    awards: assembly.awards as unknown as Shelfy.WebAward[],
   });
   pushEvent(
     key,
     'awards',
-    awards.length
-      ? `${awards.length} riconoscimenti: ${awards.map((a) => a.platform).join(', ')}`
+    assembly.awards.length
+      ? `${assembly.awards.length} riconoscimenti: ${assembly.awards.map((a) => a.platform).join(', ')}`
       : 'Nessun riconoscimento rilevato',
-    { awards },
+    { awards: assembly.awards },
   );
   report('extracting', 1);
 
   // ── Phase upsert ───────────────────────────────────────────────────────────
-  // Searchable site text: every page's digest (headings, CTAs, readable copy).
-  const siteText = digests
-    .map((d) =>
-      [
-        d.h1,
-        d.headings.filter((h) => h !== d.h1).join(' · '),
-        d.ctas.length ? `CTA: ${d.ctas.join(' · ')}` : '',
-        d.text,
-      ]
-        .filter(Boolean)
-        .join('\n'),
-    )
-    .join('\n\n')
-    .slice(0, 12000);
-  const cover =
-    primary.qc.status === 'ok' || !ogLocal ? primary.hero?.path || primary.bands[0]?.path : ogLocal;
+  const cover = assembly.cover === 'og' ? ogLocal : primary.hero?.path || primary.bands[0]?.path;
   const webPages = pages.map((p, i) => {
-    const d = digests[i];
+    const ap = assembly.pages[i];
     return {
       url: p.url,
       requestedUrl: p.requestedUrl,
       pageType: p.pageType,
-      title: meta.cleanTitle(p.title, siteName),
+      title: ap.title,
       status: p.status,
       // Legacy single image (gallery slide, v1 consumers) = the untouched hero.
       screenshotPath: (i === 0 ? cover : p.hero?.path) || p.bands[0]?.path || '',
@@ -493,49 +482,16 @@ async function captureWebReference(
       capped: p.capped,
       jacked: p.jacked,
       qc: p.qc,
-      contentText: i === 0 ? siteText : d.text,
-      digest: { h1: d.h1, headings: d.headings, ctas: d.ctas },
-      meta: { ogImage: String((probeOf(p).head || {}).ogImage || '') },
+      contentText: ap.contentText,
+      digest: ap.digest,
+      meta: { ogImage: ap.ogImage },
     };
   });
   const webMeta: Shelfy.WebMeta = {
-    schema: 2,
-    siteName,
-    title,
-    description: description.slice(0, 400),
-    lang: lang || undefined,
-    languages,
-    ogImage: head.ogImage || '',
+    ...assembly.meta,
     ogImagePath: ogLocal || null,
     favicon: faviconLocal || null,
-    themeColor: head.themeColor || null,
-    canonical: head.canonical || null,
-    rss: head.rss || null,
-    jsonldTypes: jsonld.types,
-    organization: jsonld.organization,
-    social: probeOf(primary).social || [],
-    credits: probeOf(primary).credits || [],
-    scheme: palette?.scheme || null,
-    contrast: palette?.contrast || null,
-    typeScale: typo.scale,
-    baseSize: typo.baseSize,
-    scaleRatio: typo.ratio,
-    tech,
-    traits,
     video,
-    pageCount: pages.length,
-    awardTags: awardTE.tags,
-    awardEntities: awardTE.entities,
-    capture: {
-      engine: site.engine,
-      userAgent: site.userAgent,
-      viewport: { width: 1440, height: 900, scale: 2 },
-      discovery: site.discoverySource,
-      skipped: site.skipped,
-      consent: primary.consent,
-      timings: Object.fromEntries(pages.map((p) => [p.url, p.timings.total])),
-    },
-    ...(singlePage ? { singlePage: true } : {}),
   };
   const ref = {
     id: db.webPostId(url),
@@ -547,10 +503,10 @@ async function captureWebReference(
     lang,
     capturedAt: captureStamp,
     pages: webPages,
-    palette: palette?.swatches || [],
-    fonts: fontsLegacy,
-    techStack: techNames,
-    awards,
+    palette: assembly.palette,
+    fonts: assembly.fonts,
+    techStack: assembly.techNames,
+    awards: assembly.awards,
     meta: webMeta,
   };
   let postId = ref.id;
@@ -622,43 +578,11 @@ interface ProbeHead {
   jsonld?: string[];
 }
 
-interface ProbeExtras {
-  head?: ProbeHead;
-  social?: { platform: string; href: string }[];
-  credits?: { text: string; href: string }[];
-}
-
 function webHost(u: string): string {
   try {
     return new URL(u).hostname.toLowerCase().replace(/^www\./, '');
   } catch {
     return '';
-  }
-}
-
-function titleCase(s: string): string {
-  return s.replace(/(^|[\s.-])([a-z])/g, (_, a: string, b: string) => a + b.toUpperCase());
-}
-
-// Best raster icon: apple-touch-icon / largest PNG; SVG and ICO as fallbacks.
-function pickIcon(
-  icons: { href: string; rel: string; sizes: string; type: string }[],
-  pageUrl: string,
-): string | null {
-  const scored = icons
-    .filter((i) => i.href && !/^data:/.test(i.href))
-    .map((i) => {
-      const size = Number((/(\d+)x\d+/.exec(i.sizes || '') || [])[1]) || 0;
-      const svg = /svg/.test(i.type) || /\.svg(\?|$)/i.test(i.href);
-      const apple = /apple-touch-icon/i.test(i.rel);
-      return { href: i.href, score: (apple ? 300 : 0) + Math.min(size, 512) + (svg ? -400 : 0) };
-    })
-    .sort((a, b) => b.score - a.score);
-  if (scored.length) return scored[0].href;
-  try {
-    return new URL('/favicon.ico', pageUrl).toString();
-  } catch {
-    return null;
   }
 }
 
@@ -1157,9 +1081,9 @@ function setListRefreshEmitter(fn: unknown): void {
 function discover(
   url: string | undefined,
   { maxPages = DEFAULT_MAX_PAGES }: { maxPages?: number } = {},
-): ReturnType<typeof webcapture.discoverPages> {
+): ReturnType<typeof discoverPages> {
   assertSafeUrl(url as string);
-  return webcapture.discoverPages(url as string, { maxPages: clampMaxPages(maxPages) });
+  return discoverPages(url as string, { maxPages: clampMaxPages(maxPages) });
 }
 
 export {

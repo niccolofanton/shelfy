@@ -17,6 +17,9 @@ import { parse as parseDomain } from 'tldts-experimental';
 let enginePromise: Promise<FiltersEngine | null> | null = null;
 
 function enginePath(): string {
+  // Injectable path for the capture service (plan §2.18: the prebuilt adblock
+  // engine ships in the image); otherwise the packaged resources dir, else dev.
+  if (process.env.SHELFY_ADBLOCK_ENGINE) return process.env.SHELFY_ADBLOCK_ENGINE;
   try {
     if (app.isPackaged) return path.join(process.resourcesPath || '', 'adblock', 'engine.bin');
   } catch {

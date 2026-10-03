@@ -46,14 +46,20 @@ import {
   type ImageAsset,
 } from './encode';
 import { pickPages, classifyUrl, type PageType } from './discover';
-import * as webcapture from '../webcapture';
+import { discoverPages } from './sitefetch';
 
 // ─── Public types ────────────────────────────────────────────────────────────
 
+// A capture event is a stable snake_case `code` plus scalar params (P4 lane rule
+// 10), never UI prose: the capture service streams the code and the SPA/desktop
+// render the string. shared/capture/codes.json is the contract; the desktop maps
+// codes to Italian in webcap/codes.ts.
+export type CaptureEventKind = 'read' | 'artifact' | 'info' | 'error';
+export type CaptureEventParams = Record<string, string | number | boolean | null>;
 export interface CaptureEvent {
-  kind: 'read' | 'artifact' | 'info' | 'error';
-  text: string;
-  data?: unknown;
+  kind: CaptureEventKind;
+  code: string;
+  params?: CaptureEventParams;
 }
 
 export interface CaptureHooks {
@@ -141,7 +147,7 @@ export class BlockedError extends Error {
 export class PageError extends Error {
   constructor(
     message: string,
-    readonly code: 'http' | 'not-html' | 'navigation' | 'empty',
+    readonly code: 'http' | 'not-html' | 'navigation' | 'empty' | 'timeout',
   ) {
     super(message);
     this.name = 'PageError';
@@ -473,7 +479,8 @@ export async function capturePage(
     if (blocked.blocked && blocked.vendor !== 'login') {
       emit?.({
         kind: 'info',
-        text: `Verifica anti-bot (${blocked.vendor}) su ${shortPath(requestedUrl)}: attendo che si risolva…`,
+        code: 'antibot.waiting',
+        params: { vendor: blocked.vendor || 'unknown', path: shortPath(requestedUrl) },
       });
       const tB = Date.now();
       while (blocked.blocked && Date.now() - tB < CHALLENGE_WAIT_MS) {
@@ -501,14 +508,19 @@ export async function capturePage(
     if (consent.cmp)
       emit?.({
         kind: 'info',
-        text: `Consenso cookie: ${consent.cmp} → rifiutato (${consent.result || 'ok'})`,
+        code: 'consent.optout',
+        params: { cmp: consent.cmp, result: consent.result || 'ok' },
       });
     mark('consent');
 
     // 4. readiness
     const loaderMs = await waitLoader(page, LOADER_MAX_MS, signal);
     if (loaderMs > 1500)
-      emit?.({ kind: 'info', text: `Attesa preloader: ${(loaderMs / 1000).toFixed(1)}s` });
+      emit?.({
+        kind: 'info',
+        code: 'preloader.waited',
+        params: { seconds: Math.round(loaderMs / 100) / 10 },
+      });
     await page.evaluate(jsWaitAssets(6_000), { fallback: true, timeoutMs: 8_000 });
     if (opts.extraSettleMs) await sleep(opts.extraSettleMs, signal);
     const earlyLocked = await page.evaluate<boolean>(JS_DOC_LOCKED, { fallback: false });
@@ -523,7 +535,8 @@ export async function capturePage(
     if (qc.status !== 'ok') {
       emit?.({
         kind: 'info',
-        text: `Prima schermata "${qc.status}" su ${shortPath(requestedUrl)}: attendo e riprovo`,
+        code: 'hero.retry',
+        params: { status: qc.status, path: shortPath(requestedUrl) },
       });
       await waitLoader(page, 15_000, signal);
       await sleep(6_000, signal);
@@ -545,12 +558,13 @@ export async function capturePage(
     if (opts.video) {
       try {
         videoFrames = await recordScroll(page, dir, jacked, signal);
-        emit?.({ kind: 'info', text: `Video di scroll: ${videoFrames.length} fotogrammi` });
+        emit?.({ kind: 'info', code: 'video.recorded', params: { frames: videoFrames.length } });
       } catch (err) {
         throwIfAborted(signal);
         emit?.({
           kind: 'info',
-          text: `Video di scroll non riuscito: ${(err as Error)?.message || err}`,
+          code: 'video.failed',
+          params: { detail: String((err as Error)?.message || err).slice(0, 200) },
         });
       }
       await returnToTop(page, jacked, signal);
@@ -579,7 +593,8 @@ export async function capturePage(
             if ((err as Error)?.name === 'AbortError') throw err;
             emit?.({
               kind: 'info',
-              text: `Codifica video non riuscita: ${(err as Error)?.message || err}`,
+              code: 'video.encode_failed',
+              params: { detail: String((err as Error)?.message || err).slice(0, 200) },
             });
             return null;
           })
@@ -649,7 +664,11 @@ export async function capturePage(
           throwIfAborted(signal);
           emit?.({
             kind: 'info',
-            text: `Banda ${i + 1} non catturata: ${(err as Error)?.message?.split('\n')[0] || err}`,
+            code: 'band.failed',
+            params: {
+              band: i + 1,
+              detail: String((err as Error)?.message?.split('\n')[0] || err).slice(0, 200),
+            },
           });
           break;
         }
@@ -817,7 +836,7 @@ async function withPageDeadline<T>(
     return await run(ac.signal);
   } catch (err) {
     if (timedOut && !parent?.aborted)
-      throw new PageError(`Tempo scaduto dopo ${Math.round(ms / 60_000)} minuti`, 'navigation');
+      throw new PageError(`Tempo scaduto dopo ${Math.round(ms / 60_000)} minuti`, 'timeout');
     throw err;
   } finally {
     clearTimeout(timer);
@@ -833,6 +852,45 @@ export interface SiteOptions {
   signal?: AbortSignal;
   hooks?: CaptureHooks;
   session?: SiteSession; // provided by the unblock flow (visible window)
+  // ─── Injectable knobs (desktop uses the defaults; the capture service, SPIKE-11,
+  // runs 1 page at a time at 1×, with the server budgets) ─────────────────────
+  pagesParallel?: number; // inner pages captured at once (default: v2's min(3, …))
+  encodePoolSize?: number; // ffmpeg encode-pool size (default 3)
+  deviceScale?: number; // default session device scale (default 2×; server 1×)
+  sessionLocale?: string; // context locale for the default session
+  primaryDeadlineMs?: number; // default 5 min (service: 180 s)
+  innerDeadlineMs?: number; // default 3 min (service: 150 s)
+  // When set, inner pages stop being started once the wall-clock budget or the
+  // artifact-byte cap is reached, and the pages already captured are KEPT
+  // (SPIKE-11: a timed-out capture is `partial`, not discarded). The remaining
+  // pages are reported in `skipped` with reason `budget_exceeded`.
+  siteBudgetMs?: number;
+  maxArtifactBytes?: number;
+  // Override the default Playwright session factory (service injects none → uses
+  // the default). The fallback runs when the primary factory throws; the desktop
+  // passes its visible-window ElectronSession, the service passes none so a launch
+  // failure fails the capture (no Electron fallback on the server).
+  createSession?: () => Promise<SiteSession>;
+  fallbackSession?: () => Promise<SiteSession>;
+}
+
+// Bytes already written for a captured page (hero + bands + footer + sections +
+// video), summed from the files on disk for the artifact-budget check.
+function pageArtifactBytes(p: CapturedPage): number {
+  let total = 0;
+  const add = (f: string | null | undefined): void => {
+    if (!f) return;
+    try {
+      total += fs.statSync(f).size;
+    } catch {}
+  };
+  add(p.hero?.path);
+  for (const b of p.bands) add(b.path);
+  add(p.footer?.path);
+  for (const s of p.sections) add(s.path);
+  add(p.video?.path);
+  add(p.video?.preview);
+  return total;
 }
 
 export async function captureSite(url: string, opts: SiteOptions): Promise<SiteCapture> {
@@ -846,30 +904,41 @@ export async function captureSite(url: string, opts: SiteOptions): Promise<SiteC
   let session: SiteSession;
   if (opts.session) session = opts.session;
   else {
+    const createPrimary =
+      opts.createSession ??
+      ((): Promise<SiteSession> =>
+        createPlaywrightSession({
+          deviceScale: opts.deviceScale,
+          maxConcurrency: opts.pagesParallel,
+          locale: opts.sessionLocale,
+        }));
     try {
-      session = await createPlaywrightSession();
+      session = await createPrimary();
     } catch (err) {
+      // No fallback (the capture service) → a launch failure fails the capture.
+      if (!opts.fallbackSession) throw err;
       emit({
         kind: 'info',
-        text: `Browser di cattura non disponibile (${(err as Error)?.message?.split('\n')[0] || err}): uso il motore Electron`,
+        code: 'engine.fallback',
+        params: { detail: String((err as Error)?.message?.split('\n')[0] || err).slice(0, 200) },
       });
-      const { ElectronSession } = await import('./electron-driver');
-      session = await ElectronSession.create({ visible: false });
+      session = await opts.fallbackSession();
     }
   }
-  const encodePool = createPool(3);
+  const encodePool = createPool(opts.encodePoolSize ?? 3);
+  const primaryDeadlineMs = opts.primaryDeadlineMs ?? PRIMARY_DEADLINE_MS;
+  const innerDeadlineMs = opts.innerDeadlineMs ?? INNER_DEADLINE_MS;
   try {
     // The sitemap is only a supplement: fetch it in parallel with the primary page.
     const sitemapPromise: Promise<string[]> = opts.singlePage
       ? Promise.resolve([])
-      : webcapture
-          .discoverPages(url, { maxPages: 8, signal })
+      : discoverPages(url, { maxPages: 8, signal })
           .then((d) => (d && d.source === 'sitemap' ? d.pages.map((p) => p.url) : []))
           .catch(() => []);
 
     hooks?.onStage?.('primary', 0);
-    emit({ kind: 'read', text: `Apertura di ${url}` });
-    const primary = await withPageDeadline(PRIMARY_DEADLINE_MS, signal, (s) =>
+    emit({ kind: 'read', code: 'site.opening', params: { url } });
+    const primary = await withPageDeadline(primaryDeadlineMs, signal, (s) =>
       capturePage(session, url, {
         primary: true,
         video: opts.video,
@@ -881,12 +950,17 @@ export async function captureSite(url: string, opts: SiteOptions): Promise<SiteC
     );
     emit({
       kind: 'artifact',
-      text: `Pagina principale: hero ${primary.hero ? `${primary.hero.width}×${primary.hero.height}` : '—'}, ${primary.bands.length} bande, ${primary.sections.length} sezioni${primary.video ? `, video ${primary.video.duration}s` : ''}`,
-      data: { url: primary.url },
+      code: 'page.primary_captured',
+      params: {
+        hero: primary.hero ? `${primary.hero.width}×${primary.hero.height}` : '—',
+        bands: primary.bands.length,
+        sections: primary.sections.length,
+      },
     });
     const total = opts.singlePage ? 1 : Math.max(1, opts.maxPages);
     hooks?.onPage?.(primary, 0, total);
 
+    const siteStart = Date.now();
     const pages: CapturedPage[] = [primary];
     const skipped: { url: string; reason: string }[] = [];
     let discoverySource: SiteCapture['discoverySource'] = 'single-page';
@@ -901,28 +975,47 @@ export async function captureSite(url: string, opts: SiteOptions): Promise<SiteC
       discoverySource = picked.some((p) => p.source === 'sitemap') ? 'nav+sitemap' : 'nav';
       emit({
         kind: 'info',
-        text: `Pagine scelte: ${picked.map((p) => `${shortPath(p.url)} (${p.pageType})`).join(', ') || 'nessuna'}`,
-        data: {
-          source: 'nav',
-          pages: picked.map((p) => p.url),
-          types: picked.map((p) => p.pageType),
+        code: 'pages.selected',
+        params: {
+          count: picked.length,
+          pages: picked.map((p) => `${shortPath(p.url)} (${p.pageType})`).join(', '),
         },
       });
       const ctx = (primary.probe.canvasContexts || {}) as Record<string, number>;
       const webgl = !!(ctx.webgl || ctx.webgl2 || ctx.webgpu);
-      const concurrency = Math.min(session.maxConcurrency ?? 3, primary.jacked || webgl ? 2 : 3);
+      // The capture service forces 1 page at a time (SPIKE-11); otherwise v2's own
+      // choice (2 for WebGL / scroll-jacked, else 3), capped by the session.
+      const concurrency =
+        opts.pagesParallel ??
+        Math.min(session.maxConcurrency ?? 3, primary.jacked || webgl ? 2 : 3);
       let next = 0;
       let done = 1;
       const results: (CapturedPage | null)[] = new Array(picked.length).fill(null);
+      // Site budget / artifact cap: once reached, stop STARTING new inner pages and
+      // keep the ones already captured (SPIKE-11 partial-persistence). A running
+      // page finishes under its own deadline.
+      const budgetReached = (): boolean => {
+        if (opts.siteBudgetMs && Date.now() - siteStart >= opts.siteBudgetMs) return true;
+        if (opts.maxArtifactBytes) {
+          let bytes = pageArtifactBytes(primary);
+          for (const r of results) if (r) bytes += pageArtifactBytes(r);
+          if (bytes >= opts.maxArtifactBytes) return true;
+        }
+        return false;
+      };
       const worker = async (): Promise<void> => {
         for (;;) {
           throwIfAborted(signal);
           const i = next++;
           if (i >= picked.length) return;
+          if (budgetReached()) {
+            next = picked.length; // stop every worker; unstarted pages → budget_exceeded below
+            return;
+          }
           const p = picked[i];
           hooks?.onStage?.('pages', done / (picked.length + 1));
           try {
-            const cap = await withPageDeadline(INNER_DEADLINE_MS, signal, (s) =>
+            const cap = await withPageDeadline(innerDeadlineMs, signal, (s) =>
               capturePage(session, p.url, {
                 primary: false,
                 video: false,
@@ -936,25 +1029,37 @@ export async function captureSite(url: string, opts: SiteOptions): Promise<SiteC
             results[i] = cap;
             emit({
               kind: 'artifact',
-              text: `${shortPath(cap.url)}: ${cap.bands.length} bande, ${cap.sections.length} sezioni`,
-              data: { url: cap.url },
+              code: 'page.captured',
+              params: {
+                path: shortPath(cap.url),
+                bands: cap.bands.length,
+                sections: cap.sections.length,
+              },
             });
           } catch (err) {
             if ((err as Error)?.name === 'AbortError') throw err;
+            // Reason is a stable code, not prose (P4 lane rule 10 / manifest skip
+            // reasons): anti-bot → capture_blocked, PageError → its code, else error.
             const reason =
               err instanceof BlockedError
-                ? `verifica anti-bot (${err.vendor})`
-                : (err as Error)?.message || String(err);
+                ? 'capture_blocked'
+                : err instanceof PageError
+                  ? err.code
+                  : 'error';
             // On a session that already needed a human check, a second challenge
             // means the site re-checks every navigation: stop instead of piling up
             // flagged requests (the primary page is already captured).
             if (
-              (err instanceof BlockedError || /HTTP 403/.test(reason)) &&
+              (err instanceof BlockedError || reason === 'http') &&
               session.engine !== 'playwright'
             )
               next = picked.length;
             skipped.push({ url: p.url, reason });
-            emit({ kind: 'info', text: `Pagina saltata: ${shortPath(p.url)} (${reason})` });
+            emit({
+              kind: 'info',
+              code: 'page.skipped',
+              params: { path: shortPath(p.url), reason },
+            });
           } finally {
             done++;
             const ready = results.filter((r): r is CapturedPage => !!r);
@@ -966,6 +1071,18 @@ export async function captureSite(url: string, opts: SiteOptions): Promise<SiteC
       const outcome = await Promise.allSettled(runners);
       const aborted = outcome.find((o) => o.status === 'rejected');
       if (aborted && aborted.status === 'rejected') throw aborted.reason;
+      // Pages never started because the site budget / artifact cap ran out: keep
+      // what we have, report the rest as budget_exceeded (SPIKE-11 partial result).
+      for (let i = 0; i < picked.length; i++) {
+        if (!results[i] && !skipped.some((s) => s.url === picked[i].url)) {
+          skipped.push({ url: picked[i].url, reason: 'budget_exceeded' });
+          emit({
+            kind: 'info',
+            code: 'page.skipped',
+            params: { path: shortPath(picked[i].url), reason: 'budget_exceeded' },
+          });
+        }
+      }
       // Drop near-duplicates of an already captured page (same final URL).
       for (const r of results) {
         if (r && !pages.some((p) => p.url === r.url)) pages.push(r);

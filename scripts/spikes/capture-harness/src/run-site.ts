@@ -213,7 +213,8 @@ async function main(): Promise<void> {
       signal: ac.signal,
       session,
       hooks: {
-        onEvent: (e: CaptureEvent) => line({ type: 'event', kind: e.kind, text: e.text }),
+        onEvent: (e: CaptureEvent) =>
+          line({ type: 'event', kind: e.kind, code: e.code, params: e.params }),
         // First time each stage starts ('pages' fires once per inner page).
         onStage: (stage) => {
           if (!(`stage:${stage}` in marks)) mark(`stage:${stage}`);

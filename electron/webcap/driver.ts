@@ -25,7 +25,7 @@ import type {
   Request as PwRequest,
 } from 'playwright-core';
 import { isBlockedHostname } from '../net-safety';
-import { getBrowser } from '../webcapture-playwright';
+import { getBrowser } from './browser';
 import { getEngine, shouldBlock, cosmeticCss, JS_COSMETIC_FEATURES } from './blocker';
 import { INIT_SCRIPT } from './scripts';
 
@@ -362,16 +362,21 @@ export class PlaywrightSession implements SiteSession {
     readonly maxConcurrency?: number,
   ) {}
 
-  static async create(): Promise<PlaywrightSession> {
+  // The capture service injects a device scale (1× on the server, SPIKE-11), an
+  // inner-page concurrency cap (1) and the context locale; the desktop keeps 2×
+  // and its own locale.
+  static async create(opts: SessionOptions = {}): Promise<PlaywrightSession> {
     const browser: Browser = await getBrowser();
     const userAgent = desktopUserAgent(browser.version());
-    let locale = 'en-US';
-    try {
-      locale = app.getLocale() || locale;
-    } catch {}
+    let locale = opts.locale || 'en-US';
+    if (!opts.locale) {
+      try {
+        locale = app.getLocale() || locale;
+      } catch {}
+    }
     const context = await browser.newContext({
       viewport: { width: VIEWPORT.width, height: VIEWPORT.height },
-      deviceScaleFactor: VIEWPORT.scale,
+      deviceScaleFactor: opts.deviceScale ?? VIEWPORT.scale,
       userAgent,
       locale,
       extraHTTPHeaders: { 'Accept-Language': acceptLanguage() },
@@ -383,7 +388,7 @@ export class PlaywrightSession implements SiteSession {
       // very animations/WebGL the reference is about when it is set.
     });
     await configureContext(context);
-    return new PlaywrightSession(context, userAgent);
+    return new PlaywrightSession(context, userAgent, false, opts.maxConcurrency);
   }
 
   async newPage(): Promise<PageDriver> {
@@ -408,8 +413,16 @@ export class PlaywrightSession implements SiteSession {
   }
 }
 
-export async function createPlaywrightSession(): Promise<SiteSession> {
-  return PlaywrightSession.create();
+// Options for a capture session: the device scale (2× desktop, 1× server),
+// the inner-page concurrency cap and the context locale.
+export interface SessionOptions {
+  deviceScale?: number;
+  maxConcurrency?: number;
+  locale?: string;
+}
+
+export async function createPlaywrightSession(opts: SessionOptions = {}): Promise<SiteSession> {
+  return PlaywrightSession.create(opts);
 }
 
 // Scratch dir for screencast frames and intermediate PNG bands.

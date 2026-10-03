@@ -9,9 +9,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { spawn } from 'child_process';
-import * as webcapture from '../webcapture';
+import { resolveFfmpeg, screenshotPathForUrl } from './sitefetch';
 
-const { resolveFfmpeg } = webcapture._internals;
+// ffmpeg thread cap. The desktop leaves it unset (ffmpeg's own default); the
+// capture service sets 1 (plan §2.18 budget: `ffmpeg -threads 1`) so an encode
+// never competes with Chromium for the 1.5 shared vCPUs (SPIKE-11).
+let ffmpegThreads: number | null = null;
+export function setFfmpegThreads(n: number | null): void {
+  ffmpegThreads = n && n > 0 ? Math.floor(n) : null;
+}
 
 export interface ImageAsset {
   path: string;
@@ -35,9 +41,14 @@ export function runFfmpeg(
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(abortError());
-    const child = spawn(resolveFfmpeg(), ['-hide_banner', '-loglevel', 'error', ...args], {
-      stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'],
-    });
+    const threadArgs = ffmpegThreads != null ? ['-threads', String(ffmpegThreads)] : [];
+    const child = spawn(
+      resolveFfmpeg(),
+      ['-hide_banner', '-loglevel', 'error', ...threadArgs, ...args],
+      {
+        stdio: [input ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+      },
+    );
     const out: Buffer[] = [];
     let err = '';
     child.stdout!.on('data', (d: Buffer) => out.push(d));
@@ -76,7 +87,7 @@ export function runFfmpeg(
 }
 
 export function assetPath(key: string, ext: string, stamp?: number): string {
-  const p = webcapture.screenshotPathForUrl(key, ext, stamp);
+  const p = screenshotPathForUrl(key, ext, stamp);
   fs.mkdirSync(path.dirname(p), { recursive: true });
   return p;
 }
