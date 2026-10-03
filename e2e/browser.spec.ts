@@ -46,10 +46,18 @@ test.describe('Browser – tab controls and status bar', () => {
     await expect(urlBar).toContainText('instagram.com');
   });
 
-  test('URL bar shows Twitter bookmarks URL after switching tab', async ({ page }) => {
+  test('URL bar shows Twitter history (bookmarks) URL after switching tab', async ({ page }) => {
+    // The default tab target moved from /i/bookmarks to /i/history (X now opens
+    // Bookmarks there; see TABS in src/lib/browserUrls.ts) — the app is correct,
+    // this spec just hadn't been updated to match. This profile is always
+    // logged out, and the Twitter webview starts loading in the background from
+    // app launch, so by the time this assertion runs X has sometimes already
+    // redirected it to its login wall — which still carries the original
+    // destination in `redirect_after_login`. Accept either form so the
+    // assertion doesn't race that redirect.
     await page.click('[data-testid="browser-tab-twitter"]');
     const urlBar = page.locator('[data-testid="url-bar"]');
-    await expect(urlBar).toContainText('x.com/i/bookmarks');
+    await expect(urlBar).toContainText(/x\.com\/i\/history|redirect_after_login=%2Fi%2Fhistory/);
   });
 
   test('Refresh button is visible and clickable', async ({ page }) => {
@@ -61,7 +69,10 @@ test.describe('Browser – tab controls and status bar', () => {
   });
 
   test('Refresh button has title "Reload"', async ({ page }) => {
-    await expect(page.locator('[data-testid="browser-refresh"]')).toHaveAttribute('title', 'Reload');
+    await expect(page.locator('[data-testid="browser-refresh"]')).toHaveAttribute(
+      'title',
+      'Reload',
+    );
   });
 
   test('status shows "Navigate to saved posts" when not on saved page', async ({ page }) => {

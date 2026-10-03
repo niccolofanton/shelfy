@@ -107,13 +107,31 @@ test.describe('Downloads – controls, checkboxes, and job list', () => {
   });
 
   // ── Job list ─────────────────────────────────────────────────────────────
+  // Jobs are grouped per post: one `download-post-group` row per postId, each
+  // collapsed by default behind a toggle button (aria-expanded). The 4 mock
+  // jobs each sit on their own post, so grouping yields 4 groups of 1 job —
+  // expanding a group surfaces that job's `download-job` row, same as before
+  // the grouping landed.
 
-  test('job list renders the 4 mock download jobs', async ({ page }) => {
+  async function expandGroup(page: Page, postId: string) {
+    await page
+      .locator(
+        `[data-testid="download-post-group"][data-post-id="${postId}"] button[aria-expanded]`,
+      )
+      .click();
+  }
+
+  test('job list renders the 4 mock download jobs as 4 post groups', async ({ page }) => {
+    await expect(page.locator('[data-testid="download-post-group"]')).toHaveCount(4);
+
+    // Expanding every group still surfaces one job row per job.
+    for (const postId of ['ig_001', 'ig_002', 'tw_001', 'tw_002']) await expandGroup(page, postId);
     await expect(page.locator('[data-testid="download-job"]')).toHaveCount(4);
   });
 
   test('done job shows checkmark icon', async ({ page }) => {
-    // ig_001 is 'done' — its row should contain "done" text
+    // ig_001 is 'done' — its row should contain "done" text, once expanded
+    await expandGroup(page, 'ig_001');
     const doneRow = page
       .locator('[data-testid="download-job"]')
       .filter({ hasText: 'done' })
@@ -122,13 +140,15 @@ test.describe('Downloads – controls, checkboxes, and job list', () => {
   });
 
   test('downloading job shows progress percentage', async ({ page }) => {
-    // ig_002 is 'downloading' at 0.65 → should show "65%"
+    // ig_002 is 'downloading' at 0.65 → should show "65%", once expanded
+    await expandGroup(page, 'ig_002');
     const downloadingRow = page.locator('[data-testid="download-job"]').filter({ hasText: '65%' });
     await expect(downloadingRow).toBeVisible();
   });
 
   test('error job shows error text', async ({ page }) => {
-    // tw_001 has error 'Network timeout'
+    // tw_001 has error 'Network timeout', once expanded
+    await expandGroup(page, 'tw_001');
     const errorRow = page
       .locator('[data-testid="download-job"]')
       .filter({ hasText: 'Network timeout' });
@@ -136,13 +156,15 @@ test.describe('Downloads – controls, checkboxes, and job list', () => {
   });
 
   test('pending job shows "pending" status', async ({ page }) => {
+    // tw_002 is 'pending', once expanded
+    await expandGroup(page, 'tw_002');
     const pendingRow = page.locator('[data-testid="download-job"]').filter({ hasText: 'pending' });
     await expect(pendingRow).toBeVisible();
   });
 
   test('progress summary shows done/total counts', async ({ page }) => {
-    // 1 done out of 4 total
-    await expect(page.getByText('1 / 4 posts downloaded')).toBeVisible();
+    // 1 of 4 jobs done, spread across 4 posts
+    await expect(page.getByText('1 / 4 files downloaded from 4 posts')).toBeVisible();
   });
 
   // ── Empty state ──────────────────────────────────────────────────────────
