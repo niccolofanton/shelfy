@@ -292,6 +292,9 @@ pub struct WebReport {
     pub pages: u64,
     pub pages_json_invalid: u64,
     pub meta_json_invalid: u64,
+    /// Palette, fonts, tech or awards values of the versions migrated that
+    /// are not JSON: written as `NULL`.
+    pub site_json_invalid: u64,
     /// File references of every version, by `media_objects` role.
     pub assets_by_role: BTreeMap<String, u64>,
     /// … of which come from older versions (`web_snapshots`).

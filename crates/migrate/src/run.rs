@@ -719,6 +719,14 @@ fn reconcile(plan: &PlanReport, bundle: &Bundle, report: &client::InstallReport)
         summary.objects.count,
         landed(installed.media_objects, Some(report.objects.total)),
     );
+    // Site JSON values that are not JSON, written as NULL (F12).
+    lines.push(Line {
+        what: "site JSON invalid".to_owned(),
+        desktop: Some(plan.web.site_json_invalid),
+        bundle: summary.repairs.site_json_invalid,
+        installed: None,
+        matches: plan.web.site_json_invalid == summary.repairs.site_json_invalid,
+    });
     let plan_files = &plan.files.totals;
     lines.push(Line {
         what: "files present".to_owned(),
