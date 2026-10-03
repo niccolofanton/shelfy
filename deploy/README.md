@@ -66,8 +66,8 @@ validated at start: a bad one stops the process with a message.
 Empty values count as unset, so a compose file may pass `SHELFY_SMTP_HOST=` when email is off.
 Later tasks add the master key (§3.2, §3.4). The operator commands
 (`shelfy-server admin create-owner | invite | login-link | snapshot | verify | user |
-install-snapshots | migrate-token | synth | bench`) use `SHELFY_DATA_DIR` too and print their
-results on stdout, never to the logs.
+install-snapshots | migrate-token | synth | bench | flags`) use `SHELFY_DATA_DIR` too and print
+their results on stdout, never to the logs.
 
 To sign in, create the owner once, then mint a one-time link (valid 15 minutes):
 
@@ -104,6 +104,37 @@ It prints `<SHELFY_PUBLIC_URL>/login/reauth#<token>`, valid 15 minutes, once.
 
 Every route needs a signed-in session unless it is listed as public (or open to API tokens) in
 `crates/server/src/routes/mod.rs`.
+
+## The browser extension
+
+The extension pairs from the web app: Settings asks for a 60-second code
+(`POST /api/v1/me/tokens/pairing-code`, which needs a sign-in from the last 5 minutes) and hands
+it to the extension, which exchanges it at `POST /api/v1/extension/pair` for its own token. Its
+requests carry `X-Shelfy-Extension: <version>`; below `minVersion`, every route but
+`GET /api/v1/extension/config` answers 426 `extension_outdated`.
+
+`GET /api/v1/extension/config` serves the minimum version, the kill switches, the pacing and the
+stop thresholds. They are flags in the control database, with defaults in the code; `admin flags`
+reads and changes them, and a running server applies a change within 30 seconds:
+
+```sh
+shelfy-server admin flags list
+shelfy-server admin flags set extension.instagram.replay false   # a broken parser: kill switch
+shelfy-server admin flags unset extension.instagram.replay        # back to the default
+shelfy-server admin flags set extension.minVersion 0.3.0
+```
+
+| Flags | Default |
+|---|---|
+| `extension.minVersion` | `0.2.0` |
+| `extension.<instagram\|twitter\|pinterest>.passive`, `.scroll`; `extension.instagram.replay` | `true` (kill switches) |
+| `extension.<platform>.stopAfterKnown` | 10, 20, 25 |
+| `extension.instagram.replayGapMs`, `.replayMaxPages`; `extension.<platform>.scrollSettleMs` | 700, 100; 650, 750, 650 |
+| `extension.maxSteps`, `maxRunMs`, `taskPollMinutes`, `refreshPerSession` | 16,000, 1,800,000, 5, 200 |
+
+Every value is checked against its flag's type and bounds, and every change is audited (`flag.set`,
+`flag.unset`). To cut an extension off, revoke its token from Settings (or
+`DELETE /api/v1/me/tokens/{id}`); pairing the same browser again also replaces its token.
 
 ## Metrics, logs and rate limits
 
