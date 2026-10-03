@@ -13,8 +13,8 @@
 // | `/login`               | sign-in; `?error=invalid_link`, `?next=<path>`   |
 // | `/login/magic#<token>` | what a sign-in link opens                        |
 // | `/login/reauth#<token>`| what a re-authentication link opens              |
-// | `/share`                | Android's share target, the bookmarklet, the iOS|
-// |                         | Shortcut; `?url=`, `?text=`, `?title=` (P2-07)  |
+// | `/share`               | Android share, the bookmarklet, the iOS          |
+// |                        | Shortcut; `?url=`, `?text=`, `?title=` (P2-07)   |
 //
 // A link's token stays in the fragment, so it never reaches a server or its
 // logs (EXECUTION.md L1); the app takes it out of the address at once.
