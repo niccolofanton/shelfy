@@ -23,6 +23,7 @@ use shelfy_core::legacy::{
     TagAliasRow, TagClusterMembershipRow, TagClusterRow, WebSnapshotRow,
 };
 
+use crate::bundle::web::SiteJson;
 use crate::files::{FileClass, FileRefs, FileState, PathId, scan_orphans};
 use crate::report::*;
 
@@ -345,6 +346,13 @@ impl<'a> Planner<'a> {
             info.has_capture = capture.pages > 0;
             if info.has_capture {
                 self.web.captured += 1;
+                self.web.site_json_invalid += SiteJson {
+                    palette: p.web_palette_json.as_deref(),
+                    fonts: p.web_fonts_json.as_deref(),
+                    tech: p.web_tech_json.as_deref(),
+                    awards: p.web_awards_json.as_deref(),
+                }
+                .invalid();
             } else {
                 self.web.placeholders += 1;
             }
@@ -839,6 +847,16 @@ impl<'a> Planner<'a> {
                     capture_files(s.web_pages_json.as_deref(), s.web_meta_json.as_deref());
                 self.web.pages_json_invalid += u64::from(capture.pages_json_invalid);
                 self.web.meta_json_invalid += u64::from(capture.meta_json_invalid);
+                // As the bundle: only a version with pages is written.
+                if capture.pages > 0 {
+                    self.web.site_json_invalid += SiteJson {
+                        palette: s.web_palette_json.as_deref(),
+                        fonts: s.web_fonts_json.as_deref(),
+                        tech: s.web_tech_json.as_deref(),
+                        awards: s.web_awards_json.as_deref(),
+                    }
+                    .invalid();
+                }
                 for asset in &capture.refs {
                     self.files.add(FileClass::Web(asset.role), &asset.path);
                     bump(&mut self.web.assets_by_role, asset.role.as_str());
@@ -1116,6 +1134,12 @@ impl<'a> Planner<'a> {
             warnings.push(format!(
                 "{} web capture JSON values are invalid",
                 self.web.pages_json_invalid + self.web.meta_json_invalid
+            ));
+        }
+        if self.web.site_json_invalid > 0 {
+            warnings.push(format!(
+                "{} site palette, fonts, tech or awards values are not JSON: written as NULL",
+                self.web.site_json_invalid
             ));
         }
         let invalid_arrays: u64 = self

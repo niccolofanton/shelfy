@@ -691,15 +691,20 @@ impl Desktop {
         let meta = json!({"title": "Studio", "favicon": favicon}).to_string();
         c.execute(
             "INSERT INTO posts (id, platform, media_type, web_url, web_final_url, post_url,
-               thumbnail_path, web_pages_json, web_meta_json, web_captured_at, imported_at)
-             VALUES (?1, 'web', 'website', ?2, ?2, ?2, ?3, ?4, ?5, ?6, ?6)",
+               thumbnail_path, web_pages_json, web_meta_json, web_captured_at, imported_at,
+               web_palette_json, web_fonts_json, web_tech_json, web_awards_json)
+             VALUES (?1, 'web', 'website', ?2, ?2, ?2, ?3, ?4, ?5, ?6, ?6, ?7, ?8, ?9, ?10)",
             params![
                 shelfy_core::ids::web::legacy_post_id(url),
                 url,
                 hero,
                 pages,
                 meta,
-                now
+                now,
+                r##"[{"hex":"#0A0A0A","weight":0.62}]"##,
+                r#"[{"family":"Inter"}]"#,
+                r#"["Next.js"]"#,
+                r#"[{"source":"awwwards","kind":"SOTD"}]"#
             ],
         )
         .unwrap();
@@ -950,6 +955,12 @@ async fn a_desktop_library_is_installed_end_to_end() {
     let events = migrate_events(&t, &owner_id).await;
     let outcome = run(desktop.options(&origin, &token, &work)).await.unwrap();
     assert!(outcome.matches, "{:#?}", outcome.reconciliation);
+    let invalid = outcome
+        .reconciliation
+        .iter()
+        .find(|l| l.what == "site JSON invalid")
+        .unwrap();
+    assert_eq!((invalid.desktop, invalid.bundle), (Some(0), 0));
     assert_eq!(outcome.upload.resumed, 1);
     assert_eq!(outcome.upload.missing, outcome.upload.objects);
     let report = &outcome.report;
@@ -1017,6 +1028,19 @@ async fn a_desktop_library_is_installed_end_to_end() {
         .iter()
         .find(|p| p["key"] == format!("ig_{PK}"))
         .unwrap();
+    // The site keeps its palette, fonts, tech and awards (F12).
+    let site = &items.iter().find(|p| p["platform"] == "web").unwrap()["webCapture"];
+    assert_eq!(
+        site["palette"],
+        json!([{"hex": "#0A0A0A", "weight": 0.62}]),
+        "{site}"
+    );
+    assert_eq!(site["fonts"], json!([{"family": "Inter"}]));
+    assert_eq!(site["tech"], json!(["Next.js"]));
+    assert_eq!(
+        site["awards"],
+        json!([{"source": "awwwards", "kind": "SOTD"}])
+    );
     assert!(carousel["thumbhash"].is_string());
     assert_eq!(carousel["archiveState"], "done");
     let g480 = carousel["cover"]["g480Url"].as_str().unwrap().to_owned();

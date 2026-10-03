@@ -737,9 +737,16 @@ impl<'a> Builder<'a> {
             p.web_pages_json.as_deref(),
             p.web_meta_json.as_deref(),
             None,
+            web::SiteJson {
+                palette: p.web_palette_json.as_deref(),
+                fonts: p.web_fonts_json.as_deref(),
+                tech: p.web_tech_json.as_deref(),
+                awards: p.web_awards_json.as_deref(),
+            },
             &self.mapping.files,
             &mut self.objects,
         )?;
+        self.summary.repairs.site_json_invalid += capture.site_json_invalid;
         let captured_at = epoch_to_ms(p.web_captured_at).unwrap_or(imported_at);
         Some(Version {
             capture,
@@ -754,9 +761,16 @@ impl<'a> Builder<'a> {
             s.web_pages_json.as_deref(),
             s.web_meta_json.as_deref(),
             non_empty(&s.title),
+            web::SiteJson {
+                palette: s.web_palette_json.as_deref(),
+                fonts: s.web_fonts_json.as_deref(),
+                tech: s.web_tech_json.as_deref(),
+                awards: s.web_awards_json.as_deref(),
+            },
             &self.mapping.files,
             &mut self.objects,
         )?;
+        self.summary.repairs.site_json_invalid += capture.site_json_invalid;
         let captured_at = epoch_to_ms(s.captured_at).unwrap_or(imported_at);
         let web = non_empty(&s.ai_web_json).and_then(|raw| serde_json::from_str::<Value>(raw).ok());
         let ai = json!({
@@ -1037,8 +1051,8 @@ impl<'a> Builder<'a> {
                                        engine, viewport, title, palette_json, fonts_json, tech_json,
                                        awards_json, meta_json, pages_json, traits_json, hero_object,
                                        favicon_object, ai_snapshot_json, created_at)
-             SELECT ?1, ?2, web_url, web_final_url, ?3, ?4, ?5, ?6, ?7, NULL, NULL, NULL, NULL, ?8,
-                    ?9, ?10, ?11, ?12, ?13, ?14
+             SELECT ?1, ?2, web_url, web_final_url, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                    ?13, ?14, ?15, ?16, ?17, ?18
              FROM posts WHERE id = ?1",
             params![
                 post_id,
@@ -1048,6 +1062,10 @@ impl<'a> Builder<'a> {
                 c.engine,
                 c.viewport,
                 c.title,
+                c.palette_json,
+                c.fonts_json,
+                c.tech_json,
+                c.awards_json,
                 c.meta_json,
                 c.pages_json,
                 c.traits_json,

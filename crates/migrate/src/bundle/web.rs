@@ -7,7 +7,9 @@
 //! nothing on the server. The capture settings of `meta.capture` fill the
 //! columns the desktop has no column for (OI-3): `status` is `done` (the
 //! desktop keeps only finished captures), `partial` says whether pages were
-//! skipped, `engine` and `viewport` come from the settings.
+//! skipped, `engine` and `viewport` come from the settings. The palette,
+//! fonts, tech and awards are copied verbatim ([`SiteJson`]); a value that is
+//! not JSON is written as `NULL` and counted (F12).
 
 use serde_json::{Map, Value};
 use shelfy_core::legacy::convert::is_local_path;
@@ -35,6 +37,13 @@ pub struct Capture {
     /// `meta_json` without file paths and without `traits`.
     pub meta_json: Option<String>,
     pub traits_json: Option<String>,
+    /// `palette_json`, `fonts_json`, `tech_json`, `awards_json`: verbatim.
+    pub palette_json: Option<String>,
+    pub fonts_json: Option<String>,
+    pub tech_json: Option<String>,
+    pub awards_json: Option<String>,
+    /// How many of those four were not JSON, and are `None`.
+    pub site_json_invalid: u64,
     /// Object indexes into the [`ObjectTable`].
     pub hero: Option<usize>,
     pub favicon: Option<usize>,
@@ -50,6 +59,45 @@ pub struct Asset {
     pub object: usize,
     pub css_top: Option<i64>,
     pub css_height: Option<i64>,
+}
+
+/// The desktop's `web_palette_json`, `web_fonts_json`, `web_tech_json` and
+/// `web_awards_json` of a version (a `posts` or a `web_snapshots` row).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SiteJson<'a> {
+    pub palette: Option<&'a str>,
+    pub fonts: Option<&'a str>,
+    pub tech: Option<&'a str>,
+    pub awards: Option<&'a str>,
+}
+
+impl<'a> SiteJson<'a> {
+    /// The four values, in column order.
+    fn values(self) -> [Option<&'a str>; 4] {
+        [self.palette, self.fonts, self.tech, self.awards]
+    }
+
+    /// How many of the four values are not JSON (written as `NULL`).
+    #[must_use]
+    pub fn invalid(self) -> u64 {
+        self.values()
+            .into_iter()
+            .filter(|raw| site_json_value(*raw).is_err())
+            .count() as u64
+    }
+}
+
+/// A site JSON column, verbatim: `Ok(None)` when blank or JSON `null`,
+/// `Err` when it is not JSON.
+fn site_json_value(raw: Option<&str>) -> Result<Option<String>, ()> {
+    let Some(raw) = raw.filter(|r| !r.trim().is_empty()) else {
+        return Ok(None);
+    };
+    match serde_json::from_str::<Value>(raw) {
+        Ok(Value::Null) => Ok(None),
+        Ok(_) => Ok(Some(raw.to_owned())),
+        Err(_) => Err(()),
+    }
 }
 
 /// The object role of a capture file (OI-2).
@@ -74,6 +122,7 @@ pub fn map_capture(
     pages_json: Option<&str>,
     meta_json: Option<&str>,
     title: Option<&str>,
+    site: SiteJson<'_>,
     files: &FileRefs,
     objects: &mut ObjectTable,
 ) -> Option<Capture> {
@@ -95,6 +144,9 @@ pub fn map_capture(
             _ => None,
         });
 
+    let site_json = site.values().map(site_json_value);
+    let site_json_invalid = site_json.iter().filter(|v| v.is_err()).count() as u64;
+    let [palette, fonts, tech, awards] = site_json;
     let mut capture = Capture {
         pages: found.pages,
         partial: false,
@@ -106,6 +158,11 @@ pub fn map_capture(
         pages_json: Some(Value::Array(pages.iter().map(strip_page).collect()).to_string()),
         meta_json: None,
         traits_json: None,
+        palette_json: palette.unwrap_or_default(),
+        fonts_json: fonts.unwrap_or_default(),
+        tech_json: tech.unwrap_or_default(),
+        awards_json: awards.unwrap_or_default(),
+        site_json_invalid,
         hero: None,
         favicon: None,
         assets: Vec::new(),
@@ -279,7 +336,15 @@ mod tests {
         files.check(dir.path());
         let mut objects = ObjectTable::hash(&files, false);
 
-        let capture = map_capture(Some(pages), Some(meta), None, &files, &mut objects).unwrap();
+        let capture = map_capture(
+            Some(pages),
+            Some(meta),
+            None,
+            SiteJson::default(),
+            &files,
+            &mut objects,
+        )
+        .unwrap();
         assert_eq!(capture.pages, 1);
         assert!(capture.partial);
         assert_eq!(capture.engine.as_deref(), Some("playwright"));
@@ -332,9 +397,67 @@ mod tests {
         let files = FileRefs::default();
         let mut objects = ObjectTable::default();
         assert_eq!(
-            map_capture(Some("[]"), Some("{}"), None, &files, &mut objects),
+            map_capture(
+                Some("[]"),
+                Some("{}"),
+                None,
+                SiteJson::default(),
+                &files,
+                &mut objects
+            ),
             None
         );
-        assert_eq!(map_capture(None, None, None, &files, &mut objects), None);
+        assert_eq!(
+            map_capture(None, None, None, SiteJson::default(), &files, &mut objects),
+            None
+        );
+    }
+
+    #[test]
+    fn palette_fonts_tech_and_awards_are_copied_verbatim() {
+        let pages = r#"[{"url":"https://e.test/","title":"Home"}]"#;
+        let files = FileRefs::default();
+        let mut objects = ObjectTable::default();
+        // Spacing kept: verbatim, not re-serialized.
+        let palette = r##"[ {"hex":"#0A0A0A","weight":0.6} ]"##;
+        let site = SiteJson {
+            palette: Some(palette),
+            fonts: Some(r#"[{"family":"Inter"}]"#),
+            tech: Some(r#"["Next.js"]"#),
+            awards: Some(r#"[{"name":"Awwwards SOTD"}]"#),
+        };
+        assert_eq!(site.invalid(), 0);
+        let capture = map_capture(Some(pages), None, None, site, &files, &mut objects).unwrap();
+        assert_eq!(capture.palette_json.as_deref(), Some(palette));
+        assert_eq!(
+            capture.fonts_json.as_deref(),
+            Some(r#"[{"family":"Inter"}]"#)
+        );
+        assert_eq!(capture.tech_json.as_deref(), Some(r#"["Next.js"]"#));
+        assert_eq!(
+            capture.awards_json.as_deref(),
+            Some(r#"[{"name":"Awwwards SOTD"}]"#)
+        );
+        assert_eq!(capture.site_json_invalid, 0);
+
+        // Not JSON → NULL and counted; blank and `null` → NULL, not counted.
+        let site = SiteJson {
+            palette: Some("[#0A0A0A"),
+            fonts: Some("  "),
+            tech: Some("null"),
+            awards: Some("{\"x\":"),
+        };
+        assert_eq!(site.invalid(), 2);
+        let capture = map_capture(Some(pages), None, None, site, &files, &mut objects).unwrap();
+        assert_eq!(
+            (
+                &capture.palette_json,
+                &capture.fonts_json,
+                &capture.tech_json,
+                &capture.awards_json
+            ),
+            (&None, &None, &None, &None)
+        );
+        assert_eq!(capture.site_json_invalid, 2);
     }
 }

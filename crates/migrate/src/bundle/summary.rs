@@ -155,6 +155,10 @@ pub struct RepairCounts {
     pub ai_from_duplicates: u64,
     /// `ai_web_json` values that are not JSON, dropped.
     pub ai_web_json_invalid: u64,
+    /// Site palette, fonts, tech or awards values (of the versions written)
+    /// that are not JSON: written as `NULL` (F12).
+    #[serde(default)]
+    pub site_json_invalid: u64,
     /// Collections whose name was blank or whose color was invalid.
     pub collections_fixed: u64,
     /// Rows referencing a missing parent, dropped.

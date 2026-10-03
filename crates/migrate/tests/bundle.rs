@@ -100,6 +100,12 @@ impl Desktop {
     }
 }
 
+/// The site's palette, fonts, tech and awards, as the desktop stores them.
+const SITE_PALETTE: &str = r##"[{"hex":"#0A0A0A","weight":0.62},{"hex":"#F2EFE9","weight":0.3}]"##;
+const SITE_FONTS: &str = r#"[{"family":"Inter","weights":[400,600],"role":"body"}]"#;
+const SITE_TECH: &str = r#"["Next.js","GSAP"]"#;
+const SITE_AWARDS: &str = r#"[{"source":"awwwards","kind":"SOTD","date":"2024-03-01"}]"#;
+
 /// The path of an asset in the stored form.
 fn stored(relative: &str) -> String {
     format!("/Users/someone/Library/Application Support/Shelfy/assets/{relative}")
@@ -274,9 +280,22 @@ fn library() -> Desktop {
     let url = "https://studio.example.test/";
     c.execute(
         "INSERT INTO posts (id, platform, media_type, web_url, web_final_url, post_url, web_domain,
-           thumbnail_path, web_pages_json, web_meta_json, web_captured_at, imported_at)
-         VALUES (?1, 'web', 'website', ?2, ?2, ?2, 'studio.example.test', ?3, ?4, ?5, ?6, ?6)",
-        params![legacy_post_id(url), url, hero, pages, meta, NOW_S],
+           thumbnail_path, web_pages_json, web_meta_json, web_captured_at, imported_at,
+           web_palette_json, web_fonts_json, web_tech_json, web_awards_json)
+         VALUES (?1, 'web', 'website', ?2, ?2, ?2, 'studio.example.test', ?3, ?4, ?5, ?6, ?6,
+           ?7, ?8, ?9, ?10)",
+        params![
+            legacy_post_id(url),
+            url,
+            hero,
+            pages,
+            meta,
+            NOW_S,
+            SITE_PALETTE,
+            SITE_FONTS,
+            SITE_TECH,
+            SITE_AWARDS
+        ],
     )
     .unwrap();
     c.execute(
@@ -288,8 +307,9 @@ fn library() -> Desktop {
     let old_pages = serde_json::json!([{"url": url, "screenshotPath": old_hero}]).to_string();
     c.execute(
         "INSERT INTO web_snapshots (post_id, captured_at, title, web_pages_json, ai_description,
-           created_at)
-         VALUES (?1, ?2, 'Studio, before', ?3, 'An older look', ?2)",
+           created_at, web_palette_json, web_fonts_json, web_tech_json, web_awards_json)
+         VALUES (?1, ?2, 'Studio, before', ?3, 'An older look', ?2, '[{\"hex\":\"#FFFFFF\"}]',
+           'not json', NULL, '')",
         params![legacy_post_id(url), NOW_S - 86_400, old_pages],
     )
     .unwrap();
@@ -537,6 +557,49 @@ fn every_kind_of_desktop_row_lands_in_the_bundle() {
     let snapshot: Value = serde_json::from_str(&snapshot).unwrap();
     assert_eq!(snapshot["description"], "An older look");
     assert_eq!(s.rows.web_captures, 2);
+    // Palette, fonts, tech and awards: verbatim on the current version; the
+    // older one's fonts are not JSON → NULL, counted on both sides (F12).
+    let site: (String, String, String, String) = db
+        .query_row(
+            "SELECT c.palette_json, c.fonts_json, c.tech_json, c.awards_json
+             FROM posts p JOIN web_captures c ON c.id = p.current_capture_id",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        site,
+        (
+            SITE_PALETTE.to_owned(),
+            SITE_FONTS.to_owned(),
+            SITE_TECH.to_owned(),
+            SITE_AWARDS.to_owned()
+        )
+    );
+    let older: (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = db
+        .query_row(
+            "SELECT palette_json, fonts_json, tech_json, awards_json FROM web_captures
+             WHERE ai_snapshot_json IS NOT NULL",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        older,
+        (
+            Some(r##"[{"hex":"#FFFFFF"}]"##.to_owned()),
+            None,
+            None,
+            None
+        )
+    );
+    assert_eq!(s.repairs.site_json_invalid, 1);
+    assert_eq!(plan.web.site_json_invalid, 1);
     assert_eq!(
         one::<i64>(
             &db,
