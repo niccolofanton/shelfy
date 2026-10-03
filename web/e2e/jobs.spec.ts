@@ -90,14 +90,17 @@ test('the queue bar pauses, cancels and clears finished jobs per kind', async ({
   const row = page.getByTestId('jobs-queue-row');
   await expect(row).toHaveAttribute('data-kind', 'capture.site');
 
-  await row.getByTestId('jobs-queue-pause-toggle').click();
+  await row.getByTestId('jobs-queue-menu').click();
+  await page.getByTestId('jobs-queue-pause-toggle').click();
   await expect(row).toContainText('paused');
   expect(api.pausedKinds.has('capture.site')).toBe(true);
 
-  await row.getByTestId('jobs-queue-cancel-all').click();
+  await row.getByTestId('jobs-queue-menu').click();
+  await page.getByTestId('jobs-queue-cancel-all').click();
   await expect(page.getByTestId('job-row').filter({ hasText: 'Cancelled' })).toBeVisible();
 
-  await row.getByTestId('jobs-queue-clear-finished').click();
+  await row.getByTestId('jobs-queue-menu').click();
+  await page.getByTestId('jobs-queue-clear-finished').click();
   await expect(page.getByTestId('job-row')).toHaveCount(0);
   await expect(page.getByTestId('jobs-empty')).toBeVisible();
 });

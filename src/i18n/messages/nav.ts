@@ -9,7 +9,7 @@ export default {
     library: 'Libreria',
     search: 'Cerca',
     ai: 'AI',
-    jobs: 'Lavori',
+    jobs: 'Attività',
     settings: 'Impostazioni',
     // The bar's landmark name (UX-1).
     navLabel: 'Navigazione principale',

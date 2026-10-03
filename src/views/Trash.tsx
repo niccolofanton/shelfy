@@ -1,9 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Trash2, RotateCcw, CheckSquare, X, ListChecks, Loader2, ImageOff } from 'lucide-react';
+import { Trash2, RotateCcw, CheckSquare, X, ListChecks, AlertCircle } from 'lucide-react';
+import MenuButton from '../components/MenuButton';
+import {
+  Button,
+  EmptyState,
+  IconButton,
+  NARROW_QUERY,
+  PageHeader,
+  ToastHost,
+  useMediaQuery,
+} from '../components/ui';
 import VirtualPostGrid from '../components/VirtualPostGrid';
 import PostGridSkeleton from '../components/PostGridSkeleton';
 import { useRangeSelect } from '../hooks/useRangeSelect';
-import { useToast } from '../hooks/useToast';
+import { useToasts } from '../hooks/useToast';
 import { useShelfy } from '../api/ShelfyProvider';
 import type { BulkJob } from '../api/ShelfyClient';
 import { useT } from '../i18n';
@@ -98,7 +108,14 @@ export default function Trash({ active = true, onLibraryChanged }: TrashProps): 
     setSelectAllMatching,
     isSelected,
   } = useRangeSelect(posts, (p: Shelfy.Post) => p.id);
-  const { toast: feedback, showToast: showFeedback } = useToast();
+  const toasts = useToasts();
+  const narrow = useMediaQuery(NARROW_QUERY);
+  const showFeedback = useCallback(
+    (message: string, variant: 'success' | 'error' | 'neutral' = 'neutral') =>
+      toasts.show(message, { variant, testId: 'trash-feedback-toast' }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [toasts.show],
+  );
   const [confirmEmpty, setConfirmEmpty] = useState<boolean>(false);
   const [confirmRestore, setConfirmRestore] = useState<boolean>(false);
   const [pendingJob, setPendingJob] = useState<BulkJob | null>(null);
@@ -126,6 +143,24 @@ export default function Trash({ active = true, onLibraryChanged }: TrashProps): 
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingJob, client]);
+
+  // The purge/restore job's progress: one toast, updated in place and dismissed
+  // when the job ends (or posts.changed says the library moved on).
+  const toastsShow = toasts.show;
+  const toastsDismiss = toasts.dismiss;
+  useEffect(() => {
+    if (!pendingJob) {
+      toastsDismiss('trash-job');
+      return;
+    }
+    toastsShow(
+      jobProgress != null
+        ? t('jobProgress', { pct: Math.round(jobProgress * 100) })
+        : t('jobRunning'),
+      { id: 'trash-job', variant: 'progress', duration: null, testId: 'trash-job-toast' },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingJob, jobProgress, toastsShow, toastsDismiss]);
 
   const exitSelectMode = useCallback(() => {
     setSelectMode(false);
@@ -197,36 +232,32 @@ export default function Trash({ active = true, onLibraryChanged }: TrashProps): 
         setPendingJob(job);
         setJobProgress(null);
       } else {
-        showFeedback(t('fbRestored', { n: changed }));
+        showFeedback(t('fbRestored', { n: changed }), 'success');
       }
       exitSelectMode();
       reload();
       onLibraryChanged?.();
     } catch (err) {
       console.error('[Trash] restore error:', err);
-      showFeedback(t('fbRestoreError'));
+      showFeedback(t('fbRestoreError'), 'error');
       setConfirmRestore(false);
     }
   };
 
   const handleEmpty = async (): Promise<void> => {
-    if (!confirmEmpty) {
-      setConfirmEmpty(true);
-      return;
-    }
     try {
       const res = await client.emptyTrash();
       if (res.job) {
         setPendingJob(res.job);
         setJobProgress(null);
       }
-      showFeedback(t('fbEmptyQueued'));
+      showFeedback(t('fbEmptyQueued'), 'success');
       exitSelectMode();
       reload();
       onLibraryChanged?.();
     } catch (err) {
       console.error('[Trash] emptyTrash error:', err);
-      showFeedback(t('fbEmptyError'));
+      showFeedback(t('fbEmptyError'), 'error');
     } finally {
       setConfirmEmpty(false);
     }
@@ -267,117 +298,163 @@ export default function Trash({ active = true, onLibraryChanged }: TrashProps): 
 
   const isEmpty = !loading && posts.length === 0;
 
+  const selectAllLabel = allSelected
+    ? t('deselectAll')
+    : total > posts.length
+      ? t('selectAllN', { n: total.toLocaleString() })
+      : t('selectAll');
+  const restoreLabel = confirmRestore
+    ? narrow
+      ? t('restoreConfirmShort', { n: selectedCount })
+      : t('restoreSelectedConfirm', { n: selectedCount })
+    : t('restoreSelected');
+
+  const selectionCount = (
+    <span
+      data-testid="trash-selection-count"
+      className="text-sm font-medium tabular-nums text-primary"
+    >
+      {t('selectedCount', { n: selectedCount.toLocaleString() })}
+    </span>
+  );
+  const selectAllButton = total > 0 && (
+    <Button
+      data-testid="trash-select-all"
+      variant="ghost"
+      size="sm"
+      icon={ListChecks}
+      onClick={handleSelectAll}
+      className="text-accent"
+    >
+      {selectAllLabel}
+    </Button>
+  );
+  const restoreButton = (
+    <Button
+      data-testid="trash-restore"
+      variant="primary"
+      size={narrow ? 'lg' : 'sm'}
+      icon={RotateCcw}
+      disabled={selectedCount === 0}
+      onClick={() => (confirmRestore ? handleRestore() : setConfirmRestore(true))}
+    >
+      {restoreLabel}
+    </Button>
+  );
+  const cancelSelectButton = (
+    <IconButton
+      data-testid="trash-select-cancel"
+      label={t('exitSelectionTitle')}
+      icon={X}
+      onClick={exitSelectMode}
+    />
+  );
+
+  let actions: React.ReactNode = null;
+  if (!selectMode) {
+    if (total > 0) {
+      actions = narrow ? (
+        <>
+          <IconButton
+            data-testid="trash-select-toggle"
+            label={t('select')}
+            icon={CheckSquare}
+            onClick={() => setSelectMode(true)}
+          />
+          <IconButton
+            data-testid="trash-empty"
+            label={t('emptyTrash')}
+            icon={Trash2}
+            tone="danger"
+            aria-expanded={confirmEmpty}
+            onClick={() => setConfirmEmpty((v) => !v)}
+          />
+        </>
+      ) : (
+        <>
+          <Button
+            data-testid="trash-select-toggle"
+            variant="ghost"
+            size="sm"
+            icon={CheckSquare}
+            title={t('selectTitle')}
+            onClick={() => setSelectMode(true)}
+          >
+            {t('select')}
+          </Button>
+          <Button
+            data-testid="trash-empty"
+            variant="ghost"
+            size="sm"
+            icon={Trash2}
+            title={t('emptyTrashHint')}
+            aria-expanded={confirmEmpty}
+            onClick={() => setConfirmEmpty((v) => !v)}
+            className="text-error hover:text-error"
+          >
+            {t('emptyTrash')}
+          </Button>
+        </>
+      );
+    }
+  } else if (!narrow) {
+    actions = (
+      <>
+        {selectionCount}
+        {selectAllButton}
+        {restoreButton}
+        {cancelSelectButton}
+      </>
+    );
+  }
+
   return (
     <div data-testid="trash-view" className="flex h-full flex-col overflow-hidden">
-      {!selectMode && feedback && (
+      <ToastHost toasts={toasts} />
+
+      <PageHeader
+        className="border-b border-subtle"
+        leading={<MenuButton />}
+        title={t('title')}
+        count={
+          <span data-testid="trash-count">{t('postsCount', { n: total.toLocaleString() })}</span>
+        }
+        actions={actions}
+      />
+
+      {confirmEmpty && !selectMode && total > 0 && (
         <div
-          key={feedback}
-          data-testid="trash-feedback-toast"
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-[#1a1a1a] border border-[#2e2e2e] text-xs text-[#7B5CFF] tabular-nums whitespace-nowrap u-pop-in shadow-lg"
+          data-testid="trash-empty-confirm-bar"
+          role="alert"
+          className="flex flex-wrap items-center gap-2 border-b border-subtle bg-secondary px-4 py-2 narrow:px-3"
         >
-          {feedback}
-        </div>
-      )}
-      {pendingJob && (
-        <div
-          data-testid="trash-job-toast"
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1a1a1a] border border-[#2e2e2e] text-xs text-gray-300 whitespace-nowrap u-pop-in shadow-lg"
-        >
-          <Loader2 size={13} className="animate-spin text-[#7B5CFF]" />
-          {jobProgress != null
-            ? t('jobProgress', { pct: Math.round(jobProgress * 100) })
-            : t('jobRunning')}
+          <p className="min-w-0 flex-1 text-sm text-primary">{t('emptyTrashConfirm')}</p>
+          <Button size="sm" variant="ghost" onClick={() => setConfirmEmpty(false)}>
+            {t('cancel')}
+          </Button>
+          <Button
+            data-testid="trash-empty-confirm"
+            size="sm"
+            variant="danger"
+            icon={Trash2}
+            onClick={handleEmpty}
+          >
+            {t('emptyTrashForever')}
+          </Button>
         </div>
       )}
 
-      <div className="flex items-center gap-3 px-4 h-14 shrink-0 border-b border-[#2e2e2e]">
-        <Trash2 size={18} className="text-gray-400 shrink-0" />
-        <h1 className="text-[15px] font-semibold text-white font-display">{t('title')}</h1>
-        <span data-testid="trash-count" className="text-sm text-gray-500 tabular-nums">
-          {t('postsCount', { n: total.toLocaleString() })}
-        </span>
-        <div className="flex-1" />
-        {!selectMode ? (
-          <>
-            {total > 0 && (
-              <button
-                data-testid="trash-select-toggle"
-                onClick={() => setSelectMode(true)}
-                title={t('selectTitle')}
-                className="u-press flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-gray-400 hover:text-white hover:bg-[#1a1a1a] transition-colors"
-              >
-                <CheckSquare size={15} />
-                {t('select')}
-              </button>
-            )}
-            <button
-              data-testid="trash-empty"
-              disabled={total === 0}
-              onClick={handleEmpty}
-              title={t('emptyTrashHint')}
-              className={[
-                'u-press flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors disabled:opacity-40 disabled:pointer-events-none',
-                confirmEmpty
-                  ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
-                  : 'text-red-400/90 hover:bg-red-500/10 hover:text-red-300',
-              ].join(' ')}
-            >
-              <Trash2 size={15} />
-              {confirmEmpty ? t('emptyTrashConfirm') : t('emptyTrash')}
-            </button>
-          </>
-        ) : (
-          <>
-            <span
-              data-testid="trash-selection-count"
-              className="text-sm font-medium text-gray-200 tabular-nums"
-            >
-              {t('selectedCount', { n: selectedCount.toLocaleString() })}
-            </span>
-            {total > 0 && (
-              <button
-                data-testid="trash-select-all"
-                onClick={handleSelectAll}
-                className="u-press flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-[#b9a6ff] hover:bg-[#7B5CFF]/15 transition-colors"
-              >
-                <ListChecks size={15} />
-                {allSelected
-                  ? t('deselectAll')
-                  : total > posts.length
-                    ? t('selectAllN', { n: total.toLocaleString() })
-                    : t('selectAll')}
-              </button>
-            )}
-            <button
-              data-testid="trash-restore"
-              disabled={selectedCount === 0}
-              onClick={() => (confirmRestore ? handleRestore() : setConfirmRestore(true))}
-              className="u-press flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] transition-colors disabled:opacity-40 disabled:pointer-events-none"
-            >
-              <RotateCcw size={15} />
-              {confirmRestore
-                ? t('restoreSelectedConfirm', { n: selectedCount })
-                : t('restoreSelected')}
-            </button>
-            <button
-              data-testid="trash-select-cancel"
-              onClick={exitSelectMode}
-              title={t('exitSelectionTitle')}
-              className="u-press flex items-center justify-center w-8 h-8 rounded-md text-gray-400 hover:text-white hover:bg-white/10"
-            >
-              <X size={16} />
-            </button>
-          </>
-        )}
-      </div>
-
-      <p className="px-4 py-2 text-[11px] text-gray-500 border-b border-[#1e1e1e]">
-        {t('retention', { days: retentionDays })}
-      </p>
+      {total > 0 && (
+        <p className="border-b border-subtle px-4 py-2 text-caption text-muted narrow:px-3">
+          {t('retention', { days: retentionDays })}
+        </p>
+      )}
 
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent"
+        className={`flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent ${
+          selectMode && narrow ? 'pb-24' : ''
+        }`}
       >
         {posts.length > 0 && (
           <VirtualPostGrid
@@ -392,24 +469,43 @@ export default function Trash({ active = true, onLibraryChanged }: TrashProps): 
 
         {loading && posts.length === 0 && <PostGridSkeleton />}
 
-        {isEmpty && (
-          <div
-            data-testid="trash-empty-state"
-            className="flex flex-col items-center justify-center h-full min-h-[60vh] gap-3 text-center px-6"
-          >
-            <ImageOff size={36} className="text-[#333]" strokeWidth={1} />
-            {error ? (
-              <p className="text-red-400 text-sm leading-relaxed max-w-xs">{error}</p>
-            ) : (
-              <p className="text-[#555] text-sm leading-relaxed max-w-xs font-display">
-                {t('emptyStateTitle')} <span className="text-[#444]">{t('emptyStateHint')}</span>
-              </p>
-            )}
-          </div>
-        )}
+        {isEmpty &&
+          (error ? (
+            <EmptyState
+              testId="trash-empty-state"
+              className="h-full min-h-[60vh]"
+              icon={AlertCircle}
+              title={error}
+              action={{ label: t('retry'), onClick: reload }}
+            />
+          ) : (
+            <EmptyState
+              testId="trash-empty-state"
+              className="h-full min-h-[60vh]"
+              icon={Trash2}
+              title={t('emptyStateTitle')}
+              body={t('emptyStateHint', { days: retentionDays })}
+            />
+          ))}
 
         <div ref={sentinelRef} className="h-1" aria-hidden="true" />
       </div>
+
+      {/* Narrow select mode: the actions sit in a bottom bar over the BottomNav
+        (TR-5, as the gallery's GAL-11): [× 44] [N selected] [Select all] [Restore]. */}
+      {selectMode && narrow && (
+        <div
+          data-testid="trash-selection-bar"
+          className="fixed inset-x-0 bottom-0 z-drawer flex items-center gap-2 border-t border-strong bg-elevated px-3 py-2 u-fade-in-up"
+          style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))' }}
+        >
+          {cancelSelectButton}
+          {selectionCount}
+          <div className="flex-1" />
+          {selectAllButton}
+          {restoreButton}
+        </div>
+      )}
     </div>
   );
 }
