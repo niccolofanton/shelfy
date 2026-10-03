@@ -19,6 +19,23 @@ name: CI
 #   crates/server/tests/ssrf.rs through the API's real outbound client against the real
 #   Smokescreen config; every probe in deploy/egress/ssrf/probes.json is refused and the
 #   positive controls pass. The suite's runtime is printed (--nocapture).
+# - web-e2e (P1-21, plan §6.1): the web Playwright suite against a mocked API
+#   (web/playwright.config.ts, web/e2e/api.ts) — no server build, so it stays fast.
+#   This is the web e2e gate: every behavior P1-02 through P2-07 added (gallery,
+#   filters, bulk/trash, modal, folders, mobile viewports, the service worker, the
+#   error boundary) runs here on every push and PR.
+# - web-e2e-live (P1-21, plan §6.1): the same suite's real-server specs
+#   (web/e2e/server/) — passkeys, re-auth, device approval, sessions, Jobs and the
+#   write-to-SSE latency probe (§6.2) — none of which a mock can exercise, against a
+#   release build of shelfy-server it compiles itself.
+# - lighthouse (P1-21, plan §6.2): Lighthouse CI on the Gallery, mobile profile, with
+#   a 6k-post `admin synth` library, against the LCP ≤2.5 s budget
+#   (web/lighthouserc.json). `continue-on-error`: the P1 architecture is
+#   client-rendered (no SSR), and Lighthouse's simulated slow-4G/4×-CPU profile pays
+#   for every sequential round trip that costs (HTML → CSS/JS → `GET /posts` → the
+#   first tile's image) before it ever reaches application code; closing that gap is
+#   tracked as a follow-up, not blocking merges meanwhile. Scores are still recorded
+#   on every run (job log + the uploaded report).
 
 on:
   push:
@@ -80,3 +97,65 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose -f deploy/compose.test.yml -p shelfy-ssrf down -v
+
+  web-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm run test:e2e:web
+
+  web-e2e-live:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      # web/e2e/server/support.ts's ageSignIn edits control.sqlite directly.
+      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends sqlite3
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@v2
+      - run: CARGO_TARGET_DIR="$PWD/target" CARGO_INCREMENTAL=0 cargo build --release -p shelfy-server
+      - run: pnpm run web:build
+      - run: pnpm run test:e2e:web:server
+        env:
+          CI: 'true'
+
+  lighthouse:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      # web/e2e/lighthouse/run.ts precompresses web/dist the same way the
+      # image build does, so the on-the-fly compressor (dev-only) is not what
+      # the LCP budget ends up measuring; gzip is already on the runner.
+      - run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends brotli
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@v2
+      - run: CARGO_TARGET_DIR="$PWD/target" CARGO_INCREMENTAL=0 cargo build --release -p shelfy-server
+      - run: pnpm run web:build
+      - run: pnpm run lighthouse:gallery
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lighthouse-report
+          path: .lighthouseci
+          retention-days: 14
