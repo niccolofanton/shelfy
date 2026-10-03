@@ -4,8 +4,9 @@
 //! instance otherwise stays owner-only (no invite redemption route yet).
 //!
 //! Besides the account itself: what the user accepted ([`Consent`], `POST
-//! /me/consent`) and their storage ([`Usage`], counted by the
-//! `usage.recompute` job, read by `GET /me/usage`).
+//! /me/consent`), their storage ([`Usage`]: counted by the `usage.recompute`
+//! job, moved by the commits and releases of [`crate::quota`], read by `GET
+//! /me/usage`) and their [`Limits`] (`admin user limits`).
 
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 use shelfy_core::repo::{RepoError, Result};
@@ -312,6 +313,115 @@ pub fn set_usage(
     Ok(changed > 0)
 }
 
+/// Adds `bytes` of media to the use of `user_id` (a quota commit,
+/// [`crate::quota`]); `usage_bytes` stays media plus database and
+/// `usage_updated_at` stays the time of the last count. Returns whether the
+/// user exists.
+///
+/// # Errors
+///
+/// [`RepoError::Invalid`] for negative `bytes`; the update failed.
+pub fn add_media_usage(conn: &Connection, user_id: &str, bytes: i64) -> Result<bool> {
+    if bytes < 0 {
+        return Err(RepoError::Invalid {
+            field: "bytes",
+            reason: "must not be negative",
+        });
+    }
+    // SET reads the row as it was, so both sums start from the old media.
+    let changed = conn
+        .prepare_cached(
+            "UPDATE users SET usage_media_bytes = usage_media_bytes + ?2, \
+             usage_bytes = usage_media_bytes + ?2 + usage_db_bytes WHERE id = ?1",
+        )?
+        .execute(params![user_id, bytes])?;
+    Ok(changed > 0)
+}
+
+/// Takes `bytes` of media off the use of `user_id`, never below 0 (a quota
+/// release after deleted objects, [`crate::quota`]). Returns whether the
+/// user exists.
+///
+/// # Errors
+///
+/// [`RepoError::Invalid`] for negative `bytes`; the update failed.
+pub fn remove_media_usage(conn: &Connection, user_id: &str, bytes: i64) -> Result<bool> {
+    if bytes < 0 {
+        return Err(RepoError::Invalid {
+            field: "bytes",
+            reason: "must not be negative",
+        });
+    }
+    let changed = conn
+        .prepare_cached(
+            "UPDATE users SET usage_media_bytes = max(0, usage_media_bytes - ?2), \
+             usage_bytes = max(0, usage_media_bytes - ?2) + usage_db_bytes WHERE id = ?1",
+        )?
+        .execute(params![user_id, bytes])?;
+    Ok(changed > 0)
+}
+
+/// A user's limits (plan §2.6, §2.13; P4-07).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Limits {
+    /// The storage quota in bytes, media plus database; 0 means unlimited.
+    pub quota_bytes: i64,
+    /// Site captures a day (UTC); 0 means unlimited.
+    pub capture_daily_limit: i64,
+}
+
+/// The limits of `user_id`; `None` when there is no such user.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn limits(conn: &Connection, user_id: &str) -> Result<Option<Limits>> {
+    conn.query_row(
+        "SELECT quota_bytes, capture_daily_limit FROM users WHERE id = ?1",
+        [user_id],
+        |row| {
+            Ok(Limits {
+                quota_bytes: row.get(0)?,
+                capture_daily_limit: row.get(1)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(RepoError::from)
+}
+
+/// Sets the limits of `user_id` that are given, and keeps the others.
+/// Returns the limits now in force; `None` when there is no such user.
+///
+/// # Errors
+///
+/// [`RepoError::Invalid`] for a negative limit; the update failed.
+pub fn set_limits(
+    conn: &Connection,
+    user_id: &str,
+    quota_bytes: Option<i64>,
+    capture_daily_limit: Option<i64>,
+) -> Result<Option<Limits>> {
+    if quota_bytes.is_some_and(|q| q < 0) {
+        return Err(RepoError::Invalid {
+            field: "quotaBytes",
+            reason: "must not be negative (0 means unlimited)",
+        });
+    }
+    if capture_daily_limit.is_some_and(|c| c < 0) {
+        return Err(RepoError::Invalid {
+            field: "captureDailyLimit",
+            reason: "must not be negative (0 means unlimited)",
+        });
+    }
+    conn.execute(
+        "UPDATE users SET quota_bytes = coalesce(?2, quota_bytes), \
+         capture_daily_limit = coalesce(?3, capture_daily_limit) WHERE id = ?1",
+        params![user_id, quota_bytes, capture_daily_limit],
+    )?;
+    limits(conn, user_id)
+}
+
 /// Trims and lowercases an email address and checks its shape: one `@`, a
 /// local part of 1–64 and a dotted domain, at most 254 characters, no
 /// whitespace or control characters. Deliverability is not checked.
@@ -398,6 +508,88 @@ mod tests {
                 db_bytes: 300,
                 updated_at: Some(NOW),
             }
+        );
+    }
+
+    #[test]
+    fn usage_deltas_keep_media_plus_database() {
+        let (db, owner, member) = control_with_users();
+        let read = || db.read(|conn| usage(conn, &owner)).unwrap().unwrap();
+        db.write(|tx| set_usage(tx, &owner, 1_000, 300, NOW))
+            .unwrap();
+        assert!(db.write(|tx| add_media_usage(tx, &owner, 500)).unwrap());
+        let after = read();
+        assert_eq!(
+            (after.media_bytes, after.db_bytes, after.used_bytes),
+            (1_500, 300, 1_800)
+        );
+        assert_eq!(after.updated_at, Some(NOW), "a commit is not a count");
+        assert!(db.write(|tx| remove_media_usage(tx, &owner, 200)).unwrap());
+        assert_eq!(read().used_bytes, 1_600);
+        assert!(
+            db.write(|tx| remove_media_usage(tx, &owner, 9_999))
+                .unwrap()
+        );
+        let floor = read();
+        assert_eq!(
+            (floor.media_bytes, floor.used_bytes),
+            (0, 300),
+            "never below 0"
+        );
+        assert!(
+            db.write(|tx| add_media_usage(tx, &owner, -1)).is_err(),
+            "negative"
+        );
+        assert!(
+            db.write(|tx| remove_media_usage(tx, &owner, -1)).is_err(),
+            "negative"
+        );
+        assert!(
+            !db.write(|tx| add_media_usage(tx, "01NOBODY000000000000000000", 1))
+                .unwrap()
+        );
+        let untouched = db.read(|conn| usage(conn, &member)).unwrap().unwrap();
+        assert_eq!(untouched, Usage::default());
+    }
+
+    #[test]
+    fn limits_change_only_where_given() {
+        let (db, owner, member) = control_with_users();
+        let read = |id: &str| db.read(|conn| limits(conn, id)).unwrap();
+        assert_eq!(
+            read(&member),
+            Some(Limits {
+                quota_bytes: 0,
+                capture_daily_limit: 20,
+            }),
+            "the schema's defaults"
+        );
+        let set = db
+            .write(|tx| set_limits(tx, &member, Some(5 << 30), None))
+            .unwrap();
+        assert_eq!(
+            set,
+            Some(Limits {
+                quota_bytes: 5 << 30,
+                capture_daily_limit: 20,
+            })
+        );
+        let set = db
+            .write(|tx| set_limits(tx, &member, None, Some(0)))
+            .unwrap();
+        assert_eq!(set.unwrap().capture_daily_limit, 0);
+        assert_eq!(read(&member).unwrap().quota_bytes, 5 << 30);
+        assert_eq!(read(&owner).unwrap().quota_bytes, 0, "another user");
+        for (quota, captures) in [(Some(-1), None), (None, Some(-1))] {
+            let err = db
+                .write(|tx| set_limits(tx, &member, quota, captures))
+                .unwrap_err();
+            assert!(matches!(err, RepoError::Invalid { .. }), "{err}");
+        }
+        assert_eq!(
+            db.write(|tx| set_limits(tx, "01NOBODY000000000000000000", Some(1), None))
+                .unwrap(),
+            None
         );
     }
 

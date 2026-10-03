@@ -31,7 +31,9 @@
 //! Counters and histograms change as things happen. The gauges are sampled
 //! by the server's maintenance task: [`sample`] every
 //! [`UPKEEP_INTERVAL`] (5 s), [`sample_disk`] every [`DISK_INTERVAL`]
-//! (5 minutes), so a scrape never waits on a database or a disk walk.
+//! (5 minutes), so a scrape never waits on a database or a disk walk. The
+//! disk sample of the `users` area is also kept in the state: the media
+//! budget of [`crate::quota`] starts from it.
 
 use std::fs;
 use std::path::Path;
@@ -359,17 +361,38 @@ pub async fn sample(state: &AppState) {
 }
 
 /// Measures the data directory ([`measure_disk`]) on the blocking pool and
-/// sets [`DISK_BYTES`].
+/// sets [`DISK_BYTES`]. The [`USERS_AREA`] figure also goes to the media
+/// budget ([`crate::quota::Quotas::record_users_sample`]).
 pub async fn sample_disk(state: &AppState) {
     let root = state.config().data_dir.root().to_path_buf();
+    // Taken before the walk: what is stored during it counts twice until the
+    // next sample, never zero times.
+    let mark = state.quota().sample_mark();
     match tokio::task::spawn_blocking(move || measure_disk(&root)).await {
         Ok(areas) => {
-            for (area, bytes) in areas {
+            for &(area, bytes) in &areas {
                 metrics::gauge!(DISK_BYTES, "area" => area).set(bytes as f64);
+                if area == USERS_AREA {
+                    state.quota().record_users_sample(bytes, mark);
+                }
             }
         }
         Err(err) => tracing::warn!(error = %err, "measuring the data directory failed"),
     }
+}
+
+/// The `area` of the user libraries and their media (`users/`).
+pub const USERS_AREA: &str = "users";
+
+/// The bytes of the files under `area` (one of [`DISK_AREAS`]) of the data
+/// directory `root`, measured as [`measure_disk`] does; 0 for an unknown
+/// area or a missing directory. Blocking.
+#[must_use]
+pub fn area_bytes(root: &Path, area: &str) -> u64 {
+    DISK_AREAS
+        .iter()
+        .find(|&&(name, _)| name == area)
+        .map_or(0, |&(_, dir)| tree_bytes(&root.join(dir)))
 }
 
 /// The bytes of the files under each area of the data directory `root`:
@@ -494,5 +517,11 @@ mod tests {
         let missing = measure_disk(&root.join("missing"));
         assert!(missing.iter().all(|&(_, bytes)| bytes == 0));
         assert_eq!(missing.len(), DISK_AREAS.len() + 1);
+
+        // One area alone, as the media budget measures it.
+        assert_eq!(area_bytes(root, USERS_AREA), 33_192);
+        assert_eq!(area_bytes(root, "backup_staging"), 4_096);
+        assert_eq!(area_bytes(root, "nope"), 0);
+        assert_eq!(area_bytes(&root.join("missing"), USERS_AREA), 0);
     }
 }

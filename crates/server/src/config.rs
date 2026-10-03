@@ -29,10 +29,10 @@
 //! | `SHELFY_IMPORT_MAX_GB` | `10` | largest file to import (a JSON export or a bundle), in GiB: the cap of an `import` upload |
 //! | `SHELFY_YTDLP_BIN` | `/opt/yt-dlp/yt-dlp` | yt-dlp, for on-demand videos (the image's pinned build, L6) |
 //! | `SHELFY_FFMPEG_BIN` | `/usr/bin/ffmpeg` | ffmpeg, which readies videos and extracts frames (Debian's, L5) |
+//! | `SHELFY_MEDIA_BUDGET_GB` | `30` | the media budget of every user library together, in GiB: stores that would pass it are refused with `storage_full` ([`crate::quota`]); 0 turns it off |
 //!
 //! [`crate::mail`] validates the email settings and [`crate::outbound`] the
-//! outbound ones. Later tasks add their variables here (master key, media
-//! budgets).
+//! outbound ones. Later tasks add their variables here (master key).
 
 use std::fmt;
 use std::io;
@@ -50,6 +50,7 @@ use crate::jobs::JobsConfig;
 use crate::mail::{MailArgs, MailConfig};
 use crate::net::TrustedProxies;
 use crate::outbound::{OutboundArgs, OutboundConfig};
+use crate::quota::{DEFAULT_MEDIA_BUDGET_GB, QuotaConfig};
 use crate::rate_limit::RateLimitConfig;
 use crate::static_files::WebApp;
 
@@ -187,6 +188,19 @@ pub struct ServeArgs {
 
     #[command(flatten)]
     pub video_tools: VideoToolArgs,
+
+    /// The media budget of every user library together, in GiB (2^30
+    /// bytes): a store that would take the `users` area of the data
+    /// directory past it is refused with `storage_full`, for every user.
+    /// 0 turns the budget off.
+    #[arg(
+        long = "media-budget-gb",
+        env = "SHELFY_MEDIA_BUDGET_GB",
+        value_name = "GIB",
+        default_value_t = DEFAULT_MEDIA_BUDGET_GB,
+        value_parser = parse_media_budget
+    )]
+    pub media_budget_gb: u64,
 }
 
 /// The binaries of the video tools (P4-06, plan §2.13).
@@ -237,6 +251,17 @@ impl VideoToolArgs {
             ffmpeg: pick(self.ffmpeg, defaults.ffmpeg, "SHELFY_FFMPEG_BIN")?,
         })
     }
+}
+
+/// Parses `SHELFY_MEDIA_BUDGET_GB`: a whole number of GiB. Empty counts as
+/// unset, as for the other variables: the default.
+fn parse_media_budget(raw: &str) -> Result<u64, String> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(DEFAULT_MEDIA_BUDGET_GB);
+    }
+    raw.parse()
+        .map_err(|_| format!("{raw:?} is not a whole number of GiB"))
 }
 
 /// Format of the logs on stdout (plan §3.7).
@@ -290,6 +315,8 @@ pub struct Config {
     pub import_max_bytes: u64,
     /// The binaries of the video tools (P4-06).
     pub video_tools: ToolPaths,
+    /// The global media budget (plan §3.1; P4-07).
+    pub quota: QuotaConfig,
 }
 
 impl Config {
@@ -315,6 +342,8 @@ impl Config {
             .transpose()
             .map_err(ConfigError::WebDir)?;
         let video_tools = args.video_tools.paths()?;
+        let quota = QuotaConfig::from_gib(args.media_budget_gb)
+            .ok_or(ConfigError::MediaBudget(args.media_budget_gb))?;
         Ok(Self {
             listen: args.listen,
             metrics_listen: args.metrics_listen,
@@ -326,6 +355,7 @@ impl Config {
             outbound,
             import_max_bytes: args.import_max_gb.saturating_mul(GIB),
             video_tools,
+            quota,
             ..Self::with_data_dir(data_dir)
         })
     }
@@ -352,6 +382,7 @@ impl Config {
             outbound: OutboundConfig::default(),
             import_max_bytes: DEFAULT_IMPORT_MAX_GB * GIB,
             video_tools: ToolPaths::default(),
+            quota: QuotaConfig::default(),
         }
     }
 }
@@ -387,6 +418,9 @@ pub enum ConfigError {
     /// A video tool's path is relative.
     #[error("{0}: give an absolute path")]
     ToolPath(&'static str),
+    /// The media budget does not fit in bytes.
+    #[error("SHELFY_MEDIA_BUDGET_GB ({0}) is too large")]
+    MediaBudget(u64),
 }
 
 /// The public origin of the web app: `http(s)://host[:port]`, no trailing slash.

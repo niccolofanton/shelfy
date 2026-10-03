@@ -61,9 +61,10 @@ validated at start: a bad one stops the process with a message.
 | `SHELFY_IMPORT_MAX_GB` | `10` | Largest file a user may import (a desktop JSON export or an export bundle), in GiB, 1–1024: the cap of an `import` upload (`POST /api/v1/uploads`, P4-08). A user's uploads that wait to be used (imports, bookmark files) may hold this plus 1 GiB at once; complete ones wait 24 h, under `<data>/work/uploads/` |
 | `SHELFY_YTDLP_BIN` | `/opt/yt-dlp/yt-dlp` | yt-dlp, for on-demand videos (D15, L17): the image's pinned, unpacked build (L6). An absolute path. A missing binary turns the yt-dlp route off; the server still starts. Runs anonymously (no config, cookies, cache or plugins), through the egress proxy |
 | `SHELFY_FFMPEG_BIN` | `/usr/bin/ffmpeg` | ffmpeg, which readies videos for the browser (`-c copy`, `+faststart` only when the index comes last) and extracts posters and keyframes: Debian's in the image (L5). An absolute path. yt-dlp and ffmpeg run two at a time, at `nice +10`, without the server's environment |
+| `SHELFY_MEDIA_BUDGET_GB` | `30` | The media budget of every user library together, in GiB (§3.1): a store that would take the `users` area of the data directory past it is refused with 507 `storage_full`, for every user. 0 turns it off. See [Quotas and limits](#quotas-and-limits) |
 
 Empty values count as unset, so a compose file may pass `SHELFY_SMTP_HOST=` when email is off.
-Later tasks add the master key and the media budgets (§3.2, §3.4). The operator commands
+Later tasks add the master key (§3.2, §3.4). The operator commands
 (`shelfy-server admin create-owner | invite | login-link | snapshot | verify | user |
 install-snapshots | migrate-token | synth | bench`) use `SHELFY_DATA_DIR` too and print their
 results on stdout, never to the logs.
@@ -145,6 +146,30 @@ Over a rate limit (§2.9) the API answers 429 `rate_limited` with `Retry-After`:
 | `POST /api/v1/auth/device/approve` | 10 every 10 minutes, on top of the sign-in limit | user |
 
 `/media/*`, `/health` and the web app's files are not limited.
+
+## Quotas and limits
+
+A user's usage is the bytes of the media objects their library records plus its database file
+(§2.13); `GET /api/v1/me/usage` shows it. Every store of media (archive, uploads, captures, kept
+videos, imports, migrations) reserves its bytes first and is refused when they do not fit:
+
+| Limit | Refusal |
+| --- | --- |
+| the user's quota, media plus database; 0 means unlimited (the owner's) | 403 `quota_exceeded`, and a `quota.exceeded` notification at most once a day |
+| `SHELFY_MEDIA_BUDGET_GB`, every library together, from the 5-minute disk sample of `users/` | 507 `storage_full`, logged at most once a minute |
+
+Usage moves as objects are stored and as the nightly GC deletes them; the `usage.recompute` job
+counts every library again at 03:00 UTC and after installs and purges, and logs any drift it
+corrects. There are no admin pages (E4): the operator sets a user's limits with the CLI, and a
+running server applies them at its next reservation.
+
+```sh
+shelfy-server admin user limits "$USER_ID" --quota-gb 5 --capture-daily 20
+shelfy-server admin user limits "$USER_ID"     # prints them
+```
+
+`--quota-gb` takes decimals (`0.5`); 0 means unlimited for both. A change is audited as
+`user.limits`.
 
 ## Building and running the image
 

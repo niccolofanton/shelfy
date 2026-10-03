@@ -10,7 +10,8 @@
 //! 2. **Objects**, 16 per transaction: each is stored and recorded in the live
 //!    library (an object it has already is reused), with its `g480` and, for
 //!    covers, its ThumbHash. The bundle's object ids are mapped to the live
-//!    library's.
+//!    library's. Each transaction commits the bytes its new rows add to the
+//!    install's quota reservation ([`crate::quota`]).
 //! 3. **Collections**, one transaction: a bundle collection is the live one
 //!    of the same platform folder (`platform`, `external_id`), else of the
 //!    same name among the folders without one, else a new collection.
@@ -58,6 +59,7 @@ use super::{
 use crate::error::ApiError;
 use crate::ids::now_ms;
 use crate::jobs::{JobContext, JobError};
+use crate::quota;
 use crate::state::blocking;
 
 /// Posts merged per write transaction.
@@ -100,6 +102,7 @@ pub(super) async fn merge(
         items,
         media,
         work_db,
+        mut reservation,
         ..
     } = checked;
 
@@ -145,10 +148,17 @@ pub(super) async fn merge(
             &mut cover_sizes,
         );
         let media = media.clone();
-        let recorded = ctx
+        let (recorded, held) = ctx
             .user_db(move |db| {
-                db.write(|tx| -> Result<Vec<Recorded>, RepoError> {
+                db.write(|tx| -> Result<(Vec<Recorded>, _), RepoError> {
                     let now = now_ms();
+                    // What the chunk adds to the library's usage, counted
+                    // before its rows are recorded.
+                    let objects: Vec<_> = prepared
+                        .iter()
+                        .map(|p| (p.item.object.digest, p.item.object.bytes))
+                        .collect();
+                    let added = quota::new_bytes(tx, &objects)?;
                     let mut out = Vec::with_capacity(prepared.len());
                     for (p, render) in prepared.into_iter().zip(rendered) {
                         let (bundle_id, cover) = (p.item.object.id, p.item.cover);
@@ -160,11 +170,13 @@ pub(super) async fn merge(
                             thumbhash,
                         });
                     }
-                    Ok(out)
+                    reservation.commit_part(added)?;
+                    Ok((out, reservation))
                 })
                 .map_err(JobError::from)
             })
             .await?;
+        reservation = held;
         for Recorded {
             bundle_id,
             live_id,
@@ -283,6 +295,9 @@ pub(super) async fn merge(
             .map_err(JobError::from)
         })
         .await?;
+    // The objects are committed; the database's growth is counted by the
+    // follow-up's `usage.recompute`.
+    reservation.release();
     Ok(report)
 }
 

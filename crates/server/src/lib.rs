@@ -40,6 +40,7 @@
 //! | [`static_files`] | the web app's files: precompressed assets, `index.html` for client routes |
 //! | [`security_headers`] | the content security policy, HSTS and `nosniff` on every response |
 //! | [`library`] | the library write path (events after each write) and the caches keyed by the generation |
+//! | [`quota`] | quotas, the media budget, reservations and usage accounting |
 //!
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.2–§2.4 and §3.
 
@@ -63,6 +64,7 @@ pub mod mail;
 pub mod migrations;
 pub mod net;
 pub mod outbound;
+pub mod quota;
 pub mod rate_limit;
 pub mod routes;
 pub mod security_headers;

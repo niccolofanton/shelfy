@@ -1,10 +1,13 @@
 //! `GET /api/v1/me/usage` (plan §2.13 Quota): the storage the account uses,
 //! media plus database, against its quota.
 //!
-//! The numbers are those of the last count by the `usage.recompute` job
-//! ([`crate::jobs::usage`]): nightly, and after an install or a purge. Until
-//! the first count `updatedAt` is `null`, and this request starts one; the
-//! client reads again when its `job.updated` reports it done.
+//! The media bytes move as objects are stored and deleted ([`crate::quota`]:
+//! a store's commit shows here at once); the `usage.recompute` job
+//! ([`crate::jobs::usage`]) counts everything again, the database file
+//! included, nightly and after an install or a purge. `updatedAt` is the
+//! time of that last count: until the first one it is `null`, and this
+//! request starts one; the client reads again when its `job.updated`
+//! reports it done.
 
 use std::sync::Arc;
 
@@ -41,7 +44,8 @@ pub struct Usage {
     pub db_bytes: i64,
     /// The quota in bytes; 0 means unlimited (the owner).
     pub quota_bytes: i64,
-    /// When the use was counted, unix ms; `null` until the first count.
+    /// When the library was last counted, unix ms; `null` until the first
+    /// count. Stores since then are in the media bytes already.
     #[schema(required = true)]
     pub updated_at: Option<i64>,
 }
@@ -58,8 +62,9 @@ impl From<users::Usage> for Usage {
     }
 }
 
-/// The storage the account uses and its quota, as last counted. When it was
-/// never counted, the count starts now (`usage.recompute`).
+/// The storage the account uses and its quota: the last count, plus what
+/// was stored or deleted since. When it was never counted, the count starts
+/// now (`usage.recompute`).
 #[utoipa::path(
     get,
     path = "/api/v1/me/usage",

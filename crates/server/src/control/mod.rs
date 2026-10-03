@@ -18,6 +18,7 @@ pub mod magic_links;
 pub mod passkeys;
 pub mod sessions;
 pub mod uploads;
+pub mod usage_daily;
 pub mod users;
 
 use rusqlite::ErrorCode;

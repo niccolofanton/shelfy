@@ -1238,7 +1238,7 @@
     "/api/v1/me/usage": {
       "get": {
         "tags": ["account"],
-        "summary": "The storage the account uses and its quota, as last counted. When it was\nnever counted, the count starts now (`usage.recompute`).",
+        "summary": "The storage the account uses and its quota: the last count, plus what\nwas stored or deleted since. When it was never counted, the count starts\nnow (`usage.recompute`).",
         "operationId": "getUsage",
         "responses": {
           "200": {
@@ -4088,6 +4088,7 @@
           "extension_outdated",
           "rate_limited",
           "internal",
+          "storage_full",
           "unavailable",
           "timeout"
         ]
@@ -4986,7 +4987,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "description": "A stable code: an API error code (`validation_failed`, `conflict`,\n`quota_exceeded`, `user_locked`, `internal`…) or a job code\n(`lease_expired`, `cancelled`)."
+            "description": "A stable code: an API error code (`validation_failed`, `conflict`,\n`quota_exceeded`, `storage_full`, `user_locked`, `internal`…) or a\njob code (`lease_expired`, `cancelled`)."
           },
           "detail": {
             "type": "string",
@@ -6916,7 +6917,7 @@
           "updatedAt": {
             "type": ["integer", "null"],
             "format": "int64",
-            "description": "When the use was counted, unix ms; `null` until the first count."
+            "description": "When the library was last counted, unix ms; `null` until the first\ncount. Stores since then are in the media bytes already."
           },
           "usedBytes": {
             "type": "integer",

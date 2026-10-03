@@ -9,9 +9,9 @@
 //! and checks for a cancel, a lost lease or a shutdown between chunks.
 //!
 //! **Errors.** A refused bundle (`validation_failed`), a library that is not
-//! empty without `--merge` (`conflict`) and a quota (`quota_exceeded`) fail
-//! at once; a busy or locked library, a full disk or an interrupted worker
-//! are tried again.
+//! empty without `--merge` (`conflict`), the user's quota (`quota_exceeded`)
+//! and the media budget (`storage_full`) fail at once; a busy or locked
+//! library, a full disk or an interrupted worker are tried again.
 
 use std::time::Duration;
 

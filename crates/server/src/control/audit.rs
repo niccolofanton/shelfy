@@ -53,6 +53,10 @@ pub const USER_UNLOCK: &str = "user.unlock";
 /// A user's library was replaced by a restored copy (`admin user
 /// restore-db`). `meta`: `bytes` and `keptPrevious`.
 pub const LIBRARY_RESTORE: &str = "library.restore";
+/// A user's limits changed (`admin user limits`). `meta`: `via`, the
+/// limits now in force (`quotaBytes`, `captureDailyLimit`) and those before
+/// (`previous`).
+pub const USER_LIMITS: &str = "user.limits";
 
 /// One audit row.
 #[derive(Clone, Copy, Debug)]

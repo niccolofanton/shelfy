@@ -761,8 +761,9 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * The storage the account uses and its quota, as last counted. When it was
-     *     never counted, the count starts now (`usage.recompute`).
+     * The storage the account uses and its quota: the last count, plus what
+     *     was stored or deleted since. When it was never counted, the count starts
+     *     now (`usage.recompute`).
      */
     get: operations['getUsage'];
     put?: never;
@@ -1900,6 +1901,7 @@ export interface components {
       | 'extension_outdated'
       | 'rate_limited'
       | 'internal'
+      | 'storage_full'
       | 'unavailable'
       | 'timeout';
     /**
@@ -2498,8 +2500,8 @@ export interface components {
     MigrationFailure: {
       /**
        * @description A stable code: an API error code (`validation_failed`, `conflict`,
-       *     `quota_exceeded`, `user_locked`, `internal`…) or a job code
-       *     (`lease_expired`, `cancelled`).
+       *     `quota_exceeded`, `storage_full`, `user_locked`, `internal`…) or a
+       *     job code (`lease_expired`, `cancelled`).
        */
       code: string;
       /**
@@ -3669,7 +3671,8 @@ export interface components {
       quotaBytes: number;
       /**
        * Format: int64
-       * @description When the use was counted, unix ms; `null` until the first count.
+       * @description When the library was last counted, unix ms; `null` until the first
+       *     count. Stores since then are in the media bytes already.
        */
       updatedAt: number | null;
       /**

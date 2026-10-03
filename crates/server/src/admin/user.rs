@@ -1,5 +1,7 @@
-//! `admin user lock | unlock | restore-db`: restoring one user's library to
-//! a point in time (plan §3.5, runbook "One user, point in time").
+//! `admin user lock | unlock | restore-db | limits`: restoring one user's
+//! library to a point in time (plan §3.5, runbook "One user, point in
+//! time"), and a user's limits (P4-07: the storage quota and the daily
+//! captures; E4 has no admin pages, so the CLI sets them).
 //!
 //! 1. `admin user lock <id>`: the user's requests get 423 `user_locked`, and
 //!    the server releases the library at their next request or within its
@@ -16,6 +18,11 @@
 //! Objects the restored library references but the store lost are
 //! re-archived from live URLs or by the extension (P2–P4); `admin verify`
 //! lists them.
+//!
+//! `admin user limits <id> [--quota-gb N] [--capture-daily N]` prints the
+//! limits in force after setting those given (0 means unlimited for both),
+//! and audits a change as `user.limits`. A running server reads the quota
+//! at its next reservation ([`crate::quota`]).
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -33,8 +40,9 @@ use super::open_existing_control;
 use super::verify::check_copy;
 use crate::config::DataDir;
 use crate::control::audit::{self, Entry};
-use crate::control::users;
+use crate::control::users::{self, Limits};
 use crate::ids::now_ms;
+use crate::quota::GIB;
 
 /// Default of `restore-db --wait-secs`: the server's maintenance interval is
 /// 30 s, plus requests and jobs that still hold the library.
@@ -59,6 +67,9 @@ pub enum UserCommand {
     /// Replace a locked user's library with a restored copy, keeping the
     /// current one next to it.
     RestoreDb(RestoreDbArgs),
+    /// Print a user's limits (storage quota, daily captures), after setting
+    /// those given.
+    Limits(LimitsArgs),
 }
 
 /// Arguments of `admin user lock`.
@@ -96,6 +107,48 @@ pub struct RestoreDbArgs {
     /// How long to wait for the server to release the library.
     #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_RESTORE_WAIT_SECS)]
     pub wait_secs: u64,
+}
+
+/// Arguments of `admin user limits`.
+#[derive(Debug, Args)]
+pub struct LimitsArgs {
+    /// The user's id.
+    #[arg(value_name = "USER_ID")]
+    pub user: String,
+
+    /// The storage quota in GiB, media plus database (decimals allowed:
+    /// `0.5`); 0 means unlimited.
+    #[arg(long = "quota-gb", value_name = "GIB", value_parser = parse_quota_gb)]
+    pub quota_bytes: Option<i64>,
+
+    /// Site captures a day (UTC); 0 means unlimited.
+    #[arg(long = "capture-daily", value_name = "N")]
+    pub capture_daily: Option<u32>,
+}
+
+/// The largest `--quota-gb`: 1 PiB.
+pub const MAX_QUOTA_GIB: f64 = 1_048_576.0;
+
+/// Parses `--quota-gb` into bytes.
+fn parse_quota_gb(raw: &str) -> Result<i64, String> {
+    let gib: f64 = raw
+        .trim()
+        .parse()
+        .map_err(|_| format!("{raw:?} is not a number of GiB"))?;
+    if !gib.is_finite() || !(0.0..=MAX_QUOTA_GIB).contains(&gib) {
+        return Err(format!("the quota must be 0 to {MAX_QUOTA_GIB} GiB"));
+    }
+    // At most 2^20 GiB of 2^30 bytes: 2^50 bytes, well within an i64.
+    Ok((gib * GIB as f64).round() as i64)
+}
+
+/// The limits of a user before and after `admin user limits`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LimitsChange {
+    /// Before.
+    pub before: Limits,
+    /// In force now.
+    pub after: Limits,
 }
 
 /// Runs `admin user …`.
@@ -152,8 +205,100 @@ pub fn run(data: &DataDir, args: &UserArgs, out: &mut dyn Write) -> anyhow::Resu
                 "the library is restored (see above), but its audit row could not be written",
             )?;
         }
+        UserCommand::Limits(args) => {
+            let capture_daily = args.capture_daily.map(i64::from);
+            let change = limits(data, &args.user, args.quota_bytes, capture_daily)?;
+            if args.quota_bytes.is_some() || capture_daily.is_some() {
+                writeln!(out, "updated the limits of user {}", args.user)?;
+            } else {
+                writeln!(out, "limits of user {}", args.user)?;
+            }
+            writeln!(out, "quota: {}", describe_quota(change.after.quota_bytes))?;
+            writeln!(
+                out,
+                "captures a day: {}",
+                describe_count(change.after.capture_daily_limit)
+            )?;
+        }
     }
     Ok(())
+}
+
+/// Sets the limits of `user_id` that are given (bytes; captures a day) and
+/// returns them before and after. With a change, the audit log gets
+/// `user.limits`; without one, nothing is written.
+///
+/// # Errors
+///
+/// An invalid id, no control database, no such user, a negative limit, or
+/// the control database failed.
+pub fn limits(
+    data: &DataDir,
+    user_id: &str,
+    quota_bytes: Option<i64>,
+    capture_daily_limit: Option<i64>,
+) -> anyhow::Result<LimitsChange> {
+    if !is_valid_user_id(user_id) {
+        anyhow::bail!("invalid user id {user_id:?}: expected 1-64 ASCII letters and digits");
+    }
+    let control = open_existing_control(data)?;
+    let now = now_ms();
+    let change = control
+        .write(|tx| -> Result<Option<LimitsChange>, RepoError> {
+            let Some(before) = users::limits(tx, user_id)? else {
+                return Ok(None);
+            };
+            if quota_bytes.is_none() && capture_daily_limit.is_none() {
+                return Ok(Some(LimitsChange {
+                    before,
+                    after: before,
+                }));
+            }
+            let after = users::set_limits(tx, user_id, quota_bytes, capture_daily_limit)?
+                .ok_or(RepoError::NotFound)?;
+            let meta = json!({
+                "via": "cli",
+                "quotaBytes": after.quota_bytes,
+                "captureDailyLimit": after.capture_daily_limit,
+                "previous": {
+                    "quotaBytes": before.quota_bytes,
+                    "captureDailyLimit": before.capture_daily_limit,
+                },
+            });
+            let entry = Entry {
+                action: audit::USER_LIMITS,
+                actor_user_id: None,
+                target: Some(user_id),
+                meta: Some(&meta),
+            };
+            audit::record(tx, &entry, now)?;
+            Ok(Some(LimitsChange { before, after }))
+        })
+        .context("cannot update the limits")?;
+    change.ok_or_else(|| anyhow::anyhow!("no user {user_id} in this data directory"))
+}
+
+/// A quota for people: `unlimited`, or GiB and bytes.
+fn describe_quota(bytes: i64) -> String {
+    if bytes <= 0 {
+        return "unlimited".to_owned();
+    }
+    let whole = u64::try_from(bytes).unwrap_or(0);
+    if whole % GIB == 0 {
+        format!("{} GiB ({bytes} bytes)", whole / GIB)
+    } else {
+        let value = bytes as f64 / GIB as f64;
+        format!("{value:.3} GiB ({bytes} bytes)")
+    }
+}
+
+/// A daily count for people: `unlimited`, or the number.
+fn describe_count(n: i64) -> String {
+    if n <= 0 {
+        "unlimited".to_owned()
+    } else {
+        n.to_string()
+    }
 }
 
 /// Locks `user_id`'s library; returns `false` when it was already locked.
@@ -285,4 +430,29 @@ fn record(
         })
         .context("cannot write the audit log")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quotas_are_read_in_gib() {
+        assert_eq!(parse_quota_gb("5"), Ok(5 << 30));
+        assert_eq!(parse_quota_gb(" 0.5 "), Ok(1 << 29));
+        assert_eq!(parse_quota_gb("0"), Ok(0));
+        assert_eq!(parse_quota_gb("1048576"), Ok(1 << 50));
+        for bad in ["", "-1", "five", "NaN", "inf", "1048577"] {
+            assert!(parse_quota_gb(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn limits_are_described_for_people() {
+        assert_eq!(describe_quota(0), "unlimited");
+        assert_eq!(describe_quota(5 << 30), "5 GiB (5368709120 bytes)");
+        assert_eq!(describe_quota(1 << 29), "0.500 GiB (536870912 bytes)");
+        assert_eq!(describe_count(0), "unlimited");
+        assert_eq!(describe_count(20), "20");
+    }
 }

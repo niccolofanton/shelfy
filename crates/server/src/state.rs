@@ -1,6 +1,7 @@
 //! The state shared by every request: the databases, the configuration,
 //! authentication, the mailer, the realtime event bus, the job system, the
-//! library caches, the rate limiters, outbound HTTP and the shutdown token.
+//! library caches, the rate limiters, outbound HTTP, the quota ledger and
+//! the shutdown token.
 
 use std::sync::Arc;
 
@@ -17,6 +18,7 @@ use crate::jobs::Jobs;
 use crate::library::LibraryCaches;
 use crate::mail::Mailer;
 use crate::outbound::Outbound;
+use crate::quota::Quotas;
 use crate::rate_limit::RateLimits;
 
 /// Cheap to clone: everything lives behind one `Arc`.
@@ -36,6 +38,7 @@ struct Inner {
     library_caches: LibraryCaches,
     rate_limits: RateLimits,
     outbound: Outbound,
+    quota: Quotas,
     shutdown: CancellationToken,
 }
 
@@ -95,6 +98,12 @@ impl AppState {
         let events = EventBus::new();
         let jobs = Jobs::new(&config.jobs, Arc::clone(&control), events.clone());
         let rate_limits = RateLimits::new(&config.rate_limits);
+        let quota = Quotas::new(
+            config.quota,
+            Arc::clone(&control),
+            config.jobs.clock,
+            data.root().to_path_buf(),
+        );
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
@@ -107,6 +116,7 @@ impl AppState {
                 library_caches: LibraryCaches::new(),
                 rate_limits,
                 outbound,
+                quota,
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -172,6 +182,12 @@ impl AppState {
     #[must_use]
     pub fn library_caches(&self) -> &LibraryCaches {
         &self.inner.library_caches
+    }
+
+    /// The quota reservations and the media budget ([`crate::quota`]).
+    #[must_use]
+    pub fn quota(&self) -> &Quotas {
+        &self.inner.quota
     }
 
     /// Cancelled when the server starts shutting down. Long-running work (job

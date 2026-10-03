@@ -1298,6 +1298,14 @@ async fn a_second_library_merges_into_one_that_is_not_empty() {
         })
         .unwrap();
     assert_eq!(notes, 3, "one per install");
+
+    // Each install held its bytes until they were counted: nothing is left
+    // reserved, and a count finds exactly what the merges committed.
+    assert_eq!(t.state.quota().reserved_total(), 0);
+    let counted = shelfy_server::jobs::usage::recount(&t.state, &owner_id)
+        .await
+        .unwrap();
+    assert_eq!(counted.drift_bytes, 0, "{counted:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1863,4 +1871,86 @@ async fn the_housekeeping_removes_what_installs_left_behind() {
         .map(|d| d.count())
         .unwrap_or(0);
     assert_eq!(files, 0);
+}
+
+/// Enqueues the install of the uploaded database `uploaded` for `user` and
+/// waits until it ends.
+async fn install(t: &TestState, user: &str, uploaded: &str) -> JobRow {
+    let job = shelfy_server::jobs::migrate::enqueue(
+        t.state.jobs(),
+        user,
+        &shelfy_server::jobs::migrate::Payload {
+            db_upload_id: uploaded.to_owned(),
+            merge: false,
+        },
+    )
+    .await
+    .unwrap()
+    .job;
+    t.wait_job(user, job.id, |j| j.state.is_final()).await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_install_reserves_its_bytes_against_the_quota_and_the_media_budget() {
+    // Over the user's quota: the install fails at once and changes nothing.
+    let t = TestState::new();
+    let origin = serve(&t).await;
+    let token = migrate_token(&t);
+    let owner_id = owner(&t);
+    let desktop = Desktop::new();
+    let uploaded = upload_bundle(&origin, &token, &desktop).await;
+    control(&t)
+        .execute(
+            "UPDATE users SET quota_bytes = 4096 WHERE id = ?1",
+            [&owner_id],
+        )
+        .unwrap();
+    let refused = install(&t, &owner_id, &uploaded).await;
+    assert_eq!(refused.state, JobState::Failed);
+    assert_eq!(refused.error_code.as_deref(), Some("quota_exceeded"));
+    assert_eq!(refused.attempts, 1, "a refusal is not tried again");
+    let library = || Connection::open(t.data_dir().library_db(&owner_id)).unwrap();
+    let count = |sql: &str| -> i64 { library().query_row(sql, [], |r| r.get(0)).unwrap() };
+    assert_eq!(count("SELECT count(*) FROM posts"), 0);
+    assert_eq!(t.state.quota().reserved_total(), 0);
+    assert_eq!(
+        count("SELECT count(*) FROM notifications WHERE code = 'quota.exceeded'"),
+        1
+    );
+
+    // Unlimited again, the same install goes through: its objects are
+    // counted at once, and nothing stays reserved.
+    control(&t)
+        .execute(
+            "UPDATE users SET quota_bytes = 0 WHERE id = ?1",
+            [&owner_id],
+        )
+        .unwrap();
+    t.state.jobs().retry(&owner_id, refused.id).await.unwrap();
+    let done = t
+        .wait_job(&owner_id, refused.id, |j| j.state.is_final())
+        .await;
+    assert_eq!(done.state, JobState::Succeeded, "{done:?}");
+    assert!(count("SELECT count(*) FROM posts") > 0);
+    assert_eq!(t.state.quota().reserved_total(), 0);
+    let (media, counted_at): (i64, Option<i64>) = control(&t)
+        .query_row(
+            "SELECT usage_media_bytes, usage_updated_at FROM users WHERE id = ?1",
+            [&owner_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(media, count("SELECT sum(bytes) FROM media_objects"));
+    assert!(counted_at.is_some());
+
+    // Past the media budget: `storage_full`, for any user.
+    let t = TestState::with_config(|config| config.quota.media_budget_bytes = 1);
+    let origin = serve(&t).await;
+    let token = migrate_token(&t);
+    let owner_id = owner(&t);
+    let uploaded = upload_bundle(&origin, &token, &desktop).await;
+    let refused = install(&t, &owner_id, &uploaded).await;
+    assert_eq!(refused.state, JobState::Failed);
+    assert_eq!(refused.error_code.as_deref(), Some("storage_full"));
+    assert_eq!(refused.attempts, 1, "a full budget is not tried again");
 }

@@ -12,7 +12,10 @@
 //!    `<data>/work/migrations/<job id>/` and checked ([`validate`]): integrity,
 //!    schema version and shape, limits, and every object row a stored type;
 //!    every object must be in the user's store already or in a complete
-//!    upload of the same hash, and the new bytes must fit the quota. An empty
+//!    upload of the same hash, and the new bytes (the objects the library
+//!    has no row for, and the database) must fit: the install counts the
+//!    library, then reserves them against the user's quota and the media
+//!    budget ([`crate::quota`]: `quota_exceeded`, `storage_full`). An empty
 //!    web library is **replaced**; a library with posts or collections is
 //!    **merged** into when the CLI asked for it (`--merge`), and refused
 //!    otherwise.
@@ -39,8 +42,9 @@
 //! `posts.changed` (reason `import`) and `stats.changed`, a
 //! `migration.installed` notification with the reconciliation joins the
 //! user's activity, a `usage.recompute` job counts the storage again
-//! ([`crate::jobs::usage`]), and the consumed uploads and the work directory
-//! are removed. A failed install leaves the live library untouched (a merge
+//! ([`crate::jobs::usage`]; a replace counts it at once, a merge commits
+//! each chunk's objects as it goes), and the consumed uploads and the work
+//! directory are removed. A failed install leaves the live library untouched (a merge
 //! that stopped half way is finished by the next try, which merges the same
 //! rows again without changing them twice) and keeps the uploads, so the job
 //! can be retried. An install whose library is locked for maintenance waits
@@ -153,8 +157,8 @@ pub enum InstallMode {
 #[serde(rename_all = "camelCase")]
 pub struct MigrationFailure {
     /// A stable code: an API error code (`validation_failed`, `conflict`,
-    /// `quota_exceeded`, `user_locked`, `internal`…) or a job code
-    /// (`lease_expired`, `cancelled`).
+    /// `quota_exceeded`, `storage_full`, `user_locked`, `internal`…) or a
+    /// job code (`lease_expired`, `cancelled`).
     pub code: String,
     /// Developer-facing detail of a refused bundle (`validation_failed`,
     /// `conflict`, `quota_exceeded`); never content.

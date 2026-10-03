@@ -200,6 +200,22 @@ mod tests {
     }
 
     #[test]
+    fn the_media_budget_is_given_in_gib() {
+        let budget = |args: &[&str]| serve(args).map(|c| c.quota.media_budget_bytes);
+        assert_eq!(budget(&[]), Ok(30 << 30), "the default");
+        assert_eq!(budget(&["--media-budget-gb", "12"]), Ok(12 << 30));
+        assert_eq!(budget(&["--media-budget-gb", "0"]), Ok(0), "off");
+        assert_eq!(
+            budget(&["--media-budget-gb", ""]),
+            Ok(30 << 30),
+            "empty is unset"
+        );
+        assert!(budget(&["--media-budget-gb", "-1"]).is_err());
+        let err = budget(&["--media-budget-gb", &u64::MAX.to_string()]).unwrap_err();
+        assert!(err.contains("SHELFY_MEDIA_BUDGET_GB"), "{err}");
+    }
+
+    #[test]
     fn admin_commands_take_the_data_dir_anywhere() {
         let cli = Cli::try_parse_from([
             "shelfy-server",

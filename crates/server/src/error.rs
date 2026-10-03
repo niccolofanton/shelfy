@@ -91,6 +91,10 @@ pub enum ErrorCode {
     RateLimited,
     /// 500: a bug or an unexpected failure; the logs have the details.
     Internal,
+    /// 507: the server's media budget is used up (`SHELFY_MEDIA_BUDGET_GB`):
+    /// nothing more can be stored for anyone until the operator frees space
+    /// or raises it. Not a fault of the request; retrying does not help.
+    StorageFull,
     /// 503: a dependency is busy or the server is stopping; retry after
     /// `Retry-After` seconds.
     Unavailable,
@@ -126,6 +130,7 @@ impl ErrorCode {
             Self::ExtensionOutdated => StatusCode::UPGRADE_REQUIRED,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::StorageFull => StatusCode::INSUFFICIENT_STORAGE,
             Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
         }
@@ -150,6 +155,7 @@ impl ErrorCode {
             StatusCode::TOO_MANY_REQUESTS => Self::RateLimited,
             StatusCode::SERVICE_UNAVAILABLE => Self::Unavailable,
             StatusCode::GATEWAY_TIMEOUT => Self::Timeout,
+            StatusCode::INSUFFICIENT_STORAGE => Self::StorageFull,
             s if s.is_server_error() => Self::Internal,
             _ => Self::BadRequest,
         }
@@ -184,6 +190,7 @@ impl ErrorCode {
             Self::ExtensionOutdated => "extension_outdated",
             Self::RateLimited => "rate_limited",
             Self::Internal => "internal",
+            Self::StorageFull => "storage_full",
             Self::Unavailable => "unavailable",
             Self::Timeout => "timeout",
         }
@@ -531,6 +538,7 @@ mod tests {
             ErrorCode::ExtensionOutdated,
             ErrorCode::RateLimited,
             ErrorCode::Internal,
+            ErrorCode::StorageFull,
             ErrorCode::Unavailable,
             ErrorCode::Timeout,
         ];
@@ -552,6 +560,10 @@ mod tests {
         assert_eq!(
             ErrorCode::for_status(StatusCode::GATEWAY_TIMEOUT),
             ErrorCode::Timeout
+        );
+        assert_eq!(
+            ErrorCode::for_status(StatusCode::INSUFFICIENT_STORAGE),
+            ErrorCode::StorageFull
         );
         assert_eq!(
             ErrorCode::for_status(StatusCode::RANGE_NOT_SATISFIABLE),

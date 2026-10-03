@@ -32,12 +32,12 @@ use super::{
 };
 use crate::config::create_private_dir;
 use crate::control::uploads::{self, Upload, UploadPurpose};
-use crate::control::users;
 use crate::error::{ApiError, ErrorCode};
 use crate::events::model::ChangeReason;
 use crate::ids::now_ms;
 use crate::jobs::migrate::Payload;
 use crate::jobs::{JobContext, JobError, usage};
+use crate::quota::{self, Reservation};
 use crate::routes::uploads::remove_files;
 use crate::state::blocking;
 
@@ -157,6 +157,9 @@ pub(super) struct Checked {
     pub(super) media: UserMedia,
     /// The validated copy of the bundle's database.
     pub(super) work_db: PathBuf,
+    /// The quota the install holds ([`reserve`]) until its bytes are
+    /// counted.
+    pub(super) reservation: Reservation,
 }
 
 async fn install(
@@ -264,7 +267,7 @@ async fn validated(ctx: &JobContext, payload: &Payload, work: &Path) -> Result<C
         .user(&user_id)
         .map_err(ApiError::internal)?;
     let sources = locate(ctx, &media, &facts.objects).await?;
-    check_quota(ctx, &facts, &sources, &work_db).await?;
+    let reservation = reserve(ctx, &facts, &work_db).await?;
 
     // The objects the grid shows, and the covers among them.
     let grid = {
@@ -296,6 +299,7 @@ async fn validated(ctx: &JobContext, payload: &Payload, work: &Path) -> Result<C
         items,
         media,
         work_db,
+        reservation,
     })
 }
 
@@ -327,62 +331,31 @@ pub(crate) fn not_empty() -> ApiError {
     )
 }
 
-/// Refuses a bundle whose new bytes would put the library over the user's
-/// quota (0: unlimited, the owner).
-async fn check_quota(
+/// Reserves the bytes the install adds ([`crate::quota`]): the bundle's
+/// objects that the live library has no row for, and the bundle's database.
+/// The use is counted first, so the user's quota is checked against the
+/// library as it is now. A refusal (`quota_exceeded`, `storage_full`) fails
+/// the install before anything changes.
+async fn reserve(
     ctx: &JobContext,
     facts: &BundleFacts,
-    sources: &[Source],
     work_db: &Path,
-) -> Result<(), JobError> {
-    let control = Arc::clone(ctx.state().control());
-    let user_id = ctx.user_id().to_owned();
-    let quota = blocking(move || control.read(|c| users::usage(c, &user_id)))
-        .await?
-        .map_or(0, |u| u.quota_bytes);
-    if quota <= 0 {
-        return Ok(());
-    }
-    let used = live_usage(ctx).await?;
-    let db_bytes = fs::metadata(work_db).map_or(0, |m| m.len());
-    let new_bytes: u64 = facts
+) -> Result<Reservation, JobError> {
+    usage::recount(ctx.state(), ctx.user_id()).await?;
+    let objects: Vec<_> = facts
         .objects
         .iter()
-        .zip(sources)
-        .filter(|(_, source)| matches!(source, Source::Upload(_)))
-        .map(|(object, _)| object.bytes)
-        .sum::<u64>()
-        + db_bytes;
-    let after = i64::try_from(new_bytes)
-        .unwrap_or(i64::MAX)
-        .saturating_add(used);
-    if after > quota {
-        return Err(ApiError::new(ErrorCode::QuotaExceeded)
-            .with_detail(format!(
-                "the install needs {} bytes beyond the quota of {quota} bytes",
-                after - quota
-            ))
-            .into());
-    }
-    Ok(())
-}
-
-/// Media plus database bytes of the user's live library.
-pub(super) async fn live_usage(ctx: &JobContext) -> Result<i64, JobError> {
-    ctx.user_db(|db| {
-        db.read(|c| {
-            let media: i64 = c.query_row(
-                "SELECT coalesce(sum(bytes), 0) FROM media_objects",
-                [],
-                |r| r.get(0),
-            )?;
-            let pages: i64 = c.query_row("PRAGMA page_count", [], |r| r.get(0))?;
-            let size: i64 = c.query_row("PRAGMA page_size", [], |r| r.get(0))?;
-            Ok::<_, shelfy_core::db::DbError>(media.saturating_add(pages.saturating_mul(size)))
+        .map(|object| (object.digest, object.bytes))
+        .collect();
+    let new_objects = ctx
+        .user_db(move |db| {
+            db.read(|c| quota::new_bytes(c, &objects))
+                .map_err(JobError::from)
         })
-        .map_err(JobError::from)
-    })
-    .await
+        .await?;
+    let db_bytes = fs::metadata(work_db).map_or(0, |m| m.len());
+    let reservation = quota::reserve(ctx.state(), ctx.user_id(), new_objects + db_bytes).await?;
+    Ok(reservation)
 }
 
 /// Steps 2–5 of a replace: the objects and the derived data in the new
@@ -399,6 +372,7 @@ async fn replace(
         items,
         media,
         work_db,
+        reservation,
         ..
     } = checked;
 
@@ -524,6 +498,13 @@ async fn replace(
         .await?;
     }
     state.user_dbs().evict(&user_id);
+    // The new library's storage, counted now: its bytes leave the
+    // reservation for the user's usage. Should the count fail, the
+    // follow-up's count does it.
+    if let Err(err) = usage::recount(state, &user_id).await {
+        tracing::warn!(job_id = ctx.id(), error = %err, "cannot count the installed library");
+    }
+    reservation.release();
     Ok(report)
 }
 

@@ -62,8 +62,9 @@ pub mod codes {
 ///   is queued again after a backoff with jitter, until it has used
 ///   `max_attempts` tries. `retry_after` (a 429's `Retry-After`) is the
 ///   shortest wait.
-/// - **Permanent** (4xx, validation, blocked, quota, an invalid key): the
-///   job fails at once, and the user can retry it.
+/// - **Permanent** (4xx, validation, blocked, quota, a full media budget
+///   (`storage_full`), an invalid key): the job fails at once, and the user
+///   can retry it.
 /// - **The user's library is locked** for maintenance ([`codes::USER_LOCKED`],
 ///   from a [`DbError`] or an [`ApiError`] that says so): not a failure. The
 ///   job goes back to the queue without using a try, and the user's jobs
@@ -210,8 +211,9 @@ impl From<ApiError> for JobError {
         let status = err.status();
         let code = err.code().as_str();
         // A locked library (`user_locked`) is back once the operator's
-        // restore is done.
-        let error = if status.is_server_error()
+        // restore is done. A full media budget (`storage_full`, 507) is not:
+        // like a quota, it fails now and the user retries later.
+        let error = if (status.is_server_error() && err.code() != ErrorCode::StorageFull)
             || status.as_u16() == 429
             || err.code() == ErrorCode::UserLocked
         {
@@ -652,6 +654,9 @@ mod tests {
         let quota = JobError::from(ApiError::new(ErrorCode::QuotaExceeded));
         assert!(!quota.is_transient());
         assert_eq!(quota.code(), "quota_exceeded");
+        let full = JobError::from(ApiError::new(ErrorCode::StorageFull));
+        assert!(!full.is_transient(), "a full media budget is permanent");
+        assert_eq!(full.code(), "storage_full");
 
         // A library locked for a restore waits for the unlock, however it
         // surfaces.

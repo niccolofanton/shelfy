@@ -20,6 +20,9 @@
 //! host's mock account; every one of the above already takes a member by id
 //! or email, not the owner specifically.
 //!
+//! Limits (P4-07): `user limits` sets a user's storage quota and daily
+//! captures; there are no admin pages (E4).
+//!
 //! This file is the command dispatch: a new command adds its module and one
 //! line here.
 
@@ -80,7 +83,8 @@ pub enum AdminCommand {
     /// Check restored database copies: integrity, row counts against the live
     /// databases, media references.
     Verify(verify::VerifyArgs),
-    /// Lock, unlock or restore one user's library.
+    /// Lock, unlock or restore one user's library, or set the user's
+    /// limits.
     User(user::UserArgs),
     /// Install the database copies of a snapshot directory as the live
     /// databases (full restore, server stopped).

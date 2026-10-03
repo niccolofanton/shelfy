@@ -1,32 +1,37 @@
-//! `usage.recompute` (plan §2.13 Quota and GC; P1-17): counts a user's
-//! storage.
+//! `usage.recompute` (plan §2.13 Quota and GC; P1-17, P4-07): counts a
+//! user's storage.
 //!
 //! Usage is the media plus the database (§2.13): the sum of the library's
 //! `media_objects.bytes`, and the size of its database (pages × page size).
-//! The job counts both on one read snapshot of the library and stores them
-//! on the user's row (`users.usage_bytes`, `usage_media_bytes`,
-//! `usage_db_bytes`, `usage_updated_at`), where `GET /me/usage` reads them,
-//! and the quota checks of P4 will.
+//! [`recount`] counts both and stores them on the user's row
+//! (`users.usage_bytes`, `usage_media_bytes`, `usage_db_bytes`,
+//! `usage_updated_at`), where `GET /me/usage` and the quota checks
+//! ([`crate::quota`]) read them.
+//!
+//! Between counts, the commits and releases of [`crate::quota`] keep the
+//! media bytes up to date as objects are stored and deleted; the count is
+//! the truth that corrects any drift (logged when it finds one) and the only
+//! measure of the database file. It runs in a write transaction of the
+//! library, the lock a store holds while it records objects and commits
+//! their bytes, so a count never sees a store's rows without its commit.
 //!
 //! **When.** Nightly for every active user (03:00 UTC, with the other
 //! nightly kinds), and after the events that change usage the most: the
-//! install of a migrated library ([`crate::migrations::install`]) and a
-//! purge (P1-11 calls [`enqueue`]). `GET /me/usage` enqueues one when the
-//! usage was never counted. Per-write increments arrive with the quotas in
-//! P4. A user without a library uses nothing, and none is created for them.
+//! install of a migrated library ([`crate::migrations::install`]), a purge
+//! (P1-11) and, later, the GC and the resets ([`enqueue`]). `GET /me/usage`
+//! enqueues one when the usage was never counted. A user without a library
+//! uses nothing, and none is created for them.
 //!
 //! **Limits.** 2 at once overall, 1 per user, 3 tries, a 5-minute lease: a
 //! count is one scan of `media_objects`, milliseconds at per-user scale.
 
-use std::sync::Arc;
 use std::time::Duration;
 
-use shelfy_core::db::DbError;
+use shelfy_core::repo::RepoError;
 
 use super::{Enqueued, JobContext, JobError, JobResult, Jobs, Kind, KindSpec, NewJob, Outcome};
-use crate::control::users;
 use crate::error::ApiError;
-use crate::state::blocking;
+use crate::state::{AppState, blocking};
 
 /// The kind's name.
 pub const KIND: &str = "usage.recompute";
@@ -56,43 +61,83 @@ pub async fn enqueue(jobs: &Jobs, user_id: &str) -> Result<Enqueued, ApiError> {
 
 /// What a count found, in bytes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Counted {
-    media: i64,
-    db: i64,
+pub struct Recount {
+    /// The media objects.
+    pub media_bytes: i64,
+    /// The library's database file.
+    pub db_bytes: i64,
+    /// The media bytes counted minus those the commits and releases had
+    /// kept: 0 when the accounting was exact.
+    pub drift_bytes: i64,
 }
 
-async fn run(ctx: JobContext) -> JobResult {
-    let library = ctx.state().config().data_dir.library_db(ctx.user_id());
-    let exists = tokio::fs::try_exists(&library).await.map_err(|err| {
-        JobError::transient(super::codes::UNAVAILABLE).with_detail(err.to_string())
-    })?;
+/// Counts `user_id`'s storage now and stores it (see the module docs).
+///
+/// # Errors
+///
+/// 423 `user_locked` while the library is locked for maintenance; database
+/// errors.
+pub async fn recount(state: &AppState, user_id: &str) -> Result<Recount, ApiError> {
+    let library = state.config().data_dir.library_db(user_id);
+    let exists = tokio::fs::try_exists(&library)
+        .await
+        .map_err(ApiError::internal)?;
+    let quotas = state.quota().clone();
+    let user = user_id.to_owned();
     let counted = if exists {
-        ctx.user_db(|db| {
-            db.read(|conn| {
-                let media: i64 = conn.query_row(
+        let db = state.user_db(user_id).await?;
+        blocking(move || {
+            // The write lock: no store records objects meanwhile.
+            db.write(|tx| -> Result<Recount, RepoError> {
+                let media: i64 = tx.query_row(
                     "SELECT coalesce(sum(bytes), 0) FROM media_objects",
                     [],
                     |row| row.get(0),
                 )?;
-                let pages: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))?;
-                let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))?;
-                Ok::<_, DbError>(Counted {
-                    media,
-                    db: pages.saturating_mul(page_size),
+                let pages: i64 = tx.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+                let page_size: i64 = tx.query_row("PRAGMA page_size", [], |row| row.get(0))?;
+                let db_bytes = pages.saturating_mul(page_size);
+                let drift = quotas.record_count(&user, media, db_bytes)?;
+                Ok(Recount {
+                    media_bytes: media,
+                    db_bytes,
+                    drift_bytes: drift,
                 })
             })
-            .map_err(JobError::from)
         })
         .await?
     } else {
-        Counted::default()
+        blocking(move || -> Result<Recount, RepoError> {
+            let drift = quotas.record_count(&user, 0, 0)?;
+            Ok(Recount {
+                drift_bytes: drift,
+                ..Recount::default()
+            })
+        })
+        .await?
     };
-    let control = Arc::clone(ctx.state().control());
-    let user_id = ctx.user_id().to_owned();
-    let now = ctx.jobs().clock().now_ms();
-    blocking(move || {
-        control.write(|tx| users::set_usage(tx, &user_id, counted.media, counted.db, now))
-    })
-    .await?;
+    if counted.drift_bytes != 0 {
+        tracing::warn!(
+            user_id = %user_id,
+            drift_bytes = counted.drift_bytes,
+            media_bytes = counted.media_bytes,
+            "the usage count corrected a drift of the media bytes"
+        );
+    }
+    Ok(counted)
+}
+
+async fn run(ctx: JobContext) -> JobResult {
+    // A locked library (`user_locked`) waits for the unlock without using a
+    // try; see `JobError`.
+    let counted = recount(ctx.state(), ctx.user_id())
+        .await
+        .map_err(JobError::from)?;
+    tracing::debug!(
+        job_id = ctx.id(),
+        media_bytes = counted.media_bytes,
+        db_bytes = counted.db_bytes,
+        "usage counted"
+    );
     Ok(Outcome::Succeeded)
 }
