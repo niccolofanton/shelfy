@@ -349,6 +349,15 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 | P3-05 | Tag ranking in search | running (Opus, cloud lane, E16) | `web/p3-05-tag-ranking` |
 | P2-12 | Connections settings: pairing, status, Shortcut | done (Sonnet): Settings → Connections (lazy, `connections` namespace): extension card (unsupported, not installed, unpaired, paired with status and version, outdated) with pairing through `web/src/extension/bridge.ts` (`shelfy.ping`/`shelfy.pair` to `EXTENSION_ID`), paired browsers with revoke; iOS Shortcut card (a `links:create` token shown once, setup steps); bookmarklet and Android share. `account.extensionStatus()`/`onExtensionStatus()` and the bridge are reusable (P2-18). Only run against fakes: the real extension is P2-23 | `web/p2-12-connections-ui` (9d739b9) |
 | UX-4 | Post cards | done (Sonnet): GAL-3 (a fallback tile no longer repeats the handle, no centered icon, muted "Media unavailable"), GAL-4 (the selected ring and tint are an overlay above the cover), GAL-8 (text excerpts fade instead of cutting a line), a 44 px quick-select hit area on narrow screens, alt text without the caption; `web/e2e/post-card.spec.ts`. The audit screenshots wait for UX-0 | `web/ux-4-post-cards` (9dc1450) |
+| P3-18 | AI settings: providers, routing, usage, status | running (Sonnet, cloud lane, E16) | `web/p3-18-ai-settings` |
+| P2-08 | Activity center on the web (L14) | running (Sonnet, cloud lane, E16) | `web/p2-08-activity-center` |
+| P2-16 | Selection overlay in the extension | running (Sonnet, cloud lane, E16) | `web/p2-16-selection-overlay` |
+| P4-16 | On-demand video chain, cache, keep offline (L20, L22) | running (Opus, cloud lane, E16) | `web/p4-16-video-chain` |
+| P4-18 | Manual bookmarks API | running (Opus, cloud lane, E16) | `web/p4-18-bookmarks-api` |
+| P3-02 | Key vault and master key | running (Opus, cloud lane, E16) | `web/p3-02-key-vault` |
+| UX-6 | Trash and Jobs | running (Sonnet, cloud lane, E16) | `web/ux-6-trash-jobs` |
+| P4-12 | GC | running (Opus, cloud lane, E16) | `web/p4-12-gc` |
+| P4-22 | Feedback through the relay | running (Sonnet, cloud lane, E16) | `web/p4-22-feedback-relay` |
 
 Nothing is held back by a decision any more: a task starts when its Needs have landed (wave plan below).
 
