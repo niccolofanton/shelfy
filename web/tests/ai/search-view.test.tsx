@@ -18,6 +18,10 @@ const voice = vi.hoisted(() => ({
   subscribeAudioLevel: () => () => {},
   start: vi.fn(async () => {}),
   stop: vi.fn(async (_opts?: { silent?: boolean }) => ''),
+  cancel: vi.fn(),
+  interimNoticeRequired: false,
+  acceptInterimNotice: vi.fn(async () => {}),
+  dismissInterimNotice: vi.fn(),
   toggle: vi.fn(),
   downloadModel: vi.fn(async () => {}),
 }));
@@ -73,6 +77,8 @@ function send(text = 'lamp') {
 }
 afterEach(() => {
   cleanup();
+  voice.cancel.mockClear();
+  voice.interimNoticeRequired = false;
   voice.status = 'idle';
   voice.isActive = false;
   voice.modelStatus = { ready: false };
@@ -215,6 +221,34 @@ describe('web conversation and filter state', () => {
     await act(async () => finish('late transcript'));
     expect(search.chat).toHaveBeenCalledTimes(1);
     expect(screen.queryByText('late transcript')).toBeNull();
+  });
+  it('renders explicit interim consent and cancels capture when the kept-alive view hides', async () => {
+    const search = api();
+    const c = client(search);
+    const rendered = render(
+      <ShelfyProvider client={c}>
+        <AiSearch />
+      </ShelfyProvider>,
+    );
+    voice.interimNoticeRequired = true;
+    rendered.rerender(
+      <ShelfyProvider client={c}>
+        <AiSearch />
+      </ShelfyProvider>,
+    );
+    expect(screen.getByRole('dialog')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Consenti per questa registrazione' }));
+    expect(voice.acceptInterimNotice).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Annulla' }));
+    expect(voice.dismissInterimNotice).toHaveBeenCalled();
+    voice.cancel.mockClear();
+    rendered.rerender(
+      <ShelfyProvider client={c}>
+        <AiSearch active={false} />
+      </ShelfyProvider>,
+    );
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(voice.cancel).toHaveBeenCalled();
   });
   it('clears the conversation and filters immediately when the session ends', async () => {
     const search = api();

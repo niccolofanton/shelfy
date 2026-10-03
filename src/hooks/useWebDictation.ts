@@ -108,6 +108,7 @@ export function useWebDictation(
       const abort = new AbortController();
       request.current = abort;
       const operation = Promise.resolve().then(async (): Promise<string> => {
+        if (current !== session.current || abort.signal.aborted) return '';
         try {
           if (!wav) {
             setError(t('emptyRecording'));

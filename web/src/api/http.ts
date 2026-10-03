@@ -205,7 +205,6 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
         keepalive: options?.keepalive,
         idempotencyKey: options?.idempotencyKey,
         headers: options?.headers,
-        signal: options?.signal,
         reauthenticate: options?.reauthenticate,
       }),
     onUnauthorized(listener) {

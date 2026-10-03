@@ -139,6 +139,27 @@ describe('web dictation', () => {
     f.unmount();
     expect(recorder.stop).toHaveBeenCalledTimes(2);
   });
+  it('does not restore an empty-recording error after same-tick cancel or unmount', async () => {
+    const f = fixture();
+    recorder.seconds = 0;
+    await act(async () => f.result.current.start());
+    await act(async () => {
+      const pending = f.result.current.stop();
+      f.result.current.cancel!();
+      expect(await pending).toBe('');
+    });
+    expect(f.result.current.status).toBe('idle');
+    expect(f.result.current.error).toBeNull();
+    expect(f.api.transcribe).not.toHaveBeenCalled();
+    await act(async () => f.result.current.start());
+    await act(async () => {
+      const pending = f.result.current.stop();
+      f.unmount();
+      expect(await pending).toBe('');
+    });
+    expect(f.api.transcribe).not.toHaveBeenCalled();
+    expect(f.onResult).not.toHaveBeenCalled();
+  });
   it('cancels a delayed permission prompt and closes the late recorder', async () => {
     let grant!: () => void;
     recorder.start.mockImplementation(

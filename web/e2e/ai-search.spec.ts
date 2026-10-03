@@ -66,7 +66,7 @@ test('web chat streams a result, switches provider and scope, applies filters an
 }) => {
   const { chats, searches } = await prepare(page);
   await expect(page.getByTestId('nav-aisearch')).toHaveAttribute('aria-current', 'page');
-  await expect(page.getByTestId('nav-aiqueue')).toHaveCount(0);
+  await expect(page.getByTestId('nav-aiqueue')).toBeVisible();
   await page.getByTestId('chat-provider-select').selectOption('custom');
   await page.getByTestId('aisearch-view').getByTestId('source-web').click();
   await ask(page);
@@ -119,7 +119,7 @@ for (const viewport of [
     }) => {
       const { chats, searches } = await prepare(page, true);
       await expect(page.getByTestId('model-download-btn')).toHaveCount(0);
-      await expect(page.getByTestId('chat-mic-btn')).toBeDisabled();
+      await expect(page.getByTestId('chat-mic-btn')).toBeEnabled();
       await ask(page);
       await expect(page.getByTestId('chat-message-assistant')).toContainText(
         'Here are suggested filters from your archive.',

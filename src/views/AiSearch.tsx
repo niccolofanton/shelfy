@@ -3,6 +3,7 @@ import VirtualPostGrid from '../components/VirtualPostGrid';
 import GridSizeControl from '../components/GridSizeControl';
 import PostGridSkeleton from '../components/PostGridSkeleton';
 import PostModal from '../components/PostModal';
+import DictationPrivacyNotice from '../components/DictationPrivacyNotice';
 import Chip from '../components/Chip';
 import { useShelfy } from '../api/ShelfyProvider';
 import { useAiSearch } from '../hooks/useAiSearch';
@@ -727,11 +728,13 @@ const ResultsPane = React.memo(function ResultsPane({
 // ────────────────────────────────────────────────────────────────────────────
 
 interface AiSearchProps {
+  active?: boolean;
   onOpenInWebsites?: () => void;
   onReanalyzeWeb?: (post: Shelfy.Post) => void;
 }
 
 export default function AiSearch({
+  active = true,
   onOpenInWebsites,
   onReanalyzeWeb,
 }: AiSearchProps): React.JSX.Element {
@@ -797,18 +800,34 @@ export default function AiSearch({
     language: isWeb ? lang : 'it',
   });
 
+  const cancelDictation = useRef(dictation.cancel);
+  cancelDictation.current = dictation.cancel;
+
+  useEffect(() => {
+    if (isWeb && !active) {
+      composerGeneration.current += 1;
+      cancelDictation.current?.();
+    }
+  }, [active, isWeb]);
+
   // Composer and open result dialogs contain account data outside the chat store.
   useEffect(() => {
     if (!isWeb) return;
     const clearLocal = () => {
       composerGeneration.current += 1;
+      cancelDictation.current?.();
       setDraft('');
       setActivePost(null);
       setCollectionModal(null);
       setMobileTab('chat');
     };
     clearLocal();
-    return client.ai?.search?.onSessionEnded?.(clearLocal);
+    const off = client.ai?.search?.onSessionEnded?.(clearLocal);
+    return () => {
+      off?.();
+      composerGeneration.current += 1;
+      cancelDictation.current?.();
+    };
   }, [client, isWeb]);
 
   // ── Detail modal: open on card click + step through the current results ────
@@ -867,10 +886,11 @@ export default function AiSearch({
 
   const handleReset = useCallback(() => {
     composerGeneration.current += 1;
-    if (dictation.isActive) dictation.stop({ silent: true });
+    if (isWeb) dictation.cancel?.();
+    else if (dictation.isActive) dictation.stop({ silent: true });
     reset();
     setDraft('');
-  }, [dictation, reset]);
+  }, [dictation, reset, isWeb]);
 
   const handleSeed = useCallback(
     (text: string) => {
@@ -1285,6 +1305,14 @@ export default function AiSearch({
           scrollRef={resultsScrollRef}
         />
       </div>
+
+      {isWeb && active && (
+        <DictationPrivacyNotice
+          open={!!dictation.interimNoticeRequired}
+          onAccept={dictation.acceptInterimNotice}
+          onCancel={dictation.dismissInterimNotice}
+        />
+      )}
 
       {activePost && (
         <PostModal

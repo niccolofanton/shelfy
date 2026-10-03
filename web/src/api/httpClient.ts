@@ -199,7 +199,12 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
           ...(me.capabilities['ai.tasks']
             ? {
                 aiProviders: createAiProvidersApi(http, events),
-                ai: { tags: createTagsApi(http, { events }), webQueue: createWebAiQueueApi(http, events), search: createAiSearchApi(http, events), dictation: createDictationApi(http) },
+                ai: {
+                  tags: createTagsApi(http, { events }),
+                  webQueue: createWebAiQueueApi(http, events),
+                  search: createAiSearchApi(http, events),
+                  dictation: createDictationApi(http),
+                },
               }
             : {}),
           links: createLinksApi(http),

@@ -1331,6 +1331,7 @@ function AppInner(): React.JSX.Element {
                       (caps.aiChat ? (
                         <Suspense fallback={<ViewLoading />}>
                           <AiSearchMemo
+                            active={visible}
                             onOpenInWebsites={caps.websites ? goOpenInWebsites : undefined}
                             onReanalyzeWeb={caps.websites ? goReanalyzeWeb : undefined}
                           />
