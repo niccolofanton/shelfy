@@ -29,6 +29,8 @@ fast_image_resize = "6.1.0"
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 getrandom = "0.4.3"
 http-body-util = "0.1.5"
+# `Retry-After` given as an HTTP date, in the outbound client (P2-04).
+httpdate = "1.0.3"
 # No default features: a crate enables only the codecs it decodes (no AVIF, EXR, TIFF…).
 image = { version = "0.25.10", default-features = false }
 jsonschema = { version = "0.58.4", default-features = false }
@@ -52,9 +54,21 @@ openssl = { version = "0.10.81", features = ["vendored"] }
 proptest = "1.11.0"
 rayon = "1.12.0"
 regex = "1.13.1"
+# Outbound HTTP (§2.21, L11): built only in `crates/server/src/outbound/client.rs`. No default
+# features: no cookies, no decompression, no system proxy, no bundled crypto provider. The
+# client hands reqwest its own rustls configuration (`ring` and the webpki roots, as lettre
+# and ureq use), so `rustls-no-provider` adds no second provider. HTTP/2; streamed bodies.
+reqwest = { version = "0.13.5", default-features = false, features = [
+  "http2",
+  "rustls-no-provider",
+  "stream",
+] }
 # No default features: they only add the wasm32 SQLite backend. `cache` is `prepare_cached`.
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache"] }
 rusqlite_migration = "2.6.0"
+# TLS of the outbound client, with `ring`: the provider lettre and ureq already use. Never
+# `aws_lc_rs` (a second provider and a C build).
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0.229", features = ["derive"] }
 # Query strings with repeated keys (`?mediaType=image&mediaType=video`); parsing only.
 serde_html_form = { version = "0.4.1", default-features = false, features = ["de", "std"] }
@@ -65,6 +79,8 @@ tempfile = "3.27.0"
 thiserror = "2.0.21"
 thumbhash = "0.1.0"
 tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+# TLS for the fixture CDN of the server's tests, with `ring` (see `rustls`).
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
 tokio-util = "0.7.19"
 tower = "0.5.3"
 tower-http = "0.7.1"
@@ -72,7 +88,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 # Blocking HTTP client of `shelfy-migrate`: rustls with ring (the provider lettre already
 # brings) and webpki roots, no async runtime in a CLI. The server's own outbound HTTP is
-# `reqwest` (§2.21), from P2.
+# `reqwest` (§2.21, P2-04).
 ureq = { version = "3.4.2", default-features = false, features = ["json", "rustls"] }
 url = "2.5.8"
 utoipa = "6.0.0"
@@ -82,6 +98,9 @@ utoipa-axum = "0.3.0"
 # crate names the option types the server adjusts.
 webauthn-rs = { version = "0.5.5", default-features = false, features = ["conditional-ui"] }
 webauthn-rs-proto = "0.5.5"
+# Mozilla's root certificates, compiled in: the trust store of the outbound client (as of
+# lettre and ureq), independent of the image's CA bundle.
+webpki-roots = "1.0.9"
 # Lossy WebP encoding through libwebp, compiled from source by `libwebp-sys` (needs a C
 # compiler). No default features: they only add `image` conversions.
 webp = { version = "0.3.1", default-features = false }

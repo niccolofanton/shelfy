@@ -14,6 +14,7 @@ base64.workspace = true
 clap = { workspace = true, features = ["env"] }
 futures-util.workspace = true
 getrandom.workspace = true
+httpdate.workspace = true
 lettre.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
@@ -23,8 +24,12 @@ moka.workspace = true
 openssl.workspace = true
 # Scrubbing the free text of client error reports before it is logged.
 regex.workspace = true
+# Outbound HTTP, built only in `src/outbound/client.rs` (L11).
+reqwest.workspace = true
 # `backup`: the SQLite online backup API behind `admin snapshot`.
 rusqlite = { workspace = true, features = ["backup"] }
+# The TLS configuration of the outbound client (`ring`, webpki roots).
+rustls.workspace = true
 serde.workspace = true
 serde_html_form.workspace = true
 serde_json.workspace = true
@@ -53,6 +58,7 @@ utoipa.workspace = true
 utoipa-axum.workspace = true
 webauthn-rs.workspace = true
 webauthn-rs-proto.workspace = true
+webpki-roots.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
@@ -63,6 +69,8 @@ proptest.workspace = true
 # The migration CLI, run end to end against the server in the migration tests.
 shelfy-migrate = { path = "../migrate" }
 tempfile.workspace = true
+# The fixture CDN's TLS (`tests/support/cdn.rs`).
+tokio-rustls.workspace = true
 # `test-util`: paused time for the SSE heartbeat test.
 tokio = { workspace = true, features = ["io-util", "test-util"] }
 tower = { workspace = true, features = ["util"] }
