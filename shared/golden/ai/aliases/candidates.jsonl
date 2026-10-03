@@ -1,0 +1,4 @@
+{"golden":"ai/aliases/candidates","source":"electron/db.ts#getUnaliasedTags,getCanonicalVocab","generator":"scripts/golden/ai-aliases.ts","format":1}
+{"id":"vocab-0","args":[[["Lamp","lamps","chair"],["Lamp","chairs"],["chair","chairs"],["Lamp","lamps"]]],"output":{"unaliased":[{"norm":"chair","form":"chair","count":2},{"norm":"chairs","form":"chairs","count":2}],"canonical":[{"norm":"lamp","form":"Lamp","count":3},{"norm":"chair","form":"chair","count":2},{"norm":"chairs","form":"chairs","count":2}]}}
+{"id":"vocab-1","args":[[["a","b"],["a","B"],["c"]]],"output":{"unaliased":[{"norm":"a","form":"a","count":2},{"norm":"b","form":"B","count":2},{"norm":"c","form":"c","count":1}],"canonical":[{"norm":"a","form":"a","count":2},{"norm":"b","form":"B","count":2},{"norm":"c","form":"c","count":1}]}}
+{"id":"vocab-2","args":[[]],"output":{"unaliased":[],"canonical":[]}}

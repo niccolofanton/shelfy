@@ -1,0 +1,4 @@
+{"golden":"ai/clusters/save","source":"electron/db.ts#saveClusterRun","generator":"scripts/golden/ai-clusters.ts","format":1}
+{"id":"save-0","args":[[{"label":"One","tags":["a","b"]},{"label":"Two","tags":["c","d"]}]],"output":{"saved":{"runId":1234,"count":1},"rows":[{"label":"Accepted","status":"accepted","runId":1234,"tags":["a","b"]},{"label":"Two","status":"proposed","runId":1234,"tags":["c","d"]}]}}
+{"id":"save-1","args":[[{"label":" Fresh ","tags":["A","a","b","c","d"]},{"label":"","tags":["e","f"]},{"label":"Single","tags":["g"]}]],"output":{"saved":{"runId":1234,"count":1},"rows":[{"label":"Accepted","status":"accepted","runId":1234,"tags":["a","b"]},{"label":"Fresh","status":"proposed","runId":1234,"tags":["c","d"]}]}}
+{"id":"save-2","args":[[]],"output":{"saved":{"runId":1234,"count":0},"rows":[{"label":"Accepted","status":"accepted","runId":1234,"tags":["a","b"]}]}}

@@ -108,6 +108,8 @@ pub mod search;
 pub mod selector;
 pub mod stats;
 pub mod sync_runs;
+pub mod tag_aliases;
+pub mod tag_clusters;
 pub mod trash;
 pub mod uploads;
 pub mod version;
@@ -179,6 +181,7 @@ const PROBLEM_RESPONSE: &str = "Problem";
         posts::PostSource,
         search::SearchScope,
         collections::CollectionDeleteMode,
+        tag_aliases::ReviewStatus,
     )),
     modifiers(&SecuritySchemes),
     tags(
@@ -192,6 +195,7 @@ const PROBLEM_RESPONSE: &str = "Problem";
                                           API tokens."),
         (name = "library", description = "The signed-in user's posts, stats and collections, \
                                           and their edits."),
+        (name = "ai", description = "AI taxonomy: proposed and accepted clusters and aliases."),
         (name = "search", description = "Ranked search over the signed-in user's library."),
         (
             name = "uploads",
@@ -413,6 +417,16 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(bulk::bulk_posts))
         .routes(routes!(posts::get_post, post_edit::update_post))
         .routes(routes!(search::search))
+        .routes(routes!(tag_clusters::list_clusters))
+        .routes(routes!(
+            tag_clusters::update_cluster,
+            tag_clusters::dismiss_cluster
+        ))
+        .routes(routes!(tag_clusters::remove_cluster_tag))
+        .routes(routes!(tag_aliases::list_aliases))
+        .routes(routes!(tag_aliases::accept_alias))
+        .routes(routes!(tag_aliases::dismiss_alias))
+        .routes(routes!(tag_aliases::accept_all_aliases))
         .routes(routes!(stats::get_stats))
         .routes(routes!(
             collections::list_collections,

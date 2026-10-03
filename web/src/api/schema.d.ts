@@ -1506,6 +1506,118 @@ export interface paths {
     patch: operations['updateSyncRun'];
     trace?: never;
   };
+  '/api/v1/tag-aliases': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['listTagAliases'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tag-aliases/accept-all': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['acceptAllTagAliases'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tag-aliases/{alias}/accept': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['acceptTagAlias'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tag-aliases/{alias}/dismiss': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['dismissTagAlias'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tag-clusters': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['listTagClusters'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/tag-clusters/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations['dismissTagCluster'];
+    options?: never;
+    head?: never;
+    patch: operations['updateTagCluster'];
+    trace?: never;
+  };
+  '/api/v1/tag-clusters/{id}/tags/{tag}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations['removeClusterTag'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/trash': {
     parameters: {
       query?: never;
@@ -1730,6 +1842,16 @@ export interface components {
        * @description Answer tokens providers reported.
        */
       outputTokens: number;
+    };
+    AliasDismissed: {
+      ok: boolean;
+    };
+    AliasList: {
+      items: components['schemas']['TagAlias'][];
+    };
+    AliasesAccepted: {
+      accepted: number;
+      rewritten: number;
     };
     /** @description The counts an analyze request reports. */
     AnalyzeCounts: {
@@ -2138,6 +2260,21 @@ export interface components {
        *     `settings`): 1–64 characters of letters, digits, `.`, `_`, `-`, `:`.
        */
       view: string;
+    };
+    /** @enum {string} */
+    ClusterDecision: 'accepted';
+    ClusterList: {
+      items: components['schemas']['TagCluster'][];
+    };
+    ClusterPatch: {
+      label?: string;
+      status?: components['schemas']['ClusterDecision'];
+    };
+    ClusterTagRemoved: {
+      removed: number;
+    };
+    ClusterUpdated: {
+      updated: number;
     };
     /**
      * @description A collection ("source" in the UI): a manual one, or a saved folder or board
@@ -4387,6 +4524,8 @@ export interface components {
      * @enum {string}
      */
     ResyncReason: 'expired' | 'unknown' | 'lagged';
+    /** @enum {string} */
+    ReviewStatus: 'proposed' | 'accepted';
     /**
      * @description The state of a run.
      * @enum {string}
@@ -4796,6 +4935,27 @@ export interface components {
       /** @description The new state. */
       state: components['schemas']['RunState'];
       stopReason: components['schemas']['StopReason'] | null;
+    };
+    TagAlias: {
+      aliasForm: string;
+      aliasNorm: string;
+      canonicalForm: string;
+      canonicalNorm: string;
+      /** Format: int64 */
+      count: number;
+      status: components['schemas']['ReviewStatus'];
+    };
+    TagCluster: {
+      /** Format: int64 */
+      id: number;
+      label: string;
+      /** Format: int64 */
+      postCount: number;
+      /** Format: int64 */
+      runId: number;
+      status: components['schemas']['ReviewStatus'];
+      tags: string[];
+      topTag: string;
     };
     /**
      * @description Origin of a tag.
@@ -7284,6 +7444,221 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['SyncRun'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  listTagAliases: {
+    parameters: {
+      query?: {
+        status?: components['schemas']['ReviewStatus'];
+      };
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description User aliases by live post count. */
+      200: {
+        headers: {
+          'Cache-Control'?: string;
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AliasList'];
+        };
+      };
+      /** @description Unchanged. */
+      304: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  acceptAllTagAliases: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description All proposed aliases accepted atomically. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AliasesAccepted'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  acceptTagAlias: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        alias: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Alias accepted and affected posts reindexed. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AliasesAccepted'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  dismissTagAlias: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        alias: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Proposal dismissed; post tags unchanged. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AliasDismissed'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  listTagClusters: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Top 24 clusters by distinct live posts. */
+      200: {
+        headers: {
+          'Cache-Control'?: string;
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ClusterList'];
+        };
+      };
+      /** @description Unchanged. */
+      304: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  dismissTagCluster: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Cluster dismissed. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ClusterUpdated'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  updateTagCluster: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ClusterPatch'];
+      };
+    };
+    responses: {
+      /** @description Cluster reviewed. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ClusterUpdated'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  removeClusterTag: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: number;
+        tag: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Tag removed from cluster. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ClusterTagRemoved'];
         };
       };
       default: components['responses']['Problem'];

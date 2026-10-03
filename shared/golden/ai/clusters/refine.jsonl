@@ -1,0 +1,6 @@
+{"golden":"ai/clusters/refine","source":"electron/analyzer.ts#validateRefinedGroups","generator":"scripts/golden/ai-clusters.ts","format":1}
+{"id":"valid","args":[["a","b","c"],{"groups":[{"name":" Theme ","tags":["A","b","invented","a"]}]}],"output":[{"label":"Theme","tags":["a","b"]}]}
+{"id":"cross-group-first-wins","args":[["a","b","c","d"],{"groups":[{"name":"one","tags":["a","b"]},{"name":"two","tags":["b","c","d"]}]}],"output":[{"label":"one","tags":["a","b"]},{"label":"two","tags":["c","d"]}]}
+{"id":"singleton-consumes","args":[["a","b","c"],{"groups":[{"name":"one","tags":["a"]},{"name":"two","tags":["a","b","c"]}]}],"output":[{"label":"two","tags":["b","c"]}]}
+{"id":"invalid","args":[["a","b"],{"groups":[null,{"name":"","tags":["a","b"]},{"name":4,"tags":["a","b"]},{"name":"two","tags":[42,"a","b"]}]}],"output":[{"label":"two","tags":["a","b"]}]}
+{"id":"empty","args":[["a","b"],null],"output":[]}

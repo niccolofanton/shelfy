@@ -53,7 +53,11 @@ for (const generated of GENERATED) {
 }
 
 const { default: aiCatalogSets } = await import('./ai-catalog');
+const { default: aiClusterSets } = await import('./ai-clusters');
+const { default: aiAliasSets } = await import('./ai-aliases');
 const SETS: GoldenSet[] = [
+  ...aiClusterSets,
+  ...aiAliasSets,
   extractContentTerms,
   edits,
   tagSearch,

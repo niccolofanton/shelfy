@@ -29,6 +29,7 @@ pub mod repo;
 pub mod schema;
 pub mod search;
 pub mod selector;
+pub mod tags;
 pub mod trash;
 pub mod web;
 

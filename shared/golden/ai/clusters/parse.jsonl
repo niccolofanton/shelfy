@@ -1,0 +1,9 @@
+{"golden":"ai/clusters/parse","source":"electron/analyzer.ts#parseRefineResponse","generator":"scripts/golden/ai-clusters.ts","format":1}
+{"id":"parse-0","args":[null],"output":{"groups":[],"outliers":[]}}
+{"id":"parse-1","args":[""],"output":{"groups":[],"outliers":[]}}
+{"id":"parse-2","args":[" "],"output":{"groups":[],"outliers":[]}}
+{"id":"parse-3","args":["{\"groups\":[],\"outliers\":[]}"],"output":{"groups":[],"outliers":[]}}
+{"id":"parse-4","args":["{\"groups\":[{\"name\":\"Theme\",\"tags\":[\"a\",\"b\"]}],\"outliers\":[]}"],"output":{"groups":[{"name":"Theme","tags":["a","b"]}],"outliers":[]}}
+{"id":"parse-5","args":["{\"groups\":[{\"name\":\"Theme\",\"tags\":[\"a\",\"b\"]}, {\"name\":\"Other\",\"tags\":[\"c\",\"d\"]}"],"output":{"groups":[{"name":"Theme","tags":["a","b"]},{"name":"Other","tags":["c","d"]}],"outliers":[]}}
+{"id":"parse-6","args":["noise {\"name\":\"Theme\",\"tags\":[\"a\",\"b\"]} tail"],"output":{"groups":[{"name":"Theme","tags":["a","b"]}],"outliers":[]}}
+{"id":"parse-7","args":["{\"groups\":[{\"name\":\"{ odd }\",\"tags\":[\"a\",\"b\"]}"],"output":{"groups":[{"name":"{ odd }","tags":["a","b"]}],"outliers":[]}}

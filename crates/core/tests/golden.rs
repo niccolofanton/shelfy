@@ -9,6 +9,7 @@
 mod golden_ai;
 mod golden_merge;
 mod golden_tag_search;
+mod golden_taxonomy;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -33,6 +34,8 @@ use shelfy_core::web::{color, similar};
 /// that directory.
 const CHECKED: &[&str] = &[
     "ai/catalog/",
+    "ai/clusters/",
+    "ai/aliases/",
     "edits",
     "extract-content-terms",
     "hosts",

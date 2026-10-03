@@ -3424,6 +3424,303 @@
         ]
       }
     },
+    "/api/v1/tag-aliases": {
+      "get": {
+        "tags": ["ai"],
+        "operationId": "listTagAliases",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReviewStatus"
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User aliases by live post count.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AliasList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tag-aliases/accept-all": {
+      "post": {
+        "tags": ["ai"],
+        "operationId": "acceptAllTagAliases",
+        "responses": {
+          "200": {
+            "description": "All proposed aliases accepted atomically.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AliasesAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tag-aliases/{alias}/accept": {
+      "post": {
+        "tags": ["ai"],
+        "operationId": "acceptTagAlias",
+        "parameters": [
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Alias accepted and affected posts reindexed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AliasesAccepted"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tag-aliases/{alias}/dismiss": {
+      "post": {
+        "tags": ["ai"],
+        "operationId": "dismissTagAlias",
+        "parameters": [
+          {
+            "name": "alias",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Proposal dismissed; post tags unchanged.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AliasDismissed"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tag-clusters": {
+      "get": {
+        "tags": ["ai"],
+        "operationId": "listTagClusters",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Top 24 clusters by distinct live posts.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tag-clusters/{id}": {
+      "delete": {
+        "tags": ["ai"],
+        "operationId": "dismissTagCluster",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cluster dismissed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterUpdated"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "patch": {
+        "tags": ["ai"],
+        "operationId": "updateTagCluster",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClusterPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Cluster reviewed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterUpdated"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/tag-clusters/{id}/tags/{tag}": {
+      "delete": {
+        "tags": ["ai"],
+        "operationId": "removeClusterTag",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tag removed from cluster.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClusterTagRemoved"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/trash": {
       "get": {
         "tags": ["library"],
@@ -4039,6 +4336,41 @@
             "type": "integer",
             "format": "int64",
             "description": "Answer tokens providers reported."
+          }
+        }
+      },
+      "AliasDismissed": {
+        "type": "object",
+        "required": ["ok"],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AliasList": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagAlias"
+            }
+          }
+        }
+      },
+      "AliasesAccepted": {
+        "type": "object",
+        "required": ["accepted", "rewritten"],
+        "properties": {
+          "accepted": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "rewritten": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       },
@@ -4664,6 +4996,54 @@
           }
         },
         "additionalProperties": false
+      },
+      "ClusterDecision": {
+        "type": "string",
+        "enum": ["accepted"]
+      },
+      "ClusterList": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TagCluster"
+            }
+          }
+        }
+      },
+      "ClusterPatch": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ClusterDecision"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClusterTagRemoved": {
+        "type": "object",
+        "required": ["removed"],
+        "properties": {
+          "removed": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ClusterUpdated": {
+        "type": "object",
+        "required": ["updated"],
+        "properties": {
+          "updated": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       },
       "Collection": {
         "type": "object",
@@ -8249,6 +8629,10 @@
         "description": "Why a stream asks the client to reload everything.",
         "enum": ["expired", "unknown", "lagged"]
       },
+      "ReviewStatus": {
+        "type": "string",
+        "enum": ["proposed", "accepted"]
+      },
       "RunState": {
         "type": "string",
         "description": "The state of a run.",
@@ -8967,6 +9351,66 @@
           }
         }
       },
+      "TagAlias": {
+        "type": "object",
+        "required": ["aliasNorm", "aliasForm", "canonicalNorm", "canonicalForm", "status", "count"],
+        "properties": {
+          "aliasForm": {
+            "type": "string"
+          },
+          "aliasNorm": {
+            "type": "string"
+          },
+          "canonicalForm": {
+            "type": "string"
+          },
+          "canonicalNorm": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReviewStatus"
+          }
+        }
+      },
+      "TagCluster": {
+        "type": "object",
+        "required": ["id", "label", "status", "topTag", "tags", "postCount", "runId"],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "label": {
+            "type": "string"
+          },
+          "postCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "runId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReviewStatus"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "topTag": {
+            "type": "string"
+          }
+        }
+      },
       "TagSource": {
         "type": "string",
         "description": "Origin of a tag.",
@@ -9310,6 +9754,10 @@
     {
       "name": "library",
       "description": "The signed-in user's posts, stats and collections, and their edits."
+    },
+    {
+      "name": "ai",
+      "description": "AI taxonomy: proposed and accepted clusters and aliases."
     },
     {
       "name": "search",
