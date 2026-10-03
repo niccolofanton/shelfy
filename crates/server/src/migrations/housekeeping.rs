@@ -1,16 +1,21 @@
-//! What installs leave behind, removed on a timer (plan §4.3, §2.13; P1-19):
-//! the server's maintenance loop calls [`sweep`] every hour.
+//! What installs and uploads leave behind, removed on a timer (plan §4.3,
+//! §2.13; P1-19, P4-08): the server's maintenance loop calls [`sweep`] every
+//! hour.
 //!
 //! - **Previous libraries.** An install keeps the library it replaced (or the
 //!   library as it was before a merge) as `users/<id>/library.prev-<job
 //!   id>.sqlite` for [`PREVIOUS_RETENTION`] (7 days), counted from the file's
 //!   modification time, which is when the copy was made. The kept file of
 //!   `admin user restore-db` (`library.pre-restore-*`) is not touched.
-//! - **Uploads**, of every user: unfinished ones past their expiry (24 hours,
-//!   [`crate::routes::uploads::UPLOAD_TTL`]), complete ones that no install
-//!   consumed within [`COMPLETE_UPLOAD_RETENTION`] (7 days, the life of a
-//!   `migrate` token), and files under `work/uploads/` whose row is gone
-//!   (a crash between the two) once a day old.
+//! - **Uploads**, of every user, with their files: unfinished ones past their
+//!   expiry (24 hours, [`crate::routes::uploads::UPLOAD_TTL`]); complete ones
+//!   that nobody used within their purpose's wait
+//!   ([`UploadPurpose::keep_complete`](crate::control::uploads::UploadPurpose):
+//!   7 days for the migration's, the life of a `migrate` token; 24 hours for
+//!   the web app's); claimed ones a week after the claim
+//!   ([`crate::control::uploads::CONSUMED_RETENTION`]). And files under
+//!   `work/uploads/` whose row is gone (a crash between the two) once a day
+//!   old.
 //! - **Install work directories** (`work/migrations/<job id>/`) whose job is
 //!   not queued or running: a try removes its own, so these are left by a
 //!   crash.
@@ -31,8 +36,6 @@ use crate::state::{AppState, blocking};
 pub const PREVIOUS_PREFIX: &str = "library.prev-";
 /// How long a previous library is kept.
 pub const PREVIOUS_RETENTION: Duration = Duration::from_secs(7 * 86_400);
-/// How long a complete upload waits for an install.
-pub const COMPLETE_UPLOAD_RETENTION: Duration = Duration::from_secs(7 * 86_400);
 /// How old a file under `work/uploads/` without a row must be to go.
 pub const ORPHAN_UPLOAD_AGE: Duration = Duration::from_secs(86_400);
 /// How often the server runs [`sweep`].
@@ -43,7 +46,8 @@ pub const INTERVAL: Duration = Duration::from_secs(3600);
 pub struct Swept {
     /// Previous libraries past their retention.
     pub previous: usize,
-    /// Upload rows (with their files) expired or never consumed.
+    /// Upload rows (with their files) expired, never used, or used long
+    /// ago.
     pub uploads: usize,
     /// Upload files without a row.
     pub orphan_files: usize,
@@ -69,14 +73,10 @@ pub async fn sweep(state: &AppState, now: i64) -> Swept {
     let uploads_dir = state.config().data_dir.uploads_dir();
     let migrations_dir = state.config().data_dir.migrations_dir();
     let result = blocking(move || -> Result<(usize, usize, usize), ApiError> {
-        let mut stale = control.read(|c| uploads::expired_all(c, now))?;
-        stale.extend(control.read(|c| {
-            uploads::complete_before(c, now.saturating_sub(millis(COMPLETE_UPLOAD_RETENTION)))
-        })?);
-        if !stale.is_empty() {
-            remove_files(&uploads_dir, &stale);
-            control.write(|tx| uploads::delete(tx, &stale))?;
-        }
+        // The rows go first, in one transaction, so nothing claims an upload
+        // whose files are about to go; then their files.
+        let stale = control.write(|tx| uploads::delete_stale(tx, now))?;
+        remove_files(&uploads_dir, &stale);
         let known = control.read(uploads::all_ids)?;
         let orphans = orphan_upload_files(&uploads_dir, &known, now);
         let active = control.read(active_installs)?;
@@ -90,7 +90,7 @@ pub async fn sweep(state: &AppState, now: i64) -> Swept {
             swept.orphan_files = orphan_files;
             swept.work_dirs = work_dirs;
         }
-        Err(err) => tracing::warn!(error = %err, "sweeping migration uploads failed"),
+        Err(err) => tracing::warn!(error = %err, "sweeping uploads failed"),
     }
     if swept != Swept::default() {
         tracing::info!(
@@ -98,7 +98,7 @@ pub async fn sweep(state: &AppState, now: i64) -> Swept {
             uploads = swept.uploads,
             orphan_files = swept.orphan_files,
             work_dirs = swept.work_dirs,
-            "removed what migration installs left behind"
+            "removed what installs and uploads left behind"
         );
     }
     swept

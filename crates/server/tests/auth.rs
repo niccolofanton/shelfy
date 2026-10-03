@@ -21,7 +21,7 @@ use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use shelfy_server::auth::RecentAuth;
 use shelfy_server::auth::access::{Access, AccessPolicy};
-use shelfy_server::auth::bearer::{Scope, TokenUser, scopes};
+use shelfy_server::auth::bearer::{Scope, ScopeSet, TokenUser, scopes};
 use shelfy_server::auth::rate_limit::RateLimit;
 use shelfy_server::config::Config;
 use shelfy_server::current_user::CurrentUser;
@@ -1476,6 +1476,14 @@ fn the_policy_api_is_what_routes_use() {
         Access::Token {
             scopes: Scope::Migrate.into(),
             session: false
+        }
+    );
+    // The tus uploads take a session, an `uploads` token or a `migrate` one.
+    assert_eq!(
+        policy.access(&Method::PATCH, "/api/v1/uploads/{id}"),
+        Access::Token {
+            scopes: ScopeSet::of(&[Scope::Uploads, Scope::Migrate]),
+            session: true
         }
     );
     assert_eq!(policy.access(&Method::GET, "/api/v1/me"), Access::Session);

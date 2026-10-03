@@ -2823,9 +2823,9 @@
     },
     "/api/v1/uploads": {
       "post": {
-        "tags": ["migration"],
+        "tags": ["uploads"],
         "summary": "Creates an upload (tus creation).",
-        "description": "Answers 201 with `Location: /api/v1/uploads/{id}`. 412 without\n`Tus-Resumable: 1.0.0`; 400 without a valid `Upload-Length`; 422 for bad\nmetadata; 413 when the length is over the purpose's limit (300 MiB for an\nobject, 4 GiB for a database); 409 with too many unfinished uploads.",
+        "description": "Answers 201 with `Location: /api/v1/uploads/{id}`. 412 without\n`Tus-Resumable: 1.0.0`; 400 without a valid `Upload-Length`; 422 for bad\nmetadata or an unknown purpose; 403 when the purpose is not the caller's\n(the migration's need a `migrate` token; bookmarks and imports a session\nor an `uploads` token); 413 over the purpose's size; 409 with too many\nunfinished uploads, or too many bytes waiting; 403 `quota_exceeded` when\na bookmark could not fit in the quota. A session sends `X-Shelfy-Client:\nweb` and the public `Origin`.",
         "operationId": "createUpload",
         "parameters": [
           {
@@ -2851,7 +2851,7 @@
           {
             "name": "Upload-Metadata",
             "in": "header",
-            "description": "Comma-separated `key base64(value)` pairs: `purpose`\n(`migration-object` or `migration-db`), `sha256` (lowercase hex) and,\nfor an object, `ext`.",
+            "description": "Comma-separated `key base64(value)` pairs: `purpose`\n(`migration-object`, `migration-db`, `bookmark-original`,\n`bookmark-preview` or `import`); `sha256` (lowercase hex; required for\nthe migration's purposes); for a migration object, `ext`; optionally\n`filename`, kept as a label.",
             "required": true,
             "schema": {
               "type": "string"
@@ -2889,6 +2889,12 @@
         },
         "security": [
           {
+            "session": []
+          },
+          {
+            "bearer": ["uploads"]
+          },
+          {
             "bearer": ["migrate"]
           }
         ]
@@ -2896,9 +2902,9 @@
     },
     "/api/v1/uploads/{id}": {
       "delete": {
-        "tags": ["migration"],
+        "tags": ["uploads"],
         "summary": "Terminates an upload (tus termination): its row and its bytes are\nremoved, whether it was complete or not.",
-        "description": "204; 412 without `Tus-Resumable: 1.0.0`; 404 for an unknown or another\nuser's upload; 409 while a `PATCH` writes it.",
+        "description": "204; 412 without `Tus-Resumable: 1.0.0`; 404 for an unknown or another\nuser's upload; 403 when its purpose is not the caller's; 409 while a\n`PATCH` writes it, and once a consumer used it (`upload_consumed`).",
         "operationId": "deleteUpload",
         "parameters": [
           {
@@ -2938,14 +2944,20 @@
         },
         "security": [
           {
+            "session": []
+          },
+          {
+            "bearer": ["uploads"]
+          },
+          {
             "bearer": ["migrate"]
           }
         ]
       },
       "head": {
-        "tags": ["migration"],
+        "tags": ["uploads"],
         "summary": "Where an upload stands, so a client can resume it (tus core).",
-        "description": "200 with `Upload-Offset` and `Upload-Length`; no body, errors included:\n412 without `Tus-Resumable: 1.0.0`, 404 for an unknown, expired or\nanother user's upload.",
+        "description": "200 with `Upload-Offset` and `Upload-Length`; no body, errors included:\n412 without `Tus-Resumable: 1.0.0`, 404 for an unknown, expired or\nanother user's upload, 403 when its purpose is not the caller's, 409 once\na consumer used it.",
         "operationId": "getUploadOffset",
         "parameters": [
           {
@@ -3001,14 +3013,20 @@
         },
         "security": [
           {
+            "session": []
+          },
+          {
+            "bearer": ["uploads"]
+          },
+          {
             "bearer": ["migrate"]
           }
         ]
       },
       "patch": {
-        "tags": ["migration"],
+        "tags": ["uploads"],
         "summary": "Appends bytes to an upload at its offset (tus core).",
-        "description": "The body (`application/offset+octet-stream`, at most 16 MiB) goes at\n`Upload-Offset`, which must be the upload's current offset (409\notherwise, with the current `Upload-Offset`). Bytes that arrive before a\nconnection breaks are kept. When the last byte arrives the server checks\nthe declared SHA-256 and type: a mismatch deletes the upload (422).",
+        "description": "The body (`application/offset+octet-stream`, at most 16 MiB) goes at\n`Upload-Offset`, which must be the upload's current offset (409\notherwise, with the current `Upload-Offset`). Bytes that arrive before a\nconnection breaks are kept. When the last byte arrives the server checks\nthem against the purpose: a declared SHA-256 that does not match deletes\nthe upload (422 `sha256`), and so do bytes of another type (422 `ext`\nagainst a declared type, 415 `unsupported_media_type` otherwise).",
         "operationId": "appendUpload",
         "parameters": [
           {
@@ -3082,6 +3100,12 @@
           }
         },
         "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["uploads"]
+          },
           {
             "bearer": ["migrate"]
           }
@@ -4053,6 +4077,7 @@
           "not_found",
           "method_not_allowed",
           "conflict",
+          "upload_consumed",
           "payload_too_large",
           "unsupported_media_type",
           "validation_failed",
@@ -7069,8 +7094,12 @@
       "description": "Ranked search over the signed-in user's library."
     },
     {
+      "name": "uploads",
+      "description": "Resumable uploads (tus 1.0): bookmark files and imports from the web app, migration bundles from the CLI."
+    },
+    {
       "name": "migration",
-      "description": "Moving a desktop library: resumable uploads (tus 1.0) and the install."
+      "description": "Moving a desktop library: what the server lacks, and the install."
     },
     {
       "name": "jobs",

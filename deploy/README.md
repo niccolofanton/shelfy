@@ -57,6 +57,7 @@ validated at start: a bad one stops the process with a message.
 | `SHELFY_ARCHIVE_RATE_INSTAGRAM`, `SHELFY_ARCHIVE_RATE_X`, `SHELFY_ARCHIVE_RATE_PINTEREST` | `2` | Requests per second to each CDN host group (SPIKE-2), above 0 and at most 100. Raise one step per quiet breaker week (P2-20). Concurrency is 4, 8 and 4; Instagram and Pinterest fetches start after a random 120–400 ms. The hydration hosts are fixed at 1 request per 3 s (`www.instagram.com`) and 1 per second (X and Pinterest, SPIKE-9) |
 | `SHELFY_DEV_EGRESS_HOSTS` | none | Local runs and tests only: `host=127.0.0.1:port` pairs, comma-separated, that send those names to a loopback fixture without DNS or the address check. Refused unless `SHELFY_PUBLIC_URL` is loopback, and together with `SHELFY_EGRESS_PROXY` |
 | `SHELFY_DEV_EGRESS_CA` | none | Local runs and tests only: a PEM file of extra root certificates to trust (a fixture CDN's CA). Refused unless `SHELFY_PUBLIC_URL` is loopback |
+| `SHELFY_IMPORT_MAX_GB` | `10` | Largest file a user may import (a desktop JSON export or an export bundle), in GiB, 1–1024: the cap of an `import` upload (`POST /api/v1/uploads`, P4-08). A user's uploads that wait to be used (imports, bookmark files) may hold this plus 1 GiB at once; complete ones wait 24 h, under `<data>/work/uploads/` |
 
 Empty values count as unset, so a compose file may pass `SHELFY_SMTP_HOST=` when email is off.
 Later tasks add the master key and the media budgets (§3.2, §3.4). The operator commands

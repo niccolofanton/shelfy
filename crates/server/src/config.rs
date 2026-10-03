@@ -26,6 +26,7 @@
 //! | `SHELFY_CAPTURE_URL` | none | the capture service, the only origin of the internal client |
 //! | `SHELFY_ARCHIVE_RATE_INSTAGRAM`, `…_X`, `…_PINTEREST` | `2` | CDN requests per second per host group |
 //! | `SHELFY_DEV_EGRESS_HOSTS`, `SHELFY_DEV_EGRESS_CA` | none | dev and tests: fixture hosts on loopback ports, and their CA; loopback public URL only |
+//! | `SHELFY_IMPORT_MAX_GB` | `10` | largest file to import (a JSON export or a bundle), in GiB: the cap of an `import` upload |
 //!
 //! [`crate::mail`] validates the email settings and [`crate::outbound`] the
 //! outbound ones. Later tasks add their variables here (master key, media
@@ -57,6 +58,11 @@ pub const DEFAULT_LISTEN_ADDR: &str = "0.0.0.0:8080";
 pub const DEFAULT_METRICS_ADDR: &str = "0.0.0.0:9464";
 /// Default of `SHELFY_PUBLIC_URL`.
 pub const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
+/// Default of `SHELFY_IMPORT_MAX_GB`.
+pub const DEFAULT_IMPORT_MAX_GB: u64 = 10;
+/// Largest accepted `SHELFY_IMPORT_MAX_GB`.
+pub const MAX_IMPORT_MAX_GB: u64 = 1024;
+const GIB: u64 = 1024 * 1024 * 1024;
 
 /// How long a graceful shutdown may take in total (plan §2.3: exit in ≤25 s,
 /// inside compose's `stop_grace_period: 30s`).
@@ -163,6 +169,18 @@ pub struct ServeArgs {
     /// `/app/web`. Unset: the API only.
     #[arg(long = "web-dir", env = "SHELFY_WEB_DIR", value_name = "DIR")]
     pub web_dir: Option<PathBuf>,
+
+    /// Largest file a user may import (a JSON export or an export bundle),
+    /// in GiB (1–1024): the cap of an `import` upload. A user's uploads
+    /// waiting to be used may hold this plus 1 GiB.
+    #[arg(
+        long = "import-max-gb",
+        env = "SHELFY_IMPORT_MAX_GB",
+        value_name = "GIB",
+        default_value_t = DEFAULT_IMPORT_MAX_GB,
+        value_parser = clap::value_parser!(u64).range(1..=MAX_IMPORT_MAX_GB)
+    )]
+    pub import_max_gb: u64,
 }
 
 /// Format of the logs on stdout (plan §3.7).
@@ -212,6 +230,8 @@ pub struct Config {
     /// Outbound HTTP: the proxy or direct mode, the operator allowlist, the
     /// capture service, the CDN limits (P2-04).
     pub outbound: OutboundConfig,
+    /// The largest `import` upload, in bytes (`SHELFY_IMPORT_MAX_GB`, P4-08).
+    pub import_max_bytes: u64,
 }
 
 impl Config {
@@ -245,6 +265,7 @@ impl Config {
             mail,
             web,
             outbound,
+            import_max_bytes: args.import_max_gb.saturating_mul(GIB),
             ..Self::with_data_dir(data_dir)
         })
     }
@@ -269,6 +290,7 @@ impl Config {
             jobs: JobsConfig::default(),
             web: None,
             outbound: OutboundConfig::default(),
+            import_max_bytes: DEFAULT_IMPORT_MAX_GB * GIB,
         }
     }
 }

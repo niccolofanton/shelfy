@@ -245,25 +245,53 @@ async fn migration_routes_take_a_migrate_token_and_nothing_else() {
         assert_eq!(response.headers()[header::WWW_AUTHENTICATE], "Bearer");
     }
 
-    // A signed-in session is not enough: the routes are token-only.
+    // A signed-in session is not enough: the migration routes are token-only,
+    // and the upload routes, which take sessions for the web app's uploads
+    // (P4-08), refuse a session the migration's uploads.
     let cookie = sign_in(&app, &t).await;
-    for (method, uri) in [
-        (Method::GET, "/api/v1/migrations/1"),
-        (Method::GET, "/api/v1/migrations/preflight"),
-        (Method::POST, "/api/v1/migrations/missing-objects"),
-        (Method::DELETE, location.as_str()),
+    for (method, uri, status) in [
+        (
+            Method::GET,
+            "/api/v1/migrations/1",
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            Method::GET,
+            "/api/v1/migrations/preflight",
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            Method::POST,
+            "/api/v1/migrations/missing-objects",
+            StatusCode::UNAUTHORIZED,
+        ),
+        (Method::DELETE, location.as_str(), StatusCode::FORBIDDEN),
+        (Method::POST, "/api/v1/uploads", StatusCode::FORBIDDEN),
     ] {
         let request = Request::builder()
             .method(method)
             .uri(uri)
             .header(header::CONTENT_TYPE, "application/json")
             .header("tus-resumable", "1.0.0")
+            .header("upload-length", "1")
+            .header("upload-metadata", &meta)
             .body(Body::from(r#"{"objects":[]}"#))
             .unwrap();
         let request = support::auth::from_spa(&t, with_session(request, &cookie));
-        let refused = problem(send(&app, request).await, StatusCode::UNAUTHORIZED).await;
-        assert_eq!(refused.code, ErrorCode::Unauthorized, "{uri}");
+        let refused = problem(send(&app, request).await, status).await;
+        let code = if status == StatusCode::FORBIDDEN {
+            ErrorCode::Forbidden
+        } else {
+            ErrorCode::Unauthorized
+        };
+        assert_eq!(refused.code, code, "{uri}");
     }
+    let response = send(&app, head(&token, &location)).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "the upload is still there"
+    );
 
     // A token without the scope: 403.
     let other = format!(

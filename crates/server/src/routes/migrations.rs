@@ -202,7 +202,7 @@ pub async fn find_missing_objects(
         let hashes: Vec<String> = parsed.iter().map(|p| p.0.clone()).collect();
         let uploaded: HashSet<String> = control
             .read(|c| {
-                uploads::complete_by_sha256(c, &user_id, UploadPurpose::MigrationObject, &hashes)
+                uploads::complete_by_sha256(c, &user_id, UploadPurpose::MIGRATION_OBJECT, &hashes)
             })?
             .into_iter()
             .map(|u| u.meta.sha256)
@@ -257,7 +257,7 @@ pub async fn start_migration(
         let (user_id, upload_id) = (user_id.clone(), body.db_upload_id.clone());
         blocking(move || control.read(|c| uploads::get(c, &user_id, &upload_id))).await?
     }
-    .filter(|u| u.is_complete() && u.purpose == Some(UploadPurpose::MigrationDb))
+    .filter(|u| u.is_complete() && u.purpose == Some(UploadPurpose::MIGRATION_DB))
     .ok_or_else(|| {
         ApiError::invalid_field(
             "dbUploadId",

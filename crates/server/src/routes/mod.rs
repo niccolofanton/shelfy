@@ -9,14 +9,17 @@
 //! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03); passkeys and re-authentication (P1-13); the account, its sessions and tokens, and the device flow (P1-17); bulk actions and the trash (P1-11) |
 //! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
 //! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
-//! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, [`uploads`]) |
+//! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, P4-08, [`uploads`]) |
 //! | ingest, STT | [`RouteLimits::INGEST`], [`RouteLimits::STT`] | added with their routes (P2, P3) |
 //!
-//! The migration routes (T9, P1-19): [`uploads`] (tus creation, `HEAD` to
-//! resume, `PATCH` chunks, `DELETE` to terminate) and [`migrations`]
-//! (preflight, missing objects, install, status). They take a `migrate`
-//! token and nothing else ([`TOKEN_ROUTES`]); the install is the `migrate`
-//! job ([`crate::jobs::migrate`]).
+//! The uploads (T9, P1-19, P4-08): [`uploads`] (tus creation, `HEAD` to
+//! resume, `PATCH` chunks, `DELETE` to terminate) take a session, an
+//! `uploads` token or a `migrate` token ([`TOKEN_ROUTES`]), and the upload's
+//! purpose decides which of them may upload what
+//! ([`crate::control::uploads::UploadPurpose`]). The migration routes
+//! [`migrations`] (preflight, missing objects, install, status) take a
+//! `migrate` token and nothing else; the install is the `migrate` job
+//! ([`crate::jobs::migrate`]).
 //!
 //! The read API (T11): [`posts`] (`GET /posts`, `GET /posts/{key}`),
 //! [`search`], [`stats`] and [`collections`], all behind
@@ -164,8 +167,13 @@ const PROBLEM_RESPONSE: &str = "Problem";
                                           and their edits."),
         (name = "search", description = "Ranked search over the signed-in user's library."),
         (
+            name = "uploads",
+            description = "Resumable uploads (tus 1.0): bookmark files and imports from the web \
+                           app, migration bundles from the CLI."
+        ),
+        (
             name = "migration",
-            description = "Moving a desktop library: resumable uploads (tus 1.0) and the install."
+            description = "Moving a desktop library: what the server lacks, and the install."
         ),
         (name = "jobs", description = "The signed-in user's background jobs and their queues: \
                                        progress, cancel, retry, pause and resume."),
@@ -200,40 +208,58 @@ pub const CSRF_EXEMPT_ROUTES: &[(Method, &str)] = &[
     (Method::POST, "/api/v1/auth/device/poll"),
 ];
 
-/// Routes that take a scoped API token: method, route template, the scope,
-/// and whether a signed-in session works too. Such a route also declares
-/// `security(("bearer" = ["<scope>"]))` in its `#[utoipa::path]`, plus
-/// `("session" = [])` when sessions work too. The migration routes (T9)
-/// take the CLI's `migrate` token only; `POST /posts/lookup` takes a `lookup`
-/// token or a session (P1-17); the extension routes join in P2.
-pub const TOKEN_ROUTES: &[(Method, &str, Scope, bool)] = &[
-    (Method::POST, "/api/v1/posts/lookup", Scope::Lookup, true),
-    (Method::POST, "/api/v1/uploads", Scope::Migrate, false),
-    (Method::HEAD, "/api/v1/uploads/{id}", Scope::Migrate, false),
-    (Method::PATCH, "/api/v1/uploads/{id}", Scope::Migrate, false),
+/// Routes that take a scoped API token: method, route template, the scopes
+/// (a token needs one of them), and whether a signed-in session works too.
+/// Such a route also declares one `("bearer" = ["<scope>"])` per scope in
+/// the `security(…)` of its `#[utoipa::path]`, plus `("session" = [])` when
+/// sessions work too. The migration routes (T9) take the CLI's `migrate`
+/// token only; `POST /posts/lookup` takes a `lookup` token or a session
+/// (P1-17); the tus uploads take a session, an `uploads` token or a
+/// `migrate` token, and the purpose of each upload decides further (P4-08);
+/// the extension routes join in P2.
+pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
+    (Method::POST, "/api/v1/posts/lookup", &[Scope::Lookup], true),
+    (
+        Method::POST,
+        "/api/v1/uploads",
+        uploads::UPLOAD_SCOPES,
+        true,
+    ),
+    (
+        Method::HEAD,
+        "/api/v1/uploads/{id}",
+        uploads::UPLOAD_SCOPES,
+        true,
+    ),
+    (
+        Method::PATCH,
+        "/api/v1/uploads/{id}",
+        uploads::UPLOAD_SCOPES,
+        true,
+    ),
     (
         Method::DELETE,
         "/api/v1/uploads/{id}",
-        Scope::Migrate,
-        false,
+        uploads::UPLOAD_SCOPES,
+        true,
     ),
     (
         Method::GET,
         "/api/v1/migrations/preflight",
-        Scope::Migrate,
+        &[Scope::Migrate],
         false,
     ),
     (
         Method::POST,
         "/api/v1/migrations/missing-objects",
-        Scope::Migrate,
+        &[Scope::Migrate],
         false,
     ),
-    (Method::POST, "/api/v1/migrations", Scope::Migrate, false),
+    (Method::POST, "/api/v1/migrations", &[Scope::Migrate], false),
     (
         Method::GET,
         "/api/v1/migrations/{id}",
-        Scope::Migrate,
+        &[Scope::Migrate],
         false,
     ),
 ];
@@ -282,8 +308,8 @@ pub fn access() -> AccessPolicy {
         });
     TOKEN_ROUTES
         .iter()
-        .fold(policy, |policy, (method, path, scope, session)| {
-            policy.token(method.clone(), *path, *scope, *session)
+        .fold(policy, |policy, (method, path, scopes, session)| {
+            policy.token(method.clone(), *path, *scopes, *session)
         })
 }
 

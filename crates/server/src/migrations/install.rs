@@ -231,7 +231,7 @@ async fn validated(ctx: &JobContext, payload: &Payload, work: &Path) -> Result<C
         let (user_id, upload_id) = (user_id.clone(), payload.db_upload_id.clone());
         blocking(move || control.read(|c| uploads::get(c, &user_id, &upload_id))).await?
     }
-    .filter(|u| u.is_complete() && u.purpose == Some(UploadPurpose::MigrationDb))
+    .filter(|u| u.is_complete() && u.purpose == Some(UploadPurpose::MIGRATION_DB))
     .ok_or_else(|| {
         JobError::permanent(ErrorCode::ValidationFailed.as_str()).with_detail(
             "the bundle's database upload is gone: run shelfy-migrate run again to upload it",
@@ -561,7 +561,7 @@ async fn follow_up(ctx: &JobContext, report: &MigrationReport) -> Result<(), Job
     let uploads_dir = state.config().data_dir.uploads_dir();
     blocking(move || -> Result<(), ApiError> {
         let mut ids = Vec::new();
-        for purpose in [UploadPurpose::MigrationObject, UploadPurpose::MigrationDb] {
+        for purpose in [UploadPurpose::MIGRATION_OBJECT, UploadPurpose::MIGRATION_DB] {
             let done = control.read(|c| uploads::complete_of(c, &user_id, purpose))?;
             ids.extend(done.into_iter().map(|u| u.id));
         }
@@ -616,7 +616,7 @@ async fn locate(
         let mut uploaded: HashMap<String, Upload> = HashMap::new();
         for batch in hashes.chunks(500) {
             let found = control.read(|c| {
-                uploads::complete_by_sha256(c, &user_id, UploadPurpose::MigrationObject, batch)
+                uploads::complete_by_sha256(c, &user_id, UploadPurpose::MIGRATION_OBJECT, batch)
             })?;
             for upload in found {
                 uploaded.entry(upload.meta.sha256.clone()).or_insert(upload);
