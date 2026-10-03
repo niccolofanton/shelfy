@@ -215,11 +215,14 @@ export function useJobs(filter: UseJobsFilter = NO_JOBS_FILTER): UseJobs {
         setState((prev) =>
           prev.byId.has(id) ? { ...prev, byId: new Map(prev.byId).set(id, job) } : prev,
         );
+        // The queue's counts moved too (a cancel adds to `cancelled`, a retry
+        // re-queues): the single-job call returns only the job, so refetch.
+        loadSummary();
       } finally {
         setBusyIds((prev) => without(prev, id));
       }
     },
-    [api],
+    [api, loadSummary],
   );
 
   const retry = useCallback(
@@ -231,11 +234,14 @@ export function useJobs(filter: UseJobsFilter = NO_JOBS_FILTER): UseJobs {
         setState((prev) =>
           prev.byId.has(id) ? { ...prev, byId: new Map(prev.byId).set(id, job) } : prev,
         );
+        // The queue's counts moved too (a cancel adds to `cancelled`, a retry
+        // re-queues): the single-job call returns only the job, so refetch.
+        loadSummary();
       } finally {
         setBusyIds((prev) => without(prev, id));
       }
     },
-    [api],
+    [api, loadSummary],
   );
 
   // Every queue action shares the busy-kind bookkeeping; only

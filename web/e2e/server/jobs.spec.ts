@@ -60,17 +60,10 @@ test('the Jobs view loads against the real API, empty on a fresh account', async
   await context.close();
 });
 
-// P1-21 found this one genuinely broken against the real server (not an
-// artifact of the account split above): `useJobs.ts`'s single-job `cancel`
-// only patches that job's own row (`setState`), unlike `refresh`/`resync`
-// and every *queue*-level action, which also call `loadSummary()`. A single
-// cancel never refreshes `summary`, so `queue.cancelled` stays 0 and
+// Regression for F19: a single-job cancel must refresh the queue summary, or
 // `jobs-queue-clear-finished` (disabled while `finished === 0`,
-// src/views/jobs/QueueBar.tsx) never enables — this hung for the full 60s
-// test timeout rather than failing fast. Flagged as a follow-up for
-// useJobs.ts (and its `retry`, which has the same gap); fixme rather than a
-// weaker assertion so the real behavior stays specified here.
-test.fixme('pause, a planted job, cancel, and the queue bar agree with the real server', async ({
+// src/views/jobs/QueueBar.tsx) never enables.
+test('pause, a planted job, cancel, and the queue bar agree with the real server', async ({
   browser,
 }) => {
   const context = await newContext(browser);
