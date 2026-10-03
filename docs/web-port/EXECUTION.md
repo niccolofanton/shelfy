@@ -227,6 +227,12 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P4-06, P4-14, P4-16, P4-22 | P4-06 passes `--proxy` with `proxy_url()` (direct mode leaves yt-dlp unguarded). P4-16 uses `Purpose::Video` (https only, 10 min) with the group limits and breakers, then `reader_capped` into `ingest_async(.., IngestLimits::VIDEO)`. P4-14 uses `internal()` plus `stream_capped` and reuses `SHELFY_CAPTURE_URL`, which P2-04 added. P4-22 uses `Purpose::Feedback`. | P2-04 |
 | Any lane adding serve flags | `ServeArgs` is about 8 bytes under clippy's `large_enum_variant` threshold: box `Command::Serve` in `cli.rs`. | P2-04 |
 | P3-11, P3-17, P3-18, P3-20, P3-22 | The AI seam is `src/api/ai/index.ts` (`AiApi { queue, tags, search, suggest, dictation }`, through `useShelfy().ai`); each method names its future web route. Capability flags `aiQueue`, `aiTags`, `aiChat`, `aiSuggest`, `dictation` are false on the web: implement `web/src/api/ai/*.ts` against the interfaces and flip your flag in `webCapabilities()`. The "promote results to a folder" flow in `AiTags.tsx` and `AiSearch.tsx` still calls `window.electronAPI` for collections: move it to P1-06's seam. | P3-08 |
+| P2 and P4 server lanes | P4-08 changed `TOKEN_ROUTES` rows to `(Method, &str, &[Scope], bool)`: write `&[Scope::X]` when you rebase. A token route now takes several scopes (`Access::Token { scopes, session }`, `has_any`, `missing_scope(impl Into<ScopeSet>)`), and a route that takes sessions and tokens answers 401 with `WWW-Authenticate: Bearer` when neither came. | P4-08 |
+| P2-14 | Registering an upload purpose is one line in the `purposes!` table in `crates/server/src/control/uploads.rs` (e.g. `ARCHIVE_OBJECT`, `uploads` scope, 15 MiB, `sha256` required, images, quota and staged), plus one test row; then `claim` it in `/ingest/tasks/{id}/complete`. | P4-08 |
+| P4-10, P4-19 | `POST /imports` calls `claim(IMPORT)` and puts the upload id in the job; the job reads `path`, dispatches on `found` (`Json` → v1, `Zip` → v2), then `discard`s. Measure the final `PATCH` hash of a 10 GiB import against Cloudflare's 100 s origin timeout (P4-31). | P4-08 |
+| P4-18 | Claim the originals, then the previews (release the first claim if the second fails); reserve the quota, publish from `path`, then `discard`; `release` on a failure before publishing. `bookmark-preview` excludes AVIF. | P4-08 |
+| P4-21 | tus-js-client: header `X-Shelfy-Client: web`, `chunkSize` ≤ 16 MiB, `metadata {purpose, filename}`, `removeFingerprintOnSuccess: true`. | P4-08 |
+| P4-07 | Uploads pre-check the quota at one call site, `check_quota`, marked `QUOTA(P4-07)`: make it `drop(quota::reserve(…).await?)`. | P4-08 |
 | P2-11 | `/share` (P2-07) already calls `POST /links` with contract C7 through `src/api/links.ts`; it answers 404 until P2-11 lands. | P2-07 |
 | P2-12 | The iOS Shortcut steps are drafted in the P2-07 report: a `links:create` token, then "Get Contents of URL" `POST /api/v1/links` with `{"url": <Shortcut Input>}`. | P2-07 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
@@ -257,7 +263,7 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 | P4-04 | Core: web captures, versions, delete modes | done: `crates/core/src/web/captures.rs`, 17 tests | `web/p4-04-web-captures` (53755a7) |
 | P4-06 | Media: yt-dlp and ffmpeg tools | running (Opus) | `web/p4-06-video-tools` |
 | P4-07 | Quotas, usage accounting, limits | running (Opus) | `web/p4-07-quotas` |
-| P4-08 | Web tus uploads: sessions, `uploads` scope, purposes | running (Opus) | `web/p4-08-uploads` |
+| P4-08 | Web tus uploads: sessions, `uploads` scope, purposes | done: tus takes a session, an `uploads` or a `migrate` token; five purposes in a one-line registry; used-once uploads | `web/p4-08-uploads` (4 commits, …4a93d13) |
 | P4-09 | Jobs view (replaces Downloads on the web) | running (Sonnet) | `web/p4-09-jobs-view` |
 | P3-01 | Provider adapters (OpenAI-compatible, Anthropic, whisper.cpp) and the stub provider | running (Opus) | `web/p3-01-providers` |
 | P3-03 | `shared/ai`: prompts and schemas v2, the desktop on them, the catalog core | running (Opus) | `web/p3-03-shared-ai` |
