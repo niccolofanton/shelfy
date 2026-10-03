@@ -3,7 +3,7 @@
   "id": "/",
   "name": "Shelfy",
   "short_name": "Shelfy",
-  "description": "Archive and browse your saved bookmarks from Instagram, TikTok, X and more",
+  "description": "Save and browse your posts from Instagram, X, Pinterest and websites",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

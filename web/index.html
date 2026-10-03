@@ -1,8 +1,16 @@
 <!doctype html>
-<html lang="en">
+<html lang="it">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- interactive-widget: Chrome for Android shrinks the layout when the
+         keyboard opens, so a focused field stays visible (iOS ignores it). -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <!-- <html lang> from the saved language, before the app runs (the default
+         language is Italian; React keeps it in sync afterwards). -->
+    <script src="/lang.js"></script>
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#0f0f0f" />
     <meta name="referrer" content="no-referrer" />
