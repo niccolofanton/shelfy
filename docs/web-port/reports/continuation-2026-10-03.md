@@ -1,14 +1,14 @@
 # Shelfy — local continuation and current tracking
 
-Snapshot time: 2026-10-03 18:26 CEST. Base fetched from GitHub: `web/foundations` at `abdd810` (27 commits after `86b5ab6`). This report supplements `EXECUTION.md`; it distinguishes implementation, verification and release.
+Snapshot time: 2026-10-03 19:23 CEST. Integration branch `web/foundations` is now `cc4f594`: P2-14/F22 and F20 integrated after the fetched `abdd810` base and continuation documentation. Publication and remote CI are recorded separately below. This report supplements `EXECUTION.md`; it distinguishes implementation, verification and release.
 
 | Area | Confirmed state | Next action / owner |
 |---|---|---|
 | Mac partial | `68c6c59` pushed to `web/p3-13-ai-drain`; 17 files, 1,912 added / 33 removed; pre-push Vitest 1,423/1,423 | Preserved as original recovery point |
 | P3-13 | Local lane resumed from that work, rebased as `bbefe84` onto the current foundation | Codex engine lane: worker, routes, admin, resilient state machine, generated API and tests |
-| F21 | Explicit library bearer read/write scopes not yet implemented | Codex scopes lane, no changes to F9 TTL policy |
-| Tracking | GitHub updates fetched and local integration fast-forwarded; E19 recorded | Codex lead: reconcile and publish status without replacing cloud contributions |
-| Existing cloud lanes | Still reserved by the execution log; process liveness not observable here | Do not duplicate; review their branch results as they arrive |
+| F21 | Code ready at `6f651ac`; read/write scopes and authz verified | Hold control migration 0006 until P4-11 reserved control 0005 lands; parent then rebases and refreezes v6 |
+| Tracking | E19–E22 recorded; complete implementation inventory requested by the owner | Codex lead maintains integration, evidence and the inventory |
+| Existing cloud lanes | Claude credits exhausted; all remaining tasks taken over under E20 | Published P2-14 and UX-0 code recovered; unpublished tasks resume from cards in isolated worktrees |
 | Release | Last recorded production release remains rc.5 | Next server release only after required checks and actual deployment verification |
 | Live work | F12 backfill, AI provider setup/gold gate/first run, P1-26 and personal sync checks remain in `reports/live-steps.md` | Local lead can reach local data and infra; execute in dependency order |
 | Full IG tagging | Not started; a compiled provider service alone is insufficient | Wait for complete P3-13 and measured gold pass |
@@ -28,19 +28,22 @@ Snapshot time: 2026-10-03 18:26 CEST. Base fetched from GitHub: `web/foundations
 | UX-4 | `76ef930`: fallback card, selection overlay, touch area and alt | Integrated does not imply production deployed |
 | UX-6 | `035fe2b`: Trash/Jobs primitives, layout, queue menus and progress | Integrated does not imply production deployed |
 
-## Reserved cloud assignments
+## Claude tasks taken over under E20
 
 F9, F13, F17, F18, F20; P2-08, P2-14, P2-16; P3-02, P3-05, P3-06, P3-07, P3-18; P4-10, P4-11, P4-12, P4-13, P4-14, P4-16, P4-18, P4-22; UX-0.
 
-Ownership is taken from the latest log, not inferred from a missing remote branch: an unfinished cloud lane may not have pushed yet. Re-read remote changes before integrating local work. Never force-push the shared foundation.
+The owner confirmed Claude credits are exhausted and asked Codex to continue these tasks. P2-14 and UX-0 have recoverable submitted branches; P3-13 has the preserved Mac partial. Other unintegrated task branches were not present in the fetched remote inventory. Recover any additional published work before implementation; do not claim that unpublished remote code was recovered. Never force-push the shared foundation.
 
 ## Verification ledger
 
 | Snapshot / check | Result |
 |---|---|
 | Original partial `68c6c59`, Mac pre-push | Vitest 112 files, 1,423 tests passed; Rust engine explicitly still incomplete |
-| Foundation `abdd810` CI | Run `37135767275` failed: test, rust, web-e2e and web-e2e-live succeeded; blocking ssrf stopped because the fixture was unhealthy. Nonblocking Lighthouse LCP 4,433 ms exceeded 2,500 ms. F20 remains assigned to cloud |
-| Local continuation | Required acceptance checks not yet completed; fill exact commit and outcome when lanes finish |
+| Foundation `abdd810` CI (historical) | Run `37135767275` failed: test, rust, web-e2e and web-e2e-live succeeded; blocking ssrf fixture unhealthy. F20 is now fixed locally. Nonblocking Lighthouse LCP 4,433 ms exceeded 2,500 ms; F18 remains open |
+| P2-14 + F22 `30b4e97` | Integrated after parent review: 64 targeted Rust tests; clippy, fmt, generated API/client and web typecheck green. Required leaseId, final eligibility/lease fence, bounded idempotency and actual-byte quota |
+| F20 `cc4f594` | Integrated after parent review: IPv6 cold-start 3/3, SSRF 92/92 (89 refusals + 3 controls), video 38/38 with ffmpeg, media clippy. Earlier Linux reproducer improved 10/200 failures to 0/500. Remote CI not yet rerun |
+| P3-13 work in progress | 500-post acceptance including offline mid-run, pause/resume, restart and refusal retry passed; final workspace/concurrency checks and integration remain |
+| X1 corrected preflight | The first eight-answer baseline had video frames missing because nested paths were unresolved; excluded from media-quality comparisons. New baseline resolves every input and validates media counts before the model call |
 
 ## Fetched commit inventory
 
@@ -78,5 +81,13 @@ Ownership is taken from the latest log, not inferred from a missing remote branc
 
 | Branch | Review status | Action |
 |---|---|---|
-| P2-14 `c16c863` | F22 blocker: forged/stale upload completion and polling lease ownership require hardening | Resume submitted code in local review lane; do not mark complete or deploy unchanged |
-| UX-0 `5b739eb` | Candidate ready for rebase and verification; Jobs target-size KNOWN list predates UX-6 | Reconcile stale known findings and run real-server UX suite before integration |
+| P2-14 `c16c863` | Original F22 findings resolved and integrated as `30b4e97` | P2-17 must echo polled leaseId; browser worker/live verification are separate tasks |
+| UX-0 `5b739eb` | Submitted code recovered and rebased; synthetic/real-server verification in progress | Reconcile stale Jobs target-size and contrast findings, preserving strict known-finding checks |
+
+## Implementation inventory and current assignments
+
+The owner requested implementation status, not time estimates. The complete inventory is [implementation-inventory-2026-10-03.md](implementation-inventory-2026-10-03.md): 115 P1–P4 cards, with 51 integrated, 16 pending (in progress, ready or taken over), 47 not started and P1-27 dropped. Follow-ups, UX, desktop SaaS, MCP and operational exit work are listed separately rather than hidden in a percentage.
+
+After the owner raised the cap to ten subagents and restarted Codex, all lane worktrees survived. Current parallel assignments use GPT-6.1 Sol / high: P3-13 completion, X1 harness tuning, P4-11 export, P2-08 Activity, P2-16 selection, P3-02 vault, P3-05 tag ranking, P3-06 clusters/aliases, UX-0 harness and the implementation inventory. F20 finished and its slot moved to X1.
+
+Under E22 the immediate operational priority remains the tagging chain: correct the real-node benchmark, improve shared prompts/media selection, finish and verify P3-13, deploy with operator concurrency one, then queue all saved Instagram posts for the owner's profile. The production CAS/video coverage must be measured separately from the privately fetched benchmark media. No full owner tagging run has started.
