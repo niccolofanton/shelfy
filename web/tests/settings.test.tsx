@@ -54,6 +54,7 @@ describe('Settings on the web', () => {
         .map((t) => t.dataset.testid),
     ).toEqual([
       'settings-tab-account',
+      'settings-tab-connections',
       'settings-tab-language',
       'settings-tab-storage',
       'settings-tab-legal',

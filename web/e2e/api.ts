@@ -26,6 +26,8 @@ export interface MockApi {
   // so a spec can read `api.jobs` afterwards to assert on the result.
   jobs: Schemas['Job'][];
   pausedKinds: Set<string>;
+  // P2-12: the account's API tokens, for `/me/tokens*` (connections.spec.ts).
+  tokens: Schemas['ApiToken'][];
   // The body of each `/events` connection in turn (SSE text); then `hello`.
   streams: string[];
   requests: RecordedRequest[];
@@ -235,7 +237,7 @@ const ACCOUNT_ROUTES: Record<string, unknown> = {
       },
     ],
   },
-  '/api/v1/me/tokens': { items: [] },
+  '/api/v1/extension/status': { connected: false, lastSeenAt: null, version: null },
   '/api/v1/me/usage': { usedBytes: 0, mediaBytes: 0, dbBytes: 0, quotaBytes: 0, updatedAt: T0 },
   '/api/v1/version': { version: 'e2e', apiVersion: '1' },
 };
@@ -390,6 +392,31 @@ async function answer(api: MockApi, route: Route): Promise<void> {
     });
   }
   if (path === '/api/v1/me') return route.fulfill({ json: OWNER });
+  if (path === '/api/v1/me/tokens') {
+    if (method === 'POST') {
+      const { kind, label } = (body ?? {}) as { kind: Schemas['TokenKind']; label?: string };
+      const apiToken: Schemas['ApiToken'] = {
+        id: `tok_${api.tokens.length + 1}`,
+        kind,
+        label: label ?? null,
+        scopes: kind === 'shortcut' ? ['links:create'] : ['ingest'],
+        createdAt: T0,
+        lastUsedAt: null,
+        expiresAt: null,
+      };
+      api.tokens.push(apiToken);
+      return route.fulfill({ status: 201, json: { apiToken, token: 'shx_e2e_secret' } });
+    }
+    return route.fulfill({ json: { items: api.tokens } });
+  }
+  if (path === '/api/v1/me/tokens/pairing-code' && method === 'POST') {
+    return route.fulfill({ status: 201, json: { code: 'p'.repeat(43), expiresAt: T0 + 60_000 } });
+  }
+  if (path.startsWith('/api/v1/me/tokens/') && method === 'DELETE') {
+    const id = decodeURIComponent(path.slice('/api/v1/me/tokens/'.length));
+    api.tokens = api.tokens.filter((t) => t.id !== id);
+    return route.fulfill({ status: 204 });
+  }
   if (method === 'GET' && path in ACCOUNT_ROUTES) {
     return route.fulfill({ json: ACCOUNT_ROUTES[path] });
   }
@@ -746,6 +773,7 @@ export async function mockApi(page: Page, origin: string): Promise<MockApi> {
     ...library(),
     jobs: [],
     pausedKinds: new Set(),
+    tokens: [],
     streams: [],
     requests: [],
     thirdParty: [],

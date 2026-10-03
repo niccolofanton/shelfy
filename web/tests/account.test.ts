@@ -175,6 +175,22 @@ describe('account', () => {
     expect(token.token).toMatchObject({ id: 't1', kind: 'shortcut', scopes: ['links:create'] });
   });
 
+  it('creates a pairing code and reads the extension status', async () => {
+    const events = fakeEvents();
+    const { http, sent } = fakeHttp({
+      'POST /api/v1/me/tokens/pairing-code': { code: 'abc', expiresAt: 9 },
+      'GET /api/v1/extension/status': { connected: true, lastSeenAt: 5, version: '0.1.0' },
+    });
+    const account = createAccountApi(http, OWNER, { events });
+    await expect(account.createPairingCode()).resolves.toEqual({ code: 'abc', expiresAt: 9 });
+    expect(sent[0]).toMatchObject({ method: 'POST', path: '/api/v1/me/tokens/pairing-code' });
+    await expect(account.extensionStatus()).resolves.toMatchObject({ connected: true });
+    const listener = vi.fn();
+    account.onExtensionStatus(listener);
+    events.emit('extension.status', { connected: false, lastSeenAt: 6, version: null });
+    expect(listener).toHaveBeenCalledWith({ connected: false, lastSeenAt: 6, version: null });
+  });
+
   it('saves only the settings it is given', async () => {
     const settings = {
       language: 'en',
