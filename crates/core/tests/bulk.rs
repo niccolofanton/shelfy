@@ -244,6 +244,32 @@ fn a_delete_stamps_its_posts_once_and_its_stamp_undoes_it() {
     assert_eq!(bulk::count(&conn, &undo).unwrap(), 0);
 }
 
+/// A job's chunk stamps its posts with the request's stamp, the undo key,
+/// and dates them by the chunk: when they really entered the trash (P1-11
+/// review H1, M4).
+#[test]
+fn a_chunk_stamps_with_the_request_and_dates_with_its_own_time() {
+    let (conn, ids, _) = rich_library();
+    let chunk = Selector::Keys(keys(&conn, &ids[..20]));
+    let applied = bulk::apply_stamped(&conn, &chunk, &Action::Delete, NOW + 5, NOW + 900).unwrap();
+    assert_eq!(applied.changed, ids[..20]);
+    let dated: Vec<(i64, i64)> = conn
+        .prepare("SELECT deleted_at, updated_at FROM posts WHERE id <= ?1 ORDER BY id")
+        .unwrap()
+        .query_map([ids[19]], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(dated, vec![(NOW + 5, NOW + 900); 20]);
+    // `apply` is the same with the stamp at the time of the change.
+    let inline = Selector::Keys(keys(&conn, &ids[20..22]));
+    bulk::apply(&conn, &inline, &Action::Delete, NOW + 7).unwrap();
+    assert_eq!(
+        bulk::count(&conn, &Selector::TrashedAt(NOW + 7)).unwrap(),
+        2
+    );
+}
+
 /// Trash then restore: both indexes, the folders, the tags and the post
 /// columns come back exactly, whether the restore runs inline or in chunks.
 #[test]

@@ -1231,15 +1231,15 @@ pub fn update_ai(conn: &Connection, post_id: i64, patch: &AiPatch, now: i64) -> 
     Ok(true)
 }
 
-/// Moves posts to the trash, stamped `now`, and drops their index rows;
-/// slides, tags and collection memberships stay for a restore
+/// Moves posts to the trash at `now`, stamped `now`, and drops their index
+/// rows; slides, tags and collection memberships stay for a restore
 /// ([`crate::trash::put`]). Returns how many were not already in the trash.
 ///
 /// # Errors
 ///
 /// Database errors.
 pub fn trash(conn: &Connection, post_ids: &[i64], now: i64) -> Result<usize> {
-    crate::trash::put(conn, &crate::trash::by_ids(post_ids), now).map(|moved| moved.len())
+    crate::trash::put(conn, &crate::trash::by_ids(post_ids), now, now).map(|moved| moved.len())
 }
 
 /// Restores posts from the trash and indexes them again

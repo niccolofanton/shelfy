@@ -1,6 +1,7 @@
 //! The trash (P1-11): its list, most recently trashed first with keyset
 //! paging; what a purge selects (a cutoff, oldest trash first, the 30-day
-//! retention); and the purge itself, idempotent.
+//! retention counted from the move into the trash, the exact cut of an
+//! emptying); and the purge itself, idempotent.
 
 mod support;
 
@@ -127,6 +128,101 @@ fn a_purge_takes_the_oldest_trash_up_to_its_cutoff() {
     assert_eq!(trash::count_purgeable(&conn, NOW - 1).unwrap(), 18);
     // Live posts are never purgeable.
     assert_eq!(trash::count_purgeable(&conn, i64::MAX).unwrap(), 20);
+}
+
+/// The `deleted_at` and `updated_at` of each post in `ids`.
+fn times(conn: &Connection, ids: &[i64]) -> Vec<(Option<i64>, i64)> {
+    ids.iter()
+        .map(|id| {
+            conn.query_row(
+                "SELECT deleted_at, updated_at FROM posts WHERE id = ?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+        })
+        .collect()
+}
+
+/// A delete that a job runs late keeps its stamp, the undo key, but dates
+/// its posts by the move: they stay their full 30 days from it (P1-11
+/// review M4).
+#[test]
+fn a_late_move_keeps_its_full_retention() {
+    let conn = library();
+    let ids = insert_all(&conn, &synthetic_posts(20, 11));
+    let stamp = NOW - 31 * DAY;
+    // A job asked 31 days ago that moves its posts now (its queue waited).
+    trash::put(&conn, &trash::by_ids(&ids[..5]), stamp, NOW).unwrap();
+    // An inline delete of a day before.
+    posts::trash(&conn, &ids[5..8], stamp - DAY).unwrap();
+    assert!(
+        times(&conn, &ids[..5])
+            .iter()
+            .all(|&t| t == (Some(stamp), NOW))
+    );
+
+    let nightly = |at: i64| trash::count_purgeable(&conn, trash::retention_cutoff(at)).unwrap();
+    assert_eq!(nightly(NOW), 3, "only what has been in the trash 30 days");
+    assert_eq!(nightly(NOW + 29 * DAY), 3);
+    assert_eq!(nightly(NOW + RETENTION_MS), 8);
+    // The undo still finds the late posts by the stamp.
+    let undo = shelfy_core::selector::Selector::TrashedAt(stamp);
+    assert_eq!(shelfy_core::selector::count(&conn, &undo).unwrap(), 5);
+}
+
+/// Emptying the trash deletes the posts in it when asked, and none of those
+/// that enter it afterwards, whatever their stamp: a bulk delete asked before
+/// the emptying but run after it keeps its posts (P1-11 review H1).
+#[test]
+fn emptying_cuts_exactly_the_posts_in_the_trash() {
+    let conn = library();
+    let ids = insert_all(&conn, &synthetic_posts(40, 12));
+    let nothing = trash::emptying(&conn, NOW - 2 * DAY).unwrap();
+    assert_eq!((nothing.through, nothing.posts), (NOW - 2 * DAY, 0));
+
+    posts::trash(&conn, &ids[..10], NOW - DAY).unwrap();
+    // Moved by a job a little after the request's clock read.
+    trash::put(&conn, &trash::by_ids(&ids[10..12]), NOW - 2 * DAY, NOW + 5).unwrap();
+    let emptying = trash::emptying(&conn, NOW).unwrap();
+    assert_eq!(emptying.posts, 12);
+    assert_eq!(
+        emptying.through,
+        NOW + 5,
+        "at or after every post in the trash"
+    );
+    assert_eq!(trash::count_purgeable(&conn, emptying.through).unwrap(), 12);
+
+    // After the request: a job's chunk stamped days before, in the same
+    // millisecond; an inline delete at the cut itself; a post restored, and
+    // one restored and deleted again.
+    trash::put(&conn, &trash::by_ids(&ids[20..25]), NOW - 3 * DAY, NOW).unwrap();
+    posts::trash(&conn, &ids[25..27], NOW + 5).unwrap();
+    posts::restore(&conn, &ids[..2], NOW + 6).unwrap();
+    posts::trash(&conn, &ids[..1], NOW + 6).unwrap();
+    assert!(
+        times(&conn, &ids[20..25])
+            .iter()
+            .all(|&t| t == (Some(NOW - 3 * DAY), NOW + 6)),
+        "moved past the cut"
+    );
+    assert_eq!(trash::count(&conn).unwrap(), 18);
+    let mut purged_first: Vec<i64> = ids[10..12].to_vec();
+    purged_first.extend(&ids[2..10]);
+    assert_eq!(
+        trash::purgeable(&conn, emptying.through, 100).unwrap(),
+        purged_first,
+        "the posts of the request, oldest stamp first, less the restored"
+    );
+
+    // The recorded cut never goes back, even when the clock does.
+    let later = trash::emptying(&conn, NOW + 10).unwrap();
+    assert_eq!((later.through, later.posts), (NOW + 10, 18));
+    let earlier = trash::emptying(&conn, NOW + 7).unwrap();
+    assert_eq!(earlier.through, NOW + 7);
+    posts::trash(&conn, &ids[30..31], NOW + 8).unwrap();
+    assert_eq!(times(&conn, &ids[30..31]), [(Some(NOW + 8), NOW + 11)]);
+    assert_eq!(trash::count_purgeable(&conn, later.through).unwrap(), 18);
 }
 
 #[test]

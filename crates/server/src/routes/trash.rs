@@ -5,7 +5,7 @@
 //! |---|---|
 //! | `GET /trash?limit&cursor` | the trashed posts, most recently trashed first, with `total` and `retentionDays` (conditional) |
 //! | `POST /trash/restore` `{selector}` or `{deletedAt}` (`Idempotency-Key`) | the posts back, with their folders and search text: 200 inline, or 202 and a `bulk` job past 500 posts |
-//! | `POST /trash/empty` (`Idempotency-Key`) | 202 and the `purge` job of everything trashed until the request |
+//! | `POST /trash/empty` (`Idempotency-Key`) | 202 and the `purge` job of exactly the posts in the trash at the request |
 //!
 //! Posts go to the trash with `POST /posts/bulk` (`delete`) and with
 //! `DELETE /collections/{id}?mode=withPosts`; both answer the `deletedAt`
@@ -36,7 +36,6 @@ use crate::conditional::{ConditionalHeaders, ETag};
 use crate::current_user::CurrentUser;
 use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json, Query};
-use crate::ids::now_ms;
 use crate::jobs::bulk::Selection;
 use crate::jobs::idempotency::IdempotencyHeader;
 use crate::jobs::purge;
@@ -229,17 +228,21 @@ pub async fn restore_trash(
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TrashEmptying {
-    /// Posts in the trash when the request came: what the job deletes.
+    /// Posts in the trash when the request came: what the job deletes (less
+    /// those restored before it gets to them).
     pub selected: u64,
     /// The `purge` job: its progress arrives as `job.updated`.
     pub job: Job,
 }
 
 /// Empties the trash: starts the `purge` job that deletes for good every
-/// post trashed until this request (posts trashed later stay), with their
-/// tags, folder memberships and search rows. Their media are released for
-/// the storage cleanup. Answers 202 at once; the job's progress arrives as
-/// `job.updated`. Send an `Idempotency-Key` so that a repeat starts one job.
+/// post in the trash at this request, with their tags, folder memberships
+/// and search rows. Posts that enter the trash later stay, even those of a
+/// bulk delete asked before; posts restored before the job gets to them
+/// stay too. The job runs after the user's earlier bulk jobs. Their media
+/// are released for the storage cleanup. Answers 202 at once; the job's
+/// progress arrives as `job.updated`. Send an `Idempotency-Key` so that a
+/// repeat starts one job.
 #[utoipa::path(
     post,
     path = "/api/v1/trash/empty",
@@ -261,12 +264,15 @@ pub async fn empty_trash(
     State(state): State<AppState>,
     user: CurrentUser,
 ) -> Result<Response, ApiError> {
-    let through = now_ms();
+    let now = state.jobs().clock().now_ms();
     let db = state.user_db(user.id()).await?;
-    let selected = blocking(move || db.read(|conn| trash::count_purgeable(conn, through))).await?;
-    let enqueued = purge::enqueue(state.jobs(), user.id(), through).await?;
+    // In a write transaction, so that no move to the trash is halfway: the
+    // cut covers every post in the trash, and none that comes later
+    // (`trash::emptying`, P1-11 review H1).
+    let emptying = blocking(move || db.write(|tx| trash::emptying(tx, now))).await?;
+    let enqueued = purge::enqueue(state.jobs(), user.id(), emptying.through).await?;
     let body = TrashEmptying {
-        selected,
+        selected: emptying.posts,
         job: enqueued.job.into(),
     };
     Ok((StatusCode::ACCEPTED, Json(body)).into_response())

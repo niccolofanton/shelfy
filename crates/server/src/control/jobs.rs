@@ -727,6 +727,28 @@ pub fn has_active(conn: &Connection, user_id: &str, kind: &str) -> Result<bool> 
     .map_err(RepoError::from)
 }
 
+/// Whether `user_id` has a queued or running job of `kind` created before
+/// the job `before`: a smaller id, since a new job's id is above every id in
+/// the table when it is created.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn has_active_before(
+    conn: &Connection,
+    user_id: &str,
+    kind: &str,
+    before: i64,
+) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM jobs WHERE user_id = ?1 AND kind = ?2 \
+         AND state IN ('queued', 'running') AND id < ?3)",
+        params![user_id, kind, before],
+        |row| row.get(0),
+    )
+    .map_err(RepoError::from)
+}
+
 /// The active users, for the nightly schedule and the drain sweeper.
 ///
 /// # Errors

@@ -34,7 +34,7 @@ use shelfy_core::repo::posts::{self, UserContentPatch};
 use shelfy_core::search::index;
 use shelfy_server::error::ErrorCode;
 use shelfy_server::events::Delivery;
-use shelfy_server::events::model::EventTopic;
+use shelfy_server::events::model::{EventTopic, JobState};
 use shelfy_server::ids::{new_ulid, now_ms};
 use shelfy_server::jobs::idempotency::{IDEMPOTENCY_KEY, REPLAYED};
 use shelfy_server::jobs::{Scheduler, kinds};
@@ -1199,8 +1199,9 @@ async fn emptying_the_trash_purges_up_to_the_request_and_is_idempotent() {
     }
     assert_index_consistent(&t, ALICE, "a purge");
 
-    // Again: the rest goes. Then once more: nothing to purge, no write, no
-    // new storage count.
+    // Again: the rest goes. Then once more: nothing to purge, so the purge
+    // writes nothing and counts no storage (the request itself records the
+    // cut of its emptying, see `shelfy_core::trash::emptying`).
     call(
         &app,
         post_empty("/api/v1/trash/empty"),
@@ -1208,9 +1209,6 @@ async fn emptying_the_trash_purges_up_to_the_request_and_is_idempotent() {
     )
     .await;
     wait_succeeded(&t, ALICE, "purge", 2).await;
-    let response = send(&app, get("/api/v1/trash")).await;
-    let etag = response.headers()[header::ETAG].clone();
-    assert_eq!(json(response).await["total"], 0);
     let usage_jobs: i64 = t
         .control()
         .query_row(
@@ -1219,6 +1217,7 @@ async fn emptying_the_trash_purges_up_to_the_request_and_is_idempotent() {
             |r| r.get(0),
         )
         .unwrap();
+    ok(&app, post_empty("/api/v1/queues/purge/pause")).await;
     let emptying = call(
         &app,
         post_empty("/api/v1/trash/empty"),
@@ -1226,6 +1225,10 @@ async fn emptying_the_trash_purges_up_to_the_request_and_is_idempotent() {
     )
     .await;
     assert_eq!(emptying["selected"], 0);
+    let response = send(&app, get("/api/v1/trash")).await;
+    let etag = response.headers()[header::ETAG].clone();
+    assert_eq!(json(response).await["total"], 0);
+    ok(&app, post_empty("/api/v1/queues/purge/resume")).await;
     wait_succeeded(&t, ALICE, "purge", 3).await;
     let unchanged = send(
         &app,
@@ -1248,6 +1251,125 @@ async fn emptying_the_trash_purges_up_to_the_request_and_is_idempotent() {
     // Bob's trash was never touched.
     let bobs = t.app_as(BOB);
     ok(&bobs, get("/api/v1/posts/ig_9001")).await;
+}
+
+/// Review H1: emptying the trash purges the posts in it at the request, and
+/// none of those that a bulk delete asked before moves after it. The delete
+/// stamps its posts with the request and dates them by its chunks, so they
+/// also keep their full 30 days (review M4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn emptying_the_trash_spares_what_a_bulk_delete_moves_after_it() {
+    let (t, _) = two_libraries().await;
+    t.write(ALICE, |tx| synthetic_library(tx, 1_200, 31)).await;
+    let app = t.app_as(ALICE);
+    let _scheduler = scheduler(&t);
+
+    // The reviewer's sequence: the delete of everything is stamped now and
+    // waits in its queue; the trash is emptied meanwhile.
+    ok(&app, post_empty("/api/v1/queues/bulk/pause")).await;
+    let started = call(
+        &app,
+        bulk(json!({ "filter": {} }), "delete", Value::Null),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    assert_eq!(started["selected"], 1_207);
+    let stamp = started["deletedAt"].as_i64().unwrap();
+    ok(&app, post_empty("/api/v1/queues/purge/pause")).await;
+    let emptying = call(
+        &app,
+        post_empty("/api/v1/trash/empty"),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    assert_eq!(emptying["selected"], 1, "the fixture's trashed post");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let resumed = now_ms();
+    ok(&app, post_empty("/api/v1/queues/bulk/resume")).await;
+    wait_succeeded(&t, ALICE, "bulk", 1).await;
+    ok(&app, post_empty("/api/v1/queues/purge/resume")).await;
+    wait_succeeded(&t, ALICE, "purge", 1).await;
+
+    not_found(&app, get(&format!("/api/v1/posts/{FIXTURE_TRASHED}"))).await;
+    let trash = ok(&app, get("/api/v1/trash?limit=1")).await;
+    assert_eq!(
+        trash["total"], 1_207,
+        "the delete's posts are all in the trash"
+    );
+    let dates: Vec<(i64, i64, i64)> = library(&t, ALICE)
+        .prepare(
+            "SELECT deleted_at, min(updated_at), count(*) FROM posts
+             WHERE deleted_at IS NOT NULL GROUP BY deleted_at",
+        )
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(dates.len(), 1, "one stamp: {dates:?}");
+    let (stamped, dated, count) = dates[0];
+    assert_eq!((stamped, count), (stamp, 1_207));
+    assert!(
+        dated >= resumed,
+        "dated by the chunks, after the queue resumed"
+    );
+    assert_index_consistent(&t, ALICE, "a purge beside a bulk delete");
+}
+
+/// Review H1, the other side: a purge waits for the user's bulk jobs asked
+/// before it, so a restore job asked before emptying the trash (the undo of
+/// a delete of over 500 posts) brings its posts back before the purge.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_purge_waits_for_a_restore_asked_before_it() {
+    let (t, _) = two_libraries().await;
+    t.write(ALICE, |tx| synthetic_library(tx, 1_200, 32)).await;
+    let app = t.app_as(ALICE);
+    let _scheduler = scheduler(&t);
+    let mut events = t.state.events().subscribe(ALICE, None);
+    let started = call(
+        &app,
+        bulk(json!({ "filter": {} }), "delete", Value::Null),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    let stamp = started["deletedAt"].as_i64().unwrap();
+    follow_job(&mut events, started["job"]["id"].as_i64().unwrap()).await;
+
+    // The undo waits in the bulk queue; the trash is emptied after it.
+    ok(&app, post_empty("/api/v1/queues/bulk/pause")).await;
+    let undo = call(
+        &app,
+        restore(json!({ "deletedAt": stamp })),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    let emptying = call(
+        &app,
+        post_empty("/api/v1/trash/empty"),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    assert_eq!(emptying["selected"], 1_208);
+    let purge = emptying["job"]["id"].as_i64().unwrap();
+    // The purge starts, finds the restore ahead of it, and goes back to the
+    // queue without using a try or deleting anything.
+    let waiting = t
+        .wait_job(ALICE, purge, |job| {
+            job.state == JobState::Queued && job.stage.as_deref() == Some("purge")
+        })
+        .await;
+    assert_eq!(waiting.attempts, 0);
+    assert!(waiting.run_at > waiting.created_at);
+    assert_eq!(ok(&app, get("/api/v1/trash?limit=1")).await["total"], 1_208);
+
+    ok(&app, post_empty("/api/v1/queues/bulk/resume")).await;
+    follow_job(&mut events, undo["job"]["id"].as_i64().unwrap()).await;
+    wait_succeeded(&t, ALICE, "purge", 1).await;
+    assert_eq!(ok(&app, get("/api/v1/trash")).await["total"], 0);
+    not_found(&app, get(&format!("/api/v1/posts/{FIXTURE_TRASHED}"))).await;
+    let count = ok(&app, get("/api/v1/posts/count")).await;
+    assert_eq!(count["total"], 1_207, "every post the undo restored stayed");
+    assert_index_consistent(&t, ALICE, "a purge after a restore");
 }
 
 /// The nightly purge (03:00 UTC) deletes what has been in the trash for 30

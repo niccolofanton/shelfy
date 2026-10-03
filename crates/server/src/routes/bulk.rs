@@ -49,7 +49,6 @@ use crate::error::{ApiError, ErrorCode};
 use crate::events::MAX_EVENT_KEYS;
 use crate::events::model::ChangeReason;
 use crate::extract::Json;
-use crate::ids::now_ms;
 use crate::jobs::bulk::{self as job, Payload, Selection};
 use crate::jobs::idempotency::IdempotencyHeader;
 use crate::library::{self, Change};
@@ -310,7 +309,8 @@ pub(crate) async fn start(
         selection,
         selector,
     } = plan;
-    let at = now_ms();
+    // The job system's clock, which the jobs' chunks read too.
+    let at = state.jobs().clock().now_ms();
     let deleted_at = (action == BulkAction::Delete).then_some(at);
     // A selection by key fits the inline limit by construction. Otherwise
     // count it, and check the action can run, before anything is enqueued.

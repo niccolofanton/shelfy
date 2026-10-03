@@ -24,7 +24,7 @@
 //!
 //! | [`Action`] | Changes |
 //! |---|---|
-//! | `Delete` | the posts outside the trash go to it, all stamped with the action's time ([`crate::trash::put`]) |
+//! | `Delete` | the posts outside the trash go to it, all with the action's stamp; their `updated_at` is when the move runs ([`apply_stamped`], [`crate::trash::put`]) |
 //! | `Restore` | the posts in the trash come back ([`crate::trash::restore`]) |
 //! | `AddToCollections` | the posts outside the trash join each collection; members stay as they are |
 //! | `RemoveFromCollection` | the members leave the collection, in the trash or not |
@@ -139,8 +139,8 @@ pub fn count(conn: &Connection, selector: &Selector) -> Result<u64> {
     selector::count(conn, selector)
 }
 
-/// Runs `action` on every post `selector` selects, at time `now` (the
-/// trash stamp of a delete, and every post's new `updated_at`), in the
+/// Runs `action` on every post `selector` selects, at time `now` (every
+/// changed post's new `updated_at`, and the trash stamp of a delete), in the
 /// caller's transaction. Checks the action first ([`Action::check`]).
 ///
 /// # Errors
@@ -149,11 +149,30 @@ pub fn count(conn: &Connection, selector: &Selector) -> Result<u64> {
 /// [`RepoError::Invalid`] for a selector over its caps or a bad action;
 /// database errors.
 pub fn apply(conn: &Connection, selector: &Selector, action: &Action, now: i64) -> Result<Applied> {
+    apply_stamped(conn, selector, action, now, now)
+}
+
+/// [`apply`] with the trash stamp of a delete apart from the time of the
+/// change: a job stamps every post it deletes with its request's `stamp`,
+/// while `now`, the time each chunk runs, becomes the posts' `updated_at`
+/// ([`crate::trash`]: the stamp is the undo key, `updated_at` when the post
+/// entered the trash). Other actions ignore `stamp`.
+///
+/// # Errors
+///
+/// As [`apply`].
+pub fn apply_stamped(
+    conn: &Connection,
+    selector: &Selector,
+    action: &Action,
+    stamp: i64,
+    now: i64,
+) -> Result<Applied> {
     action.check(conn)?;
     let which = selector.sql()?;
     let selected = count_of(conn, &which)?;
     let mut changed = match action {
-        Action::Delete => trash::put(conn, &which, now)?,
+        Action::Delete => trash::put(conn, &which, stamp, now)?,
         Action::Restore => trash::restore(conn, &which, now)?,
         Action::AddToCollections(ids) => {
             let mut added = Vec::new();

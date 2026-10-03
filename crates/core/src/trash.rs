@@ -11,23 +11,42 @@
 //! recently trashed first.
 //!
 //! **One stamp per operation.** Every post that one delete moves gets the
-//! same `deleted_at`, the time of the delete, so the stamp names the
+//! same `deleted_at`, the stamp of the delete, so the stamp names the
 //! operation: [`Selector::TrashedAt`] selects its posts again, which is the
 //! undo of that delete. Posts already in the trash keep their stamp.
+//!
+//! **When a post entered the trash.** The stamp is the undo key only: a job
+//! may move a post long after the request that stamped it. A trashed post's
+//! `updated_at` says when it really entered the trash, or was changed there
+//! since: [`put`] sets it to the time of the move, and always past the cut of
+//! every emptying requested before ([`emptying`]). Purges go by both (P1-11
+//! review H1, M4):
+//!
+//! - **emptying the trash** deletes the posts that were in the trash when it
+//!   was asked, and no other: [`emptying`] runs in the request's write
+//!   transaction, so no move is halfway, and picks a cut `through` at or
+//!   after the stamp and the `updated_at` of every post then in the trash.
+//!   It records the cut, so a post that enters the trash later, such as one a
+//!   running bulk delete moves after the request, gets an `updated_at` past
+//!   it and stays;
+//! - **the nightly retention** deletes the posts whose stamp and `updated_at`
+//!   are both [`RETENTION_DAYS`] old ([`retention_cutoff`]): a post that a late
+//!   job moved stays its full 30 days from the move.
 //!
 //! **Purging** ([`purge`]) deletes posts for good: their index rows, their
 //! row and everything that cascades from it (slides, memberships, tags,
 //! entities, captures). Media objects that lose their last reference get
 //! `unreferenced_since`; deleting their files is the GC's (P4). Purging is
 //! idempotent: a purged post is gone, so purging it again changes nothing.
-//! A purge job works through [`purgeable`] chunks, oldest trash first:
-//! everything trashed up to a time (emptying the trash), or nightly what is
-//! older than [`RETENTION_MS`].
+//! A purge job works through [`purgeable`] chunks, oldest trash first.
+//!
+//! The library's `meta` table keeps the cut of the last emptying
+//! ([`EMPTIED_THROUGH_KEY`]).
 //!
 //! [`Selector::TrashedAt`]: crate::selector::Selector::TrashedAt
 
 use rusqlite::types::Value;
-use rusqlite::{Connection, params, params_from_iter};
+use rusqlite::{Connection, OptionalExtension as _, params, params_from_iter};
 
 use crate::repo::posts::{self, PostSummary};
 use crate::repo::{Result, id_list, media};
@@ -39,6 +58,8 @@ use crate::selector::SelectorSql;
 pub const RETENTION_DAYS: u32 = 30;
 /// [`RETENTION_DAYS`] in milliseconds.
 pub const RETENTION_MS: i64 = RETENTION_DAYS as i64 * 86_400_000;
+/// `meta` key of the cut of the last emptying of the trash ([`emptying`]).
+pub const EMPTIED_THROUGH_KEY: &str = "trash.emptiedThrough";
 
 /// The posts with these internal ids, as a condition for [`put`] and
 /// [`restore`].
@@ -50,24 +71,50 @@ pub fn by_ids(post_ids: &[i64]) -> SelectorSql {
     }
 }
 
+/// An integer of the library's `meta` table.
+fn meta_i64(conn: &Connection, key: &str) -> Result<Option<i64>> {
+    let value: Option<String> = conn
+        .prepare_cached("SELECT value FROM meta WHERE key = ?1")?
+        .query_row([key], |r| r.get(0))
+        .optional()?;
+    Ok(value.and_then(|v| v.parse().ok()))
+}
+
+/// Raises the integer `key` of `meta` to `value`; it never goes down.
+fn raise_meta(conn: &Connection, key: &str, value: i64) -> Result<()> {
+    if meta_i64(conn, key)?.is_some_and(|current| current >= value) {
+        return Ok(());
+    }
+    conn.prepare_cached(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+    )?
+    .execute(params![key, value.to_string()])?;
+    Ok(())
+}
+
 /// Moves the posts `which` selects to the trash, stamped `at`, and drops
-/// their index rows. Posts already in the trash keep their stamp. Returns the
+/// their index rows. `now` is the time of the move: the posts' `updated_at`,
+/// past the cut of every emptying requested so far (module docs). Posts
+/// already in the trash keep their stamp and their `updated_at`. Returns the
 /// ids of the posts moved, ascending.
 ///
 /// # Errors
 ///
 /// Database errors.
-pub fn put(conn: &Connection, which: &SelectorSql, at: i64) -> Result<Vec<i64>> {
+pub fn put(conn: &Connection, which: &SelectorSql, at: i64, now: i64) -> Result<Vec<i64>> {
+    let entered = meta_i64(conn, EMPTIED_THROUGH_KEY)?
+        .map_or(now, |through| now.max(through.saturating_add(1)));
     let sql = format!(
         "UPDATE posts SET deleted_at = ?, updated_at = ?
          WHERE deleted_at IS NULL AND id IN (SELECT p.id FROM posts p WHERE {})
          RETURNING id",
         which.condition
     );
-    let stamp = [Value::Integer(at), Value::Integer(at)];
+    let times = [Value::Integer(at), Value::Integer(entered)];
     let mut moved: Vec<i64> = conn
         .prepare_cached(&sql)?
-        .query_map(params_from_iter(stamp.iter().chain(&which.params)), |r| {
+        .query_map(params_from_iter(times.iter().chain(&which.params)), |r| {
             r.get(0)
         })?
         .collect::<rusqlite::Result<_>>()?;
@@ -227,8 +274,10 @@ pub fn page(conn: &Connection, limit: u32, after: Option<Position>) -> Result<Tr
     Ok(TrashPage { items, next })
 }
 
-/// Ids of the trashed posts whose `deleted_at` is at or before `through`,
-/// oldest trash first, at most `limit`: the next chunk of a purge.
+/// Ids of the trashed posts a purge through `through` deletes, oldest trash
+/// first, at most `limit`: the next chunk of a purge. A post qualifies when
+/// both its stamp and its `updated_at` (when it entered the trash, or was
+/// changed there) are at or before `through` (module docs).
 ///
 /// # Errors
 ///
@@ -237,7 +286,8 @@ pub fn purgeable(conn: &Connection, through: i64, limit: usize) -> Result<Vec<i6
     let limit = i64::try_from(limit).unwrap_or(i64::MAX);
     let ids = conn
         .prepare_cached(
-            "SELECT id FROM posts WHERE deleted_at IS NOT NULL AND deleted_at <= ?1
+            "SELECT id FROM posts
+             WHERE deleted_at IS NOT NULL AND deleted_at <= ?1 AND updated_at <= ?1
              ORDER BY deleted_at, id LIMIT ?2",
         )?
         .query_map(params![through, limit], |r| r.get(0))?
@@ -245,7 +295,7 @@ pub fn purgeable(conn: &Connection, through: i64, limit: usize) -> Result<Vec<i6
     Ok(ids)
 }
 
-/// How many trashed posts have a `deleted_at` at or before `through`.
+/// How many posts a purge through `through` deletes ([`purgeable`]).
 ///
 /// # Errors
 ///
@@ -253,14 +303,49 @@ pub fn purgeable(conn: &Connection, through: i64, limit: usize) -> Result<Vec<i6
 pub fn count_purgeable(conn: &Connection, through: i64) -> Result<u64> {
     let n: i64 = conn
         .prepare_cached(
-            "SELECT count(*) FROM posts WHERE deleted_at IS NOT NULL AND deleted_at <= ?1",
+            "SELECT count(*) FROM posts
+             WHERE deleted_at IS NOT NULL AND deleted_at <= ?1 AND updated_at <= ?1",
         )?
         .query_row([through], |r| r.get(0))?;
     Ok(u64::try_from(n).unwrap_or(0))
 }
 
-/// The `through` of the nightly purge at `now`: posts trashed at least
-/// [`RETENTION_MS`] ago.
+/// What emptying the trash at `now` deletes ([`emptying`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Emptying {
+    /// The cut: a purge through it deletes every post in the trash now.
+    pub through: i64,
+    /// Posts in the trash now.
+    pub posts: u64,
+}
+
+/// Starts emptying the trash at `now`: the cut `through` of the purge, at or
+/// after `now` and the stamp and `updated_at` of every post in the trash, so
+/// that the purge deletes exactly the posts in the trash now. The cut is
+/// recorded, and every post moved to the trash afterwards gets an
+/// `updated_at` past it ([`put`]), so the purge leaves it alone. Call it in
+/// the write transaction of the request: no move is then halfway.
+///
+/// # Errors
+///
+/// Database errors.
+pub fn emptying(conn: &Connection, now: i64) -> Result<Emptying> {
+    let (posts, newest): (i64, Option<i64>) = conn
+        .prepare_cached(
+            "SELECT count(*), max(max(deleted_at, updated_at)) FROM posts
+             WHERE deleted_at IS NOT NULL",
+        )?
+        .query_row([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let through = newest.map_or(now, |newest| now.max(newest));
+    raise_meta(conn, EMPTIED_THROUGH_KEY, through)?;
+    Ok(Emptying {
+        through,
+        posts: u64::try_from(posts).unwrap_or(0),
+    })
+}
+
+/// The `through` of the nightly purge at `now`: the posts whose stamp and
+/// `updated_at` are at least [`RETENTION_MS`] old.
 #[must_use]
 pub const fn retention_cutoff(now: i64) -> i64 {
     now.saturating_sub(RETENTION_MS)

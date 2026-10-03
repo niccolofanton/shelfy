@@ -3,8 +3,11 @@
 //! /trash/restore` ([`crate::routes::bulk`]).
 //!
 //! **Work.** The payload holds the request: the action, its parameters, the
-//! selection, and the request's time, which is the trash stamp of a delete
-//! and the `updatedAt` of every post changed. The worker counts the
+//! selection, and the request's stamp, the `deletedAt` of every post a
+//! delete moves (the undo key). Each chunk changes its posts at its own time,
+//! their `updatedAt`: a post a delete moves later than asked stays in the
+//! trash for its full 30 days, and outside the purge of an emptying asked
+//! before the move ([`shelfy_core::trash`]). The worker counts the
 //! selection, then works through it in chunks of 500 posts in id order
 //! ([`shelfy_core::bulk::next_chunk`]), one write transaction per chunk on a
 //! handle taken for that chunk ([`JobContext::user_db`]). After each chunk
@@ -100,8 +103,8 @@ pub struct Payload {
     pub params: Option<BulkParams>,
     /// The posts.
     pub selection: Selection,
-    /// The request's time, unix ms: the trash stamp of a delete and the
-    /// `updatedAt` of every change.
+    /// The request's stamp, unix ms: the `deletedAt` of every post a delete
+    /// moves. The posts' `updatedAt` is the time of their chunk.
     pub at: i64,
 }
 
@@ -159,13 +162,17 @@ async fn run(ctx: JobContext) -> JobResult {
             return Ok(Outcome::Requeue { run_at: None });
         }
         let (selector, action) = (selector.clone(), action.clone());
+        let clock = *ctx.jobs().clock();
         let step = ctx
             .user_db(move |db| {
                 db.write(|tx| -> Result<Option<Step>, RepoError> {
                     let Some(chunk) = bulk::next_chunk(tx, &selector, after, CHUNK)? else {
                         return Ok(None);
                     };
-                    let applied = bulk::apply(tx, &chunk.selector, &action, at)?;
+                    // The stamp is the request's; the time is the chunk's
+                    // own: when its posts really change (P1-11 review H1).
+                    let now = clock.now_ms();
+                    let applied = bulk::apply_stamped(tx, &chunk.selector, &action, at, now)?;
                     Ok(Some(Step {
                         len: chunk.len,
                         last: chunk.last,

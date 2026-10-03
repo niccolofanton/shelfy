@@ -1,11 +1,21 @@
 //! `purge` (plan §2.12, §2.13; P1-11): deletes trashed posts for good.
 //!
-//! **When.** `POST /trash/empty` enqueues one for everything trashed until
-//! the request ([`enqueue`]: the payload's `through`); the nightly schedule
-//! (03:00 UTC) enqueues one per active user with an empty payload, which
-//! purges what has been in the trash for 30 days or more
+//! **When.** `POST /trash/empty` enqueues one for exactly the posts in the
+//! trash when it was asked ([`enqueue`]: the payload's `through`, the cut of
+//! [`shelfy_core::trash::emptying`]); the nightly schedule (03:00 UTC)
+//! enqueues one per active user with an empty payload, which purges the
+//! posts whose stamp and move into the trash are 30 days old or more
 //! ([`shelfy_core::trash::retention_cutoff`] on the job system's clock).
-//! Posts trashed after the cutoff, and posts restored meanwhile, stay.
+//! Posts that enter the trash after the cut, such as those a bulk delete
+//! moves after the request, and posts restored meanwhile, stay.
+//!
+//! **After the user's earlier bulk jobs.** A purge does not run while its
+//! user has an active `bulk` job enqueued before it (P1-11 review H1): it
+//! goes back to the queue for [`BULK_WAIT`], without using a try, and looks
+//! again before each chunk. So a restore asked before emptying the trash (an
+//! undo past 500 posts, say) brings its posts back before the purge could
+//! delete them, whatever the two queues do; and a bulk delete asked before
+//! has moved its posts, past the purge's cut, before the purge starts.
 //!
 //! **Work.** In chunks of 500 posts, oldest trash first, one write
 //! transaction per chunk ([`shelfy_core::trash::purge`]): the index rows, the
@@ -21,9 +31,10 @@
 //! **Idempotent.** A purged post is gone: a try that starts over, or a
 //! second purge, finds only what is left.
 //!
-//! **Limits** (§2.12 `purge`, `gc`): one at a time overall, three tries, a
-//! 60-minute lease renewed by every chunk.
+//! **Limits** (§2.12 `purge`, `gc`): one at a time overall and per user,
+//! three tries, a 60-minute lease renewed by every chunk.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -33,6 +44,7 @@ use shelfy_core::trash;
 use super::{
     Enqueued, JobContext, JobError, JobResult, Jobs, Kind, KindSpec, NewJob, Outcome, codes, usage,
 };
+use crate::control::jobs as rows;
 use crate::error::ApiError;
 use crate::events::model::ChangeReason;
 use crate::library::{self, event_keys};
@@ -45,6 +57,10 @@ pub const STAGE: &str = "purge";
 pub const MAX_ATTEMPTS: u32 = 3;
 /// How long a purge may go without a sign of life: every chunk is one.
 pub const LEASE: Duration = Duration::from_secs(3600);
+/// How long a purge waits before it looks again while an earlier `bulk`
+/// job of its user is active (module docs). It waits in the queue, without
+/// using a try.
+pub const BULK_WAIT: Duration = Duration::from_secs(5);
 
 /// The kind, for the registry ([`super::kinds::registry`]).
 #[must_use]
@@ -64,15 +80,15 @@ pub fn kind() -> Kind {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Payload {
-    /// The posts trashed at or before this time, unix ms (emptying the
-    /// trash). Absent, as in the nightly job: those trashed at least 30 days
-    /// ago.
+    /// The cut of an emptying of the trash ([`trash::emptying`]): the posts
+    /// whose stamp and `updated_at` are at or before it, unix ms. Absent, as
+    /// in the nightly job: those 30 days old ([`trash::retention_cutoff`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub through: Option<i64>,
 }
 
-/// Enqueues the purge of every post `user_id` trashed at or before
-/// `through` (emptying the trash).
+/// Enqueues the purge of `user_id`'s trash through the cut `through` of an
+/// emptying ([`trash::emptying`]).
 ///
 /// # Errors
 ///
@@ -116,6 +132,16 @@ async fn run(ctx: JobContext) -> JobResult {
         if ctx.is_paused() {
             return Ok(Outcome::Requeue { run_at: None });
         }
+        if after_earlier_bulk(&ctx).await? {
+            let run_at = ctx
+                .jobs()
+                .clock()
+                .now_ms()
+                .saturating_add(millis(BULK_WAIT));
+            return Ok(Outcome::Requeue {
+                run_at: Some(run_at),
+            });
+        }
         let now = ctx.jobs().clock().now_ms();
         let purged = ctx
             .user_db(move |db| {
@@ -153,6 +179,23 @@ async fn run(ctx: JobContext) -> JobResult {
         "trash purged"
     );
     Ok(Outcome::Succeeded)
+}
+
+/// Whether the user has an active `bulk` job enqueued before this purge,
+/// which it waits for (module docs).
+async fn after_earlier_bulk(ctx: &JobContext) -> Result<bool, JobError> {
+    let control = Arc::clone(ctx.state().control());
+    let (user, id) = (ctx.user_id().to_owned(), ctx.id());
+    tokio::task::spawn_blocking(move || {
+        control.read(|conn| rows::has_active_before(conn, &user, super::bulk::KIND, id))
+    })
+    .await
+    .map_err(|err| JobError::transient(codes::INTERNAL).with_detail(err.to_string()))?
+    .map_err(JobError::from)
+}
+
+fn millis(duration: Duration) -> i64 {
+    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
