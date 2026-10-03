@@ -41,10 +41,11 @@ describe.skipIf(!available)('in-page capture scripts', () => {
     } catch {
       browser = null;
     }
-  });
+    // Launching Chromium can take well over the default 10 s on a loaded machine.
+  }, 60_000);
   afterAll(async () => {
     await browser?.close();
-  });
+  }, 30_000);
 
   it('recognises a Cloudflare interstitial but not a normal page with a captcha form', async () => {
     if (!browser) return;
