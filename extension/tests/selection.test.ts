@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { type SelectDeps, SelectionService } from '../src/content/select/service';
 import { MSG } from '../src/shared/protocol';
 import { hasMessage, translate } from '../src/shared/i18n';
@@ -152,6 +152,77 @@ describe('extension selection', () => {
     });
     expect(h.api.runs.size).toBe(1);
     expect(h.api.ingests).toHaveLength(1);
+  });
+
+  it('refuses a request when credentials change after the selection captured its pairing', async () => {
+    const h = selectionHarness();
+    const token = await h.pairNow();
+    const pairing = (await h.store.pairing())!;
+    await h.store.setPairing({ ...pairing, tokenId: 'tok-2', token: 'shx_other-account' });
+    const before = h.api.log.length;
+    expect(
+      await h.client.post(
+        '/api/v1/posts/lookup',
+        { platform: 'instagram', keys: [] },
+        { auth: 'token', expectedToken: token },
+      ),
+    ).toEqual({ ok: false, failure: { kind: 'unpaired' } });
+    expect(h.api.log).toHaveLength(before);
+  });
+
+  it('discards a pending journal after pairing changes and never replays another account run', async () => {
+    const h = selectionHarness(2);
+    await h.pairNow();
+    h.api.loseNextIngestResponse = true;
+    await h.service.command(7, 'import', 'en', 'none', null);
+    const old = h.storage.data.get('shelfy.selection.7') as { tokenId: string; runId: string };
+    expect(old.tokenId).toBe('tok-1');
+    const pairing = (await h.store.pairing())!;
+    await h.store.setPairing({ ...pairing, tokenId: 'tok-2' });
+    expect(await h.restart().command(7, 'status', 'en', 'none', null)).toMatchObject({
+      pending: false,
+    });
+    expect(h.storage.data.has('shelfy.selection.7')).toBe(false);
+    expect(await h.restart().command(7, 'import', 'en', 'none', null)).toMatchObject({ ok: true });
+    expect(h.api.runs.size).toBe(2);
+    expect(h.api.ingests.map((batch) => batch.replayed)).toEqual([false, false]);
+  });
+
+  it('discards an in-flight import response after re-pairing before persisting or marking it', async () => {
+    const h = selectionHarness(601);
+    await h.pairNow();
+    const original = h.client.post.bind(h.client);
+    vi.spyOn(h.client, 'post').mockImplementation(async (path, body, options) => {
+      const response = await original(path, body, options);
+      if (path.includes('/ingest/batches')) {
+        const pairing = (await h.store.pairing())!;
+        await h.store.setPairing({ ...pairing, tokenId: 'tok-2' });
+      }
+      return response;
+    });
+    expect(await h.service.command(7, 'import', 'en', 'none', null)).toEqual({
+      ok: false,
+      code: 'not_paired',
+    });
+    expect(h.api.ingests).toHaveLength(1);
+    expect(h.marked).toHaveLength(0);
+    expect(h.storage.data.has('shelfy.selection.7')).toBe(false);
+    expect([...h.api.runs.values()][0].state).not.toBe('done');
+  });
+
+  it('does not apply an in-flight lookup to the overlay after unpairing', async () => {
+    const h = selectionHarness();
+    await h.pairNow();
+    h.api.posts.set('ig_3400000000000000001', 1);
+    const original = h.client.post.bind(h.client);
+    vi.spyOn(h.client, 'post').mockImplementation(async (path, body, options) => {
+      const response = await original(path, body, options);
+      await h.store.setPairing(null);
+      return response;
+    });
+    expect(await h.service.lookup(['3400000000000000001'], sender)).toEqual({ ok: false });
+    expect(h.marked).toHaveLength(0);
+    expect(h.actions).toContain('bind');
   });
 
   it('serializes imports before asynchronous tab checks', async () => {

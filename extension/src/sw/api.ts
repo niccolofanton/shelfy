@@ -33,6 +33,8 @@ export interface ApiDeps {
 export interface RequestOptions {
   /** `token`: the route takes the extension token (C1); `none`: public (pairing, health). */
   auth: 'token' | 'none';
+  /** Refuse sending under another pairing after an asynchronous context check. */
+  expectedToken?: string;
   body?: unknown;
   idempotencyKey?: string;
   etag?: string | null;
@@ -174,6 +176,8 @@ export class ApiClient {
 
   async request(method: string, path: string, options: RequestOptions): Promise<ApiResponse> {
     const credentials = await this.deps.credentials();
+    if (options.expectedToken !== undefined && credentials.token !== options.expectedToken)
+      return { ok: false, failure: { kind: 'unpaired' } };
     if (options.auth === 'token' && !credentials.token)
       return { ok: false, failure: { kind: 'unpaired' } };
     const { url, init } = buildRequest(

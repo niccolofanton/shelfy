@@ -36,6 +36,7 @@ interface Entry {
   item: WireItem;
 }
 interface Journal {
+  tokenId: string;
   listingKey: string;
   platform: Platform;
   runId: string;
@@ -55,13 +56,20 @@ export class SelectionService {
 
   private async context(
     tabId: number,
-  ): Promise<{ code: string } | { platform: Platform; listing: Listing; pong: BridgePong }> {
+  ): Promise<
+    | { code: string }
+    | { platform: Platform; listing: Listing; pong: BridgePong; tokenId: string; token: string }
+  > {
     const [tab, pairing, status] = await Promise.all([
       this.deps.tabs.get(tabId).catch(() => null),
       this.deps.store.pairing(),
       this.deps.store.status(),
     ]);
-    if (!pairing) return { code: 'not_paired' } as const;
+    if (!pairing) {
+      await this.main(tabId, 'bind', null).catch(() => undefined);
+      await this.deps.storage.remove(journalKey(tabId));
+      return { code: 'not_paired' } as const;
+    }
     if (status.outdated) return { code: 'outdated' } as const;
     const platform = platformForUrl(tab?.url ?? '');
     const listing = platform && tab?.url ? syncTarget(platform, tab.url) : null;
@@ -75,7 +83,22 @@ export class SelectionService {
       const scope = passiveScope(platform, tab.url, pong.viewer);
       if (!scope.ok) return { code: scope.reason } as const;
     }
-    return { platform, listing, pong };
+    const storageKey = journalKey(tabId);
+    const journal = (await this.deps.storage.get(storageKey))[storageKey] as Journal | undefined;
+    if (journal && journal.tokenId !== pairing.tokenId) await this.deps.storage.remove(storageKey);
+    await this.main(tabId, 'bind', pairing.tokenId);
+    return { platform, listing, pong, tokenId: pairing.tokenId, token: pairing.token };
+  }
+
+  private async paired(tabId: number, tokenId: string): Promise<boolean> {
+    const current = await this.deps.store.pairing();
+    if (current?.tokenId === tokenId) return true;
+    const key = journalKey(tabId);
+    const stored = (await this.deps.storage.get(key))[key] as Journal | undefined;
+    if (stored?.tokenId === tokenId || stored?.tokenId === undefined)
+      await this.deps.storage.remove(key);
+    await this.main(tabId, 'bind', current?.tokenId ?? null).catch(() => undefined);
+    return false;
   }
 
   private async main(tabId: number, action: string, value: unknown = null, documentId?: string) {
@@ -131,7 +154,7 @@ export class SelectionService {
             ok: true,
             enabled: value.enabled === true,
             count: value.count,
-            pending: journal?.listingKey === ctx.listing.key,
+            pending: journal?.tokenId === ctx.tokenId && journal?.listingKey === ctx.listing.key,
           }
         : no('reload_tab');
     } finally {
@@ -156,12 +179,14 @@ export class SelectionService {
     if ('code' in ctx || platformForUrl(sender.url) !== ctx.platform) return { ok: false };
     const asked = [...new Set(keys)];
     for (let i = 0; i < asked.length; i += 1000) {
+      if (!(await this.paired(tabId, ctx.tokenId))) return { ok: false };
       const chunk = asked.slice(i, i + 1000);
       const response = await this.deps.api.post(
         '/api/v1/posts/lookup',
         { platform: ctx.platform, keys: chunk },
-        { auth: 'token' },
+        { auth: 'token', expectedToken: ctx.token },
       );
+      if (!(await this.paired(tabId, ctx.tokenId))) return { ok: false };
       if (!response.ok) {
         await this.main(tabId, 'retry', asked.slice(i), sender.documentId).catch(() => undefined);
         return { ok: false };
@@ -205,6 +230,7 @@ export class SelectionService {
     collection: 'auto' | 'none',
     name: string | null,
   ): Promise<SelectAnswer> {
+    if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
     const snapshot = await this.main(tabId, 'collect');
     const documentId = snapshot?.documentId;
     const result = snapshot?.result;
@@ -220,7 +246,8 @@ export class SelectionService {
     if (!Array.isArray(raw) || raw.length > 16_000) return no('bad_request');
     const storageKey = journalKey(tabId);
     const stored = (await this.deps.storage.get(storageKey))[storageKey] as Journal | undefined;
-    let journal = stored?.listingKey === ctx.listing.key ? stored : null;
+    let journal =
+      stored?.tokenId === ctx.tokenId && stored?.listingKey === ctx.listing.key ? stored : null;
     if (stored && !journal) return no('selection_pending');
     if (!journal) {
       const entries: Entry[] = [];
@@ -242,6 +269,7 @@ export class SelectionService {
       const wire = toWireListing(ctx.listing);
       if (!wire) return no('not_a_listing');
       if (name && wire.externalId !== null) wire.name = name;
+      if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
       const opened = await this.deps.api.post(
         API.syncRuns,
         {
@@ -250,8 +278,9 @@ export class SelectionService {
           listing: wire,
           collection: { mode: collection === 'auto' && wire.externalId !== null ? 'auto' : 'none' },
         },
-        { auth: 'token' },
+        { auth: 'token', expectedToken: ctx.token },
       );
+      if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
       if (!opened.ok) return no(failureCode(opened.failure));
       const run = parseSyncRunCreated(opened.data);
       if (!run) return no('bad_response');
@@ -270,6 +299,7 @@ export class SelectionService {
       }
       if (group.length) batches.push({ id: this.ulid(), entries: group });
       journal = {
+        tokenId: ctx.tokenId,
         listingKey: ctx.listing.key,
         platform: ctx.platform,
         runId: run.id,
@@ -292,10 +322,13 @@ export class SelectionService {
         client: journal.client,
         items: batch.entries.map((entry) => entry.item),
       };
+      if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
       const response = await this.deps.api.post(API.ingestBatches, body, {
         auth: 'token',
         idempotencyKey: batch.id,
+        expectedToken: ctx.token,
       });
+      if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
       if (!response.ok) return no(failureCode(response.failure));
       const result = parseIngestResult(response.data);
       for (const item of result.results) {
@@ -306,9 +339,12 @@ export class SelectionService {
       journal.scanned += batch.entries.length;
       // Persist progress before touching a possibly navigated page. A replay retains the same key.
       await this.deps.storage.set({ [storageKey]: { ...journal, next: journal.next + 1 } });
+      if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
       await this.main(tabId, 'mark', accepted, documentId).catch(() => undefined);
     }
+    if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
     await this.main(tabId, 'mark', accepted, documentId).catch(() => undefined);
+    if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
     const closed = await this.deps.api.patch(
       API.syncRun(journal.runId),
       {
@@ -319,8 +355,9 @@ export class SelectionService {
         resumeCursor: null,
         errorCode: null,
       },
-      { auth: 'token' },
+      { auth: 'token', expectedToken: ctx.token },
     );
+    if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
     if (!closed.ok) return no(failureCode(closed.failure));
     await this.deps.storage.remove(storageKey);
     // markSaved removes only accepted posts; rejected records remain selected for correction.

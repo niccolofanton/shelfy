@@ -102,6 +102,7 @@ interface SelectApi {
   status: () => { enabled: boolean; count: number };
   collectEntriesJSON: () => string;
   retryCheck: (keys: string[]) => void;
+  bindLibrary: (key: string | null) => void;
 }
 
 // Custom MAIN-world properties this script reads/writes on `window` and on each
@@ -785,6 +786,8 @@ declare global {
   // Flag posts as already in the local library → disabled + label. Accepts
   // [{ key, id }] pairs: `key` is the DOM-derived shortcode/tweet-id we matched on,
   // `id` is the DB primary key (used to open the post's modal on the host).
+  let libraryKey: string | null = null;
+
   function markSaved(pairs: unknown): void {
     if (!Array.isArray(pairs)) return;
     const decoratedKeys = new Set<string | undefined>();
@@ -832,6 +835,17 @@ declare global {
     enable,
     disable,
     markSaved,
+    bindLibrary: (key) => {
+      if (libraryKey !== null && libraryKey !== key) {
+        const enabled = state.enabled;
+        disable();
+        state.saved.clear();
+        state.savedId.clear();
+        state.queried.clear();
+        if (enabled && key !== null) enable();
+      }
+      libraryKey = key;
+    },
     clearSelection,
     collectJSON,
     refresh: scan,

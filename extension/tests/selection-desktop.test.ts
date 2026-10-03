@@ -56,6 +56,33 @@ describe('desktop selection contract', () => {
     dom.window.close();
   });
 
+  it('resets saved badges and selections when the extension switches library binding', () => {
+    const dom = new JSDOM('<a href="/p/ABC/">tile</a><a href="/p/DEF/">other</a>', {
+      url: 'https://www.instagram.com/me/saved/all-posts/',
+      runScripts: 'outside-only',
+      pretendToBeVisual: true,
+    });
+    const window = dom.window as unknown as Window;
+    dom.window.eval(code);
+    window.__ssSelect!.bindLibrary('account-a');
+    window.__ssSelect!.enable();
+    window.__ssSelect!.markSaved([{ key: 'ABC', id: 'ig_old' }]);
+    (dom.window.document.querySelectorAll('[data-ss-check]')[1] as HTMLElement).click();
+    expect(window.__ssSelect!.status().count).toBe(1);
+    window.__ssSelect!.bindLibrary('account-b');
+    expect(window.__ssSelect!.status()).toEqual({ enabled: true, count: 0 });
+    expect((dom.window.document.querySelector('[data-ss-open]') as HTMLElement).style.display).toBe(
+      'none',
+    );
+    expect(
+      dom.window.document.querySelector('[data-ss-open]')!.getAttribute('data-ss-id'),
+    ).toBeNull();
+    (dom.window.document.querySelector('[data-ss-check]') as HTMLElement).click();
+    expect(window.__ssSelect!.status().count).toBe(1);
+    window.__ssSelect!.disable();
+    dom.window.close();
+  });
+
   it('injects labels as text and updates existing saved cards', () => {
     const dom = new JSDOM('<a href="/p/ABC/">tile</a>', {
       url: 'https://www.instagram.com/me/saved/all-posts/',

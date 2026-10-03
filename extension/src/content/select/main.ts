@@ -1,4 +1,5 @@
 interface SelectMainApi {
+  bindLibrary(key: string | null): void;
   setLabels(labels: { saved: string; open: string; disabled: string }): void;
   enable(): void;
   disable(): void;
@@ -13,7 +14,8 @@ interface SelectMainApi {
 export function selectMain(action: string, value: unknown = null): unknown {
   const api = (window as unknown as { __ssSelect?: SelectMainApi }).__ssSelect;
   if (!api) return action === 'status' ? { enabled: false, count: 0 } : null;
-  if (action === 'enable') {
+  if (action === 'bind') api.bindLibrary(value as string | null);
+  else if (action === 'enable') {
     if (value && typeof value === 'object')
       api.setLabels(value as Parameters<typeof api.setLabels>[0]);
     api.enable();

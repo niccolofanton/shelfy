@@ -37,6 +37,17 @@ function tiles(platform: 'ig' | 'x' | 'pin', count: number) {
 const listing = (platform: 'ig' | 'x' | 'pin', count: number) =>
   `<main><h1>Recipes</h1><div id="feed" style="display:grid;grid-template-columns:repeat(11,80px);gap:4px">${tiles(platform, count)}</div></main>`;
 async function click(panel: Page, id: string) {
+  if (
+    !(await waitFor(
+      () =>
+        panel.evaluate((key) => {
+          const button = document.querySelector(`[data-testid=${key}]`) as HTMLButtonElement | null;
+          return !!button && !button.disabled && !button.hidden;
+        }, id),
+      `${id} ready`,
+    ))
+  )
+    throw new Error(`${id} is not ready`);
   await panel.evaluate(
     (key) => (document.querySelector(`[data-testid=${key}]`) as HTMLButtonElement).click(),
     id,
