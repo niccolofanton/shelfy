@@ -5,6 +5,10 @@ import type { ElectronAPI } from '../../types/electron-api';
 import { assetThumbUrl, assetUrl, isAssetUrl } from '../lib/asset';
 import { createElectronAiApi } from './ai/electron';
 import type {
+  BulkActionKind,
+  BulkActionParams,
+  BulkOutcome,
+  BulkSelector,
   CollectionDeleteOptions,
   CollectionDeleteResult,
   MediaUrls,
@@ -12,10 +16,12 @@ import type {
   PostEdit,
   PostPage,
   PostQuery,
+  RestoreSelector,
   ShelfyCapabilities,
   ShelfyClient,
   ShelfyEventOf,
   ShelfyEventType,
+  TrashPage,
 } from './ShelfyClient';
 
 // A push payload of the download / analyze channels: only these fields are read.
@@ -102,6 +108,82 @@ export function createElectronClient(
     getStats: () => bridge().getStats(),
 
     listCollections: () => bridge().getCollections(),
+
+    // No dedicated count IPC: a 1-row page's `total` is the same COUNT(*) the
+    // gallery already pays for, and the desktop's local SQLite makes it cheap.
+    // The desktop has no trash, so a trash count is always 0.
+    async countPosts(query: PostQuery): Promise<number> {
+      if (query.trash) return 0;
+      const result = await bridge().getPosts({ ...query, limit: 1, offset: 0 });
+      return result?.total ?? 0;
+    },
+
+    // The desktop's local SQLite can list every matching id cheaply: unlike
+    // the web, "select all matching" never needs `{filter, exceptKeys}` here.
+    async resolveAllIds(query: PostQuery): Promise<string[] | null> {
+      if (query.trash) return [];
+      const ids = await bridge().getPostIds(query);
+      return Array.isArray(ids) ? ids : [];
+    },
+
+    // Every bulk action the desktop can run takes explicit keys: the UI
+    // always resolves "select all matching" to literal ids first (via
+    // resolveAllIds), so `selector.filter` never reaches this client.
+    async bulkAction(
+      selector: BulkSelector,
+      action: BulkActionKind,
+      params?: BulkActionParams,
+    ): Promise<BulkOutcome> {
+      const api = bridge();
+      const keys = selector.keys ?? [];
+      const none: BulkOutcome = { changed: 0, selected: keys.length, deletedAt: null, job: null };
+      if (keys.length === 0) return none;
+      switch (action) {
+        case 'delete': {
+          const res = await api.deletePosts(keys);
+          // Permanent on the desktop: nothing to undo, ever (F11 semantics).
+          return {
+            changed: res?.deleted ?? keys.length,
+            selected: keys.length,
+            deletedAt: null,
+            job: null,
+          };
+        }
+        case 'addToCollections': {
+          await api.addPostsToCollections(keys, params?.collectionIds ?? []);
+          return { ...none, changed: keys.length };
+        }
+        case 'removeFromCollection': {
+          if (params?.collectionId != null) {
+            for (const id of keys) await api.removePostFromCollection(id, params.collectionId);
+          }
+          return { ...none, changed: keys.length };
+        }
+        case 'clearAiDescription': {
+          const n = await api.clearPostDescriptions(keys);
+          return { ...none, changed: n ?? keys.length };
+        }
+        case 'clearAiTags': {
+          const n = await api.clearPostAiTags(keys);
+          return { ...none, changed: n ?? keys.length };
+        }
+        // 'restore': nothing is ever soft-deleted on the desktop, so there is
+        // never anything to bring back.
+        default:
+          return none;
+      }
+    },
+
+    // The desktop never soft-deletes a post, so its trash is always empty.
+    async listTrash(): Promise<TrashPage> {
+      return { posts: [], total: 0, retentionDays: 0, nextCursor: null };
+    },
+    async restoreFromTrash(_selector: RestoreSelector): Promise<BulkOutcome> {
+      return { changed: 0, selected: 0, deletedAt: null, job: null };
+    },
+    async emptyTrash(): Promise<{ selected: number; job: null }> {
+      return { selected: 0, job: null };
+    },
 
     // The desktop has no single round-trip that both applies a manual edit and
     // returns the post: `updatePostUserContent`/`updatePostAiAnalysis` answer

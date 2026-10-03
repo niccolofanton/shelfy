@@ -43,6 +43,9 @@ export interface SendOptions {
   // Sent as `Idempotency-Key`: a repeated request (a double click, or this
   // same call resent after a re-authentication) has one effect server-side.
   idempotencyKey?: string;
+  // Extra headers (e.g. `Idempotency-Key` on a job-creating POST, P1-11).
+  // Merged after the CSRF/content-type headers; never overrides them.
+  headers?: Record<string, string>;
 }
 
 export interface Http {
@@ -125,12 +128,13 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
       signal?: AbortSignal;
       keepalive?: boolean;
       idempotencyKey?: string;
+      headers?: Record<string, string>;
       // How many re-authentications this request asked for already.
       reauthRounds?: number;
     } = {},
   ): Promise<Response> {
     const qs = init.query?.toString();
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    const headers: Record<string, string> = { Accept: 'application/json', ...init.headers };
     if (method !== 'GET') headers[CLIENT_HEADER] = CLIENT_WEB;
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
     if (init.idempotencyKey) headers['Idempotency-Key'] = init.idempotencyKey;
@@ -181,6 +185,7 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
         body,
         keepalive: options?.keepalive,
         idempotencyKey: options?.idempotencyKey,
+        headers: options?.headers,
       }),
     onUnauthorized(listener) {
       unauthorized.add(listener);

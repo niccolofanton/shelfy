@@ -114,6 +114,11 @@ declare global {
       media?: PostMedia[];
       collectionIds?: number[];
 
+      // Trash (P1-11/P1-14, web only): unix epoch seconds the post was moved to
+      // the trash, or null while it is in the library. The desktop has no trash
+      // (its delete is immediate and permanent), so this stays undefined there.
+      deletedAt?: number | null;
+
       // Attached only by the JSON export path (attachTagTiers/attachCollectionKeys).
       aiGeneralTags?: string[];
       aiSpecificTags?: string[];

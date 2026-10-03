@@ -1,10 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { rgbaToThumbHash } from 'thumbhash';
 import {
+  countParams,
   listPostsParams,
   mediaRef,
   toCollection,
+  toFilterParams,
   toPost,
+  toPostSelector,
   toSearchParams,
   toStats,
   webMedia,
@@ -82,6 +85,86 @@ describe('gallery query → GET /posts parameters', () => {
     const search = toSearchParams({ mediaType: ['image', 'video'], q: undefined, limit: 3 });
     expect(search.toString()).toBe('mediaType=image&mediaType=video&limit=3');
   });
+
+  // P1-14: the full media-type facet (§1.2 #13) and the trash/AI-status filters.
+  it('passes through the new facets: every media type, trash and aiStatus', () => {
+    for (const mediaType of ['images', 'text', 'website', 'file'] as const) {
+      expect(listPostsParams({ mediaType }, { limit: 1 })).toMatchObject({
+        mediaType: [mediaType],
+      });
+    }
+    expect(listPostsParams({ trash: true, aiStatus: 'error' }, { limit: 1 })).toMatchObject({
+      trash: true,
+      aiStatus: 'error',
+    });
+    expect(listPostsParams({ trash: false }, { limit: 1 }).trash).toBeUndefined();
+  });
+});
+
+describe('GET /posts/count parameters (P1-14 select-all-matching)', () => {
+  it('mirrors listPostsParams minus paging/order', () => {
+    expect(
+      countParams({
+        platform: 'instagram',
+        mediaType: 'video',
+        downloadStatus: 'missing',
+        aiTagged: 'tagged',
+        aiStatus: 'done',
+        tag: 'lamp',
+        trash: true,
+      }),
+    ).toEqual({
+      platform: 'instagram',
+      mediaType: ['video'],
+      stored: 'no',
+      aiTagged: 'yes',
+      aiStatus: 'done',
+      tag: 'lamp',
+      trash: true,
+    });
+    expect(countParams({})).toEqual({});
+  });
+});
+
+describe('bulk/trash selector (P1-11/P1-14)', () => {
+  it('toFilterParams fills in every field (defaults, not undefined)', () => {
+    expect(toFilterParams({ platform: 'instagram', tag: 'lamp', trash: true })).toEqual({
+      platform: 'instagram',
+      source: null,
+      collection: null,
+      mediaType: [],
+      stored: null,
+      aiTagged: null,
+      aiStatus: null,
+      tag: 'lamp',
+      tagMode: null,
+      tags: [],
+      entity: null,
+      category: null,
+      contentType: null,
+      q: null,
+      concept: [],
+      conceptMode: null,
+      trash: true,
+    });
+  });
+
+  it('toPostSelector: keys when there is no filter, {filter, exceptKeys} otherwise', () => {
+    expect(toPostSelector({ keys: ['ig_1', 'ig_2'] })).toEqual({ keys: ['ig_1', 'ig_2'] });
+    expect(toPostSelector({})).toEqual({ keys: [] });
+
+    const withFilter = toPostSelector({
+      filter: { platform: 'instagram' },
+      exceptKeys: ['ig_3'],
+    });
+    expect(withFilter.exceptKeys).toEqual(['ig_3']);
+    expect(withFilter.filter).toMatchObject({ platform: 'instagram' });
+
+    // No exceptKeys at all when none are given — not an empty array.
+    const noExceptions = toPostSelector({ filter: { trash: true } });
+    expect(noExceptions).not.toHaveProperty('exceptKeys');
+    expect(noExceptions.filter).toMatchObject({ trash: true });
+  });
 });
 
 describe('media references', () => {
@@ -139,6 +222,11 @@ describe('API post → Shelfy.Post', () => {
       thumbBlur: null,
     });
     expect(toPost(apiPost({ postedAt: null })).timestamp).toBeNull();
+  });
+
+  it('carries deletedAt in seconds, for the Trash view (P1-11/P1-14)', () => {
+    expect(toPost(apiPost({ deletedAt: 1_790_000_000_500 })).deletedAt).toBe(1_790_000_000);
+    expect(toPost(apiPost({ deletedAt: null })).deletedAt).toBeNull();
   });
 
   it('shows the poster of a video the server has not kept', () => {

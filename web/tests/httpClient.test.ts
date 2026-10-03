@@ -243,19 +243,37 @@ describe('httpClient — writes (P1-06)', () => {
   });
 
   it('deletes a folder (label only by default) and maps the trashed count', async () => {
-    const { http, calls } = fakeHttp({ '/api/v1/collections/3': [{ trashed: 0 }] });
+    const { http, calls } = fakeHttp({
+      '/api/v1/collections/3': [{ trashed: 0, deletedAt: null }],
+    });
     const res = await createHttpClient(http).deleteCollection(3);
-    expect(res).toEqual({ ok: true, deletedPosts: 0, errors: [] });
+    expect(res).toEqual({ ok: true, deletedPosts: 0, errors: [], deletedAt: null, job: null });
     expect(calls).toEqual([{ path: '/api/v1/collections/3', query: {}, body: undefined }]);
   });
 
-  it('deletes a folder with its posts when asked (P1-11 mode)', async () => {
+  it('deletes a folder with its posts when asked (P1-11 mode), with its undo handle', async () => {
     const { http, calls } = fakeHttp({
-      '/api/v1/collections/3?mode=withPosts': [{ trashed: 5 }],
+      '/api/v1/collections/3?mode=withPosts': [{ trashed: 5, deletedAt: 1_000 }],
     });
     const res = await createHttpClient(http).deleteCollection(3, { deletePosts: true });
-    expect(res).toEqual({ ok: true, deletedPosts: 5, errors: [] });
+    expect(res).toEqual({ ok: true, deletedPosts: 5, errors: [], deletedAt: 1_000, job: null });
     expect(calls[0].path).toBe('/api/v1/collections/3?mode=withPosts');
+  });
+
+  it('reads a queued job from a large folder delete (F11), forward-compatibly', async () => {
+    const { http } = fakeHttp({
+      '/api/v1/collections/3?mode=withPosts': [
+        { trashed: 600, deletedAt: 2_000, job: { id: 9, kind: 'bulk' } },
+      ],
+    });
+    const res = await createHttpClient(http).deleteCollection(3, { deletePosts: true });
+    expect(res).toEqual({
+      ok: true,
+      deletedPosts: 600,
+      errors: [],
+      deletedAt: 2_000,
+      job: { id: 9, kind: 'bulk' },
+    });
   });
 
   it('adds posts to a folder by selector', async () => {
@@ -295,13 +313,136 @@ describe('httpClient — writes (P1-06)', () => {
   });
 });
 
+describe('httpClient — bulk, trash and count (P1-14)', () => {
+  it('counts posts matching a query (the gallery count pill / select-all total)', async () => {
+    const { http, calls } = fakeHttp({ '/api/v1/posts/count': [{ total: 42 }] });
+    const n = await createHttpClient(http).countPosts({ platform: 'instagram' });
+    expect(n).toBe(42);
+    expect(calls).toEqual([{ path: '/api/v1/posts/count', query: { platform: ['instagram'] } }]);
+  });
+
+  it('never materializes the full matching id list (select-all-matching stays a filter)', async () => {
+    const { http } = fakeHttp({});
+    expect(await createHttpClient(http).resolveAllIds({ platform: 'instagram' })).toBeNull();
+  });
+
+  it('bulkAction: sends the selector and action, with a fresh Idempotency-Key', async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/posts/bulk': [
+        { action: 'delete', changed: 2, selected: 2, deletedAt: 1_000, job: null },
+      ],
+    });
+    const res = await createHttpClient(http).bulkAction({ keys: ['ig_1', 'ig_2'] }, 'delete');
+    expect(res).toEqual({ changed: 2, selected: 2, deletedAt: 1_000, job: null });
+    expect(calls).toEqual([
+      {
+        path: '/api/v1/posts/bulk',
+        query: {},
+        body: { selector: { keys: ['ig_1', 'ig_2'] }, action: 'delete' },
+      },
+    ]);
+    expect(http.send).toHaveBeenCalledWith('POST', '/api/v1/posts/bulk', expect.anything(), {
+      headers: { 'Idempotency-Key': expect.any(String) },
+    });
+  });
+
+  it('bulkAction: select-all-matching carries {filter, exceptKeys} and params', async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/posts/bulk': [
+        { action: 'addToCollections', changed: 50, selected: 50, deletedAt: null, job: null },
+      ],
+    });
+    await createHttpClient(http).bulkAction(
+      { filter: { platform: 'instagram' }, exceptKeys: ['ig_9'] },
+      'addToCollections',
+      { collectionIds: [3] },
+    );
+    expect(calls[0].body).toMatchObject({
+      selector: {
+        filter: expect.objectContaining({ platform: 'instagram' }),
+        exceptKeys: ['ig_9'],
+      },
+      action: 'addToCollections',
+      params: { collectionIds: [3] },
+    });
+  });
+
+  it('bulkAction: a 202 job answer maps the job handle, keeping `changed` null', async () => {
+    const { http } = fakeHttp({
+      '/api/v1/posts/bulk': [
+        {
+          action: 'delete',
+          changed: null,
+          selected: 600,
+          deletedAt: 2_000,
+          job: { id: 7, kind: 'bulk' },
+        },
+      ],
+    });
+    const res = await createHttpClient(http).bulkAction({ filter: {} }, 'delete');
+    expect(res).toEqual({
+      changed: null,
+      selected: 600,
+      deletedAt: 2_000,
+      job: { id: 7, kind: 'bulk' },
+    });
+  });
+
+  it('lists the trash, mapping its posts and paging', async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/trash': [
+        {
+          items: [apiPost({ key: 'ig_1', deletedAt: 1_000 })],
+          nextCursor: 'c1',
+          total: 5,
+          retentionDays: 30,
+        },
+      ],
+    });
+    const page = await createHttpClient(http).listTrash({ limit: 50 });
+    expect(page).toMatchObject({ total: 5, retentionDays: 30, nextCursor: 'c1' });
+    expect(page.posts.map((p) => p.id)).toEqual(['ig_1']);
+    expect(page.posts[0].deletedAt).toBe(1);
+    expect(calls).toEqual([{ path: '/api/v1/trash', query: { limit: ['50'] } }]);
+  });
+
+  it("restores by a delete's undo handle (deletedAt), or by selector", async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/trash/restore': [
+        { action: 'restore', changed: 3, selected: 3, deletedAt: null, job: null },
+        { action: 'restore', changed: 3, selected: 3, deletedAt: null, job: null },
+      ],
+    });
+    const client = createHttpClient(http);
+    await client.restoreFromTrash({ deletedAt: 1_000 });
+    expect(calls[0].body).toEqual({ deletedAt: 1_000 });
+    await client.restoreFromTrash({ filter: { trash: true }, exceptKeys: ['ig_1'] });
+    expect(calls[1].body).toMatchObject({
+      selector: { exceptKeys: ['ig_1'], filter: expect.objectContaining({ trash: true }) },
+    });
+  });
+
+  it('empties the trash and maps the purge job', async () => {
+    const { http, calls } = fakeHttp({
+      '/api/v1/trash/empty': [{ selected: 10, job: { id: 9, kind: 'purge' } }],
+    });
+    const res = await createHttpClient(http).emptyTrash();
+    expect(res).toEqual({ selected: 10, job: { id: 9, kind: 'purge' } });
+    expect(calls[0].path).toBe('/api/v1/trash/empty');
+    expect(http.send).toHaveBeenCalledWith('POST', '/api/v1/trash/empty', undefined, {
+      headers: { 'Idempotency-Key': expect.any(String) },
+    });
+  });
+});
+
 describe('httpClient — capabilities, links and events', () => {
-  it('can browse, read and edit the library; nothing else yet', () => {
+  it('can browse, read, edit and bulk-act on the library (P1-14); nothing else yet', () => {
     const { http } = fakeHttp({});
     const client = createHttpClient(http);
     expect(client.capabilities).toBe(WEB_CAPABILITIES);
-    const { libraryEdit, ...rest } = client.capabilities;
+    const { libraryEdit, bulkActions, ...rest } = client.capabilities;
     expect(libraryEdit).toBe(true);
+    expect(bulkActions).toBe(true);
     expect(Object.values(rest).every((on) => on === false)).toBe(true);
     const off = client.on('posts.changed', () => {});
     expect(typeof off).toBe('function');

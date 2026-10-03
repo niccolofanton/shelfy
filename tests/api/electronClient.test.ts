@@ -52,6 +52,92 @@ describe('electronClient — posts over the bridge', () => {
   });
 });
 
+describe('electronClient — bulk and trash (P1-14 seam)', () => {
+  it('countPosts: a 1-row page read just for its total; the trash is always 0', async () => {
+    vi.mocked(window.electronAPI.getPosts).mockResolvedValue(page(['a'], 7));
+    const client = createElectronClient();
+    expect(await client.countPosts({ platform: 'instagram' })).toBe(7);
+    expect(window.electronAPI.getPosts).toHaveBeenCalledWith({
+      platform: 'instagram',
+      limit: 1,
+      offset: 0,
+    });
+    expect(await client.countPosts({ trash: true })).toBe(0);
+  });
+
+  it("resolveAllIds: the desktop's local SQLite can list every matching id", async () => {
+    vi.mocked(window.electronAPI.getPostIds).mockResolvedValue(['a', 'b']);
+    const client = createElectronClient();
+    expect(await client.resolveAllIds({ platform: 'instagram' })).toEqual(['a', 'b']);
+    expect(window.electronAPI.getPostIds).toHaveBeenCalledWith({ platform: 'instagram' });
+    // The trash never has anything to resolve on the desktop.
+    expect(await client.resolveAllIds({ trash: true })).toEqual([]);
+  });
+
+  it('bulkAction: each action is a thin pass-through to the matching IPC call', async () => {
+    const client = createElectronClient();
+
+    vi.mocked(window.electronAPI.deletePosts).mockResolvedValue({
+      ok: true,
+      deleted: 2,
+      errors: [],
+    });
+    const deleted = await client.bulkAction({ keys: ['a', 'b'] }, 'delete');
+    expect(window.electronAPI.deletePosts).toHaveBeenCalledWith(['a', 'b']);
+    // Permanent on the desktop: never an undo handle or a job.
+    expect(deleted).toEqual({ changed: 2, selected: 2, deletedAt: null, job: null });
+
+    await client.bulkAction({ keys: ['a'] }, 'addToCollections', { collectionIds: [3] });
+    expect(window.electronAPI.addPostsToCollections).toHaveBeenCalledWith(['a'], [3]);
+
+    await client.bulkAction({ keys: ['a', 'b'] }, 'removeFromCollection', { collectionId: 3 });
+    expect(window.electronAPI.removePostFromCollection).toHaveBeenNthCalledWith(1, 'a', 3);
+    expect(window.electronAPI.removePostFromCollection).toHaveBeenNthCalledWith(2, 'b', 3);
+
+    vi.mocked(window.electronAPI.clearPostDescriptions).mockResolvedValue(2);
+    const cleared = await client.bulkAction({ keys: ['a', 'b'] }, 'clearAiDescription');
+    expect(window.electronAPI.clearPostDescriptions).toHaveBeenCalledWith(['a', 'b']);
+    expect(cleared.changed).toBe(2);
+
+    vi.mocked(window.electronAPI.clearPostAiTags).mockResolvedValue(1);
+    const untagged = await client.bulkAction({ keys: ['a'] }, 'clearAiTags');
+    expect(window.electronAPI.clearPostAiTags).toHaveBeenCalledWith(['a']);
+    expect(untagged.changed).toBe(1);
+
+    // Nothing is ever soft-deleted on the desktop: 'restore' is a no-op.
+    expect(await client.bulkAction({ keys: ['a'] }, 'restore')).toEqual({
+      changed: 0,
+      selected: 1,
+      deletedAt: null,
+      job: null,
+    });
+  });
+
+  it('bulkAction: an empty selection is a no-op (no IPC call)', async () => {
+    const client = createElectronClient();
+    const res = await client.bulkAction({ keys: [] }, 'delete');
+    expect(res).toEqual({ changed: 0, selected: 0, deletedAt: null, job: null });
+    expect(window.electronAPI.deletePosts).not.toHaveBeenCalled();
+  });
+
+  it('the trash is always empty, and restore/empty are no-ops: nothing is ever soft-deleted', async () => {
+    const client = createElectronClient();
+    expect(await client.listTrash({ limit: 50 })).toEqual({
+      posts: [],
+      total: 0,
+      retentionDays: 0,
+      nextCursor: null,
+    });
+    expect(await client.restoreFromTrash({ deletedAt: 1 })).toEqual({
+      changed: 0,
+      selected: 0,
+      deletedAt: null,
+      job: null,
+    });
+    expect(await client.emptyTrash()).toEqual({ selected: 0, job: null });
+  });
+});
+
 describe('electronClient — writes (P1-06 seam)', () => {
   it('updatePost: the user layer goes through updatePostUserContent, then re-reads the post', async () => {
     vi.mocked(window.electronAPI.getPostsByIds).mockResolvedValue([

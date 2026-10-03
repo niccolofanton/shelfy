@@ -2,7 +2,7 @@
 // data model (Shelfy.*); these pure functions translate the gallery query into
 // `GET /api/v1/posts` parameters and the API's posts, stats and collections into
 // that model.
-import type { MediaUrls, PostQuery } from '@ui/api/ShelfyClient';
+import type { BulkSelector, MediaUrls, PostQuery } from '@ui/api/ShelfyClient';
 import { thumbHashToDataURL } from '@ui/lib/thumbhash';
 import type { components, operations } from './schema';
 
@@ -12,6 +12,7 @@ export type ApiPostDetail = Schemas['PostDetail'];
 export type ApiPostMedia = Schemas['PostMedia'];
 export type ApiMediaObject = Schemas['MediaObject'];
 export type ListPostsParams = NonNullable<operations['listPosts']['parameters']['query']>;
+export type CountParams = NonNullable<operations['countPosts']['parameters']['query']>;
 
 // Largest page the API serves (§2.9); a bigger window takes several requests.
 export const MAX_PAGE_SIZE = 200;
@@ -61,6 +62,7 @@ export function listPostsParams(
           : undefined,
     aiTagged:
       query.aiTagged === 'tagged' ? 'yes' : query.aiTagged === 'untagged' ? 'no' : undefined,
+    aiStatus: query.aiStatus || undefined,
     tag: query.tag || undefined,
     category: query.category || undefined,
     contentType: query.contentType || undefined,
@@ -68,11 +70,88 @@ export function listPostsParams(
     concept: concepts.length ? concepts : undefined,
     conceptMode: concepts.length && query.conceptMode === 'and' ? 'and' : undefined,
     sort: !q && !concepts.length && query.sortOrder === 'oldest' ? 'oldest' : undefined,
+    trash: query.trash || undefined,
     limit: Math.max(1, Math.min(MAX_PAGE_SIZE, Math.floor(page.limit))),
     cursor: page.cursor || undefined,
     includeTotal: page.includeTotal || undefined,
   };
   return params;
+}
+
+// The same filters, as `GET /posts/count` takes them (no paging/order): the
+// gallery's count pill, and the authoritative total behind "select all
+// matching" (P1-14).
+export function countParams(query: PostQuery): CountParams {
+  const q = query.search?.trim() || undefined;
+  const concepts = (query.concepts ?? []).map((c) => c.trim()).filter(Boolean);
+  const mediaType = oneOf(MEDIA_TYPES, query.mediaType);
+  return {
+    platform: oneOf(PLATFORMS, query.platform),
+    source: query.source === 'web' || query.source === 'social' ? query.source : undefined,
+    collection: query.collectionId || undefined,
+    mediaType: mediaType ? [mediaType] : undefined,
+    stored:
+      query.downloadStatus === 'downloaded'
+        ? 'yes'
+        : query.downloadStatus === 'missing'
+          ? 'no'
+          : undefined,
+    aiTagged:
+      query.aiTagged === 'tagged' ? 'yes' : query.aiTagged === 'untagged' ? 'no' : undefined,
+    aiStatus: query.aiStatus || undefined,
+    tag: query.tag || undefined,
+    category: query.category || undefined,
+    contentType: query.contentType || undefined,
+    q,
+    concept: concepts.length ? concepts : undefined,
+    conceptMode: concepts.length && query.conceptMode === 'and' ? 'and' : undefined,
+    trash: query.trash || undefined,
+  };
+}
+
+// The same filters again, as the `FilterParams` schema nested in a bulk/trash
+// selector's `filter` (P1-11): unlike the query-string forms above, every
+// field is present (defaults filled in), because this travels as a JSON
+// object rather than an optional query parameter.
+export function toFilterParams(query: PostQuery): Schemas['FilterParams'] {
+  const q = query.search?.trim() || null;
+  const concepts = (query.concepts ?? []).map((c) => c.trim()).filter(Boolean);
+  const mediaType = oneOf(MEDIA_TYPES, query.mediaType);
+  return {
+    platform: oneOf(PLATFORMS, query.platform) ?? null,
+    source: query.source === 'web' || query.source === 'social' ? query.source : null,
+    collection: query.collectionId ?? null,
+    mediaType: mediaType ? [mediaType] : [],
+    stored:
+      query.downloadStatus === 'downloaded'
+        ? 'yes'
+        : query.downloadStatus === 'missing'
+          ? 'no'
+          : null,
+    aiTagged: query.aiTagged === 'tagged' ? 'yes' : query.aiTagged === 'untagged' ? 'no' : null,
+    aiStatus: query.aiStatus || null,
+    tag: query.tag || null,
+    tagMode: null,
+    tags: [],
+    entity: null,
+    category: query.category || null,
+    contentType: query.contentType || null,
+    q,
+    concept: concepts,
+    conceptMode: concepts.length && query.conceptMode === 'and' ? 'and' : null,
+    trash: query.trash ?? null,
+  };
+}
+
+// A `BulkSelector` (ShelfyClient's transport-neutral shape) as the API's
+// `PostSelector` (P1-03/P1-11): exactly one of `keys` or `filter`.
+export function toPostSelector(selector: BulkSelector): Schemas['PostSelector'] {
+  if (selector.filter) {
+    const out: Schemas['PostSelector'] = { filter: toFilterParams(selector.filter) };
+    if (selector.exceptKeys?.length) out.exceptKeys = selector.exceptKeys;
+    return out;
+  }
+  return { keys: selector.keys ?? [] };
 }
 
 // Query-string form of `params`: arrays repeat their key, unset values are left out.
@@ -215,6 +294,7 @@ export function toPost(p: ApiPost | ApiPostDetail): Shelfy.Post {
     webFaviconPath: capture?.favicon?.url ?? null,
     media: p.media.map(toPostMedia),
     collectionIds: p.collectionIds,
+    deletedAt: seconds(p.deletedAt),
   };
 }
 

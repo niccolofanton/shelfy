@@ -1,15 +1,22 @@
 // The web ShelfyClient: the HTTP API of shelfy-server (`/api/v1`), typed by
 // the generated OpenAPI types (./schema.d.ts), and its realtime stream.
 import type {
+  BulkActionKind,
+  BulkActionParams,
+  BulkJob,
+  BulkOutcome,
+  BulkSelector,
   CollectionDeleteOptions,
   CollectionDeleteResult,
   PageRequest,
   PostEdit,
   PostPage,
   PostQuery,
+  RestoreSelector,
   ShelfyCapabilities,
   ShelfyClient,
   ShelfyEvent,
+  TrashPage,
   ViewErrorReport,
 } from '@ui/api/ShelfyClient';
 import { createAccountApi } from './account';
@@ -19,9 +26,11 @@ import { createJobsApi } from './jobs';
 import { createLinksApi } from './links';
 import {
   MAX_PAGE_SIZE,
+  countParams,
   listPostsParams,
   toCollection,
   toPost,
+  toPostSelector,
   toSearchParams,
   toStats,
   webMedia,
@@ -32,6 +41,28 @@ type Schemas = components['schemas'];
 
 // `POST /posts/batch-get` takes at most 200 keys per call (plan §2.9).
 const MAX_BATCH_GET = 200;
+
+// A fresh key for a job-creating POST's `Idempotency-Key` (P1-11/P1-15):
+// `crypto.randomUUID` is available in every browser this app targets.
+function idempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function toBulkJob(job: Schemas['Job'] | null | undefined): BulkJob | null {
+  return job ? { id: job.id, kind: job.kind } : null;
+}
+
+function toBulkOutcome(result: Schemas['BulkResult']): BulkOutcome {
+  return {
+    changed: result.changed,
+    selected: result.selected,
+    deletedAt: result.deletedAt,
+    job: toBulkJob(result.job),
+  };
+}
 
 // What the web app can do without an account: browse, read and edit the
 // library. Each capability turns on with the task that brings its API
@@ -54,7 +85,7 @@ export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
   websites: false,
   bookmarks: false,
   libraryEdit: true,
-  bulkActions: false,
+  bulkActions: true,
   settings: false,
   activity: false,
   feedback: false,
@@ -210,6 +241,71 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
       return items.map(toCollection);
     },
 
+    async countPosts(query: PostQuery): Promise<number> {
+      const { total } = await http.get<Schemas['PostCount']>(
+        '/api/v1/posts/count',
+        toSearchParams(countParams(query)),
+      );
+      return total;
+    },
+
+    // The web never materializes the full matching id set (it would not
+    // scale, P1-11): "select all matching" always selects by filter instead.
+    async resolveAllIds(): Promise<string[] | null> {
+      return null;
+    },
+
+    async bulkAction(
+      selector: BulkSelector,
+      action: BulkActionKind,
+      params?: BulkActionParams,
+    ): Promise<BulkOutcome> {
+      const res = await http.send(
+        'POST',
+        '/api/v1/posts/bulk',
+        {
+          selector: toPostSelector(selector),
+          action,
+          ...(params ? { params } : {}),
+        } satisfies Schemas['BulkRequest'],
+        { headers: { 'Idempotency-Key': idempotencyKey() } },
+      );
+      return toBulkOutcome((await res.json()) as Schemas['BulkResult']);
+    },
+
+    async listTrash({ limit, cursor, signal }: PageRequest): Promise<TrashPage> {
+      const page = await http.get<Schemas['TrashPage']>(
+        '/api/v1/trash',
+        toSearchParams({ limit, cursor: cursor || undefined }),
+        signal,
+      );
+      return {
+        posts: page.items.map(toPost),
+        total: page.total,
+        retentionDays: page.retentionDays,
+        nextCursor: page.nextCursor,
+      };
+    },
+
+    async restoreFromTrash(selector: RestoreSelector): Promise<BulkOutcome> {
+      const body: Schemas['RestoreRequest'] =
+        'deletedAt' in selector
+          ? { deletedAt: selector.deletedAt }
+          : { selector: toPostSelector(selector) };
+      const res = await http.send('POST', '/api/v1/trash/restore', body, {
+        headers: { 'Idempotency-Key': idempotencyKey() },
+      });
+      return toBulkOutcome((await res.json()) as Schemas['BulkResult']);
+    },
+
+    async emptyTrash(): Promise<{ selected: number; job: BulkJob | null }> {
+      const res = await http.send('POST', '/api/v1/trash/empty', undefined, {
+        headers: { 'Idempotency-Key': idempotencyKey() },
+      });
+      const data = (await res.json()) as Schemas['TrashEmptying'];
+      return { selected: data.selected, job: toBulkJob(data.job) };
+    },
+
     async updatePost(id: string, edit: PostEdit): Promise<Shelfy.Post> {
       const res = await http.send(
         'PATCH',
@@ -234,12 +330,22 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
     ): Promise<CollectionDeleteResult> {
       // `mode=withPosts` moves the posts to the trash (server-side since
       // P1-11); the UI only offers the choice once its own trash/bulk
-      // surface exists (capability `bulkActions`, P1-14).
+      // surface exists (capability `bulkActions`, P1-14). A folder over 500
+      // posts queues a `bulk` job instead (F11): read `job` defensively,
+      // since it is not in every server build's `CollectionDeleted` yet.
       const mode = options?.deletePosts ? 'withPosts' : undefined;
       const path = `/api/v1/collections/${id}` + (mode ? `?mode=${mode}` : '');
       const res = await http.send('DELETE', path);
-      const { trashed } = (await res.json()) as Schemas['CollectionDeleted'];
-      return { ok: true, deletedPosts: trashed, errors: [] };
+      const data = (await res.json()) as Schemas['CollectionDeleted'] & {
+        job?: Schemas['Job'] | null;
+      };
+      return {
+        ok: true,
+        deletedPosts: data.trashed,
+        errors: [],
+        deletedAt: data.deletedAt,
+        job: toBulkJob(data.job),
+      };
     },
 
     async addPostsToCollections(postIds, collectionIds): Promise<void> {
@@ -273,6 +379,19 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
           return events.on('stats.changed', () => emit({ type: 'stats.changed' }));
         case 'resync':
           return events.on('resync', () => emit({ type: 'resync' }));
+        case 'job.updated':
+          // Minimal (P1-14: bulk/trash/purge progress only); P4-09 owns the
+          // full jobs seam and may extend or replace this for the Jobs view.
+          return events.on('job.updated', (data) =>
+            emit({
+              type: 'job.updated',
+              id: data.id,
+              kind: data.kind,
+              state: data.state,
+              progress: data.progress,
+              errorCode: data.errorCode,
+            }),
+          );
         default:
           return () => {};
       }
