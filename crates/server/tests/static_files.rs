@@ -227,17 +227,16 @@ async fn server_paths_never_get_the_page() {
     let response = send(&app, get("/health")).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(json(response).await["status"], "ok");
-    // Capture has a real health route; an unconfigured service must report
-    // unavailable as JSON rather than falling back to the web page.
+    // Capture has a real status-only health route; an unconfigured service
+    // must report unavailable without falling back to the web page.
     let response = send(&app, get("/health/capture")).await;
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert!(
-        response.headers()[header::CONTENT_TYPE]
-            .to_str()
-            .unwrap()
-            .contains("json")
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/octet-stream"
     );
-    assert_ne!(body(response).await, INDEX);
+    assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+    assert!(body(response).await.is_empty());
     let response = send(&app, get("/api/v1/openapi.json")).await;
     assert_eq!(response.status(), StatusCode::OK);
     problem(

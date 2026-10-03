@@ -37,6 +37,21 @@ fn generated() -> Value {
     serde_json::from_str(&routes::openapi_json()).expect("the document is JSON")
 }
 
+#[test]
+fn token_ttl_can_be_omitted_but_is_not_nullable() {
+    let document = generated();
+    let request = &document["components"]["schemas"]["ApiTokenRequest"];
+    assert!(
+        !request["required"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("ttlDays"))
+    );
+    let ttl = &request["properties"]["ttlDays"];
+    assert_eq!(ttl["type"], "integer");
+    assert_eq!(ttl["default"], 90);
+}
+
 fn committed_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("openapi.json")
 }

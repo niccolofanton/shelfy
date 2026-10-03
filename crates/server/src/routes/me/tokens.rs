@@ -159,7 +159,13 @@ pub struct ApiTokenRequest {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "ttl_days"
     )]
-    #[schema(nullable = false, minimum = 1, maximum = 365, default = 90)]
+    #[schema(
+        required = false,
+        nullable = false,
+        minimum = 1,
+        maximum = 365,
+        default = 90
+    )]
     pub ttl_days: Option<u16>,
 }
 
