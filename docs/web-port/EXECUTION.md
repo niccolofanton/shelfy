@@ -226,6 +226,7 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P4-02, P4-30 | Proxy mode is `SHELFY_EGRESS_PROXY`; a non-200 tunnel answer or `X-Smokescreen-Error` maps to `Refusal::Proxy`; `ProxyStub` in `tests/support/cdn.rs` is a reference. Literal addresses are refused in proxy mode too, so positive controls reach fixtures by name. The operator allowlist and the capture origin bypass the proxy, so in proxy mode the API container needs a route to the tailnet, or Smokescreen needs an allow-range: decide at P4-30. | P2-04 |
 | P4-06, P4-14, P4-16, P4-22 | P4-06 passes `--proxy` with `proxy_url()` (direct mode leaves yt-dlp unguarded). P4-16 uses `Purpose::Video` (https only, 10 min) with the group limits and breakers, then `reader_capped` into `ingest_async(.., IngestLimits::VIDEO)`. P4-14 uses `internal()` plus `stream_capped` and reuses `SHELFY_CAPTURE_URL`, which P2-04 added. P4-22 uses `Purpose::Feedback`. | P2-04 |
 | Any lane adding serve flags | `ServeArgs` is about 8 bytes under clippy's `large_enum_variant` threshold: box `Command::Serve` in `cli.rs`. | P2-04 |
+| P3-11, P3-17, P3-18, P3-20, P3-22 | The AI seam is `src/api/ai/index.ts` (`AiApi { queue, tags, search, suggest, dictation }`, through `useShelfy().ai`); each method names its future web route. Capability flags `aiQueue`, `aiTags`, `aiChat`, `aiSuggest`, `dictation` are false on the web: implement `web/src/api/ai/*.ts` against the interfaces and flip your flag in `webCapabilities()`. The "promote results to a folder" flow in `AiTags.tsx` and `AiSearch.tsx` still calls `window.electronAPI` for collections: move it to P1-06's seam. | P3-08 |
 | P2-11 | `/share` (P2-07) already calls `POST /links` with contract C7 through `src/api/links.ts`; it answers 404 until P2-11 lands. | P2-07 |
 | P2-12 | The iOS Shortcut steps are drafted in the P2-07 report: a `links:create` token, then "Get Contents of URL" `POST /api/v1/links` with `{"url": <Shortcut Input>}`. | P2-07 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
@@ -260,7 +261,7 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 | P4-09 | Jobs view (replaces Downloads on the web) | running (Sonnet) | `web/p4-09-jobs-view` |
 | P3-01 | Provider adapters (OpenAI-compatible, Anthropic, whisper.cpp) and the stub provider | running (Opus) | `web/p3-01-providers` |
 | P3-03 | `shared/ai`: prompts and schemas v2, the desktop on them, the catalog core | running (Opus) | `web/p3-03-shared-ai` |
-| P3-08 | The AI seam on the desktop | running (Sonnet) | `web/p3-08-ai-seam` |
+| P3-08 | The AI seam on the desktop | done (Sonnet): `useShelfy().ai` with queue, tags, search, suggest and dictation; desktop unchanged; web flags off | `web/p3-08-ai-seam` (27985d1) |
 
 Held back: P4-02 and P4-03 wait for the SPIKE-4/11 note; P2-08 waits for P4-09 (L14); P4-05, P4-10, P4-11, P4-12 and P3-02, P3-04–P3-07 start as slots free up.
 
