@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "type": "string"
+          },
+          "canonical": {
+            "type": "string"
+          }
+        },
+        "required": ["alias", "canonical"]
+      }
+    }
+  },
+  "required": ["aliases"]
+}

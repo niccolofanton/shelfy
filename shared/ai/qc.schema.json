@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["ok", "black", "blank", "loading", "partial"]
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": ["status", "reason"]
+}

@@ -1,0 +1,92 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "type": "string"
+    },
+    "purpose": {
+      "type": "string",
+      "enum": [
+        "portfolio",
+        "e-commerce",
+        "saas",
+        "landing",
+        "agency",
+        "editorial",
+        "corporate",
+        "docs",
+        "webapp",
+        "directory",
+        "personal",
+        "other"
+      ]
+    },
+    "industry": {
+      "type": "string",
+      "enum": [
+        "technology",
+        "fintech",
+        "fashion",
+        "food-beverage",
+        "real-estate",
+        "health",
+        "education",
+        "gaming",
+        "travel",
+        "b2b-software",
+        "nonprofit",
+        "crypto-web3",
+        "architecture",
+        "automotive",
+        "media-entertainment",
+        "ecommerce-retail",
+        "marketing-agency",
+        "sports",
+        "beauty",
+        "other"
+      ]
+    },
+    "general_tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "specific_tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "search_keywords": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "save_reason": {
+      "type": "string"
+    },
+    "language": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "description",
+    "purpose",
+    "industry",
+    "general_tags",
+    "specific_tags",
+    "entities",
+    "search_keywords",
+    "save_reason",
+    "language"
+  ]
+}

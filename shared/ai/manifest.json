@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 2,
+  "tasks": {
+    "catalog": {
+      "about": "Catalogs a social post (image, carousel, video or text) from its images and caption.",
+      "system": "catalog.system.md",
+      "user": "catalog.user.md",
+      "schema": { "name": "video_catalog", "file": "catalog.schema.json" },
+      "temperature": 0.2,
+      "maxTokens": 768,
+      "captionMax": 1200,
+      "hintsMax": 30,
+      "caps": { "general": 3, "specific": 7, "tags": 10 }
+    },
+    "web_catalog": {
+      "about": "Catalogs a website from its screenshots, page text and detected tech stack.",
+      "system": "web_catalog.system.md",
+      "user": "web_catalog.user.md",
+      "schema": { "name": "web_catalog", "file": "web_catalog.schema.json" },
+      "temperature": 0.2,
+      "maxTokens": 768,
+      "captionMax": 1200,
+      "hintsMax": 30,
+      "caps": { "general": 3, "specific": 7, "tags": 10 }
+    },
+    "qc": {
+      "about": "Tells whether a captured page screenshot shows the loaded page.",
+      "system": "qc.system.md",
+      "user": "qc.user.md",
+      "schema": { "name": "screenshot_qc", "file": "qc.schema.json" },
+      "temperature": 0,
+      "maxTokens": 120
+    },
+    "chat": {
+      "about": "The search chat: proposes archive tags and search keywords, turn by turn.",
+      "system": "chat.system.md",
+      "temperature": 0.3,
+      "maxTokens": 256
+    },
+    "suggest": {
+      "about": "Suggests related filter tags for a gallery search.",
+      "system": "suggest.system.md",
+      "user": "suggest.user.md",
+      "schema": { "name": "suggested_tags", "file": "suggest.schema.json" },
+      "temperature": 0.4,
+      "maxTokens": 200
+    },
+    "cluster_refine": {
+      "about": "Names, splits and cleans one candidate group of co-occurring tags.",
+      "system": "cluster_refine.system.md",
+      "user": "cluster_refine.user.md",
+      "schema": { "name": "tag_refine", "file": "cluster_refine.schema.json" },
+      "temperature": 0.2,
+      "maxTokens": { "base": 256, "perItem": 8, "max": 2048 }
+    },
+    "aliases": {
+      "about": "Maps near-synonym tags onto the canonical vocabulary, one batch at a time.",
+      "system": "cluster_refine.system.md",
+      "user": "aliases.user.md",
+      "schema": { "name": "tag_aliases", "file": "aliases.schema.json" },
+      "temperature": 0.1,
+      "maxTokens": { "base": 256, "perItem": 24, "max": 2048 }
+    }
+  }
+}
