@@ -43,3 +43,9 @@ From the owner's handoff of 2026-10-03 (§17.4–17.5), for when P3-13 has lande
 6. Confirm with the returned token and a stable Idempotency-Key; watch one post go pending → analyzing → done with its tags saved; then monitor done, error, waiting, provider state and backlog without re-launching `all` while the first run is queued.
 
 Status: todo (needs P3-13).
+
+## P2-13: the first real syncs (owner, P2-23)
+
+The sync controller only ran against synthetic pages. On the owner's real accounts, check that the replay gate works on live Instagram, that a signed-out replay really answers 401/403 (it maps to `login_required`), and how folder names taken from the page `h1` come out. On Instagram the scroll after a full replay adds nothing today (SPIKE-3) and can take up to 30 minutes: `shelfy-server admin flags extension.instagram.scroll=false` turns it off (it is on by default, as the card asks); decide after the first real sync.
+
+Status: todo (owner).
