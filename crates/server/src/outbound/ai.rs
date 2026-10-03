@@ -6,7 +6,7 @@
 //! |---|---|---|
 //! | `Allowlisted` (the operator provider) | [`Purpose::AiOperator`] | the operator's origins (`SHELFY_EGRESS_ALLOW_ORIGINS`), directly, never through the proxy |
 //! | `Public` (a user's provider) | [`Purpose::Ai`] | https on ports 80 and 443, public addresses only, through `SHELFY_EGRESS_PROXY` when set |
-//! | `Loopback` (P3-19's test switch) | [`Purpose::Ai`] | nothing: the client refuses loopback addresses. Only [`AiTransport::with_loopback_for_tests`] (feature `test-loopback`, tests only) reaches a loopback stub, on any port |
+//! | `Loopback` (P3-19's test switch) | [`Purpose::Ai`] | literal loopback addresses on any port only with the validated `SHELFY_AI_ALLOW_LOOPBACK` switch; otherwise refused |
 //!
 //! User providers stay on ports 80 and 443 (F15): the plan sends custom base
 //! URLs through the egress proxy (§2.15), which allows those two ports only
@@ -60,8 +60,7 @@ const MARGIN: Duration = Duration::from_secs(5);
 pub struct AiTransport {
     operator: Egress,
     user: Egress,
-    /// Tests only: the route of `Egress::Loopback`.
-    #[cfg(any(test, feature = "test-loopback"))]
+    /// Local-development route, enabled only after configuration validation.
     loopback: Option<Egress>,
 }
 
@@ -72,7 +71,6 @@ impl AiTransport {
         Self {
             operator: outbound.client(Purpose::AiOperator),
             user: outbound.client(Purpose::Ai),
-            #[cfg(any(test, feature = "test-loopback"))]
             loopback: None,
         }
     }
@@ -86,8 +84,12 @@ impl AiTransport {
     #[cfg(any(test, feature = "test-loopback"))]
     #[must_use]
     pub fn with_loopback_for_tests(outbound: &Outbound) -> Self {
+        Self::with_local_loopback(outbound)
+    }
+
+    pub(crate) fn with_local_loopback(outbound: &Outbound) -> Self {
         Self {
-            loopback: Some(outbound.client(Purpose::Ai).loopback_for_tests()),
+            loopback: Some(outbound.client(Purpose::Ai).loopback_for_local_ai()),
             ..Self::new(outbound)
         }
     }
@@ -95,7 +97,6 @@ impl AiTransport {
     /// The handle of the `Loopback` route: the strict user handle, which
     /// refuses loopback addresses, outside tests.
     fn loopback(&self) -> &Egress {
-        #[cfg(any(test, feature = "test-loopback"))]
         if let Some(loopback) = &self.loopback {
             return loopback;
         }

@@ -122,11 +122,53 @@ pub struct AiModels {
     /// The transcription model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub qc: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+}
+
+/// Optional prices in US dollars per million tokens (no keys).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct AiPrices {
+    pub input_per_million_usd: f64,
+    pub output_per_million_usd: f64,
+}
+
+/// The consent applying to this exact provider endpoint and credential.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProviderConsent {
+    pub version: String,
+    pub accepted_at: i64,
+}
+
+/// A probe outcome stores a stable error kind, never remote text or answers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProbeResult {
+    pub ok: bool,
+    pub skipped: bool,
+    pub error: Option<String>,
+}
+
+/// Synthetic onboarding checks; library content is never sent by the probe.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProviderTest {
+    pub tested_at: i64,
+    pub models: AiProbeResult,
+    pub text: AiProbeResult,
+    pub vision: AiProbeResult,
+    pub schema: AiProbeResult,
 }
 
 /// One BYOK provider as the user configured it, without its key (P3). The
 /// key is sealed in the control database; the service looks it up there.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiProvider {
     /// A stable id the user chose.
@@ -140,6 +182,12 @@ pub struct AiProvider {
     /// The models per task.
     #[serde(default)]
     pub models: AiModels,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prices: Option<AiPrices>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consent: Option<AiProviderConsent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test: Option<AiProviderTest>,
 }
 
 /// Per-task provider overrides: a task name (`catalog`, `chat`, …) to a
@@ -157,7 +205,7 @@ impl AiRouting {
 }
 
 /// The AI settings (P3), with defaults filled in.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct AiSettings {
     /// The user's BYOK providers (no keys).
     pub providers: Vec<AiProvider>,
@@ -190,7 +238,7 @@ impl Default for AiSettings {
 }
 
 /// Every setting, with defaults filled in.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
     /// The UI language; `None` until the user picks one.
     pub language: Option<Language>,
@@ -201,7 +249,7 @@ pub struct Settings {
 }
 
 /// A change to the settings: `None` leaves a setting as it is.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SettingsChange {
     /// The new UI language.
     pub language: Option<Language>,
@@ -419,6 +467,9 @@ mod tests {
         assert_eq!(read(&conn).unwrap().ai, AiSettings::default());
 
         let providers = vec![AiProvider {
+            prices: None,
+            consent: None,
+            test: None,
             id: "openai".into(),
             kind: AiProviderKind::OpenaiCompatible,
             label: "OpenAI".into(),

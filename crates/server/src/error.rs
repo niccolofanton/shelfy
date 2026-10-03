@@ -90,6 +90,8 @@ pub enum ErrorCode {
     /// (a vision task needs a vision model), so the request has no route
     /// (P3-09, Q1). `GET /me/providers` says what is configured.
     AiNotConfigured,
+    /// 409: this instance has no master key for BYOK credentials.
+    AiVaultDisabled,
     /// 403: sending library content to this provider needs consent first.
     /// Accept it for the provider (P3-19), then retry. The operator provider
     /// counts as consented for the owner.
@@ -157,7 +159,10 @@ impl ErrorCode {
             }
             Self::NotFound | Self::SyncRunNotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::Conflict | Self::UploadConsumed | Self::SourceDisabled => StatusCode::CONFLICT,
+            Self::Conflict
+            | Self::UploadConsumed
+            | Self::SourceDisabled
+            | Self::AiVaultDisabled => StatusCode::CONFLICT,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::ValidationFailed
@@ -233,6 +238,7 @@ impl ErrorCode {
             Self::ValidationFailed => "validation_failed",
             Self::ProviderKeyInvalid => "provider_key_invalid",
             Self::AiNotConfigured => "ai_not_configured",
+            Self::AiVaultDisabled => "ai_vault_disabled",
             Self::AiConsentRequired => "ai_consent_required",
             Self::ProviderOffline => "provider_offline",
             Self::ProviderUnavailable => "provider_unavailable",
@@ -595,6 +601,7 @@ mod tests {
             ErrorCode::ValidationFailed,
             ErrorCode::ProviderKeyInvalid,
             ErrorCode::AiNotConfigured,
+            ErrorCode::AiVaultDisabled,
             ErrorCode::AiConsentRequired,
             ErrorCode::ProviderOffline,
             ErrorCode::ProviderUnavailable,

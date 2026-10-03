@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use rusqlite::{OptionalExtension as _, params};
 use serde::Serialize;
 use serde_json::{Map, Value};
-use shelfy_ai::secrecy::SecretString;
 use shelfy_ai::{
     AiError, CallOptions, ChatRequest, ChatResponse, EgressPolicy, EmbedRequest, Embeddings,
     ErrorKind, Provider, ProviderConfig, ProviderKind, RetryPolicy, Source, TextCallback, Timeouts,
@@ -30,7 +29,6 @@ use shelfy_core::repo::settings::{self, AiProvider, AiProviderKind, AiSettings};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
-use url::Url;
 use utoipa::ToSchema;
 
 use super::breaker::{Admission, CallOutcome, OperatorBreaker, Transition, UserBreakers};
@@ -116,7 +114,7 @@ pub struct ProviderModels {
 
 /// One provider as `GET /me/providers` lists it: no key, and the operator
 /// provider is `managed` (no edit or delete).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ProviderSummary {
     /// The provider id (`operator`, or the user's id).
@@ -133,6 +131,18 @@ pub struct ProviderSummary {
     pub stt: bool,
     /// Its current state.
     pub status: ProviderState,
+    pub configured: bool,
+    pub consent_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last4: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prices: Option<super::providers::ProviderPrices>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consent: Option<super::providers::ProviderConsent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test: Option<super::providers::ProviderTest>,
 }
 
 /// The built operator provider.
@@ -191,9 +201,54 @@ impl OperatorGate {
     }
 }
 
+/// One semaphore survives concurrency edits, so old calls remain counted.
+struct UserGate {
+    sem: Arc<Semaphore>,
+    reserved: tokio::sync::Mutex<Option<OwnedSemaphorePermit>>,
+}
+impl UserGate {
+    fn new() -> Self {
+        Self {
+            sem: Arc::new(Semaphore::new(8)),
+            reserved: tokio::sync::Mutex::new(None),
+        }
+    }
+    async fn acquire(&self, concurrency: u8) -> OwnedSemaphorePermit {
+        let desired = usize::from(8 - concurrency.clamp(1, 8));
+        let mut reserved = self.reserved.lock().await;
+        let current = reserved
+            .as_ref()
+            .map_or(0, OwnedSemaphorePermit::num_permits);
+        if desired > current {
+            let extra = Arc::clone(&self.sem)
+                .acquire_many_owned(u32::try_from(desired - current).expect("at most 7 permits"))
+                .await
+                .expect("the user gate is never closed");
+            if let Some(existing) = reserved.as_mut() {
+                existing.merge(extra);
+            } else {
+                *reserved = Some(extra);
+            }
+        } else if desired < current {
+            drop(
+                reserved
+                    .as_mut()
+                    .expect("reserved slots exist")
+                    .split(current - desired),
+            );
+        }
+        drop(reserved);
+        Arc::clone(&self.sem)
+            .acquire_owned()
+            .await
+            .expect("the user gate is never closed")
+    }
+}
+
 /// A held call: its provider and the permits it holds until it finishes.
 struct CallGuard {
     provider: Provider,
+    cancel: Option<CancellationToken>,
     _global: OwnedSemaphorePermit,
     _slot: OwnedSemaphorePermit,
 }
@@ -204,11 +259,10 @@ struct Inner {
     user_breakers: UserBreakers,
     global: Arc<Semaphore>,
     operator_gate: OperatorGate,
-    user_gates: Mutex<HashMap<String, Arc<Semaphore>>>,
+    user_gates: Mutex<HashMap<String, Arc<UserGate>>>,
     /// (user, provider) pairs whose operator consent is recorded this process.
     consented: Mutex<std::collections::HashSet<(String, String)>>,
-    policy: EgressPolicy,
-    transport: Arc<dyn Transport>,
+    user_statuses: Mutex<HashMap<(String, String), ProviderState>>,
     vault_on: bool,
     probe_interval: Duration,
     last_probe: Mutex<Option<Instant>>,
@@ -253,8 +307,7 @@ impl AiService {
                 operator_gate: gate,
                 user_gates: Mutex::new(HashMap::new()),
                 consented: Mutex::new(std::collections::HashSet::new()),
-                policy,
-                transport,
+                user_statuses: Mutex::new(HashMap::new()),
                 vault_on,
                 probe_interval: PROBE_INTERVAL,
                 last_probe: Mutex::new(None),
@@ -366,11 +419,26 @@ impl AiService {
                 },
                 stt: op.whisper.is_some(),
                 status: self.inner.operator_breaker.state(),
+                configured: true,
+                consent_version: super::providers::CONSENT_VERSION.to_owned(),
+                last4: None,
+                base_url: None,
+                prices: None,
+                consent: None,
+                test: None,
             });
         }
+        let _lock = state.byok().lock(caller.id).await;
         let settings = self.read_ai_settings(state, caller.id).await;
         let now = Instant::now();
         for provider in &settings.providers {
+            let control = Arc::clone(state.control());
+            let user = caller.id.to_owned();
+            let id = provider.id.clone();
+            let sealed = blocking(move || {
+                control.read(|c| crate::control::provider_keys::get(c, &user, &id))
+            })
+            .await?;
             out.push(ProviderSummary {
                 id: provider.id.clone(),
                 kind: match provider.kind {
@@ -386,7 +454,31 @@ impl AiService {
                     embed: provider.models.embed.clone(),
                 },
                 stt: provider.models.stt.is_some(),
-                status: self.inner.user_breakers.state(caller.id, &provider.id, now),
+                status: if self.inner.user_breakers.state(caller.id, &provider.id, now)
+                    == ProviderState::Down
+                {
+                    ProviderState::Down
+                } else {
+                    self.inner
+                        .user_statuses
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .get(&(caller.id.to_owned(), provider.id.clone()))
+                        .copied()
+                        .unwrap_or_else(|| {
+                            provider
+                                .test
+                                .as_ref()
+                                .map_or(ProviderState::Ok, super::providers::probe_status)
+                        })
+                },
+                configured: sealed.is_some(),
+                consent_version: super::providers::CONSENT_VERSION.to_owned(),
+                last4: sealed.map(|k| k.sealed.last4),
+                base_url: Some(provider.base_url.clone()),
+                prices: provider.prices.map(Into::into),
+                consent: provider.consent.clone().map(Into::into),
+                test: provider.test.clone().map(Into::into),
             });
         }
         Ok(out)
@@ -456,13 +548,25 @@ impl AiService {
 
     fn descriptor_route(&self, provider: &AiProvider, task: Task) -> Option<Route> {
         let model = match task {
-            Task::Catalog | Task::Qc => provider.models.catalog.clone()?,
+            Task::Catalog => provider.models.catalog.clone()?,
+            Task::Qc => provider
+                .models
+                .qc
+                .clone()
+                .or_else(|| provider.models.catalog.clone())?,
             Task::Chat => provider.models.chat.clone()?,
             Task::Suggest => provider.models.suggest.clone()?,
-            Task::Cluster | Task::Alias => provider
+            Task::Cluster => provider
                 .models
-                .chat
+                .cluster
                 .clone()
+                .or_else(|| provider.models.chat.clone())
+                .or_else(|| provider.models.suggest.clone())?,
+            Task::Alias => provider
+                .models
+                .alias
+                .clone()
+                .or_else(|| provider.models.chat.clone())
                 .or_else(|| provider.models.suggest.clone())?,
             Task::Embed => provider.models.embed.clone()?,
             Task::Stt => provider.models.stt.clone()?,
@@ -496,13 +600,27 @@ impl AiService {
         hints: CallHints,
     ) -> Result<ChatResponse, AiServiceError> {
         let route = self.route(state, caller, task).await?;
-        let guard = self.begin(state, caller, &route).await?;
+        let guard = self
+            .begin_cancellable(state, caller, &route, hints.cancel.as_ref())
+            .await?;
         let options = self.call_options(&route, hints);
-        let result = guard.provider.chat(request, &options).await;
+        let result = until_cancelled(
+            guard.cancel.as_ref(),
+            guard.provider.chat(request, &options),
+        )
+        .await;
+        let generation = guard.cancel.clone();
         drop(guard);
         let usage = result.as_ref().ok().and_then(|r| r.usage);
-        self.finish(state, caller, &route, outcome_of(&result), usage)
-            .await;
+        self.finish(
+            state,
+            caller,
+            &route,
+            outcome_of(&result),
+            usage,
+            generation,
+        )
+        .await;
         result.map_err(AiServiceError::Call)
     }
 
@@ -519,13 +637,27 @@ impl AiService {
         hints: CallHints,
     ) -> Result<Embeddings, AiServiceError> {
         let route = self.route(state, caller, Task::Embed).await?;
-        let guard = self.begin(state, caller, &route).await?;
+        let guard = self
+            .begin_cancellable(state, caller, &route, hints.cancel.as_ref())
+            .await?;
         let options = self.call_options(&route, hints);
-        let result = guard.provider.embed(request, &options).await;
+        let result = until_cancelled(
+            guard.cancel.as_ref(),
+            guard.provider.embed(request, &options),
+        )
+        .await;
+        let generation = guard.cancel.clone();
         drop(guard);
         let usage = result.as_ref().ok().and_then(|r| r.usage);
-        self.finish(state, caller, &route, outcome_of(&result), usage)
-            .await;
+        self.finish(
+            state,
+            caller,
+            &route,
+            outcome_of(&result),
+            usage,
+            generation,
+        )
+        .await;
         result.map_err(AiServiceError::Call)
     }
 
@@ -542,13 +674,44 @@ impl AiService {
         hints: CallHints,
     ) -> Result<Transcript, AiServiceError> {
         let route = self.route(state, caller, Task::Stt).await?;
-        let guard = self.begin(state, caller, &route).await?;
+        let guard = self
+            .begin_cancellable(state, caller, &route, hints.cancel.as_ref())
+            .await?;
         let options = self.call_options(&route, hints);
-        let result = guard.provider.transcribe(request, &options).await;
+        let result = until_cancelled(
+            guard.cancel.as_ref(),
+            guard.provider.transcribe(request, &options),
+        )
+        .await;
+        let generation = guard.cancel.clone();
         drop(guard);
-        self.finish(state, caller, &route, outcome_of(&result), None)
+        self.finish(state, caller, &route, outcome_of(&result), None, generation)
             .await;
         result.map_err(AiServiceError::Call)
+    }
+
+    async fn begin_cancellable(
+        &self,
+        state: &AppState,
+        caller: Caller<'_>,
+        route: &Route,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<CallGuard, AiServiceError> {
+        if let Some(cancel) = cancel {
+            tokio::select! { biased; _ = cancel.cancelled() => Err(AiServiceError::Call(AiError::new(ErrorKind::Cancelled, "the AI call was cancelled"))), result = self.begin(state, caller, route) => result }
+        } else {
+            self.begin(state, caller, route).await
+        }
+    }
+
+    pub(crate) async fn acquire_probe(
+        &self,
+        user: &str,
+        concurrency: u8,
+    ) -> (OwnedSemaphorePermit, OwnedSemaphorePermit) {
+        let global = self.acquire_global().await;
+        let slot = self.user_gate(user).acquire(concurrency).await;
+        (global, slot)
     }
 
     async fn begin(
@@ -612,6 +775,7 @@ impl AiService {
         };
         Ok(CallGuard {
             provider,
+            cancel: None,
             _global: global,
             _slot: slot,
         })
@@ -621,43 +785,53 @@ impl AiService {
         &self,
         state: &AppState,
         caller: Caller<'_>,
-        route: &Route,
+        _route: &Route,
         id: &str,
     ) -> Result<CallGuard, AiServiceError> {
+        let lock = state.byok().lock(caller.id).await;
         let settings = self.read_ai_settings(state, caller.id).await;
         let descriptor = settings
             .providers
             .iter()
             .find(|p| p.id == id)
             .ok_or(AiServiceError::NotConfigured)?;
-        // The key is sealed in the vault (P3-02); P3-19 fills this in. Until
-        // then a BYOK provider cannot be called.
-        let Some(key) = self.byok_key(state, caller, id).await else {
-            return Err(AiServiceError::NotConfigured);
-        };
-        if !self.byok_consented(state, caller, id).await {
+        if !descriptor
+            .consent
+            .as_ref()
+            .is_some_and(|c| c.version == super::providers::CONSENT_VERSION)
+        {
             return Err(AiServiceError::ConsentRequired(id.to_owned()));
         }
-        let now = Instant::now();
-        if self.inner.user_breakers.admit(caller.id, id, now) == Admission::Refuse {
+        let key = super::providers::key(state, caller.id, id)
+            .await
+            .map_err(|_| AiServiceError::Call(held_error(ErrorKind::InvalidKey)))?
+            .ok_or(AiServiceError::NotConfigured)?;
+        if self
+            .inner
+            .user_breakers
+            .admit(caller.id, id, Instant::now())
+            == Admission::Refuse
+        {
             return Err(AiServiceError::Call(held_error(ErrorKind::Transient)));
         }
-        let url = Url::parse(&descriptor.base_url).map_err(|_| AiServiceError::NotConfigured)?;
-        let config = ProviderConfig::new(route.kind, Source::User, url).with_key(key);
-        let provider = Provider::new(
-            config,
-            &self.inner.policy,
-            Arc::clone(&self.inner.transport),
-        )
-        .map_err(AiServiceError::Call)?;
-        let global = self.acquire_global().await;
-        let slot = self
-            .user_gate(caller.id, settings.concurrency)
-            .acquire_owned()
+        let provider =
+            super::providers::adapter(state, descriptor, key).map_err(AiServiceError::Call)?;
+        let cancel = state.byok().generation(caller.id, id);
+        drop(lock);
+        let global = until_cancelled(Some(&cancel), async { Ok(self.acquire_global().await) })
             .await
-            .expect("a per-user AI gate is never closed");
+            .map_err(AiServiceError::Call)?;
+        let slot = until_cancelled(Some(&cancel), async {
+            Ok(self
+                .user_gate(caller.id)
+                .acquire(settings.concurrency)
+                .await)
+        })
+        .await
+        .map_err(AiServiceError::Call)?;
         Ok(CallGuard {
             provider,
+            cancel: Some(cancel),
             _global: global,
             _slot: slot,
         })
@@ -670,12 +844,12 @@ impl AiService {
             .expect("the global AI semaphore is never closed")
     }
 
-    fn user_gate(&self, user: &str, concurrency: u8) -> Arc<Semaphore> {
+    fn user_gate(&self, user: &str) -> Arc<UserGate> {
         let mut gates = self.lock_gates();
         Arc::clone(
             gates
                 .entry(user.to_owned())
-                .or_insert_with(|| Arc::new(Semaphore::new(usize::from(concurrency.max(1))))),
+                .or_insert_with(|| Arc::new(UserGate::new())),
         )
     }
 
@@ -716,6 +890,7 @@ impl AiService {
         route: &Route,
         outcome: CallOutcome,
         usage: Option<Usage>,
+        generation: Option<CancellationToken>,
     ) {
         let outcome_label = match outcome {
             CallOutcome::Ok => metrics::ai_outcome::OK,
@@ -734,9 +909,35 @@ impl AiService {
         match &route.provider {
             ProviderRef::Operator => self.finish_operator(state, caller, outcome).await,
             ProviderRef::User(id) => {
+                let _lock = state.byok().lock(caller.id).await;
+                if generation
+                    .as_ref()
+                    .is_some_and(CancellationToken::is_cancelled)
+                {
+                    return;
+                }
                 self.inner
                     .user_breakers
                     .record(caller.id, id, &outcome, Instant::now());
+                let status = match outcome {
+                    CallOutcome::Ok => ProviderState::Ok,
+                    CallOutcome::Failed(ErrorKind::Cancelled) => return,
+                    CallOutcome::Failed(ErrorKind::InvalidKey) => ProviderState::InvalidKey,
+                    CallOutcome::Failed(ErrorKind::Offline) => ProviderState::Offline,
+                    CallOutcome::Failed(_) => {
+                        if self
+                            .inner
+                            .user_breakers
+                            .state(caller.id, id, Instant::now())
+                            == ProviderState::Down
+                        {
+                            ProviderState::Down
+                        } else {
+                            ProviderState::Degraded
+                        }
+                    }
+                };
+                self.record_user_status(state, caller.id, id, status);
             }
         }
     }
@@ -909,23 +1110,37 @@ impl AiService {
         }
     }
 
-    /// The key of a user's BYOK provider. The vault (P3-02) and the records
-    /// (P3-19) fill this in; until then there is none.
-    #[allow(clippy::unused_async)]
-    async fn byok_key(
-        &self,
-        _state: &AppState,
-        _caller: Caller<'_>,
-        _id: &str,
-    ) -> Option<SecretString> {
-        None
+    pub(crate) fn reset_user_provider(&self, user: &str, id: &str) {
+        self.inner
+            .user_statuses
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&(user.to_owned(), id.to_owned()));
+        self.inner.user_breakers.remove(user, id);
     }
 
-    /// Whether a user consented to a BYOK provider. P3-19 records consent;
-    /// until then a BYOK call would be refused anyway (no key).
-    #[allow(clippy::unused_async)]
-    async fn byok_consented(&self, _state: &AppState, _caller: Caller<'_>, _id: &str) -> bool {
-        false
+    pub(crate) fn record_user_status(
+        &self,
+        state: &AppState,
+        user: &str,
+        id: &str,
+        status: ProviderState,
+    ) {
+        let previous = self
+            .inner
+            .user_statuses
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert((user.to_owned(), id.to_owned()), status);
+        if previous != Some(status) {
+            state.events().provider_status(
+                user,
+                &ProviderStatusEvent {
+                    provider_id: id.to_owned(),
+                    state: status,
+                },
+            );
+        }
     }
 
     async fn read_ai_settings(&self, state: &AppState, user: &str) -> AiSettings {
@@ -952,7 +1167,7 @@ impl AiService {
         }
     }
 
-    fn lock_gates(&self) -> MutexGuard<'_, HashMap<String, Arc<Semaphore>>> {
+    fn lock_gates(&self) -> MutexGuard<'_, HashMap<String, Arc<UserGate>>> {
         self.inner
             .user_gates
             .lock()
@@ -987,4 +1202,48 @@ fn held_error(kind: ErrorKind) -> AiError {
         _ => "the provider is cooling down after repeated failures",
     };
     AiError::new(kind, message).with_code("provider_held")
+}
+
+async fn until_cancelled<T>(
+    cancel: Option<&CancellationToken>,
+    call: impl std::future::Future<Output = Result<T, AiError>>,
+) -> Result<T, AiError> {
+    if let Some(cancel) = cancel {
+        tokio::select! { biased; _ = cancel.cancelled() => Err(AiError::new(ErrorKind::Cancelled, "the provider configuration changed")), result = call => result }
+    } else {
+        call.await
+    }
+}
+
+#[cfg(test)]
+mod user_gate_tests {
+    use super::UserGate;
+    use tokio::time::{Duration, timeout};
+    #[tokio::test]
+    async fn changing_concurrency_counts_existing_calls() {
+        let gate = UserGate::new();
+        let first = gate.acquire(1).await;
+        let second = gate.acquire(2).await;
+        assert!(
+            timeout(Duration::from_millis(20), gate.acquire(2))
+                .await
+                .is_err()
+        );
+        drop(first);
+        let third = gate.acquire(2).await;
+        drop(third);
+        assert!(
+            timeout(Duration::from_millis(20), gate.acquire(1))
+                .await
+                .is_err()
+        );
+        drop(second);
+        let fourth = gate.acquire(1).await;
+        assert!(
+            timeout(Duration::from_millis(20), gate.acquire(1))
+                .await
+                .is_err()
+        );
+        drop(fourth);
+    }
 }

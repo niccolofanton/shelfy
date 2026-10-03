@@ -1814,6 +1814,127 @@
         }
       }
     },
+    "/api/v1/me/providers/{id}": {
+      "put": {
+        "tags": ["account"],
+        "operationId": "putProvider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Provider saved; credential is write-only."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "delete": {
+        "tags": ["account"],
+        "operationId": "deleteProvider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Provider, key, consent and routing references deleted."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/providers/{id}/consent": {
+      "post": {
+        "tags": ["account"],
+        "operationId": "consentProvider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Current provider consent recorded and audited."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/providers/{id}/test": {
+      "post": {
+        "tags": ["account"],
+        "operationId": "testProvider",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Synthetic connectivity checks; no consent or library content needed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderTest"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/me/sessions": {
       "get": {
         "tags": ["account"],
@@ -5820,6 +5941,7 @@
           "validation_failed",
           "provider_key_invalid",
           "ai_not_configured",
+          "ai_vault_disabled",
           "ai_consent_required",
           "provider_offline",
           "provider_unavailable",
@@ -8323,6 +8445,21 @@
           }
         }
       },
+      "ProbeResult": {
+        "type": "object",
+        "required": ["ok", "skipped"],
+        "properties": {
+          "error": {
+            "type": ["string", "null"]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "skipped": {
+            "type": "boolean"
+          }
+        }
+      },
       "Problem": {
         "type": "object",
         "description": "An error body: RFC 9457 problem details plus the stable `code`.",
@@ -8359,6 +8496,54 @@
           }
         }
       },
+      "ProviderConsent": {
+        "type": "object",
+        "required": ["version", "acceptedAt"],
+        "properties": {
+          "acceptedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ProviderInput": {
+        "type": "object",
+        "description": "The key can be supplied only on writes, never serialized or debug-printed.",
+        "required": ["kind", "label", "baseUrl"],
+        "properties": {
+          "baseUrl": {
+            "type": "string"
+          },
+          "key": {
+            "type": ["string", "null"],
+            "description": "Omit to keep the current credential. Required on creation or a target change.",
+            "writeOnly": true
+          },
+          "kind": {
+            "$ref": "#/components/schemas/UserProviderKind"
+          },
+          "label": {
+            "type": "string"
+          },
+          "models": {
+            "$ref": "#/components/schemas/TaskModels"
+          },
+          "prices": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProviderPrices"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "ProviderModels": {
         "type": "object",
         "description": "The model ids a provider offers, as `GET /me/providers` shows them.",
@@ -8377,6 +8562,21 @@
             "description": "The vision model (cataloging and QC)."
           }
         }
+      },
+      "ProviderPrices": {
+        "type": "object",
+        "required": ["inputPerMillionUsd", "outputPerMillionUsd"],
+        "properties": {
+          "inputPerMillionUsd": {
+            "type": "number",
+            "format": "double"
+          },
+          "outputPerMillionUsd": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
       },
       "ProviderState": {
         "type": "string",
@@ -8401,8 +8601,37 @@
       "ProviderSummary": {
         "type": "object",
         "description": "One provider as `GET /me/providers` lists it: no key, and the operator\nprovider is `managed` (no edit or delete).",
-        "required": ["id", "kind", "label", "managed", "models", "stt", "status"],
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "managed",
+          "models",
+          "stt",
+          "status",
+          "configured",
+          "consentVersion"
+        ],
         "properties": {
+          "baseUrl": {
+            "type": ["string", "null"]
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "consent": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProviderConsent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "consentVersion": {
+            "type": "string"
+          },
           "id": {
             "type": "string",
             "description": "The provider id (`operator`, or the user's id)."
@@ -8415,6 +8644,9 @@
             "type": "string",
             "description": "The display name."
           },
+          "last4": {
+            "type": ["string", "null"]
+          },
           "managed": {
             "type": "boolean",
             "description": "Whether the server manages it (the operator provider): no key, no edit."
@@ -8423,6 +8655,16 @@
             "$ref": "#/components/schemas/ProviderModels",
             "description": "The models per use."
           },
+          "prices": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProviderPrices"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "$ref": "#/components/schemas/ProviderState",
             "description": "Its current state."
@@ -8430,6 +8672,38 @@
           "stt": {
             "type": "boolean",
             "description": "Whether it transcribes (dictation)."
+          },
+          "test": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProviderTest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ProviderTest": {
+        "type": "object",
+        "required": ["testedAt", "models", "text", "vision", "schema"],
+        "properties": {
+          "models": {
+            "$ref": "#/components/schemas/ProbeResult"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/ProbeResult"
+          },
+          "testedAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "text": {
+            "$ref": "#/components/schemas/ProbeResult"
+          },
+          "vision": {
+            "$ref": "#/components/schemas/ProbeResult"
           }
         }
       },
@@ -9902,6 +10176,36 @@
         "description": "What a task asks of the extension (C6).",
         "enum": ["upload_media", "refresh_media", "hydrate_link"]
       },
+      "TaskModels": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": ["string", "null"]
+          },
+          "catalog": {
+            "type": ["string", "null"]
+          },
+          "chat": {
+            "type": ["string", "null"]
+          },
+          "cluster": {
+            "type": ["string", "null"]
+          },
+          "embed": {
+            "type": ["string", "null"]
+          },
+          "qc": {
+            "type": ["string", "null"]
+          },
+          "stt": {
+            "type": ["string", "null"]
+          },
+          "suggest": {
+            "type": ["string", "null"]
+          }
+        },
+        "additionalProperties": false
+      },
       "TaskOutcome": {
         "type": "string",
         "description": "How the extension ended a task (C6).",
@@ -10032,6 +10336,10 @@
             "description": "Media plus database, in bytes."
           }
         }
+      },
+      "UserProviderKind": {
+        "type": "string",
+        "enum": ["openai_compatible", "anthropic"]
       },
       "UserRole": {
         "type": "string",

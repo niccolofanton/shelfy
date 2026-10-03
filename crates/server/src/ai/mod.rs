@@ -20,6 +20,7 @@
 //! until they land, so the operator provider is the only live one.
 
 pub mod operator;
+pub mod providers;
 pub mod queue;
 pub mod runs;
 pub mod service;

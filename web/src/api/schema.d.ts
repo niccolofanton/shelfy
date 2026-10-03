@@ -962,6 +962,54 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/me/providers/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put: operations['putProvider'];
+    post?: never;
+    delete: operations['deleteProvider'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/providers/{id}/consent': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['consentProvider'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/providers/{id}/test': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['testProvider'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/me/sessions': {
     parameters: {
       query?: never;
@@ -2613,6 +2661,7 @@ export interface components {
       | 'validation_failed'
       | 'provider_key_invalid'
       | 'ai_not_configured'
+      | 'ai_vault_disabled'
       | 'ai_consent_required'
       | 'provider_offline'
       | 'provider_unavailable'
@@ -4200,6 +4249,11 @@ export interface components {
       /** @description What changed them. */
       reason: components['schemas']['ChangeReason'];
     };
+    ProbeResult: {
+      error?: string | null;
+      ok: boolean;
+      skipped: boolean;
+    };
     /** @description An error body: RFC 9457 problem details plus the stable `code`. */
     Problem: {
       /** @description What went wrong. Clients map it to their own message. */
@@ -4218,6 +4272,21 @@ export interface components {
       /** @description Always `about:blank`: `code` carries the problem type. */
       type: string;
     };
+    ProviderConsent: {
+      /** Format: int64 */
+      acceptedAt: number;
+      version: string;
+    };
+    /** @description The key can be supplied only on writes, never serialized or debug-printed. */
+    ProviderInput: {
+      baseUrl: string;
+      /** @description Omit to keep the current credential. Required on creation or a target change. */
+      key?: string | null;
+      kind: components['schemas']['UserProviderKind'];
+      label: string;
+      models?: components['schemas']['TaskModels'];
+      prices?: components['schemas']['ProviderPrices'] | null;
+    };
     /** @description The model ids a provider offers, as `GET /me/providers` shows them. */
     ProviderModels: {
       /** @description The embedding model. */
@@ -4226,6 +4295,12 @@ export interface components {
       text: string | null;
       /** @description The vision model (cataloging and QC). */
       vision: string | null;
+    };
+    ProviderPrices: {
+      /** Format: double */
+      inputPerMillionUsd: number;
+      /** Format: double */
+      outputPerMillionUsd: number;
     };
     /**
      * @description The state of an AI provider (plan §2.15 "Reliability", P3-09). The circuit
@@ -4252,20 +4327,35 @@ export interface components {
      *     provider is `managed` (no edit or delete).
      */
     ProviderSummary: {
+      baseUrl?: string | null;
+      configured: boolean;
+      consent?: components['schemas']['ProviderConsent'] | null;
+      consentVersion: string;
       /** @description The provider id (`operator`, or the user's id). */
       id: string;
       /** @description The protocol (`operator`, `openai_compatible`, `anthropic`). */
       kind: string;
       /** @description The display name. */
       label: string;
+      last4?: string | null;
       /** @description Whether the server manages it (the operator provider): no key, no edit. */
       managed: boolean;
       /** @description The models per use. */
       models: components['schemas']['ProviderModels'];
+      prices?: components['schemas']['ProviderPrices'] | null;
       /** @description Its current state. */
       status: components['schemas']['ProviderState'];
       /** @description Whether it transcribes (dictation). */
       stt: boolean;
+      test?: components['schemas']['ProviderTest'] | null;
+    };
+    ProviderTest: {
+      models: components['schemas']['ProbeResult'];
+      schema: components['schemas']['ProbeResult'];
+      /** Format: int64 */
+      testedAt: number;
+      text: components['schemas']['ProbeResult'];
+      vision: components['schemas']['ProbeResult'];
     };
     /**
      * @description `PublicKeyCredentialCreationOptionsJSON`: what
@@ -5113,6 +5203,16 @@ export interface components {
      * @enum {string}
      */
     TaskKind: 'upload_media' | 'refresh_media' | 'hydrate_link';
+    TaskModels: {
+      alias?: string | null;
+      catalog?: string | null;
+      chat?: string | null;
+      cluster?: string | null;
+      embed?: string | null;
+      qc?: string | null;
+      stt?: string | null;
+      suggest?: string | null;
+    };
     /**
      * @description How the extension ended a task (C6).
      * @enum {string}
@@ -5217,6 +5317,8 @@ export interface components {
        */
       usedBytes: number;
     };
+    /** @enum {string} */
+    UserProviderKind: 'openai_compatible' | 'anthropic';
     /**
      * @description What a user may do on the instance.
      * @enum {string}
@@ -6607,6 +6709,100 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['ProviderSummary'][];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  putProvider: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ProviderInput'];
+      };
+    };
+    responses: {
+      /** @description Provider saved; credential is write-only. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  deleteProvider: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Provider, key, consent and routing references deleted. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  consentProvider: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ConsentRequest'];
+      };
+    };
+    responses: {
+      /** @description Current provider consent recorded and audited. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  testProvider: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Synthetic connectivity checks; no consent or library content needed. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProviderTest'];
         };
       };
       default: components['responses']['Problem'];

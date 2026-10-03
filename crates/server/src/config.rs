@@ -205,6 +205,10 @@ pub struct ServeArgs {
     #[command(flatten)]
     pub vault: VaultArgs,
 
+    /// Local e2e only: BYOK providers may use loopback http URLs.
+    #[arg(long, env = "SHELFY_AI_ALLOW_LOOPBACK", default_value_t = false)]
+    pub ai_allow_loopback: bool,
+
     /// The media budget of every user library together, in GiB (2^30
     /// bytes): a store that would take the `users` area of the data
     /// directory past it is refused with `storage_full`, for every user.
@@ -364,6 +368,8 @@ pub struct Config {
     pub operator: OperatorConfig,
     /// Sealed BYOK storage, disabled without the current master key.
     pub vault: KeyVault,
+    /// Loopback BYOK transport for a loopback public server only.
+    pub ai_allow_loopback: bool,
 }
 
 impl Config {
@@ -395,8 +401,12 @@ impl Config {
         let operator = OperatorConfig::from_args(args.operator, &outbound.allow_origins)
             .map_err(ConfigError::Operator)?;
         let vault = args.vault.into_vault().map_err(ConfigError::Vault)?;
+        if args.ai_allow_loopback && !public_url_is_loopback(&public_url) {
+            return Err(ConfigError::AiLoopback);
+        }
         Ok(Self {
             vault,
+            ai_allow_loopback: args.ai_allow_loopback,
             listen: args.listen,
             metrics_listen: args.metrics_listen,
             public_url,
@@ -441,8 +451,17 @@ impl Config {
             archive: ArchiveConfig::default(),
             operator: OperatorConfig::default(),
             vault: KeyVault::default(),
+            ai_allow_loopback: false,
         }
     }
+}
+
+/// Same local-origin rule as the dev mailbox, including IPv6 literals.
+pub(crate) fn public_url_is_loopback(public: &PublicUrl) -> bool {
+    Url::parse(public.as_str())
+        .ok()
+        .and_then(|u| u.host_str().map(crate::net::is_loopback_host))
+        .unwrap_or(false)
 }
 
 /// Whether two listeners would claim the same port. Port 0 (an ephemeral port)
@@ -485,6 +504,9 @@ pub enum ConfigError {
     /// Invalid master-key configuration, with values always redacted.
     #[error("{0}")]
     Vault(String),
+    /// The local AI switch cannot run on a public server.
+    #[error("SHELFY_AI_ALLOW_LOOPBACK requires a loopback SHELFY_PUBLIC_URL")]
+    AiLoopback,
 }
 
 /// The public origin of the web app: `http(s)://host[:port]`, no trailing slash.

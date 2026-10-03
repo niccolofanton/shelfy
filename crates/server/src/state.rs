@@ -53,6 +53,7 @@ struct Inner {
     extension: ExtensionState,
     archive: Archive,
     ai: AiService,
+    byok: crate::ai::providers::ProviderStore,
     shutdown: CancellationToken,
 }
 
@@ -66,6 +67,10 @@ impl AppState {
     /// The directories cannot be created, the control database cannot be
     /// opened, or the mail transport cannot be set up.
     pub fn open(config: Config) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            !config.ai_allow_loopback || crate::config::public_url_is_loopback(&config.public_url),
+            "SHELFY_AI_ALLOW_LOOPBACK requires a loopback SHELFY_PUBLIC_URL"
+        );
         let data = &config.data_dir;
         data.create_layout()
             .with_context(|| format!("cannot create the layout of {}", data.root().display()))?;
@@ -166,6 +171,7 @@ impl AppState {
                 extension,
                 archive,
                 ai,
+                byok: crate::ai::providers::ProviderStore::default(),
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -250,6 +256,12 @@ impl AppState {
     #[must_use]
     pub fn ai(&self) -> &AiService {
         &self.inner.ai
+    }
+
+    /// Serializes BYOK configuration/key snapshots and cancels stale calls.
+    #[must_use]
+    pub fn byok(&self) -> &crate::ai::providers::ProviderStore {
+        &self.inner.byok
     }
 
     /// BYOK key sealing; operator credentials never enter this vault.

@@ -135,6 +135,11 @@ impl UserBreakers {
         Self::default()
     }
 
+    /// Clears a provider after its configuration changes.
+    pub(crate) fn remove(&self, user: &str, provider: &str) {
+        self.lock().remove(&(user.to_owned(), provider.to_owned()));
+    }
+
     /// Whether a call to `provider` for `user` may go now.
     #[must_use]
     pub fn admit(&self, user: &str, provider: &str, now: Instant) -> Admission {

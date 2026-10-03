@@ -277,8 +277,7 @@ enum Route {
     Public,
     Operator,
     Internal,
-    /// Tests only: a loopback literal address ([`Egress::loopback_for_tests`]).
-    #[cfg(any(test, feature = "test-loopback"))]
+    /// Literal loopback address; enabled only by the local AI transport.
     Loopback,
 }
 
@@ -289,7 +288,6 @@ struct Clients {
     public: Vec<(Vec<Purpose>, reqwest::Client)>,
     operator: Option<reqwest::Client>,
     internal: Option<reqwest::Client>,
-    #[cfg(any(test, feature = "test-loopback"))]
     loopback: reqwest::Client,
 }
 
@@ -362,7 +360,6 @@ impl Clients {
             operator,
             internal,
             // Literal addresses only: no name resolves through it.
-            #[cfg(any(test, feature = "test-loopback"))]
             loopback: pinned(Vec::new(), config.connect_timeout(Purpose::Ai))?,
         })
     }
@@ -376,7 +373,6 @@ impl Clients {
                 .map(|(_, client)| client),
             Route::Operator => self.operator.as_ref(),
             Route::Internal => self.internal.as_ref(),
-            #[cfg(any(test, feature = "test-loopback"))]
             Route::Loopback => Some(&self.loopback),
         }
     }
@@ -453,8 +449,7 @@ impl Shared {
         if !url.username().is_empty() || url.password().is_some() {
             return Err(Refusal::Credentials);
         }
-        #[cfg(any(test, feature = "test-loopback"))]
-        if policy.loopback && is_loopback_literal(url) {
+        if policy.loopback && policy.purpose == Purpose::Ai && is_loopback_literal(url) {
             return Ok(Route::Loopback);
         }
         if policy.purpose == Purpose::Capture {
@@ -491,7 +486,6 @@ impl Shared {
 }
 
 /// Whether `url`'s host is a loopback literal address (`127.0.0.0/8`, `::1`).
-#[cfg(any(test, feature = "test-loopback"))]
 fn is_loopback_literal(url: &Url) -> bool {
     match url.host() {
         Some(Host::Ipv4(ip)) => ip.is_loopback(),
@@ -516,7 +510,6 @@ struct Policy<'a> {
     purpose: Purpose,
     https_only: bool,
     hosts: Option<&'a HostSet>,
-    #[cfg(any(test, feature = "test-loopback"))]
     loopback: bool,
 }
 
@@ -525,7 +518,6 @@ struct Policy<'a> {
 pub struct Egress {
     shared: Arc<Shared>,
     purpose: Purpose,
-    #[cfg(any(test, feature = "test-loopback"))]
     loopback: bool,
 }
 
@@ -534,7 +526,6 @@ impl Egress {
         Self {
             shared,
             purpose,
-            #[cfg(any(test, feature = "test-loopback"))]
             loopback: false,
         }
     }
@@ -544,11 +535,15 @@ impl Egress {
     /// that a test can reach a loopback `shelfy-ai-stub` through
     /// [`Purpose::Ai`]. Every other URL keeps the purpose's rules. It exists
     /// only with the `test-loopback` feature, which only the server's own
-    /// dev-dependency turns on: a release build has no such route, and no
-    /// setting of the environment opens it.
-    #[cfg(any(test, feature = "test-loopback"))]
+    /// dev-dependency turns on: the runtime local AI switch uses a separate crate-private handle.
     #[must_use]
-    pub fn loopback_for_tests(mut self) -> Self {
+    #[cfg(any(test, feature = "test-loopback"))]
+    pub fn loopback_for_tests(self) -> Self {
+        self.loopback_for_local_ai()
+    }
+
+    /// Only the AI transport's validated local-development switch uses this.
+    pub(crate) fn loopback_for_local_ai(mut self) -> Self {
         self.loopback = true;
         self
     }
@@ -688,7 +683,6 @@ impl EgressRequest {
             purpose: egress.purpose,
             https_only,
             hosts: hosts.as_deref(),
-            #[cfg(any(test, feature = "test-loopback"))]
             loopback: egress.loopback,
         };
         let mut url = url.ok_or(EgressError::InvalidUrl)?;
