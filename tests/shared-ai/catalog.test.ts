@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   buildUserPrompt,
@@ -5,8 +7,50 @@ import {
   catalogTask,
   normalizeCatalogOutput,
   stripPromptMarkers,
+  type AnalyzeKind,
+  type RawCatalog,
 } from '../../shared/ai/catalog';
 import { file, systemPrompt } from '../../shared/ai/prompts';
+
+const FIXTURES = path.resolve(__dirname, '../../shared/ai/fixtures');
+const fixture = <T>(name: string): T =>
+  JSON.parse(fs.readFileSync(path.join(FIXTURES, name), 'utf8')) as T;
+
+describe('the fixture posts, offline', () => {
+  const { vocabulary, posts } = fixture<{
+    vocabulary: string[];
+    posts: {
+      id: string;
+      platform: string;
+      mediaType: string;
+      caption: string;
+      tech?: string[];
+      images: number;
+    }[];
+  }>('posts.json');
+  const answers = fixture<Record<string, RawCatalog>>('answers.json');
+  const kindOf = (p: { platform: string; mediaType: string }): AnalyzeKind =>
+    p.platform === 'web' || p.mediaType === 'website' ? 'web' : 'social';
+
+  it('build their requests, the caption once between its markers', () => {
+    for (const post of posts) {
+      const kind = kindOf(post);
+      const hints = kind === 'web' ? (post.tech ?? []) : vocabulary;
+      const request = catalogRequest(post.caption, hints, post.images > 0, kind);
+      expect(request.schema.name, post.id).toBe(kind === 'web' ? 'web_catalog' : 'video_catalog');
+      expect(request.user.split('<<<END CAPTION>>>').length, post.id).toBe(2);
+    }
+  });
+
+  it('normalize their answers', () => {
+    for (const post of posts) {
+      const result = normalizeCatalogOutput(answers[post.id], kindOf(post));
+      expect(result.tags.length, post.id).toBeGreaterThan(0);
+      expect(result.generalTags.length, post.id).toBeLessThanOrEqual(3);
+      expect(result.specificTags.length, post.id).toBeLessThanOrEqual(7);
+    }
+  });
+});
 
 describe('catalogRequest', () => {
   it('assembles the social catalog request from the "catalog" task', () => {
