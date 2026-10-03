@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { rgbaToThumbHash } from 'thumbhash';
 import {
   listPostsParams,
   mediaRef,
@@ -9,6 +10,13 @@ import {
   webMedia,
 } from '../src/api/mapping';
 import { apiObject, apiPost, apiSlide } from './fixtures';
+
+// `thumbhash` ships no types; @ui/lib/thumbhash declares the one export it
+// uses (thumbHashToRGBA). This merges in the encoder, used only to build a
+// real fixture above instead of hand-rolling ThumbHash bytes.
+declare module 'thumbhash' {
+  export function rgbaToThumbHash(w: number, h: number, rgba: Uint8Array): Uint8Array;
+}
 
 describe('gallery query → GET /posts parameters', () => {
   it('maps the desktop filters onto the API', () => {
@@ -231,7 +239,53 @@ describe('API post → Shelfy.Post', () => {
       webAwards: [],
       webMeta: { description: 'Design studio', title: 'Studio Example' },
       webCapturedAt: 1_790_000_000,
+      webFaviconPath: null,
     });
+  });
+
+  it('maps the favicon stored at capture time (plan §1.2 #10), not a g480 fragment', () => {
+    const post = toPost(
+      apiPost({
+        platform: 'web',
+        mediaType: 'website',
+        webCapture: {
+          id: 1,
+          capturedAt: 1_790_000_000_000,
+          requestedUrl: 'https://studio.example.test',
+          finalUrl: 'https://studio.example.test/',
+          status: 'done',
+          partial: false,
+          title: null,
+          palette: [],
+          fonts: [],
+          tech: [],
+          awards: null,
+          meta: null,
+          hero: null,
+          favicon: apiObject('fav1', 'png', false),
+        },
+      }),
+    );
+    // No g480 rendition exists for a favicon: the object's own URL, not
+    // mediaRef's `url#g480Url` tile-fragment form.
+    expect(post.webFaviconPath).toBe('/media/fav1.png');
+  });
+
+  it('decodes a client-side ThumbHash into thumbBlur; absent stays null', () => {
+    expect(toPost(apiPost({ thumbhash: null })).thumbBlur).toBeNull();
+
+    // A real (if tiny) ThumbHash, built the same way crates/media does.
+    const w = 2;
+    const h = 2;
+    const rgba = new Uint8Array(w * h * 4).fill(128);
+    for (let i = 0; i < w * h; i++) rgba[i * 4 + 3] = 255; // opaque
+    const bytes = rgbaToThumbHash(w, h, rgba);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    const hash = btoa(bin);
+
+    const blur = toPost(apiPost({ thumbhash: hash })).thumbBlur;
+    expect(blur).toMatch(/^data:image\/bmp;base64,/);
   });
 
   it('fills the detail-only fields from a post detail', () => {

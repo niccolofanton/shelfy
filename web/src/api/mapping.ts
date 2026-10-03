@@ -3,6 +3,7 @@
 // `GET /api/v1/posts` parameters and the API's posts, stats and collections into
 // that model.
 import type { MediaUrls, PostQuery } from '@ui/api/ShelfyClient';
+import { thumbHashToDataURL } from '@ui/lib/thumbhash';
 import type { components, operations } from './schema';
 
 type Schemas = components['schemas'];
@@ -178,7 +179,9 @@ export function toPost(p: ApiPost | ApiPostDetail): Shelfy.Post {
     previewPath: null,
     imagePath: null,
     videoPath: keptVideo?.videoObject?.url ?? null,
-    thumbBlur: null,
+    // Client-decoded ThumbHash (T8 + P1-08): the web's blur-up placeholder,
+    // in the same `thumbBlur` slot PostCard already renders.
+    thumbBlur: thumbHashToDataURL(p.thumbhash),
     mediaCount: p.mediaCount,
     importedAt: Math.floor(p.importedAt / 1000),
     aiDescription: p.aiDescription,
@@ -206,6 +209,10 @@ export function toPost(p: ApiPost | ApiPostDetail): Shelfy.Post {
     webMeta,
     webSinglePage: false,
     webCapturedAt: seconds(capture?.capturedAt),
+    // The favicon stored at capture time (plan §1.2 #10): no g480 rendition
+    // exists for it, so this is the object's own URL, not `mediaRef`'s
+    // tile-fragment form.
+    webFaviconPath: capture?.favicon?.url ?? null,
     media: p.media.map(toPostMedia),
     collectionIds: p.collectionIds,
   };

@@ -1,7 +1,10 @@
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import PostCard from '../../src/components/PostCard';
+import { ShelfyProvider } from '../../src/api/ShelfyProvider';
+import { desktopCapabilities } from '../../src/api/electronClient';
+import type { ShelfyClient } from '../../src/api/ShelfyClient';
 
 // The hover overlay (author/timestamp/tags/AI badge/offline icon), the quick-select
 // checkbox and the <video> preview mount lazily on first hover/focus — keeping the
@@ -607,6 +610,91 @@ describe('PostCard', () => {
       fireEvent.pointerDown(card, { pointerId: 1, pointerType: 'touch', clientX: 10, clientY: 10 });
       fireEvent.click(card);
       expect(onOpen).toHaveBeenCalledWith(basePost, expect.anything());
+    });
+  });
+
+  // Favicon (plan §1.2 #10 "the SPA makes zero third-party requests"): a
+  // stored favicon wins everywhere; without one, the desktop (`localFiles`)
+  // still falls back to the live per-domain fetch exactly as before — no
+  // desktop post has `webFaviconPath` yet, so this is its unchanged behavior —
+  // while a web-shaped client (no `localFiles`) shows the neutral glyph
+  // instead of ever reaching out to the bookmarked site itself.
+  describe('favicon', () => {
+    const webishPost = {
+      ...basePost,
+      platform: 'web' as const,
+      mediaType: 'website' as const,
+      text: null,
+      webDomain: 'example.com',
+      webMeta: null,
+    };
+
+    function withCapabilities(caps: Partial<ReturnType<typeof desktopCapabilities>>) {
+      const client = {
+        capabilities: { ...desktopCapabilities('darwin'), ...caps },
+        media: {
+          file: (ref: string | null | undefined) => ref ?? null,
+          tile: (ref: string | null | undefined) => ref ?? null,
+          isStored: () => true,
+        },
+      } as unknown as ShelfyClient;
+      function Provider({ children }: { children: ReactNode }) {
+        return <ShelfyProvider client={client}>{children}</ShelfyProvider>;
+      }
+      return Provider;
+    }
+
+    // The favicon's `alt=""` is intentional (decorative; the domain text next
+    // to it already names the site), which drops its accessible role to
+    // "presentation" — queried by tag, not role, for that reason.
+    const favicon = (container: HTMLElement) => container.querySelector('img');
+
+    it('desktop (localFiles, no stored favicon) falls back to the live domain fetch, unchanged', () => {
+      render(<PostCard post={webishPost} onOpen={vi.fn()} />, {
+        wrapper: withCapabilities({ localFiles: true }),
+      });
+      expect(favicon(screen.getByTestId('web-fallback'))).toHaveAttribute(
+        'src',
+        'https://example.com/favicon.ico',
+      );
+    });
+
+    it('a stored favicon wins over the live fetch, on the desktop too', () => {
+      const post = { ...webishPost, webFaviconPath: '/media/abc.png' };
+      render(<PostCard post={post} onOpen={vi.fn()} />, {
+        wrapper: withCapabilities({ localFiles: true }),
+      });
+      expect(favicon(screen.getByTestId('web-fallback'))).toHaveAttribute('src', '/media/abc.png');
+    });
+
+    it('the web client (no localFiles) never hits the domain: neutral glyph without a stored favicon', () => {
+      render(<PostCard post={webishPost} onOpen={vi.fn()} />, {
+        wrapper: withCapabilities({ localFiles: false }),
+      });
+      expect(favicon(screen.getByTestId('web-fallback'))).toBeNull();
+    });
+
+    it('the web client still shows a stored favicon', () => {
+      const post = { ...webishPost, webFaviconPath: '/media/abc.png' };
+      render(<PostCard post={post} onOpen={vi.fn()} />, {
+        wrapper: withCapabilities({ localFiles: false }),
+      });
+      expect(favicon(screen.getByTestId('web-fallback'))).toHaveAttribute('src', '/media/abc.png');
+    });
+  });
+
+  // Viewport-first fetchpriority (plan §2.19): threaded from the grid's own
+  // first-paint gate (VirtualPostGrid/InfiniteCanvas), not computed here —
+  // PostCard only has to forward whatever it's handed.
+  describe('priority', () => {
+    it('defaults to auto', () => {
+      render(<PostCard post={mediaPost} onOpen={vi.fn()} />);
+      expect(screen.getByTestId('card-image')).toHaveAttribute('fetchpriority', 'auto');
+    });
+
+    it('is high when the card is marked priority', () => {
+      render(<PostCard post={mediaPost} onOpen={vi.fn()} priority />);
+      expect(screen.getByTestId('card-image')).toHaveAttribute('fetchpriority', 'high');
     });
   });
 });

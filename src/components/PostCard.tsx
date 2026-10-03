@@ -28,11 +28,23 @@ import { useT, useLang, localeTag } from '../i18n';
 // `title` is a valid global SVG attribute (native hover tooltip) that lucide
 // spreads onto its <svg>, but React's SVGAttributes typings omit it. Declare it
 // so the icon tooltips below (and elsewhere) stay typed without `any`.
+//
+// `fetchpriority` (lowercase): @types/react 18.3's `ImgHTMLAttributes` already
+// declares the camelCase `fetchPriority`, but react-dom 18.3.1's own attribute
+// table doesn't special-case it yet, so that spelling only warns at runtime
+// ("React does not recognize the `fetchPriority` prop…") and never reaches the
+// DOM. The plain lowercase HTML attribute name passes straight through
+// react-dom's generic (unrecognized-prop) path instead, which is what the
+// card's cover <img> below actually uses.
 declare module 'react' {
   // React's declaration uses this generic name; keep it for interface merging.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface SVGAttributes<T> {
     title?: string;
+  }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  interface ImgHTMLAttributes<T> {
+    fetchpriority?: 'high' | 'low' | 'auto';
   }
 }
 
@@ -80,30 +92,40 @@ function PlatformIcon({ platform }: { platform: Shelfy.Platform }): React.JSX.El
   return <SourceIcon platform={platform} size={11} className="text-white/85" />;
 }
 
-// Site favicon with a lucide Globe fallback. Comes from the site's own
-// /favicon.ico (the user already visited it at capture time — Google s2 would
-// leak every saved domain to a third party); onError falls back to Globe.
-// Shared between the rest-state domain chip and the no-screenshot fallback.
+// Site favicon with a lucide Globe fallback. Prefers the copy stored at
+// capture time (plan §1.2 #10: the SPA makes zero third-party requests);
+// `faviconPath` is absent for every post today on the desktop (it has no
+// capture-time favicon field yet), so `capabilities.localFiles` there falls
+// back to the site's own /favicon.ico exactly as before — unchanged desktop
+// behavior. On the web (no `localFiles`), a missing stored favicon falls back
+// to the neutral glyph instead, never a live per-domain request. Shared
+// between the rest-state domain chip and the no-screenshot fallback.
 function Favicon({
   domain,
+  faviconPath,
   size = 11,
 }: {
   domain: string | null;
+  faviconPath?: string | null;
   size?: number;
 }): React.JSX.Element {
+  const { media, capabilities } = useShelfy();
   const [iconFailed, setIconFailed] = useState<boolean>(false);
-  let faviconSrc: string | null = null;
-  try {
-    if (domain) faviconSrc = new URL('/favicon.ico', `https://${domain}`).href;
-  } catch {
-    /* malformed domain → Globe fallback below */
+  const stored = faviconPath ? media.file(faviconPath) : null;
+  let src: string | null = stored;
+  if (!src && capabilities.localFiles) {
+    try {
+      if (domain) src = new URL('/favicon.ico', `https://${domain}`).href;
+    } catch {
+      /* malformed domain → Globe fallback below */
+    }
   }
-  if (iconFailed || !faviconSrc) {
+  if (iconFailed || !src) {
     return <Globe size={size} className="text-white/85 shrink-0" />;
   }
   return (
     <img
-      src={faviconSrc}
+      src={src}
       alt=""
       width={size}
       height={size}
@@ -117,11 +139,17 @@ function Favicon({
 
 // For web posts the bottom-left identity is a favicon + domain chip instead of
 // a social platform glyph.
-function WebDomainBadge({ domain }: { domain: string | null }): React.JSX.Element {
+function WebDomainBadge({
+  domain,
+  faviconPath,
+}: {
+  domain: string | null;
+  faviconPath?: string | null;
+}): React.JSX.Element {
   if (!domain) return <Globe size={11} className="text-white/85" />;
   return (
     <div className="flex items-center gap-1 min-w-0">
-      <Favicon domain={domain} size={11} />
+      <Favicon domain={domain} faviconPath={faviconPath} size={11} />
       <span className="text-white/85 text-[10px] truncate max-w-[110px]">{domain}</span>
     </div>
   );
@@ -247,7 +275,7 @@ function WebFallback({ post, t }: { post: Shelfy.Post; t: Translate }): React.JS
       className="w-full h-full flex flex-col items-center justify-center gap-1.5 px-4 text-center"
       style={{ backgroundColor: '#161618' }}
     >
-      <Favicon domain={post.webDomain} size={22} />
+      <Favicon domain={post.webDomain} faviconPath={post.webFaviconPath} size={22} />
       {title ? (
         <p className="text-xs text-gray-200 leading-snug line-clamp-2 break-words">{title}</p>
       ) : (
@@ -351,6 +379,12 @@ interface PostCardProps {
   selectable?: boolean;
   selected?: boolean;
   onQuickSelect?: (post: Shelfy.Post, event: React.SyntheticEvent) => void;
+  // Viewport-first loading (plan §2.19): the rows a grid paints on its very
+  // first frame set this so their cover competes for bandwidth/decode ahead of
+  // everything scrolled in afterward. Threads straight to the <img>'s
+  // `fetchpriority`; default 'auto' matches the previous (unprioritized)
+  // behavior for every other row.
+  priority?: boolean;
 }
 
 function PostCard({
@@ -359,6 +393,7 @@ function PostCard({
   selectable = false,
   selected = false,
   onQuickSelect,
+  priority = false,
 }: PostCardProps): React.JSX.Element {
   const t = useT('postCard');
   const { lang } = useLang();
@@ -720,6 +755,7 @@ function PostCard({
             // until near the viewport, defeating the pre-loading.
             loading="eager"
             decoding="async"
+            fetchpriority={priority ? 'high' : 'auto'}
             // Cover image FILLS the square (object-cover) and overscans 3px past every
             // edge via MEDIA_OVERSCAN, so the rounded clip cuts image interior, never the
             // element's antialiased/composited border → no pale seam at rest, mid-zoom, or
@@ -919,7 +955,7 @@ function PostCard({
             className="flex items-center rounded bg-black/65 px-1.5 py-0.5 min-w-0"
           >
             {isWeb ? (
-              <WebDomainBadge domain={post.webDomain} />
+              <WebDomainBadge domain={post.webDomain} faviconPath={post.webFaviconPath} />
             ) : (
               <PlatformIcon platform={post.platform} />
             )}

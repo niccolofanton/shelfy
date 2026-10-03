@@ -103,6 +103,12 @@ declare global {
       webMeta: WebMeta | null;
       webSinglePage: boolean; // coerced via !! from web_meta_json.singlePage
       webCapturedAt: number | null; // unix epoch seconds
+      // A locally-stored favicon reference (desktop: asset path; web: a
+      // same-origin /media URL from the captured CAS object), so the grid
+      // tile never hot-links the bookmarked site itself (plan §1.2 #10).
+      // Optional: only the web client populates it today (P1-08); absent on
+      // the desktop falls back to its existing live-domain fetch unchanged.
+      webFaviconPath?: string | null;
 
       // Attached by the list/by-id queries (not part of rowToPost itself).
       media?: PostMedia[];
