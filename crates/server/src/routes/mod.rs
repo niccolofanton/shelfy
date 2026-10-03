@@ -95,6 +95,7 @@ pub mod docs;
 pub mod events;
 pub mod extension;
 pub mod health;
+pub mod imports;
 pub mod ingest;
 pub mod ingest_tasks;
 pub mod jobs;
@@ -461,6 +462,11 @@ pub const IDEMPOTENT_ROUTES: &[IdempotentRoute] = &[
     },
     IdempotentRoute {
         method: Method::POST,
+        path: "/api/v1/imports",
+        body_bytes: RouteLimits::STANDARD.body_bytes,
+    },
+    IdempotentRoute {
+        method: Method::POST,
         path: "/api/v1/ai/analyze",
         body_bytes: RouteLimits::STANDARD.body_bytes,
     },
@@ -577,6 +583,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(version::get_version))
         .routes(routes!(uploads::create_upload))
         .routes(routes!(uploads::upload_offset, uploads::delete_upload))
+        .routes(routes!(imports::start_import))
+        .routes(routes!(imports::get_import))
         .routes(routes!(migrations::migration_preflight))
         .routes(routes!(migrations::find_missing_objects))
         .routes(routes!(migrations::start_migration))

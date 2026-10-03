@@ -1224,6 +1224,83 @@
         }
       }
     },
+    "/api/v1/imports": {
+      "post": {
+        "tags": ["imports"],
+        "summary": "Claims the upload and inserts the job atomically. Only a web session can\nstart an import; tokens authorized to upload cannot operate the library.",
+        "operationId": "startImport",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Unique request key, 1–255 visible ASCII bytes; replayed for 24 hours.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartImport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Import queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Import"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/imports/{id}": {
+      "get": {
+        "tags": ["imports"],
+        "summary": "Another user's job, an unknown id or a different job kind is 404. Reads\nreport on every state, including the already committed part of a cancel.",
+        "operationId": "getImport",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Import job id.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Import and committed report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Import"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/ingest/batches": {
       "post": {
         "tags": ["extension"],
@@ -5939,6 +6016,7 @@
           "payload_too_large",
           "unsupported_media_type",
           "validation_failed",
+          "import_format_unknown",
           "provider_key_invalid",
           "ai_not_configured",
           "ai_vault_disabled",
@@ -6526,6 +6604,103 @@
           "version": {
             "type": "string",
             "description": "Version of the server build; a change means a new deploy."
+          }
+        }
+      },
+      "Import": {
+        "type": "object",
+        "description": "Job and its durable partial or completed report.",
+        "required": ["job", "report"],
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/Job",
+            "description": "Import job, cancellable through the usual jobs route."
+          },
+          "report": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ImportReport",
+                "description": "Present as soon as the first batch commits, also after failure/cancel."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ImportRejected": {
+        "type": "object",
+        "description": "A rejected source record.",
+        "required": ["index", "code"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable code."
+          },
+          "index": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Zero-based position.",
+            "minimum": 0
+          }
+        }
+      },
+      "ImportReport": {
+        "type": "object",
+        "description": "Schema of the core report.",
+        "required": [
+          "imported",
+          "updated",
+          "collections",
+          "links",
+          "skipped",
+          "rejected",
+          "rejectedCount"
+        ],
+        "properties": {
+          "collections": {
+            "type": "integer",
+            "format": "int64",
+            "description": "New collections.",
+            "minimum": 0
+          },
+          "imported": {
+            "type": "integer",
+            "format": "int64",
+            "description": "New posts.",
+            "minimum": 0
+          },
+          "links": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Added memberships.",
+            "minimum": 0
+          },
+          "rejected": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportRejected"
+            },
+            "description": "First 1000 failures in input order."
+          },
+          "rejectedCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total failures, including omitted details.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unchanged/folded copies.",
+            "minimum": 0
+          },
+          "updated": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Changed known posts.",
+            "minimum": 0
           }
         }
       },
@@ -9673,6 +9848,18 @@
         "type": "string",
         "description": "Kind of slide (`post_media.kind`).",
         "enum": ["image", "video", "file", "page"]
+      },
+      "StartImport": {
+        "type": "object",
+        "description": "An import upload (never a client-provided path).",
+        "required": ["uploadId"],
+        "properties": {
+          "uploadId": {
+            "type": "string",
+            "description": "Complete upload with purpose `import`."
+          }
+        },
+        "additionalProperties": false
       },
       "StartMigration": {
         "type": "object",

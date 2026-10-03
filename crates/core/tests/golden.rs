@@ -43,6 +43,7 @@ const CHECKED: &[&str] = &[
     "edits",
     "extract-content-terms",
     "hosts",
+    "import/",
     "merge/",
     "sanitize",
     "tag-search",
@@ -884,4 +885,16 @@ fn similar_matches_the_desktop() {
             })
             .collect::<Vec<_>>()
     });
+}
+
+#[test]
+fn import_normalization_matches_desktop_bytes() {
+    for (name, platform) in [
+        ("import/instagram", Platform::Instagram),
+        ("import/twitter", Platform::Twitter),
+    ] {
+        check(name, |[value]: [Value; 1]| {
+            shelfy_core::import::normalize::desktop(&value, platform)
+        });
+    }
 }

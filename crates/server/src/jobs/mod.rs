@@ -73,6 +73,7 @@ mod clock;
 mod context;
 pub mod hydrate;
 pub mod idempotency;
+pub mod import;
 pub mod kinds;
 pub mod migrate;
 pub mod purge;

@@ -658,6 +658,46 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/imports': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Claims the upload and inserts the job atomically. Only a web session can
+     *     start an import; tokens authorized to upload cannot operate the library.
+     */
+    post: operations['startImport'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/imports/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Another user's job, an unknown id or a different job kind is 404. Reads
+     *     report on every state, including the already committed part of a cancel.
+     */
+    get: operations['getImport'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/ingest/batches': {
     parameters: {
       query?: never;
@@ -2659,6 +2699,7 @@ export interface components {
       | 'payload_too_large'
       | 'unsupported_media_type'
       | 'validation_failed'
+      | 'import_format_unknown'
       | 'provider_key_invalid'
       | 'ai_not_configured'
       | 'ai_vault_disabled'
@@ -3031,6 +3072,57 @@ export interface components {
       lastEventId: string;
       /** @description Version of the server build; a change means a new deploy. */
       version: string;
+    };
+    /** @description Job and its durable partial or completed report. */
+    Import: {
+      /** @description Import job, cancellable through the usual jobs route. */
+      job: components['schemas']['Job'];
+      report: components['schemas']['ImportReport'] | null;
+    };
+    /** @description A rejected source record. */
+    ImportRejected: {
+      /** @description Stable code. */
+      code: string;
+      /**
+       * Format: int64
+       * @description Zero-based position.
+       */
+      index: number;
+    };
+    /** @description Schema of the core report. */
+    ImportReport: {
+      /**
+       * Format: int64
+       * @description New collections.
+       */
+      collections: number;
+      /**
+       * Format: int64
+       * @description New posts.
+       */
+      imported: number;
+      /**
+       * Format: int64
+       * @description Added memberships.
+       */
+      links: number;
+      /** @description First 1000 failures in input order. */
+      rejected: components['schemas']['ImportRejected'][];
+      /**
+       * Format: int64
+       * @description Total failures, including omitted details.
+       */
+      rejectedCount: number;
+      /**
+       * Format: int64
+       * @description Unchanged/folded copies.
+       */
+      skipped: number;
+      /**
+       * Format: int64
+       * @description Changed known posts.
+       */
+      updated: number;
     };
     /**
      * @description A capture batch (contract C5). Items are untrusted JSON for the sanitizer;
@@ -4914,6 +5006,11 @@ export interface components {
      * @enum {string}
      */
     SlideKind: 'image' | 'video' | 'file' | 'page';
+    /** @description An import upload (never a client-provided path). */
+    StartImport: {
+      /** @description Complete upload with purpose `import`. */
+      uploadId: string;
+    };
     /** @description Body of `POST /migrations`. */
     StartMigration: {
       /** @description The complete upload (purpose `migration-db`) of the bundle's database. */
@@ -6294,6 +6391,58 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['ExtensionStatusEvent'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  startImport: {
+    parameters: {
+      query?: never;
+      header: {
+        /** @description Unique request key, 1–255 visible ASCII bytes; replayed for 24 hours. */
+        'Idempotency-Key': string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StartImport'];
+      };
+    };
+    responses: {
+      /** @description Import queued. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Import'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getImport: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Import job id. */
+        id: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Import and committed report. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Import'];
         };
       };
       default: components['responses']['Problem'];

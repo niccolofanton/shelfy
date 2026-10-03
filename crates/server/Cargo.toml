@@ -75,6 +75,8 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2
 test-loopback = []
 
 [dev-dependencies]
+# Deterministic batch/cancel rendezvous in synthetic import tests only.
+rusqlite = { workspace = true, features = ["functions"] }
 http-body-util.workspace = true
 # Decodable synthetic images for the migration tests.
 image = { workspace = true, features = ["jpeg", "png"] }

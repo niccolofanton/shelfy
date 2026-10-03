@@ -44,6 +44,7 @@ pub fn registry() -> Registry {
         .register(usage::kind())
         .register(migrate::kind())
         .register(super::export::kind())
+        .register(super::import::kind())
         .register(bulk::kind())
         .register(purge::kind())
         .register(hydrate::kind())

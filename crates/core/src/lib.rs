@@ -23,6 +23,7 @@ pub mod bulk;
 pub mod db;
 pub mod generation;
 pub mod ids;
+pub mod import;
 pub mod ingest;
 pub mod legacy;
 pub mod repo;

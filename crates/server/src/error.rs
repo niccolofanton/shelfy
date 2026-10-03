@@ -83,6 +83,8 @@ pub enum ErrorCode {
     UnsupportedMediaType,
     /// 422: a value failed validation; `errors` names the fields.
     ValidationFailed,
+    /// 422: unsupported or malformed import document.
+    ImportFormatUnknown,
     /// 422: the AI provider refused the key.
     ProviderKeyInvalid,
     /// 422: no AI provider can serve this task on this server. The operator
@@ -166,6 +168,7 @@ impl ErrorCode {
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::ValidationFailed
+            | Self::ImportFormatUnknown
             | Self::ProviderKeyInvalid
             | Self::CaptureBlocked
             | Self::UnsupportedLink
@@ -236,6 +239,7 @@ impl ErrorCode {
             Self::PayloadTooLarge => "payload_too_large",
             Self::UnsupportedMediaType => "unsupported_media_type",
             Self::ValidationFailed => "validation_failed",
+            Self::ImportFormatUnknown => "import_format_unknown",
             Self::ProviderKeyInvalid => "provider_key_invalid",
             Self::AiNotConfigured => "ai_not_configured",
             Self::AiVaultDisabled => "ai_vault_disabled",

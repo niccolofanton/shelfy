@@ -11,6 +11,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import edits from './edits';
 import tagSearch from './tag-search';
+import importSets from './import';
 import extractContentTerms from './extract-content-terms';
 import hosts from './hosts';
 import mergeSets from './merge';
@@ -61,6 +62,7 @@ const SETS: GoldenSet[] = [
   ...taxonomyPromptSets,
   ...aiClusterSets,
   ...aiAliasSets,
+  ...importSets,
   extractContentTerms,
   edits,
   tagSearch,
