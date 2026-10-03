@@ -3,6 +3,8 @@ import { useT } from '../i18n';
 import { toApiFilters } from '../lib/postFilters';
 import { useShelfy } from '../api/ShelfyProvider';
 import { errorMessageKey } from '../api/errors';
+import { colsForWidth } from '../components/VirtualPostGrid';
+import { applyStep } from './useGridSize';
 
 // UI-side filter bag accepted by the Gallery surfaces. Mirrors the fields
 // toApiFilters reads; pagination `limit` is the only window control here.
@@ -82,6 +84,38 @@ export function reconcilePosts(prev: Shelfy.Post[], next: Shelfy.Post[]): Shelfy
     return p;
   });
   return unchanged ? prev : out;
+}
+
+// Windowing (plan §2.19 "the loaded list is windowed: keep ±1,000 items
+// around the viewport"): Gallery's infinite scroll only ever appends forward,
+// so the viewport sits at the loaded window's tail — bounding the window to
+// 2,000 (±1,000 either side of that tail) caps how much of a 20k-post library
+// a long scroll session keeps in memory/DOM-adjacent arrays, without ever
+// touching rows still on or near screen.
+export const MAX_LOADED_POSTS = 2000;
+
+// Columns in the CURRENT grid layout, so a trim lands on a row boundary (a
+// trim that split a row would reshuffle which posts share it). Mirrors
+// VirtualPostGrid's own breakpoint math; `applyStep` with no second argument
+// reads the live shared zoom step, so this needn't subscribe to it like a
+// component would.
+function estimatedColumns(): number {
+  const width = typeof window !== 'undefined' ? window.innerWidth : 1280;
+  return Math.max(1, applyStep(colsForWidth(width)));
+}
+
+// Drops posts from the FRONT of `list` down to at most `max`, rounded to a
+// whole `cols`-wide row. The front is always the furthest-scrolled-past end
+// during forward infinite scroll, so this never touches the viewport itself —
+// only what's comfortably above it. Returns `list` unchanged (same
+// reference) when it's already within budget, so a reconciled-but-unchanged
+// page (see reconcilePosts) still bails out of re-rendering downstream.
+export function windowPosts(list: Shelfy.Post[], max: number, cols: number): Shelfy.Post[] {
+  const over = list.length - max;
+  if (over <= 0) return list;
+  const safeCols = Math.max(1, Math.floor(cols) || 1);
+  const trim = Math.ceil(over / safeCols) * safeCols;
+  return trim >= list.length ? [] : list.slice(trim);
 }
 
 /**
@@ -252,11 +286,16 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
             setPosts((prev) => {
               const seen = new Set(prev.map((p) => p.id));
               const fresh = page.filter((p) => !seen.has(p.id));
-              return fresh.length ? [...prev, ...fresh] : prev;
+              const next = fresh.length ? [...prev, ...fresh] : prev;
+              return windowPosts(next, MAX_LOADED_POSTS, estimatedColumns());
             });
           });
         } else {
-          startTransition(() => setPosts((prev) => reconcilePosts(prev, page)));
+          startTransition(() =>
+            setPosts((prev) =>
+              windowPosts(reconcilePosts(prev, page), MAX_LOADED_POSTS, estimatedColumns()),
+            ),
+          );
         }
         // A later page may come without the total: keep the first page's.
         if (typeof result.total === 'number') setTotal(result.total);

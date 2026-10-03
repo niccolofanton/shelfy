@@ -1,7 +1,12 @@
 import { describe, it, expect, vi, type Mock } from 'vitest';
 import type React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { usePosts, type PostFilters } from '../../src/hooks/usePosts';
+import {
+  usePosts,
+  windowPosts,
+  MAX_LOADED_POSTS,
+  type PostFilters,
+} from '../../src/hooks/usePosts';
 import { ShelfyProvider } from '../../src/api/ShelfyProvider';
 import { desktopCapabilities } from '../../src/api/electronClient';
 import type { PostPage, ShelfyClient } from '../../src/api/ShelfyClient';
@@ -813,5 +818,91 @@ describe('usePosts — web stream and API errors', () => {
     );
     const { result } = renderHook(() => usePosts(defaultFilters), { wrapper: wrapperOf(client) });
     await waitFor(() => expect(result.current.error).toBe('SQLITE_BUSY: locked'));
+  });
+});
+
+// ─── 13. Windowing (plan §2.19 "the loaded list is windowed: ±1,000 around
+// the viewport") ────────────────────────────────────────────────────────────
+
+describe('windowPosts', () => {
+  const post = (id: string) => ({ id }) as Shelfy.Post;
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => post(`p${i}`));
+
+  it('leaves a list within budget untouched (same reference)', () => {
+    const list = ids(500);
+    expect(windowPosts(list, 2000, 6)).toBe(list);
+  });
+
+  it('trims the front, row-aligned to cols, down to at most max', () => {
+    const list = ids(2010); // 10 over budget
+    const out = windowPosts(list, 2000, 6);
+    // ceil(10/6)*6 = 12 dropped, not 10: a partial row would reshuffle which
+    // posts share it.
+    expect(out).toHaveLength(1998);
+    expect(out[0].id).toBe('p12');
+    // The tail (what a forward scroll's viewport sits near) is untouched.
+    expect(out.at(-1)?.id).toBe('p2009');
+  });
+
+  it('never keeps more than max even when the whole list must go', () => {
+    expect(windowPosts(ids(3), 2, 10)).toEqual([]);
+  });
+
+  it('tolerates a non-positive or fractional column count', () => {
+    const list = ids(2005);
+    expect(() => windowPosts(list, 2000, 0)).not.toThrow();
+    expect(windowPosts(list, 2000, 0).length).toBeLessThanOrEqual(2000);
+  });
+});
+
+describe('usePosts — windowing keeps memory near the viewport', () => {
+  // A keyset-style backend over `total` posts, serving whatever `limit`
+  // (minus what's already fetched, via `cursor`) asks for — the same shape a
+  // real 20k-post library's `GET /posts` gives Gallery's infinite scroll.
+  function pagingClient(total: number): ShelfyClient & { listPosts: Mock } {
+    const listPosts = vi.fn(
+      async (_query: unknown, page: { limit: number; cursor?: string | null }) => {
+        const start = page.cursor ? Number(page.cursor) : 0;
+        const n = Math.max(0, Math.min(page.limit, total - start));
+        const posts = Array.from({ length: n }, (_, i) => ({ id: `p${start + i}` }) as Shelfy.Post);
+        const end = start + posts.length;
+        return { posts, total, nextCursor: end < total ? String(end) : null };
+      },
+    );
+    return {
+      capabilities: desktopCapabilities('darwin'),
+      media: { file: (r) => r ?? null, tile: (r) => r ?? null, isStored: () => false },
+      listPosts,
+      getPostsByIds: vi.fn().mockResolvedValue([]),
+      getStats: vi.fn(),
+      listCollections: vi.fn().mockResolvedValue([]),
+      openExternal: vi.fn(),
+      on: vi.fn(() => () => {}),
+      reportError: vi.fn(),
+    };
+  }
+  function providerOf(client: ShelfyClient) {
+    return function Provider({ children }: { children: React.ReactNode }) {
+      return <ShelfyProvider client={client}>{children}</ShelfyProvider>;
+    };
+  }
+
+  it('never holds more than MAX_LOADED_POSTS scrolling through a 20k-post library', async () => {
+    const client = pagingClient(20_000);
+    const { result, rerender } = renderHook((props: PostFilters) => usePosts(props), {
+      initialProps: { ...defaultFilters, limit: 250 },
+      wrapper: providerOf(client),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.posts.length).toBeGreaterThan(0);
+
+    for (let limit = 500; limit <= 16_000; limit += 250) {
+      rerender({ ...defaultFilters, limit });
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      expect(result.current.posts.length).toBeLessThanOrEqual(MAX_LOADED_POSTS);
+    }
+    // The viewport — the tail, on this forward-only infinite scroll — is
+    // exactly what the backend last served, never trimmed away.
+    expect(result.current.posts.at(-1)?.id).toBe('p15999');
   });
 });
