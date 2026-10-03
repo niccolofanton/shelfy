@@ -5,6 +5,7 @@ use axum::{
     body::Body,
     http::{Request, Response, StatusCode},
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use shelfy_ai::{
@@ -219,6 +220,78 @@ async fn offline_cache_and_provider_errors_use_the_fallback() {
         before.elapsed() < Duration::from_secs(1),
         "cached offline decision must be immediate"
     );
+}
+#[tokio::test]
+async fn explicit_byok_requires_consent_uses_its_model_and_revocation_stops_the_call() {
+    let stub = start_stub().await;
+    let t = TestState::with_config(|c| {
+        c.ai_allow_loopback = true;
+        c.vault = shelfy_server::ai::vault::KeyVault::new(
+            Some(SecretString::from(STANDARD.encode([14; 32]))),
+            None,
+        )
+        .unwrap();
+    });
+    let user = owner(&t);
+    seed(&t, &user).await;
+    let app = t.app();
+    let cookie = sign_in(&app, &t).await;
+    let install = Request::put("/api/v1/me/providers/chat-custom")
+        .header("content-type", "application/json")
+        .body(Body::from(json!({"kind":"openai_compatible","label":"Synthetic chat override","baseUrl":stub.openai_base(),"models":{"chat":"chosen-chat-model"},"key":KEY}).to_string())).unwrap();
+    let installed = send(&app, spa(&t, install, &cookie)).await;
+    let status = installed.status();
+    assert_eq!(
+        status,
+        StatusCode::NO_CONTENT,
+        "{}",
+        String::from_utf8_lossy(&support::body(installed).await)
+    );
+    let mut input = body();
+    input["providerId"] = json!("chat-custom");
+    let mut response = open(&t, &app, &cookie, input.clone()).await;
+    assert_eq!(terminal(&mut response).await.1["modelUsed"], false);
+    assert!(
+        stub.requests().is_empty(),
+        "missing BYOK consent must never fall through to the operator"
+    );
+    let consent = post_json(
+        "/api/v1/me/providers/chat-custom/consent",
+        json!({"version":shelfy_server::ai::providers::CONSENT_VERSION}).to_string(),
+    );
+    assert_eq!(
+        send(&app, spa(&t, consent, &cookie)).await.status(),
+        StatusCode::NO_CONTENT
+    );
+    let mut response = open(&t, &app, &cookie, input.clone()).await;
+    assert_eq!(terminal(&mut response).await.1["modelUsed"], true);
+    assert_eq!(
+        stub.requests().last().unwrap().body.as_ref().unwrap()["model"],
+        "chosen-chat-model"
+    );
+    stub.set_latency(Duration::from_secs(5));
+    let before = stub.requests().len();
+    let mut response = open(&t, &app, &cookie, input).await;
+    assert_eq!(frame(&mut response).await.unwrap().name(), "run");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while stub.requests().len() == before {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let delete = Request::delete("/api/v1/me/providers/chat-custom")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        send(&app, spa(&t, delete, &cookie)).await.status(),
+        StatusCode::NO_CONTENT
+    );
+    let result = tokio::time::timeout(Duration::from_secs(1), terminal(&mut response))
+        .await
+        .unwrap()
+        .1;
+    assert_eq!(result["modelUsed"], false);
 }
 #[tokio::test]
 async fn new_runs_cancel_old_runs_cancel_is_account_scoped_and_drop_cancels() {
