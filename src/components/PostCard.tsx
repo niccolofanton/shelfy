@@ -246,7 +246,15 @@ function TextCard({
       <span className="absolute top-3 right-3 text-[9px] font-semibold tracking-[0.16em] text-white/40">
         {t('textLabel')}
       </span>
-      <div className="absolute inset-x-3 top-8 bottom-9 flex items-center overflow-hidden">
+      <div
+        className="absolute inset-x-3 top-8 bottom-9 flex items-center overflow-hidden"
+        // Fade the excerpt's last line out instead of cutting it mid-glyph when
+        // the tile is too short for the clamp (narrow columns).
+        style={{
+          WebkitMaskImage: 'linear-gradient(to bottom, #000 calc(100% - 14px), transparent)',
+          maskImage: 'linear-gradient(to bottom, #000 calc(100% - 14px), transparent)',
+        }}
+      >
         <p className="max-h-full text-[12px] font-medium leading-[1.4] text-[#f0f1f5] break-words line-clamp-6">
           {post.text}
         </p>
@@ -327,15 +335,18 @@ function SocialFallback({ post, t }: { post: Shelfy.Post; t: Translate }): React
   return (
     <div
       data-testid="social-fallback"
-      className="w-full h-full flex flex-col items-center justify-center gap-1 px-4"
+      // Upper half: the hover overlay (caption + date) owns the bottom, and the
+      // platform badge already sits bottom-left, so no centered icon here.
+      className="w-full h-full flex flex-col items-center justify-start gap-1 px-4 pt-[24%]"
       style={{ backgroundColor: '#161618' }}
     >
-      <SourceIcon platform={post.platform} size={20} className="text-gray-500" />
       <p className="text-[11px] text-gray-400 truncate max-w-full">
         @{post.authorUsername || t('unknownAuthor')}
       </p>
       {hadMedia && (
-        <p className="text-[10px] text-gray-600 truncate max-w-full">{t('mediaUnavailable')}</p>
+        <p className="text-[11px] text-[color:var(--text-muted)] truncate max-w-full">
+          {t('mediaUnavailable')}
+        </p>
       )}
     </div>
   );
@@ -637,6 +648,10 @@ function PostCard({
   // Web cards show only the hero screenshot at rest (no on-hover page slideshow
   // in the POC — the other pages live in the modal carousel).
   const slideshowActive = !isWeb && hovering && slideshowImages.length >= 2;
+  // Short label (author or domain), never the caption: it would spill over the
+  // tile if the image fails, and the card's aria-label already carries the text.
+  const imageAlt =
+    (isWeb ? post.webDomain : post.authorUsername && `@${post.authorUsername}`) || t('post');
   const displayedImage = slideshowActive ? slideshowImages[slide] : imageSrc;
   const imageShowable = !!displayedImage && !imageFailed;
 
@@ -702,9 +717,9 @@ function PostCard({
         // INTERNAL media zoom (see `u-media-zoom`) + the gradient overlay fading in,
         // so a card never casts the stray pale halo the old ring+lift produced.
         'group relative isolate aspect-square overflow-hidden rounded-sm u-clip-aa cursor-pointer outline-none',
-        // Only the selected state draws a ring (accent); at rest the card edge is
-        // defined by its own fill against the darker grid, with no hairline border.
-        selected ? 'ring-2 ring-[#7B5CFF] ring-inset' : '',
+        // At rest the card edge is defined by its own fill against the darker grid,
+        // with no hairline border. The selected ring is an overlay child (below):
+        // an inset box-shadow on the card itself paints UNDER the cover image.
       ].join(' ')}
       style={{ backgroundColor: '#1a1a1a' }}
       onClick={handleClick}
@@ -748,7 +763,7 @@ function PostCard({
             // favicon (web domain chip / fallback) for the thumbnail. Inert in prod.
             data-testid="card-image"
             src={displayedImage ?? undefined}
-            alt={post.text || (isWeb ? post.webDomain : post.authorUsername) || ''}
+            alt={imageAlt}
             // Eager on purpose: the virtualizer already windows which cards exist,
             // and mounts overscan rows precisely so their media is ready before
             // they scroll into view. `loading="lazy"` would defer those fetches
@@ -806,6 +821,16 @@ function PostCard({
         />
       )}
 
+      {/* Selected state (GAL-4): plain RGBA tint + inset ring above the cover. No
+        backdrop-filter (per-card compositing cost); `.u-clip-aa` stays on the card. */}
+      {selected && (
+        <span
+          data-testid="selected-overlay"
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-20 ring-2 ring-inset ring-[color:var(--accent)] bg-[rgba(123,92,255,0.12)]"
+        />
+      )}
+
       {/* Selection checkbox — presentational (the parent card owns the click), but
         carries checkbox semantics so assistive tech announces the toggle state. */}
       {selectable && (
@@ -840,7 +865,7 @@ function PostCard({
           // press that starts on the checkbox.
           onMouseDown={(e) => e.stopPropagation()}
           className={[
-            'absolute top-1.5 left-1.5 z-20 flex items-center justify-center w-5 h-5 rounded-md border bg-black/50 border-white/60 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity u-transition u-press',
+            'absolute top-1.5 left-1.5 z-20 flex items-center justify-center w-5 h-5 rounded-md border bg-black/50 border-white/60 u-hit narrow:after:!-inset-[13px] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity u-transition u-press',
             touchPreviewing ? '!opacity-100' : '',
           ].join(' ')}
         />
@@ -890,13 +915,16 @@ function PostCard({
               touchPreviewing ? '!translate-y-0' : '',
             ].join(' ')}
           >
-            <p className="text-white text-xs font-bold leading-tight truncate font-display">
-              {isWeb
-                ? post.webDomain || post.authorName || t('website')
-                : isManual
-                  ? post.userNote || t('manualBookmark')
-                  : `@${post.authorUsername || t('unknownAuthor')}`}
-            </p>
+            {/* A fallback tile already prints the handle/domain/note: don't repeat it. */}
+            {imageShowable && (
+              <p className="text-white text-xs font-bold leading-tight truncate font-display">
+                {isWeb
+                  ? post.webDomain || post.authorName || t('website')
+                  : isManual
+                    ? post.userNote || t('manualBookmark')
+                    : `@${post.authorUsername || t('unknownAuthor')}`}
+              </p>
+            )}
             {/* Palette swatches (web only) — presentational; copy lives in the modal */}
             {swatches.length > 0 && (
               <div className="flex items-center gap-1" data-testid="web-palette-swatches">
