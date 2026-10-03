@@ -136,6 +136,8 @@ pub struct ProviderSummary {
     pub managed: bool,
     /// The models per use.
     pub models: ProviderModels,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_models: Option<super::providers::TaskModels>,
     /// Whether it transcribes (dictation).
     pub stt: bool,
     /// Its current state.
@@ -426,6 +428,7 @@ impl AiService {
                     vision: op.vision_model.clone(),
                     embed: op.embed_model.clone(),
                 },
+                task_models: None,
                 stt: op.whisper.is_some(),
                 status: self.inner.operator_breaker.state(),
                 configured: true,
@@ -462,6 +465,7 @@ impl AiService {
                     vision: provider.models.catalog.clone(),
                     embed: provider.models.embed.clone(),
                 },
+                task_models: Some(provider.models.clone().into()),
                 stt: provider.models.stt.is_some(),
                 status: if self.inner.user_breakers.state(caller.id, &provider.id, now)
                     == ProviderState::Down

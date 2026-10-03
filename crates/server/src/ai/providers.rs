@@ -96,7 +96,7 @@ impl From<UserProviderKind> for AiProviderKind {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TaskModels {
     pub catalog: Option<String>,
@@ -110,6 +110,21 @@ pub struct TaskModels {
 }
 impl From<TaskModels> for AiModels {
     fn from(m: TaskModels) -> Self {
+        Self {
+            catalog: m.catalog,
+            chat: m.chat,
+            suggest: m.suggest,
+            qc: m.qc,
+            cluster: m.cluster,
+            alias: m.alias,
+            embed: m.embed,
+            stt: m.stt,
+        }
+    }
+}
+
+impl From<AiModels> for TaskModels {
+    fn from(m: AiModels) -> Self {
         Self {
             catalog: m.catalog,
             chat: m.chat,
@@ -705,7 +720,10 @@ async fn synthetic_probes(
         .chat
         .as_ref()
         .or(models.suggest.as_ref())
-        .or(models.catalog.as_ref());
+        .or(models.cluster.as_ref())
+        .or(models.alias.as_ref())
+        .or(models.catalog.as_ref())
+        .or(models.qc.as_ref());
     let text = if let Some(model) = text_model {
         outcome(
             &provider
@@ -725,7 +743,7 @@ async fn synthetic_probes(
         skip()
     };
     // Valid, synthetic 1x1 PNG; no image or caption is taken from the library.
-    let vision = if let Some(model) = &models.catalog {
+    let vision = if let Some(model) = models.catalog.as_ref().or(models.qc.as_ref()) {
         let bytes = STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYyQAAAAASUVORK5CYII=").expect("fixed synthetic PNG");
         let image = Part::Image(Image {
             media_type: ImageType::Png,

@@ -4701,6 +4701,7 @@ export interface components {
       status: components['schemas']['ProviderState'];
       /** @description Whether it transcribes (dictation). */
       stt: boolean;
+      taskModels?: components['schemas']['TaskModels'] | null;
       test?: components['schemas']['ProviderTest'] | null;
     };
     ProviderTest: {

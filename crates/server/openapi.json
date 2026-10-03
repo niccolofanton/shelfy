@@ -9595,6 +9595,16 @@
             "type": "boolean",
             "description": "Whether it transcribes (dictation)."
           },
+          "taskModels": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TaskModels"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "test": {
             "oneOf": [
               {

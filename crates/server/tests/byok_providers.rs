@@ -39,7 +39,7 @@ async fn stub(latency: Duration) -> Stub {
     .unwrap()
 }
 fn input(url: &str) -> Value {
-    json!({"kind":"openai_compatible","label":"Synthetic provider","baseUrl":url,"models":{"chat":"stub-text","catalog":"stub-vision","embed":"stub-embed"},"key":KEY,"prices":{"inputPerMillionUsd":0.5,"outputPerMillionUsd":1.5}})
+    json!({"kind":"openai_compatible","label":"Synthetic provider","baseUrl":url,"models":{"chat":"stub-text","catalog":"stub-vision","embed":"stub-embed", "qc":"specific-qc", "cluster":"specific-cluster", "alias":"specific-alias"},"key":KEY,"prices":{"inputPerMillionUsd":0.5,"outputPerMillionUsd":1.5}})
 }
 fn put(id: &str, value: Value) -> Request<Body> {
     Request::put(format!("/api/v1/me/providers/{id}"))
@@ -134,6 +134,9 @@ async fn sealed_write_only_and_no_consent_for_synthetic_probes() {
     let summaries: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(summaries[0]["configured"], true);
     assert_eq!(summaries[0]["last4"], "8193");
+    assert_eq!(summaries[0]["taskModels"]["qc"], "specific-qc");
+    assert_eq!(summaries[0]["taskModels"]["cluster"], "specific-cluster");
+    assert_eq!(summaries[0]["taskModels"]["alias"], "specific-alias");
     assert!(summaries[0]["consent"].is_null());
     consent(&t, &session).await;
     consent(&t, &session).await;
