@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-vi.mock('../../electron/webcap/sitefetch', () => ({ encodeImage: vi.fn() }));
-import { FETCH_CAP, fetchComplete, ogUrl } from '../src/fetched';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { ManifestSchema } from '../src/protocol';
+vi.mock('../../electron/webcap/sitefetch', () => ({
+  encodeImage: vi.fn(async (_src: string, out: string) => {
+    const fs = await import('fs');
+    fs.copyFileSync(path.resolve('capture/fixtures/recorded/basic/p0-hero.webp'), out);
+  }),
+}));
+import { FETCH_CAP, blockedFallback, fetchComplete, ogUrl } from '../src/fetched';
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -44,5 +53,65 @@ describe('strict capture metadata fetch', () => {
     expect(
       ogUrl(`<meta property='og:image' content='http://127.0.0.1/a'>`, 'https://example.test/'),
     ).toBeNull();
+  });
+});
+
+describe('blocked OG fallback', () => {
+  it('writes a schema-valid partial manifest only after a complete image', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shelfy-blocked-test-'));
+    const req = {
+      captureId: '01J0000000000000000000000X',
+      url: 'https://example.test/',
+      maxPages: 6,
+      singlePage: false,
+      video: false,
+      workDir: '/work/01J0000000000000000000000X',
+    };
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async (url: string) =>
+            new Response(
+              url.endsWith('cover.webp')
+                ? fs.readFileSync('capture/fixtures/recorded/basic/p0-hero.webp')
+                : `<meta property="og:image" content="/cover.webp">`,
+            ),
+        ),
+      );
+      expect(await blockedFallback(req, dir, signal, Date.now(), 1024)).toBe(true);
+      const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+      expect(ManifestSchema.safeParse(manifest).success).toBe(true);
+      expect(manifest.cover.role).toBe('og');
+      expect(manifest.pages).toEqual([]);
+      expect(manifest.partial).toBe(true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  it('does not encode or write a fallback from a truncated image', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shelfy-blocked-test-'));
+    const req = {
+      captureId: '01J0000000000000000000000X',
+      url: 'https://example.test/',
+      maxPages: 6,
+      singlePage: false,
+      video: false,
+      workDir: '/work/01J0000000000000000000000X',
+    };
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (url: string) =>
+          url.endsWith('cover.webp')
+            ? new Response('partial', { headers: { 'content-length': '100' } })
+            : new Response(`<meta property="og:image" content="/cover.webp">`),
+        ),
+      );
+      expect(await blockedFallback(req, dir, signal, Date.now(), 1024)).toBe(false);
+      expect(fs.readdirSync(dir)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

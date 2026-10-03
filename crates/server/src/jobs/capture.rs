@@ -73,7 +73,31 @@ async fn count_success(ctx: &JobContext) -> Result<(), JobError> {
     }).map_err(JobError::from)).await
 }
 
+async fn daily_dispatch_guard(ctx: &JobContext) -> Result<(), JobError> {
+    let control = Arc::clone(ctx.state().control());
+    let user = ctx.user_id().to_owned();
+    let now = ctx.jobs().clock().now_ms();
+    blocking(move || {
+        control.read(|c| {
+            let limits = crate::control::users::limits(c, &user)
+                .map_err(JobError::from)?
+                .ok_or_else(|| JobError::permanent("not_found"))?;
+            let used = usage_daily::of_day(c, &user, now)
+                .map_err(JobError::from)?
+                .captures;
+            // Generic /jobs/retry bypasses capture enqueue admission. Per-user
+            // concurrency is one, so this check also fences retries across UTC days.
+            if limits.capture_daily_limit > 0 && used >= limits.capture_daily_limit {
+                return Err(JobError::permanent("capture_daily_limit"));
+            }
+            Ok(())
+        })
+    })
+    .await
+}
+
 pub async fn run(ctx: JobContext) -> JobResult {
+    let deadline = std::time::Instant::now() + capture::client::DEADLINE;
     let mut payload: Payload = ctx.payload_as()?;
     // A user retry after first-capture cancellation may have no placeholder.
     // Repair only a missing identity, never resurrect a trashed existing post.
@@ -111,13 +135,17 @@ pub async fn run(ctx: JobContext) -> JobResult {
     }
     drop(_gate);
     let post = payload.post_id;
-    if let Some(_capture_id) = captured(&ctx, &payload).await? {
+    if let Some(capture_id) = captured(&ctx, &payload).await? {
         count_success(&ctx).await?;
+        crate::ai::queue::enqueue_web(ctx.state(), ctx.user_id(), &payload.post_key, capture_id)
+            .await
+            .map_err(JobError::from)?;
         return Ok(Outcome::Succeeded);
     }
     if ctx.should_yield() {
         return Ok(Outcome::Requeue { run_at: None });
     }
+    daily_dispatch_guard(&ctx).await?;
     let reservation = quota::reserve(ctx.state(), ctx.user_id(), protocol::SITE_BYTES)
         .await
         .map_err(JobError::from)?;
@@ -218,16 +246,29 @@ pub async fn run(ctx: JobContext) -> JobResult {
     let p = path.clone();
     let url = payload.url.clone();
     let opts = payload.options;
+    let validate_ctx = ctx.clone();
     let validated = blocking(move || {
         if blocked && !p.join("manifest.json").exists() {
             return Err(JobError::permanent("capture_blocked"));
         }
-        ingest::validate(&p, &url, opts, blocked)
+        ingest::validate_checked(&p, &url, opts, blocked, || {
+            validate_ctx.heartbeat();
+            if validate_ctx.should_yield() {
+                return Err(JobError::cancelled());
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(JobError::transient("capture_timeout"));
+            }
+            Ok(())
+        })
     })
     .await;
     let validated = match validated {
         Ok(value) => value,
         Err(err) => {
+            if ctx.should_yield() {
+                return Ok(Outcome::Requeue { run_at: None });
+            }
             if err.code() == "capture_blocked" {
                 mark_blocked(&ctx, &payload).await?;
             }
@@ -247,20 +288,24 @@ pub async fn run(ctx: JobContext) -> JobResult {
     let caches = Arc::clone(ctx.state().user_dbs());
     let events = ctx.state().events().clone();
     let user = ctx.user_id().to_owned();
-    ctx.user_db(move |db| {
-        db.write(|tx| {
+    let capture_id = ctx.user_db(move |db| {
+        let capture_id = db.write(|tx| {
             if token.is_cancelled() || !fence.is_current()? { return Err(JobError::cancelled()); }
             let valid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM posts WHERE id=?1 AND key=?2 AND platform='web' AND deleted_at IS NULL)",params![post,key],|r|r.get(0)).map_err(RepoError::from)?;
             if !valid { return Err(JobError::permanent("not_found")); }
-            let (_,added)=ingest::commit(tx,&media,post,job,prepared,now)?;
+            let (capture_id,added)=ingest::commit(tx,&media,post,job,prepared,now)?;
             reservation.commit(added)?;
-            Ok::<_,JobError>(())
+            Ok::<_,JobError>(capture_id)
         })?;
         library::committed(&caches,&events,&user,db,ChangeReason::Capture,Some(vec![key]));
-        Ok(())
+        Ok(capture_id)
     }).await?;
     drop(work);
     count_success(&ctx).await?;
+    // Outside the ingest transaction, also retried from the durable receipt.
+    crate::ai::queue::enqueue_web(ctx.state(), ctx.user_id(), &payload.post_key, capture_id)
+        .await
+        .map_err(JobError::from)?;
     Ok(Outcome::Succeeded)
 }
 

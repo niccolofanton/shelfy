@@ -24,7 +24,10 @@ A blocked capture can store a complete bounded OG fallback; no fallback leaves
 a failed placeholder. Cancelling a first capture removes only an unedited
 placeholder. Retry repairs a removed placeholder, and restart uses a fresh work
 ULID. Durable capture/job receipts prevent duplicate version creation and daily
-charges on recovery. Hourly cleanup removes orphan ULID directories older than
+charges on recovery. After ingest or receipt recovery, the P3-27 typed hook
+enqueues a fenced website catalog job when automatic analysis and a vision route
+are configured; off/unconfigured analysis leaves the capture complete without AI.
+Hourly cleanup removes orphan ULID directories older than
 24 hours, excluding running attempts.
 
 `GET /health/capture` is public, outside `/api`, and returns status only.

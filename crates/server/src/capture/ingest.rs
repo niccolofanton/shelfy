@@ -37,7 +37,7 @@ struct ValidatedFile {
     page: i64,
     role: AssetRole,
     bytes: Vec<u8>,
-    kind: MediaKind,
+    rendered: Option<render::Rendered>,
 }
 pub struct Prepared {
     manifest: Value,
@@ -252,6 +252,19 @@ pub fn validate(
     opts: Options,
     blocked: bool,
 ) -> Result<Validated, JobError> {
+    validate_checked(dir, requested_url, opts, blocked, || Ok(()))
+}
+
+/// Checks between bounded decodes allow cancellation/pause/deadline to stop
+/// untrusted batches before staging anything; one decode is already size-capped.
+pub fn validate_checked(
+    dir: &Path,
+    requested_url: &str,
+    opts: Options,
+    blocked: bool,
+    mut checkpoint: impl FnMut() -> Result<(), JobError>,
+) -> Result<Validated, JobError> {
+    checkpoint()?;
     let dir = directory(dir)?;
     let manifest = protocol::manifest(
         &open_at(&dir, "manifest.json", protocol::MANIFEST_BYTES)?,
@@ -305,6 +318,7 @@ pub fn validate(
     let mut files = Vec::new();
     let mut total = 0_u64;
     for (page, role, mut asset) in assets {
+        checkpoint()?;
         let page = if matches!(
             role,
             AssetRole::Video | AssetRole::VideoPreview | AssetRole::VideoPoster
@@ -343,15 +357,18 @@ pub fn validate(
         {
             return Err(protocol::invalid());
         }
-        if !role.is_video() {
-            render::render_bytes(&bytes, RenderSpec::G480).map_err(|_| protocol::invalid())?;
-        }
+        let rendered = if !role.is_video() {
+            Some(render::render_bytes(&bytes, RenderSpec::G480).map_err(|_| protocol::invalid())?)
+        } else {
+            None
+        };
+        checkpoint()?;
         files.push(ValidatedFile {
             asset,
             page,
             role,
             bytes,
-            kind,
+            rendered,
         });
     }
     if !files.iter().any(|f| {
@@ -393,21 +410,17 @@ pub fn prepare(
             .map_err(|_| protocol::invalid())?;
         let hero = file.asset.role == validated.manifest["cover"]["role"].as_str().unwrap_or("")
             || matches!(file.role, AssetRole::Hero | AssetRole::Screenshot);
-        let rendered = if hero && file.kind.is_renderable() {
-            Some(
-                render::render_bytes(&file.bytes, RenderSpec::G480)
-                    .map_err(|_| protocol::invalid())?,
-            )
-        } else {
-            None
-        };
+        let rendered = file.rendered;
         files.push(PreparedFile {
             asset: file.asset,
             page: file.page,
             role: file.role,
             staged,
-            grid: rendered.as_ref().map(|r| r.webp.clone()),
-            thumbhash: rendered.as_ref().map(|r| r.thumbhash.clone()),
+            grid: rendered.as_ref().filter(|_| hero).map(|r| r.webp.clone()),
+            thumbhash: rendered
+                .as_ref()
+                .filter(|_| hero)
+                .map(|r| r.thumbhash.clone()),
             width: rendered.as_ref().map(|r| r.source_width),
             height: rendered.as_ref().map(|r| r.source_height),
         });

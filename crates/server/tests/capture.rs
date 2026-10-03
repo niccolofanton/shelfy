@@ -64,6 +64,9 @@ impl Drop for Harness {
 }
 impl Harness {
     async fn new(mode: Mode) -> Self {
+        Self::with_ai(mode, None).await
+    }
+    async fn with_ai(mode: Mode, stub: Option<&shelfy_ai::stub::Stub>) -> Self {
         let fake = Fake {
             root: Arc::new(Mutex::new(PathBuf::new())),
             mode: Arc::new(Mutex::new(mode)),
@@ -84,6 +87,23 @@ impl Harness {
             c.capture.internal_token = Some(secrecy::SecretString::from("fixture-internal"));
             let registry = Registry::new().register(shelfy_server::jobs::capture::kind(1));
             c.jobs.registry = registry;
+            if let Some(stub) = stub {
+                c.outbound.allow_origins = shelfy_server::outbound::OriginAllowlist::parse(
+                    &format!("http://{}", stub.addr()),
+                )
+                .unwrap();
+                c.operator = shelfy_server::ai::OperatorConfig {
+                    url: Some(stub.openai_base()),
+                    model: Some("stub-text".into()),
+                    vision_model: Some("stub-vision".into()),
+                    ..Default::default()
+                };
+                c.jobs.registry = c
+                    .jobs
+                    .registry
+                    .clone()
+                    .register(shelfy_server::jobs::ai_drain::kind());
+            }
             c.jobs.clock = Clock::System;
         });
         *fake.root.lock().unwrap() = capture::work_root(&t.state);
@@ -338,6 +358,30 @@ async fn recorded_ingest_dedupe_recapture_and_receipt() {
         })
         .unwrap();
     assert_eq!(daily.captures, 2);
+    let master_bytes: i64 = db
+        .read(|c| {
+            c.query_row("SELECT sum(bytes) FROM media_objects", [], |r| r.get(0))
+                .map_err(RepoError::from)
+        })
+        .unwrap();
+    let usage =
+        h.t.state
+            .control()
+            .read(|c| shelfy_server::control::users::usage(c, &user))
+            .unwrap()
+            .unwrap();
+    assert_eq!(usage.media_bytes, master_bytes);
+    let dimensions: i64 = db
+        .read(|c| {
+            c.query_row(
+                "SELECT count(*) FROM media_objects WHERE width>0 AND height>0",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(RepoError::from)
+        })
+        .unwrap();
+    assert_eq!(dimensions, counts(&h.t, &user).await.1);
     assert_eq!(h.t.state.quota().reserved_total(), 0);
     assert_eq!(
         std::fs::read_dir(capture::work_root(&h.t.state))
@@ -714,4 +758,136 @@ async fn sweep_removes_old_queued_orphans_but_keeps_running_and_links() {
             .is_symlink()
     );
     assert!(outside.path().join("keep").is_file());
+}
+
+#[tokio::test]
+async fn capture_and_recovery_arm_the_typed_catalog_hook_without_provider_calls() {
+    use shelfy_core::repo::settings::{self, SettingsChange};
+    let stub = shelfy_ai::stub::Stub::start(shelfy_ai::stub::StubConfig::default())
+        .await
+        .unwrap();
+    let h = Harness::with_ai(Mode::Recorded, Some(&stub)).await;
+    let (key, id, _) = h.queue().await;
+    let user = owner(&h.t);
+    h.t.write(&user, |c| {
+        settings::update(
+            c,
+            &SettingsChange {
+                ai_auto_analyze_websites: Some(true),
+                ..Default::default()
+            },
+            1,
+        )
+    })
+    .await;
+    // Keep analysis pending: this lane exercises dispatch, no model generation.
+    h.t.state
+        .jobs()
+        .pause(&user, shelfy_server::jobs::ai_drain::KIND)
+        .await
+        .unwrap();
+    let scheduler =
+        h.t.state
+            .jobs()
+            .start(h.t.state.clone(), CancellationToken::new());
+    assert_eq!(h.terminal(&user, id).await, JobState::Succeeded);
+    stop(scheduler).await;
+    let db = h.t.state.user_db(&user).await.unwrap();
+    let pending: i64 = db
+        .read(|c| {
+            c.query_row(
+                "SELECT count(*) FROM posts WHERE key=?1 AND ai_status='pending'",
+                [&key],
+                |r| r.get(0),
+            )
+            .map_err(RepoError::from)
+        })
+        .unwrap();
+    assert_eq!(pending, 1);
+    let drains: i64 =
+        h.t.state
+            .control()
+            .read(|c| {
+                c.query_row(
+                "SELECT count(*) FROM jobs WHERE user_id=?1 AND kind='ai.drain' AND state='queued'",
+                [&user],
+                |r| r.get(0),
+            )
+            .map_err(RepoError::from)
+            })
+            .unwrap();
+    assert_eq!(drains, 1);
+    h.t.state
+        .control()
+        .write(|c| {
+            c.execute("UPDATE jobs SET state='failed' WHERE id=?1", [id])
+                .map(|_| ())
+                .map_err(RepoError::from)
+        })
+        .unwrap();
+    let state = shelfy_server::state::AppState::open(h.t.state.config().clone()).unwrap();
+    state.jobs().retry(&user, id).await.unwrap();
+    let scheduler = state.jobs().start(state.clone(), CancellationToken::new());
+    tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if state.jobs().get(&user, id).await.unwrap().unwrap().state == JobState::Succeeded {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(h.fake.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(counts(&h.t, &user).await.0, 1);
+    assert!(stub.requests().is_empty());
+    let drains: i64 = state
+        .control()
+        .read(|c| {
+            c.query_row(
+                "SELECT count(*) FROM jobs WHERE user_id=?1 AND kind='ai.drain' AND state='queued'",
+                [&user],
+                |r| r.get(0),
+            )
+            .map_err(RepoError::from)
+        })
+        .unwrap();
+    assert_eq!(drains, 1);
+    stop(scheduler).await;
+}
+
+#[tokio::test]
+async fn generic_job_retry_cannot_bypass_the_daily_capture_limit() {
+    let h = Harness::new(Mode::BadManifest).await;
+    let (_, id, _) = h.queue().await;
+    let user = owner(&h.t);
+    h.t.state
+        .control()
+        .write(|c| shelfy_server::control::users::set_limits(c, &user, None, Some(1)))
+        .unwrap();
+    let scheduler =
+        h.t.state
+            .jobs()
+            .start(h.t.state.clone(), CancellationToken::new());
+    assert_eq!(h.terminal(&user, id).await, JobState::Failed);
+    h.mode(Mode::Recorded);
+    let (_, next) = capture::enqueue_site(
+        &h.t.state,
+        &user,
+        "https://other.shelfy.test/",
+        Options::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(h.terminal(&user, next.job.id).await, JobState::Succeeded);
+    let calls = h.fake.calls.load(Ordering::SeqCst);
+    h.t.state.jobs().retry(&user, id).await.unwrap();
+    assert_eq!(h.terminal(&user, id).await, JobState::Failed);
+    assert_eq!(
+        h.t.job(&user, id).await.error_code.as_deref(),
+        Some("capture_daily_limit")
+    );
+    assert_eq!(h.fake.calls.load(Ordering::SeqCst), calls);
+    assert_eq!(counts(&h.t, &user).await.0, 1);
+    stop(scheduler).await;
 }
