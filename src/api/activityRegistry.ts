@@ -33,6 +33,7 @@ for (const kind of [
 ]) {
   registerActivityKind(kind, { labelKey: `jobs.kind.${kind}`, target: '/jobs' });
 }
+registerActivityKind('sync', { labelKey: 'activity.syncKind', target: '/settings/connections' });
 export function activityKindLabel(lang: string, kind: string): string {
   const descriptor = registry.get(kind);
   if (descriptor) {

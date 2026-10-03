@@ -26,6 +26,7 @@ export interface MockApi {
   // so a spec can read `api.jobs` afterwards to assert on the result.
   jobs: Schemas['Job'][];
   notifications: Schemas['Notification'][];
+  syncRuns: Schemas['SyncRun'][];
   pausedKinds: Set<string>;
   // P2-12: the account's API tokens, for `/me/tokens*` (connections.spec.ts).
   tokens: Schemas['ApiToken'][];
@@ -686,6 +687,26 @@ async function answer(api: MockApi, route: Route): Promise<void> {
     return route.fulfill({ status: 204 });
   }
 
+  if (path === '/api/v1/sync-runs' && method === 'GET') {
+    const before = query.get('cursor') ? Number(query.get('cursor')) : Infinity;
+    const limit = Number(query.get('limit') ?? 100);
+    const matching = api.syncRuns
+      .filter(
+        (run) =>
+          run.startedAt < before &&
+          (!query.get('platform') || run.platform === query.get('platform')) &&
+          (!query.get('state') || run.state === query.get('state')),
+      )
+      .sort((a, b) => b.startedAt - a.startedAt);
+    const items = matching.slice(0, limit);
+    return route.fulfill({
+      json: {
+        items,
+        nextCursor: matching.length > items.length ? String(items.at(-1)!.startedAt) : null,
+      },
+    });
+  }
+
   if (path === '/api/v1/notifications' && method === 'GET') {
     const before = query.get('cursor') ? Number(query.get('cursor')) : Infinity;
     const limit = Number(query.get('limit')) || 60;
@@ -804,6 +825,7 @@ export async function mockApi(page: Page, origin: string): Promise<MockApi> {
     ...library(),
     jobs: [],
     notifications: [],
+    syncRuns: [],
     pausedKinds: new Set(),
     tokens: [],
     streams: [],

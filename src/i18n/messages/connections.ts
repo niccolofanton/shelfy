@@ -6,6 +6,8 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    syncDesktopHelp:
+      'Le sincronizzazioni si eseguono in Chrome sul computer. Tieni aperta una scheda social con accesso effettuato per recuperare le copertine mancanti.',
     // Extension card
     extTitle: 'Estensione del browser',
     extDesc: 'Sincronizza Instagram, X e Pinterest dal tuo browser. Funziona in Chrome e simili.',
@@ -89,6 +91,8 @@ export default {
     revoke: 'Revoca',
   },
   en: {
+    syncDesktopHelp:
+      'Syncs run in desktop Chrome. Keep a signed-in social tab open to recover missing covers.',
     extTitle: 'Browser extension',
     extDesc: 'Syncs Instagram, X and Pinterest from your browser. Works in Chrome and similar.',
     extUnsupported: 'This browser does not support the extension. Use Chrome, Edge, Brave or Arc.',

@@ -1,3 +1,4 @@
+import { createSyncApi } from './sync';
 import { createActivityApi } from './activity';
 // The web ShelfyClient: the HTTP API of shelfy-server (`/api/v1`), typed by
 // the generated OpenAPI types (./schema.d.ts), and its realtime stream.
@@ -78,6 +79,7 @@ export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
   trafficLights: false,
   localFiles: false,
   browser: false,
+  sync: false,
   webviewFallback: false,
   ai: false,
   aiQueue: false,
@@ -120,6 +122,7 @@ export function webCapabilities(me: Schemas['Me'] | null | undefined): ShelfyCap
     links: true,
     jobs: true,
     activity: true,
+    sync: me.capabilities.extension,
   });
 }
 
@@ -193,6 +196,7 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
           links: createLinksApi(http),
           jobs: createJobsApi(http, { events }),
           activity: createActivityApi(http, events),
+          ...(me.capabilities.extension ? { sync: createSyncApi(http, events) } : {}),
         }
       : {}),
 

@@ -1,3 +1,4 @@
+import { WebSyncProvider, useWebSync } from './hooks/useWebSync';
 import React, {
   useState,
   useEffect,
@@ -338,7 +339,9 @@ export default function App(): React.JSX.Element {
     <ErrorBoundary view="app" layout="page">
       <AnalysisProvider>
         <ShellProvider>
-          <AppInner />
+          <WebSyncProvider>
+            <AppInner />
+          </WebSyncProvider>
         </ShellProvider>
       </AnalysisProvider>
     </ErrorBoundary>
@@ -496,6 +499,8 @@ function AppInner(): React.JSX.Element {
     [],
   );
 
+  const webSync = useWebSync();
+
   // ── Source-sync (sync in background dalle righe della Libreria) ──────────────
   // Il Browser (sempre montato) registra qui la sua API imperativa; i job per
   // piattaforma risalgono via onSourceSyncJobs e alimentano sidebar + Attività.
@@ -509,17 +514,6 @@ function AppInner(): React.JSX.Element {
   // Un solo entry-point per i bottoni della sidebar: se quella piattaforma sta
   // già sincronizzando il click diventa uno stop; un errore residuo (es. login)
   // viene sgomberato prima di ripartire.
-  const handleSyncSource = useCallback((target: SyncTarget | null | undefined) => {
-    const api = sourceSyncApiRef.current;
-    if (!api || !target?.platform) return;
-    const job = sourceSyncJobsRef.current[target.platform];
-    if (job && (job.status === 'navigating' || job.status === 'syncing')) {
-      api.stop(target.platform);
-      return;
-    }
-    if (job) api.dismiss(target.platform);
-    api.start(target);
-  }, []);
 
   const {
     collections,
@@ -528,6 +522,47 @@ function AppInner(): React.JSX.Element {
     remove: removeCollection,
     rename: renameCollection,
   } = useCollections();
+
+  const handleSyncSource = useCallback(
+    (target: SyncTarget | null | undefined) => {
+      if (!target?.platform) return;
+      if (webSync?.enabled) {
+        if (webSync.active[target.platform]) void webSync.stop(target.platform);
+        else {
+          const folders = collections.filter(
+            (collection) =>
+              collection.platform === target.platform && collection.externalId != null,
+          ).length;
+          const steps =
+            target.collectionId != null
+              ? 1
+              : target.platform === 'instagram'
+                ? 1 + folders
+                : target.platform === 'pinterest'
+                  ? folders
+                  : 1;
+          void webSync.start(
+            {
+              platform: target.platform,
+              ...(target.collectionId != null ? { collectionId: target.collectionId } : {}),
+            },
+            Math.max(1, steps),
+          );
+        }
+        return;
+      }
+      const api = sourceSyncApiRef.current;
+      if (!api) return;
+      const job = sourceSyncJobsRef.current[target.platform];
+      if (job && (job.status === 'navigating' || job.status === 'syncing')) {
+        api.stop(target.platform);
+        return;
+      }
+      if (job) api.dismiss(target.platform);
+      api.start(target);
+    },
+    [webSync, collections],
+  );
 
   // Local VLM analysis activity — surfaced in the sidebar like the browser-tab sync.
   const {
@@ -1217,8 +1252,17 @@ function AppInner(): React.JSX.Element {
                         onStatsChanged={refreshStats}
                         onOpenInWebsites={caps.websites ? goOpenInWebsites : undefined}
                         onReanalyzeWeb={caps.websites ? goReanalyzeWeb : undefined}
-                        sourceSyncJobs={sourceSyncJobs}
-                        onSyncSource={caps.browser ? handleSyncSource : undefined}
+                        sourceSyncJobs={
+                          webSync?.enabled
+                            ? Object.fromEntries(
+                                Object.entries(webSync.active).map(([platform, running]) => [
+                                  platform,
+                                  { status: running ? 'syncing' : 'done' },
+                                ]),
+                              )
+                            : sourceSyncJobs
+                        }
+                        onSyncSource={caps.browser || caps.sync ? handleSyncSource : undefined}
                       />
                     )}
                     {v === 'downloads' && (

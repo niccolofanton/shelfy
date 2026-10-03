@@ -20,6 +20,16 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    syncKind: 'Sincronizzazione',
+    syncCounters: '{scanned} esaminati · {inserted} nuovi · {known} già noti',
+    syncStep: 'Passaggio {step} di {total}',
+    syncLogin: 'Accedi al tuo account social, poi avvia di nuovo la sincronizzazione.',
+    syncOpen: 'Apri {platform}',
+    syncNavigating: 'Apertura pagina salvati…',
+    syncError: 'Azione di sincronizzazione non riuscita ({code}).',
+    'notif.sync.done': '{platform}: {inserted} post nuovi, {known} già noti.',
+    'notif.sync.failed': 'Sincronizzazione non riuscita su {platform}.',
+    'notif.sync.login_required': 'Accedi a {platform} per sincronizzare i tuoi salvati.',
     webTitleCenter: 'Centro notifiche',
     markAllRead: 'Segna tutte come lette',
     markRead: 'Segna come letta',
@@ -72,9 +82,6 @@ export default {
     syncOpenBrowser: 'Apri browser',
 
     // ── end-of-run notification codes (server `sync.*`, P2-09) ──
-    'notif.sync.done': 'Sincronizzazione completata: {inserted} nuovi post.',
-    'notif.sync.failed': 'Sincronizzazione non riuscita.',
-    'notif.sync.login_required': 'Accesso richiesto per sincronizzare.',
 
     // ── action labels (buildActivities) ──
     actionResume: 'Riprendi',
@@ -167,6 +174,16 @@ export default {
     logSyncStopped: 'Sincronizzazione {platform} interrotta',
   },
   en: {
+    syncKind: 'Sync',
+    syncCounters: '{scanned} scanned · {inserted} new · {known} known',
+    syncStep: 'Step {step} of {total}',
+    syncLogin: 'Sign in to your social account, then start the sync again.',
+    syncOpen: 'Open {platform}',
+    syncNavigating: 'Opening saved page…',
+    syncError: 'Sync action failed ({code}).',
+    'notif.sync.done': '{platform}: {inserted} new posts, {known} known.',
+    'notif.sync.failed': 'Sync failed on {platform}.',
+    'notif.sync.login_required': 'Sign in to {platform} to sync your saved posts.',
     webTitleCenter: 'Notification center',
     markAllRead: 'Mark all read',
     markRead: 'Mark read',
@@ -218,9 +235,6 @@ export default {
     syncOpenBrowser: 'Open browser',
 
     // ── end-of-run notification codes (server `sync.*`, P2-09) ──
-    'notif.sync.done': 'Sync finished: {inserted} new posts.',
-    'notif.sync.failed': 'Sync failed.',
-    'notif.sync.login_required': 'Sign-in needed to sync.',
 
     // ── action labels (buildActivities) ──
     actionResume: 'Resume',

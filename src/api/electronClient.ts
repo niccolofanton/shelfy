@@ -44,6 +44,7 @@ export function desktopCapabilities(platform: string | undefined): ShelfyCapabil
     trafficLights: platform === 'darwin',
     localFiles: true,
     browser: true,
+    sync: false,
     webviewFallback: true,
     ai: true,
     aiQueue: true,

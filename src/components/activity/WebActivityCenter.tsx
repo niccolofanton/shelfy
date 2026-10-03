@@ -1,3 +1,5 @@
+import { SyncActivity } from '../sync/SyncActivity';
+import { useWebSync } from '../../hooks/useWebSync';
 import { useRef, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { useNavigation } from '../../api/navigation';
@@ -15,14 +17,15 @@ import { Button, Notice, Spinner } from '../ui';
 
 export default function WebActivityCenter({ onOpen }: { onOpen?: () => void }) {
   const activity = useWebActivity();
+  const sync = useWebSync();
   const { lang } = useLang();
   const t = useT('activity');
   const navigation = useNavigation();
   const [open, setOpen] = useState(false);
   const anchor = useRef<HTMLButtonElement>(null);
-  const activeCount = activity.jobs.filter(
-    (job) => job.state === 'queued' || job.state === 'running',
-  ).length;
+  const activeCount =
+    activity.jobs.filter((job) => job.state === 'queued' || job.state === 'running').length +
+    Object.values(sync?.active ?? {}).filter(Boolean).length;
   const go = (target: string | null) => {
     const route = notificationTarget(target);
     if (route) {
@@ -105,9 +108,13 @@ export default function WebActivityCenter({ onOpen }: { onOpen?: () => void }) {
             {t('loading')}
           </div>
         )}
-        {!activity.loading && activity.jobs.length === 0 && activity.notifications.length === 0 && (
-          <p className="p-4 text-sm text-secondary">{t('empty')}</p>
-        )}
+        {!activity.loading &&
+          activity.jobs.length === 0 &&
+          activity.notifications.length === 0 &&
+          !Object.values(sync?.active ?? {}).some(Boolean) &&
+          !Object.values(sync?.latest ?? {}).some((run) => run?.errorCode === 'login_required') && (
+            <p className="p-4 text-sm text-secondary">{t('empty')}</p>
+          )}
         {activity.queues.length > 0 && (
           <section className="border-b border-subtle p-3" aria-label={t('queues')}>
             {activity.queues.map((queue) => (
@@ -133,6 +140,7 @@ export default function WebActivityCenter({ onOpen }: { onOpen?: () => void }) {
             ))}
           </section>
         )}
+        <SyncActivity />
         {activity.jobs.length > 0 && (
           <section data-testid="activity-live" className="p-3">
             <h3 className="mb-2 text-xs text-secondary">{t('sectionLive')}</h3>

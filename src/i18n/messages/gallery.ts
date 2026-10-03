@@ -16,6 +16,20 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    webSyncHelpTitle: 'Sincronizza i tuoi salvati',
+    webSyncConnections: 'Impostazioni → Connessioni',
+    webSyncClose: 'Chiudi',
+    webSync_mobile:
+      'Le sincronizzazioni si eseguono in Chrome sul computer. Installa e collega lì l’estensione Shelfy. La libreria resta disponibile su questo telefono.',
+    webSync_missing:
+      'Installa l’estensione Shelfy in Chrome sul computer, poi collegala in Impostazioni → Connessioni.',
+    webSync_unsupported:
+      'Le sincronizzazioni si eseguono in Chrome sul computer con l’estensione Shelfy. Apri Impostazioni → Connessioni per installarla e collegarla.',
+    webSync_not_paired:
+      'Collega l’estensione Shelfy a questo account in Impostazioni → Connessioni.',
+    webSync_outdated: 'Aggiorna l’estensione Shelfy, poi controlla di nuovo la connessione.',
+    webSync_unreachable: 'L’estensione non ha risposto. Controlla che sia attiva, poi riprova.',
+    webSyncError: 'Sincronizzazione non avviata ({code}).',
     // View mode toggle (grid ↔ infinite canvas)
     viewGrid: 'Griglia',
     viewCanvas: 'Canvas',
@@ -119,6 +133,19 @@ export default {
     emptyHint: 'Importa un file JSON o cattura post dalla scheda Browser.',
   },
   en: {
+    webSyncHelpTitle: 'Sync your saved posts',
+    webSyncConnections: 'Settings → Connections',
+    webSyncClose: 'Close',
+    webSync_mobile:
+      'Syncs run in desktop Chrome. Install and pair the Shelfy extension there. Your library stays available on this phone.',
+    webSync_missing:
+      'Install the Shelfy extension in desktop Chrome, then pair it in Settings → Connections.',
+    webSync_unsupported:
+      'Syncs run in desktop Chrome with the Shelfy extension. Open Settings → Connections for installation and pairing.',
+    webSync_not_paired: 'Pair the Shelfy extension with this account in Settings → Connections.',
+    webSync_outdated: 'Update the Shelfy extension, then check the connection again.',
+    webSync_unreachable: 'The extension did not respond. Check that it is enabled, then try again.',
+    webSyncError: 'Sync could not start ({code}).',
     viewGrid: 'Grid',
     viewCanvas: 'Canvas',
     viewGridTitle: 'Switch to grid view (sorted by date)',

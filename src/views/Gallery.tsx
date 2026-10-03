@@ -1798,6 +1798,40 @@ export default function Gallery({
     </div>
   );
 
+  const syncSourceButton = (() => {
+    if (!onSyncSource) return null;
+    const c = collectionId != null ? collections.find((x) => x.id === collectionId) : null;
+    const target: SyncTarget | null = c
+      ? isSyncPlatform(c.platform) && c.externalId != null
+        ? { type: 'collection', platform: c.platform, collectionId: c.id }
+        : null
+      : platform === 'instagram' || platform === 'twitter'
+        ? { type: 'platform', platform }
+        : platform === 'pinterest' &&
+            collections.some((x) => x.platform === 'pinterest' && x.externalId != null)
+          ? { type: 'platform', platform }
+          : null;
+    if (!target) return null;
+    const job = target.platform ? sourceSyncJobs?.[target.platform] : undefined;
+    const running = !!job && (job.status === 'navigating' || job.status === 'syncing');
+    return (
+      <button
+        data-testid="gallery-sync-source"
+        onClick={() => onSyncSource(target)}
+        title={running ? t('syncStopTitle') : t('syncSourceTitle')}
+        aria-label={running ? t('syncStopTitle') : t('syncSourceTitle')}
+        className={[
+          'pointer-events-auto flex items-center justify-center w-7 h-7 narrow:w-11 narrow:h-11 rounded-md narrow:rounded-full narrow:bg-panel/85 narrow:ring-1 narrow:ring-white/10 u-press shrink-0',
+          running
+            ? 'text-amber-400 hover:bg-[#1a1a1a]'
+            : 'text-gray-400 hover:text-white hover:bg-[#1a1a1a]',
+        ].join(' ')}
+      >
+        {running ? <Loader2 size={15} className="animate-spin" /> : <CloudDownload size={15} />}
+      </button>
+    );
+  })();
+
   return (
     <div data-testid="gallery-view" className="flex h-full overflow-hidden">
       {/* Post-exit confirmations, Undo and job progress are shown by the shared
@@ -1887,7 +1921,10 @@ export default function Gallery({
                 }
                 trailing={
                   narrow ? (
-                    narrowSelectButton
+                    <>
+                      {syncSourceButton}
+                      {narrowSelectButton}
+                    </>
                   ) : (
                     <>
                       {/* Source-sync: fetches new posts from the source's connector in
@@ -1897,49 +1934,7 @@ export default function Gallery({
                     CloudDownload (not RefreshCw — taken by the grid refresh
                     beside it); while the run is in flight it becomes a spinner
                     and clicking it stops the run. */}
-                      {(() => {
-                        if (!onSyncSource) return null;
-                        const c =
-                          collectionId != null
-                            ? collections.find((x) => x.id === collectionId)
-                            : null;
-                        const target: SyncTarget | null = c
-                          ? isSyncPlatform(c.platform) && c.externalId != null
-                            ? { type: 'collection', platform: c.platform, collectionId: c.id }
-                            : null
-                          : platform === 'instagram' || platform === 'twitter'
-                            ? { type: 'platform', platform }
-                            : platform === 'pinterest' &&
-                                collections.some(
-                                  (x) => x.platform === 'pinterest' && x.externalId != null,
-                                )
-                              ? { type: 'platform', platform }
-                              : null;
-                        if (!target) return null;
-                        const job = target.platform ? sourceSyncJobs?.[target.platform] : undefined;
-                        const running =
-                          !!job && (job.status === 'navigating' || job.status === 'syncing');
-                        return (
-                          <button
-                            data-testid="gallery-sync-source"
-                            onClick={() => onSyncSource(target)}
-                            title={running ? t('syncStopTitle') : t('syncSourceTitle')}
-                            aria-label={running ? t('syncStopTitle') : t('syncSourceTitle')}
-                            className={[
-                              'flex items-center justify-center w-7 h-7 rounded-md u-press shrink-0',
-                              running
-                                ? 'text-amber-400 hover:bg-[#1a1a1a]'
-                                : 'text-gray-400 hover:text-white hover:bg-[#1a1a1a]',
-                            ].join(' ')}
-                          >
-                            {running ? (
-                              <Loader2 size={15} className="animate-spin" />
-                            ) : (
-                              <CloudDownload size={15} />
-                            )}
-                          </button>
-                        );
-                      })()}
+                      {syncSourceButton}
 
                       <button
                         data-testid="gallery-refresh"

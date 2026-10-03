@@ -1,3 +1,4 @@
+import { WebConnections } from './sync/WebConnections';
 import React, { useEffect, useRef, useState, Suspense, lazy } from 'react';
 import {
   Grid3X3,
@@ -249,7 +250,7 @@ function Sidebar({
   // Each group and row exists only where the client can back it: the web app
   // shows the library (all posts, platforms, folders) and nothing else yet.
   const caps = useCapabilities();
-  const showConnections = caps.browser || caps.websites || caps.bookmarks;
+  const showConnections = caps.browser || caps.sync || caps.websites || caps.bookmarks;
   const showFooter = caps.feedback || caps.activity || caps.settings;
   const total = stats?.total ?? 0;
   const byPlatform: Partial<Record<string, number>> = stats?.byPlatform ?? {};
@@ -579,6 +580,7 @@ function Sidebar({
 
                   {open && (
                     <div className="flex flex-col gap-0.5 mb-0.5">
+                      {caps.sync && !caps.browser && <WebConnections />}
                       {caps.browser &&
                         BROWSER_TABS.map((tab, i) => {
                           const subActive = currentView === 'browser' && browserTab === tab.id;

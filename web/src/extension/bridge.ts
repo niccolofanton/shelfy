@@ -94,3 +94,51 @@ export function createExtensionBridge(options: BridgeOptions = {}): ExtensionBri
     },
   };
 }
+
+/** C9 sync controls share the fixed-id/origin checks of pairing. */
+export function createSyncExtension(
+  options: BridgeOptions = {},
+): import('@ui/api/sync').SyncExtension {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const chrome = () =>
+    options.chrome !== undefined
+      ? options.chrome
+      : typeof window === 'undefined'
+        ? null
+        : ((window as unknown as { chrome?: ChromeLike }).chrome ?? null);
+  const request = async (message: unknown, timeout = timeoutMs) => {
+    const c = chrome();
+    return c ? send(c, message, timeout) : null;
+  };
+  const answer = async (message: unknown) => {
+    const value = await request(message, Math.max(timeoutMs * 4, 30_000));
+    if (!isRecord(value)) return { ok: false as const, code: 'unreachable' };
+    return value.ok === true
+      ? { ok: true as const }
+      : { ok: false as const, code: typeof value.code === 'string' ? value.code : 'bad_response' };
+  };
+  return {
+    async connection() {
+      if (!chrome()) return { extension: { state: 'unsupported' }, syncing: {} };
+      const value = await request({ type: EXTERNAL.ping });
+      if (!isRecord(value) || value.ok !== true || typeof value.version !== 'string')
+        return { extension: { state: 'missing' }, syncing: {} };
+      const syncing: Partial<Record<import('@ui/api/sync').SyncPlatform, boolean>> = {};
+      if (isRecord(value.syncing))
+        for (const platform of ['instagram', 'twitter', 'pinterest'] as const)
+          if (typeof value.syncing[platform] === 'boolean')
+            syncing[platform] = value.syncing[platform];
+      return {
+        extension: {
+          state: 'ready',
+          version: value.version,
+          paired: value.paired === true,
+          outdated: value.outdated === true,
+        },
+        syncing,
+      };
+    },
+    start: (target) => answer({ type: EXTERNAL.syncStart, target }),
+    stop: (platform) => answer({ type: EXTERNAL.syncStop, platform }),
+  };
+}

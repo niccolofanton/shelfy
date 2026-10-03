@@ -183,6 +183,7 @@ function ExtensionCard({ account }: { account: AccountApi }): React.JSX.Element 
   return (
     <Card testId="connections-extension">
       <CardHeader icon={Puzzle} title={t('extTitle')} description={t('extDesc')} />
+      <p className="mb-3 text-xs text-secondary">{t('syncDesktopHelp')}</p>
       <div className="mt-4 space-y-3">
         {probe === null && <Loading label={t('extChecking')} />}
 

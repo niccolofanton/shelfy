@@ -7,6 +7,7 @@
 // need, in transport-neutral terms. Posts keep the desktop shape
 // (Shelfy.Post): the web client maps the API's posts onto it, with the post
 // `key` as `id` and same-origin `/media` URLs as the local file references.
+import type { SyncApi } from './sync';
 import type { ActivityApi } from './activity';
 import type { AccountApi } from './account';
 import type { AiApi } from './ai';
@@ -27,6 +28,8 @@ export interface ShelfyCapabilities {
   localFiles: boolean;
   // The in-app platform browsers: Connections, source sync and hand-picked saves.
   browser: boolean;
+  // Web source sync through the paired browser extension.
+  sync: boolean;
   // The original page, live, inside the post modal when no media can be shown.
   webviewFallback: boolean;
   // AI: true when any of the five flags below is (plan §2.19; P3-08
@@ -330,6 +333,7 @@ export interface ShelfyClient {
   // (ShelfyCapabilities.jobs) and leaves this undefined.
   readonly jobs?: JobsApi;
   readonly activity?: ActivityApi;
+  readonly sync?: SyncApi;
 
   // One page of the library (or of a folder, a search…).
   listPosts(query: PostQuery, page: PageRequest): Promise<PostPage>;

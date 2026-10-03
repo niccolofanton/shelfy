@@ -12,6 +12,16 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    webSyncOpenPlatform: 'Apri {platform}',
+    webSyncNow: 'Sincronizza ora',
+    webSyncStop: 'Interrompi',
+    webSyncOpen: 'Apri pagina salvati',
+    webSyncNever: 'Mai sincronizzato',
+    webSyncState_running: 'Sincronizzazione…',
+    webSyncState_done: 'Ultima sincronizzazione completata',
+    webSyncState_failed: 'Ultima sincronizzazione non riuscita',
+    webSyncState_stopped: 'Sincronizzazione interrotta',
+    webSyncError: 'Azione di sincronizzazione non riuscita ({code}).',
     sources: 'Connessioni',
     bookmarks: 'Libreria',
     ai: 'AI',
@@ -49,6 +59,16 @@ export default {
     closeMenu: 'Chiudi il menu',
   },
   en: {
+    webSyncOpenPlatform: 'Open {platform}',
+    webSyncNow: 'Sync now',
+    webSyncStop: 'Stop',
+    webSyncOpen: 'Open saved page',
+    webSyncNever: 'Not synced yet',
+    webSyncState_running: 'Syncing…',
+    webSyncState_done: 'Last sync completed',
+    webSyncState_failed: 'Last sync failed',
+    webSyncState_stopped: 'Sync stopped',
+    webSyncError: 'Sync action failed ({code}).',
     sources: 'Connections',
     bookmarks: 'Library',
     ai: 'AI',
