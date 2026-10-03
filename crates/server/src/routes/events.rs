@@ -191,7 +191,7 @@ pub async fn stream_events(
 /// every [`HEARTBEAT`]. A failing lookup ends the stream too: the client
 /// reconnects and resumes without loss. A stream opened without a session
 /// cookie (the test stand-in for authentication) never ends this way.
-async fn session_ended(state: AppState, token: Option<String>, user_id: String) {
+pub(super) async fn session_ended(state: AppState, token: Option<String>, user_id: String) {
     let Some(token) = token else {
         return std::future::pending().await;
     };

@@ -11,6 +11,7 @@ use serde::Serialize;
 use super::{query, terms};
 use crate::db::UserDb;
 use crate::generation::GenerationCache;
+use crate::repo::posts::SourceBucket;
 use crate::repo::{RepoError, tags};
 
 pub const BROAD_LIMIT: usize = 150;
@@ -32,6 +33,7 @@ pub struct Vocabulary {
     keyword_tokens: HashMap<String, usize>,
     keyword_total: usize,
     posts: usize,
+    source: Option<SourceBucket>,
 }
 
 /// Bounded per-user cache. Read generation before opening the snapshot.
@@ -44,12 +46,26 @@ impl Default for VocabCache {
 impl VocabCache {
     /// Returns the current snapshot; database errors leave no cached value.
     pub fn get(&self, user: &str, db: &UserDb) -> Result<Arc<Vocabulary>, RepoError> {
+        self.get_for_source(user, db, None)
+    }
+    /// Separately caches the all/social/sites vocabularies for each generation.
+    pub fn get_for_source(
+        &self,
+        user: &str,
+        db: &UserDb,
+        source: Option<SourceBucket>,
+    ) -> Result<Arc<Vocabulary>, RepoError> {
         let generation = db.generation();
-        let view = *b"chat-vocab-v1___";
+        let mut view = *b"chat-vocab-v1___";
+        view[15] = match source {
+            None => 0,
+            Some(SourceBucket::Web) => 1,
+            Some(SourceBucket::Social) => 2,
+        };
         if let Some(value) = self.0.get(user, generation, &view) {
             return Ok(value);
         }
-        let value = Arc::new(db.read(Vocabulary::load)?);
+        let value = Arc::new(db.read(|conn| Vocabulary::load_for_source(conn, source))?);
         self.0.insert(user, generation, view, value.clone());
         Ok(value)
     }
@@ -74,12 +90,20 @@ pub struct Pools {
 impl Vocabulary {
     /// Builds counts, display forms, tiers and keyword statistics in one snapshot.
     pub fn load(conn: &Connection) -> Result<Self, RepoError> {
+        Self::load_for_source(conn, None)
+    }
+    /// A vocabulary restricted to the search's source bucket.
+    pub fn load_for_source(
+        conn: &Connection,
+        source: Option<SourceBucket>,
+    ) -> Result<Self, RepoError> {
+        let predicate = source_predicate(source);
         let mut tags = Vec::new();
-        let mut stmt = conn.prepare("SELECT t.tag_norm, COUNT(DISTINCT t.post_id), COUNT(DISTINCT CASE WHEN t.tier='general' THEN t.post_id END), MAX(t.tier='specific')
+        let mut stmt = conn.prepare(&format!("SELECT t.tag_norm, COUNT(DISTINCT t.post_id), COUNT(DISTINCT CASE WHEN t.tier='general' THEN t.post_id END), MAX(t.tier='specific')
                  FROM post_tags t
                  JOIN posts p ON p.id=t.post_id
-                 WHERE p.deleted_at IS NULL
-                 GROUP BY t.tag_norm")?;
+                 WHERE p.deleted_at IS NULL AND {predicate}
+                 GROUP BY t.tag_norm"))?;
         for row in stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -97,21 +121,21 @@ impl Vocabulary {
                 specific,
             });
         }
-        let forms: HashMap<String,String> = conn.prepare("SELECT tag_norm, tag_form
+        let forms: HashMap<String,String> = conn.prepare(&format!("SELECT tag_norm, tag_form
                  FROM (SELECT t.tag_norm,t.tag_form,COUNT(DISTINCT t.post_id) n, ROW_NUMBER() OVER (PARTITION BY t.tag_norm
                  ORDER BY COUNT(DISTINCT t.post_id) DESC,t.tag_form) rank
                  FROM post_tags t
                  JOIN posts p ON p.id=t.post_id
-                 WHERE p.deleted_at IS NULL
+                 WHERE p.deleted_at IS NULL AND {predicate}
                  GROUP BY t.tag_norm,t.tag_form)
-                 WHERE rank=1")?.query_map([], |r| Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+                 WHERE rank=1"))?.query_map([], |r| Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
         for tag in &mut tags {
             if let Some(form) = forms.get(&tag.norm) {
                 tag.form.clone_from(form);
             }
         }
         let mut keyword_tokens = HashMap::new();
-        let rows = conn.prepare("SELECT ai_keywords_json FROM posts WHERE deleted_at IS NULL AND ai_keywords_json IS NOT NULL")?.query_map([], |r| r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = conn.prepare(&format!("SELECT ai_keywords_json FROM posts p WHERE deleted_at IS NULL AND {predicate} AND ai_keywords_json IS NOT NULL"))?.query_map([], |r| r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
         for raw in rows {
             for phrase in keyword_phrases(&raw) {
                 for token in keyword_tokens_of(&phrase) {
@@ -121,7 +145,7 @@ impl Vocabulary {
         }
         let keyword_total = keyword_tokens.values().sum();
         let posts = conn.query_row(
-            "SELECT COUNT(*) FROM posts WHERE deleted_at IS NULL",
+            &format!("SELECT COUNT(*) FROM posts p WHERE deleted_at IS NULL AND {predicate}"),
             [],
             |r| Ok(r.get::<_, u32>(0)? as usize),
         )?;
@@ -130,7 +154,12 @@ impl Vocabulary {
             keyword_tokens,
             keyword_total,
             posts,
+            source,
         })
+    }
+
+    pub(crate) fn source(&self) -> Option<SourceBucket> {
+        self.source
     }
 
     pub(crate) fn display<'a>(&'a self, norm: &'a str) -> &'a str {
@@ -221,8 +250,8 @@ impl Vocabulary {
         let mut weights: BTreeMap<i64, (f64, f64)> = BTreeMap::new();
         let mut max_idf: f64 = 0.0;
         for term in terms::content_terms_or_raw(text, 3) {
-            let ids = indexed_matches(conn, &term, 4000)?;
-            let df = indexed_count(conn, &term)?;
+            let ids = indexed_matches(conn, &term, 4000, self.source)?;
+            let df = indexed_count(conn, &term, self.source)?;
             if df == 0 {
                 continue;
             }
@@ -370,7 +399,7 @@ impl Vocabulary {
     ) -> Result<Vec<String>, RepoError> {
         let mut ids = HashSet::new();
         for term in terms::content_terms_or_raw(text, 3) {
-            ids.extend(indexed_matches(conn, &term, 600)?);
+            ids.extend(indexed_matches(conn, &term, 600, self.source)?);
         }
         let raw = serde_json::to_string(&ids).expect("ids serialize");
         let rows = conn.prepare("SELECT ai_keywords_json FROM posts WHERE id IN (SELECT value FROM json_each(?1)) AND ai_keywords_json IS NOT NULL ORDER BY id LIMIT 600")?.query_map([raw], |r| r.get::<_,String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -472,30 +501,50 @@ fn match_sql(term: &str) -> Option<(String, String)> {
         infix.unwrap_or_else(|| query::quote("\u{1}")),
     ))
 }
-fn indexed_matches(conn: &Connection, term: &str, limit: usize) -> rusqlite::Result<Vec<i64>> {
+fn indexed_matches(
+    conn: &Connection,
+    term: &str,
+    limit: usize,
+    source: Option<SourceBucket>,
+) -> rusqlite::Result<Vec<i64>> {
     let Some((prefix, infix)) = match_sql(term) else {
         return Ok(Vec::new());
     };
-    conn.prepare_cached(
+    let predicate = source_predicate(source);
+    conn.prepare_cached(&format!(
         "SELECT p.id
                  FROM posts p
                  WHERE p.id IN (SELECT rowid
                  FROM posts_fts
                  WHERE posts_fts MATCH ?1 UNION SELECT rowid
                  FROM posts_infix
-                 WHERE posts_infix MATCH ?2)
+                 WHERE posts_infix MATCH ?2) AND {predicate}
                  ORDER BY COALESCE(p.posted_at,p.imported_at) DESC,p.id ASC
-                 LIMIT ?3",
-    )?
+                 LIMIT ?3"
+    ))?
     .query_map(
         params![prefix, infix, i64::try_from(limit).unwrap_or(i64::MAX)],
         |r| r.get(0),
     )?
     .collect()
 }
-fn indexed_count(conn: &Connection, term: &str) -> rusqlite::Result<usize> {
+fn indexed_count(
+    conn: &Connection,
+    term: &str,
+    source: Option<SourceBucket>,
+) -> rusqlite::Result<usize> {
     let Some((prefix, infix)) = match_sql(term) else {
         return Ok(0);
     };
-    conn.query_row("SELECT COUNT(*) FROM (SELECT rowid FROM posts_fts WHERE posts_fts MATCH ?1 UNION SELECT rowid FROM posts_infix WHERE posts_infix MATCH ?2)",params![prefix,infix],|r| Ok(r.get::<_,u32>(0)? as usize))
+    let predicate = source_predicate(source);
+    conn.query_row(&format!("SELECT COUNT(*) FROM posts p WHERE p.id IN (SELECT rowid FROM posts_fts WHERE posts_fts MATCH ?1 UNION SELECT rowid FROM posts_infix WHERE posts_infix MATCH ?2) AND {predicate}"),params![prefix,infix],|r| Ok(r.get::<_,u32>(0)? as usize))
+}
+
+/// Fixed SQL over the posts alias, never built from user text.
+pub(crate) fn source_predicate(source: Option<SourceBucket>) -> &'static str {
+    match source {
+        None => "1",
+        Some(SourceBucket::Web) => "p.platform='web'",
+        Some(SourceBucket::Social) => "p.platform<>'web'",
+    }
 }

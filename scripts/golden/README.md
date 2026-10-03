@@ -24,6 +24,7 @@ what the desktop returns.
 | `ai/catalog/user-prompt` | `electron/analyzer.ts#buildUserPrompt` (social and web) | `shelfy_core::ai::catalog::user_prompt` |
 | `ai/catalog/request` | `shared/ai/catalog.ts#catalogRequest` | `shelfy_core::ai::catalog::request` |
 | `ai/catalog/normalize` | `electron/analyzer.ts#normalizeCatalogOutput` | `shelfy_core::ai::normalize::catalog` |
+| `ai/chat/buildChatSystemPrompt` | `electron/analyzer.ts#buildChatSystemPrompt` | `ai::chat_prompt::system` |
 | `ai/chat/*` | `electron/analyzer.ts` offline vocabulary intersection, query expansion, block parsers, deterministic keywords/tag matches | `search::vocab::Vocabulary` and `ai::chat` |
 | `ai/catalog/apply` | `electron/analyzer.ts#catalogAnalysisFields` into `updateAiAnalysis` | `Catalog::into_patch` into `update_ai` |
 

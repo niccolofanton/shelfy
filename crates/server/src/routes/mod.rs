@@ -112,6 +112,7 @@ pub mod post_edit;
 pub mod posts;
 pub mod reauth;
 pub mod search;
+pub mod search_chat;
 pub mod selector;
 pub mod stats;
 pub mod sync_runs;
@@ -167,6 +168,7 @@ const PROBLEM_RESPONSE: &str = "Problem";
         ErrorCode,
         FieldError,
         event::ServerEvent,
+        search_chat::ChatEvents,
         event::EventTopic,
         event::HelloEvent,
         event::ResyncEvent,
@@ -537,6 +539,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     let standard = OpenApiRouter::default()
         .routes(routes!(health::health))
         .routes(routes!(ai::analyze))
+        .routes(routes!(search_chat::cancel_search_chat))
         .routes(routes!(ai::get_queue))
         .routes(routes!(ai::cancel_queue))
         .routes(routes!(ai::retry_queue))
@@ -615,6 +618,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     // Streams end when the shutdown token fires instead of on a timer.
     let streams = OpenApiRouter::default()
         .routes(routes!(events::stream_events))
+        .routes(routes!(search_chat::search_chat))
         .routes(routes!(ingest_tasks::list_extension_tasks));
     let upload_chunks = OpenApiRouter::default().routes(routes!(uploads::append_upload));
     // Capture batches are larger (up to 8 MiB, ≤ 500 items).
@@ -626,6 +630,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(RouteLimits::INGEST.apply(ingest))
         .merge(RouteLimits::STANDARD.apply(media::router()))
         .layer(Extension(Arc::new(uploads::UploadLocks::default())))
+        .layer(Extension(Arc::new(crate::ai::chat::ChatRuns::default())))
 }
 
 /// The OpenAPI document of [`router`], with the shared error response added

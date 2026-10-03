@@ -126,3 +126,13 @@ fn deterministic_tags() {
         },
     );
 }
+
+#[test]
+fn system_prompt() {
+    super::check(
+        "ai/chat/buildChatSystemPrompt",
+        |(broad, specific, active): (Vec<String>, Vec<String>, Vec<String>)| {
+            shelfy_core::ai::chat_prompt::system(&broad, &specific, &active).unwrap()
+        },
+    );
+}

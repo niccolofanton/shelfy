@@ -273,3 +273,46 @@ fn specific_pool_budget_on_twenty_thousand_ai_posts() {
         );
     }
 }
+
+#[test]
+fn source_scoped_vocabularies_exclude_other_posts_from_pools_and_cooccurrence() {
+    let c = conn();
+    insert(&c, "social", "lamp design", &["design"], &["lamp", "glass"]);
+    let mut p = NewPost::new("site", Platform::Web, "site", "website", 0);
+    p.caption = Some("lamp site".into());
+    p.ai = Some(AiLayer {
+        tags: vec!["glass".into(), "website".into()],
+        general_tags: Some(vec!["website".into()]),
+        specific_tags: Some(vec!["glass".into()]),
+        keywords: vec!["site lamp".into()],
+        ..AiLayer::default()
+    });
+    posts::insert(&c, &p, 0).unwrap();
+    let social =
+        Vocabulary::load_for_source(&c, Some(shelfy_core::repo::posts::SourceBucket::Social))
+            .unwrap();
+    assert_eq!(social.broad(), vec!["design"]);
+    assert!(
+        !social
+            .keywords(&c, "lamp", 12)
+            .unwrap()
+            .contains(&"site lamp".into())
+    );
+    assert!(
+        !social
+            .expand(&c, "lamp", 60)
+            .unwrap()
+            .contains(&"website".into())
+    );
+    let result = chat::fallback(&c, &social, "lamp", &["glass".into()]).unwrap();
+    assert!(!result.tags.broad.contains(&"website".into()));
+    let sites =
+        Vocabulary::load_for_source(&c, Some(shelfy_core::repo::posts::SourceBucket::Web)).unwrap();
+    assert_eq!(sites.broad(), vec!["website"]);
+    assert!(
+        !sites
+            .expand(&c, "lamp", 60)
+            .unwrap()
+            .contains(&"design".into())
+    );
+}

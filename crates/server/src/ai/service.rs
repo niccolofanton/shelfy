@@ -73,6 +73,8 @@ pub struct CallHints {
     pub cancel: Option<CancellationToken>,
     /// Streamed text so far (chat).
     pub on_text: Option<TextCallback>,
+    /// Explicit account-scoped provider override (chat search).
+    pub provider_id: Option<String>,
 }
 
 impl CallHints {
@@ -80,6 +82,13 @@ impl CallHints {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Uses this provider if it belongs to the caller and serves the task.
+    #[must_use]
+    pub fn with_provider(mut self, id: String) -> Self {
+        self.provider_id = Some(id);
+        self
     }
 
     /// Cancelled by `token`.
@@ -511,6 +520,27 @@ impl AiService {
         }
     }
 
+    /// Resolves an optional explicit provider, retaining ownership/model checks.
+    pub async fn route_for_provider(
+        &self,
+        state: &AppState,
+        caller: Caller<'_>,
+        task: Task,
+        id: Option<&str>,
+    ) -> Result<Route, AiServiceError> {
+        match id {
+            None => self.route(state, caller, task).await,
+            Some(OPERATOR_PROVIDER_ID) => self
+                .operator_route(caller, task)
+                .ok_or(AiServiceError::NotConfigured),
+            Some(id) => {
+                let settings = self.read_ai_settings(state, caller.id).await;
+                self.user_route(&settings, id, task)
+                    .ok_or(AiServiceError::NotConfigured)
+            }
+        }
+    }
+
     fn operator_route(&self, caller: Caller<'_>, task: Task) -> Option<Route> {
         if !caller.owner {
             return None; // the operator provider is owner-only (E4)
@@ -599,14 +629,18 @@ impl AiService {
         request: &ChatRequest,
         hints: CallHints,
     ) -> Result<ChatResponse, AiServiceError> {
-        let route = self.route(state, caller, task).await?;
+        let route = self
+            .route_for_provider(state, caller, task, hints.provider_id.as_deref())
+            .await?;
         let guard = self
             .begin_cancellable(state, caller, &route, hints.cancel.as_ref())
             .await?;
         let options = self.call_options(&route, hints);
+        let mut request = request.clone();
+        request.model.clone_from(&route.model);
         let result = until_cancelled(
             guard.cancel.as_ref(),
-            guard.provider.chat(request, &options),
+            guard.provider.chat(&request, &options),
         )
         .await;
         let generation = guard.cancel.clone();

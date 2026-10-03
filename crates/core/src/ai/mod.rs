@@ -29,3 +29,5 @@ pub mod taxonomy_prompt;
 pub mod template;
 
 pub mod chat;
+
+pub mod chat_prompt;

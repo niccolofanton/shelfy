@@ -94,6 +94,25 @@ const queries = [
   'architecture',
 ];
 export default [
+  set('buildChatSystemPrompt', () => {
+    const h = setup();
+    try {
+      return [
+        [[], [], []],
+        [['design'], ['desk lamp'], []],
+        [['architecture'], [], ['città']],
+        [['', '  ', 'design'], [' desk lamp ', 'glass'], ['lamp']],
+        [['café', '東京'], ['città'], ['design']],
+        [['{{active}}'], ['[[GENERAL]]', 'x, y'], ['line\nnext']],
+      ].map(([broad, specific, active], i) => ({
+        id: `system-${i}`,
+        args: [broad, specific, active],
+        output: h.analyzer.buildChatSystemPrompt(broad, specific, active),
+      }));
+    } finally {
+      h.db.close();
+    }
+  }),
   set('parseTagBlock', () => {
     const h = setup();
     try {

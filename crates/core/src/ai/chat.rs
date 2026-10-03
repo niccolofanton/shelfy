@@ -2,7 +2,7 @@
 use crate::repo::RepoError;
 use crate::search::{
     terms,
-    vocab::{Vocabulary, normalize, normalize_spaces},
+    vocab::{Vocabulary, normalize, normalize_spaces, source_predicate},
 };
 use regex::Regex;
 use rusqlite::{Connection, params};
@@ -134,17 +134,18 @@ pub fn deterministic_tag_matches(
         if tag.is_empty() || !active_seen.insert(tag.clone()) {
             continue;
         }
+        let predicate = source_predicate(vocab.source());
         let rows = conn
-            .prepare(
+            .prepare(&format!(
                 "SELECT b.tag_norm
                  FROM post_tags a
                  JOIN post_tags b ON b.post_id=a.post_id
                  JOIN posts p ON p.id=a.post_id
-                 WHERE a.tag_norm=?1 AND b.tag_norm<>?1 AND p.deleted_at IS NULL
+                 WHERE a.tag_norm=?1 AND b.tag_norm<>?1 AND p.deleted_at IS NULL AND {predicate}
                  GROUP BY b.tag_norm
                  ORDER BY COUNT(DISTINCT a.post_id) DESC,b.tag_norm DESC
-                 LIMIT 8",
-            )?
+                 LIMIT 8"
+            ))?
             .query_map(params![tag], |r| r.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         for related in rows {
