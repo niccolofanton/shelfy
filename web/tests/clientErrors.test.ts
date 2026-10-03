@@ -12,6 +12,7 @@ function fakeHttp() {
     onUnauthorized: () => () => {},
     sessionEnded: () => {},
     onReauthRequired: () => () => {},
+    reauthenticate: () => Promise.resolve(false),
   };
   return { http, send };
 }

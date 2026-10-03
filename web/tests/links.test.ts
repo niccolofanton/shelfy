@@ -26,6 +26,7 @@ function fakeHttp(answer: Response | Error) {
     onUnauthorized: () => () => {},
     sessionEnded: () => {},
     onReauthRequired: () => () => {},
+    reauthenticate: () => Promise.resolve(false),
   };
   return { http, sent };
 }

@@ -35,6 +35,7 @@ function fakeHttp(answers: Record<string, unknown> = {}) {
     onUnauthorized: () => () => {},
     sessionEnded: () => {},
     onReauthRequired: () => () => {},
+    reauthenticate: () => Promise.resolve(false),
   };
   return { http, sent, gets };
 }

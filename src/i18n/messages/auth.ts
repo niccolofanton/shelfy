@@ -91,6 +91,8 @@ export default {
     deviceInvalid:
       'Questo codice non è valido, è scaduto o è già stato usato. Avvia di nuovo l’accesso nel terminale.',
     deviceReauth: 'Per approvare un dispositivo, conferma prima che sei tu.',
+    deviceConfirm: 'Conferma che sei tu',
+    deviceConfirming: 'Conferma in corso…',
     deviceRateLimited: 'Troppi tentativi. Riprova tra qualche minuto.',
   },
   en: {
@@ -169,6 +171,8 @@ export default {
     deviceInvalid:
       'This code is invalid, has expired or was already used. Start the sign-in again in your terminal.',
     deviceReauth: 'To approve a device, confirm it’s you first.',
+    deviceConfirm: 'Confirm it’s you',
+    deviceConfirming: 'Confirming…',
     deviceRateLimited: 'Too many tries. Try again in a few minutes.',
   },
 } satisfies LangMessages;

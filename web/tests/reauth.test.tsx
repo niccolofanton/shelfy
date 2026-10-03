@@ -188,20 +188,85 @@ describe('DevicePage', () => {
     expect(auth.approveDevice).toHaveBeenCalledWith('BCDF-GHJK');
   });
 
-  it('explains a bad code, a cancelled confirmation and a limit', async () => {
+  it('explains a bad code and a limit', async () => {
     const auth = fakeAuth({
       approveDevice: vi
         .fn()
         .mockRejectedValueOnce(new ApiError(400, 'invalid_device_code'))
-        .mockRejectedValueOnce(new ApiError(403, 'reauth_required'))
         .mockRejectedValueOnce(new ApiError(429, 'rate_limited')),
     });
     render(<DevicePage auth={auth} initialCode="BCDF-GHJK" />);
-    const expected = ['non è valido', 'conferma prima che sei tu', 'Troppi tentativi'];
+    const expected = ['non è valido', 'Troppi tentativi'];
     for (const text of expected) {
       fireEvent.click(screen.getByTestId('device-approve'));
       await waitFor(() => expect(screen.getByTestId('device-error')).toHaveTextContent(text));
     }
     expect(screen.getByTestId('device-code')).toHaveValue('BCDF-GHJK');
+  });
+
+  // F10: clicks on Approve while the session has to re-authenticate sent
+  // approvals the server refused, and spent the sign-in limit.
+  it('keeps Approve off until the re-authentication, then approves once', async () => {
+    let confirmed: (ok: boolean) => void = () => {};
+    const auth = fakeAuth({
+      approveDevice: vi
+        .fn()
+        .mockRejectedValueOnce(new ApiError(403, 'reauth_required'))
+        .mockResolvedValueOnce(undefined),
+      confirmIdentity: vi
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockImplementationOnce(
+          () =>
+            new Promise<boolean>((resolve) => {
+              confirmed = resolve;
+            }),
+        ),
+    });
+    render(<DevicePage auth={auth} initialCode="BCDF-GHJK" />);
+    const approve = screen.getByTestId('device-approve');
+    fireEvent.click(approve);
+    fireEvent.click(approve);
+    await screen.findByTestId('device-reauth');
+    expect(screen.getByTestId('device-reauth')).toHaveTextContent('conferma prima che sei tu');
+    expect(approve).toBeDisabled();
+    fireEvent.click(approve);
+    expect(auth.approveDevice).toHaveBeenCalledTimes(1);
+
+    // Cancelled: still off, and nothing sent.
+    fireEvent.click(screen.getByTestId('device-confirm'));
+    await waitFor(() => expect(auth.confirmIdentity).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId('device-confirm')).toBeEnabled());
+    expect(approve).toBeDisabled();
+    expect(auth.approveDevice).toHaveBeenCalledTimes(1);
+
+    // In progress: both buttons off; confirmed: the approval goes once.
+    fireEvent.click(screen.getByTestId('device-confirm'));
+    await waitFor(() => expect(screen.getByTestId('device-confirm')).toBeDisabled());
+    fireEvent.click(screen.getByTestId('device-confirm'));
+    expect(approve).toBeDisabled();
+    expect(auth.confirmIdentity).toHaveBeenCalledTimes(2);
+    await act(async () => confirmed(true));
+    await screen.findByTestId('device-approved');
+    expect(auth.approveDevice).toHaveBeenCalledTimes(2);
+    expect(auth.approveDevice).toHaveBeenLastCalledWith('BCDF-GHJK');
+  });
+
+  it('approves once a link confirms in another tab', async () => {
+    const auth = fakeAuth({
+      approveDevice: vi
+        .fn()
+        .mockRejectedValueOnce(new ApiError(403, 'reauth_required'))
+        .mockResolvedValueOnce(undefined),
+    });
+    render(<DevicePage auth={auth} initialCode="BCDF-GHJK" />);
+    fireEvent.click(screen.getByTestId('device-approve'));
+    await screen.findByTestId('device-reauth');
+    const tab = new BroadcastChannel(AUTH_CHANNEL);
+    tab.postMessage({ type: 'reauth' });
+    tab.close();
+    await screen.findByTestId('device-approved');
+    expect(auth.approveDevice).toHaveBeenCalledTimes(2);
+    expect(auth.confirmIdentity).not.toHaveBeenCalled();
   });
 });

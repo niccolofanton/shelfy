@@ -72,6 +72,11 @@ export interface Http {
   // still refused asks again (`again`), up to MAX_REAUTH_ROUNDS times. One
   // handler at a time; returns the function that removes it.
   onReauthRequired(handler: ReauthHandler): () => void;
+  // Asks the onReauthRequired handler to confirm the user's identity without
+  // a refused request: a page that knows its action needs a re-authentication
+  // asks first and sends the action once (F10, /device). Resolves to false
+  // when cancelled or when no handler is registered.
+  reauthenticate(): Promise<boolean>;
 }
 
 export type ReauthHandler = (context: { again: boolean }) => Promise<boolean>;
@@ -201,6 +206,15 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
       return () => {
         if (reauth === handler) reauth = null;
       };
+    },
+    async reauthenticate() {
+      const confirm = reauth;
+      if (!confirm) return false;
+      try {
+        return await confirm({ again: false });
+      } catch {
+        return false;
+      }
     },
   };
 }

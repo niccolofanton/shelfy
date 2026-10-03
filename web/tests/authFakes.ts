@@ -19,6 +19,7 @@ export function fakeAuth(overrides: Partial<AuthApi> = {}): AuthApi {
     requestReauthLink: vi.fn().mockResolvedValue(undefined),
     reauthWithLink: vi.fn().mockResolvedValue(undefined),
     approveDevice: vi.fn().mockResolvedValue(undefined),
+    confirmIdentity: vi.fn().mockResolvedValue(true),
     ...overrides,
   };
 }
@@ -49,6 +50,7 @@ export function fakeHttp(): FakeHttp {
         if (reauth === handler) reauth = null;
       };
     },
+    reauthenticate: () => (reauth ? reauth({ again: false }) : Promise.resolve(false)),
     expire: () => listeners.forEach((l) => l()),
     requireReauth: (again = false) =>
       reauth ? reauth({ again }) : Promise.reject(new Error('no re-authentication handler')),

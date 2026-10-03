@@ -103,11 +103,11 @@ test('approving a device asks for a passkey when the sign-in is old', async ({ b
   await redeemLink(context.request);
   await ageSignIn(context);
 
-  // The migration CLI asks for a code: no cookie, no CSRF headers.
-  const cli = await apiRequest.newContext({
-    baseURL: E2E.origin,
-    extraHTTPHeaders: { 'CF-Connecting-IP': '198.51.100.7' },
-  });
+  // The migration CLI asks for a code: no cookie, no CSRF headers. The
+  // browser shares its address, and so its sign-in limit (10 a minute).
+  const client = { 'CF-Connecting-IP': '198.51.100.7' };
+  await context.setExtraHTTPHeaders(client);
+  const cli = await apiRequest.newContext({ baseURL: E2E.origin, extraHTTPHeaders: client });
   const start = await (await cli.post('/api/v1/auth/device/start')).json();
   expect(start.verificationUriComplete).toBe(`${E2E.origin}/device#${start.userCode}`);
 
@@ -117,11 +117,27 @@ test('approving a device asks for a passkey when the sign-in is old', async ({ b
   await expect(page.getByTestId('device-warning')).toContainText('your own terminal');
   await shot(page, '06-device');
 
+  // F10: approvals refused with `reauth_required` do not spend the limit.
+  for (let i = 0; i < 12; i++) {
+    const res = await context.request.post('/api/v1/auth/device/approve', {
+      data: { userCode: start.userCode },
+      headers: { 'X-Shelfy-Client': 'web', Origin: E2E.origin },
+    });
+    expect(res.status(), `approval ${i}`).toBe(403);
+    expect((await res.json()).code).toBe('reauth_required');
+  }
+
   await page.getByTestId('device-approve').click();
   const dialog = page.getByTestId('reauth-dialog');
   await expect(dialog).toBeVisible();
   await expect(page.getByTestId('reauth-email')).toBeVisible();
   await shot(page, '07-reauth-dialog');
+  // Cancelled: Approve stays off until the re-authentication.
+  await page.getByTestId('reauth-cancel').click();
+  await expect(page.getByTestId('device-reauth')).toBeVisible();
+  await expect(page.getByTestId('device-approve')).toBeDisabled();
+  await page.getByTestId('device-confirm').click();
+  await expect(dialog).toBeVisible();
   await page.getByTestId('reauth-passkey').click();
   await expect(page.getByTestId('device-approved')).toBeVisible();
   await expect(dialog).toBeHidden();

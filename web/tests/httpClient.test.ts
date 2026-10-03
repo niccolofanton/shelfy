@@ -33,6 +33,7 @@ function fakeHttp(routes: Record<string, unknown[]>) {
     onUnauthorized: () => () => {},
     sessionEnded: () => {},
     onReauthRequired: () => () => {},
+    reauthenticate: () => Promise.resolve(false),
   };
   return { http, calls };
 }
