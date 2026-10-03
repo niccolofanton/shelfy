@@ -347,7 +347,7 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 | P2-14 | Extension tasks API and uploads (L23) | running (Opus, cloud lane, E16) | `web/p2-14-extension-tasks` |
 | P3-06 | Clusters and aliases: core and review API | running (Opus, cloud lane, E16) | `web/p3-06-clusters-aliases` |
 | P3-05 | Tag ranking in search | running (Opus, cloud lane, E16) | `web/p3-05-tag-ranking` |
-| P2-12 | Connections settings: pairing, status, Shortcut | running (Sonnet, cloud lane, E16) | `web/p2-12-connections-ui` |
+| P2-12 | Connections settings: pairing, status, Shortcut | done (Sonnet): Settings → Connections (lazy, `connections` namespace): extension card (unsupported, not installed, unpaired, paired with status and version, outdated) with pairing through `web/src/extension/bridge.ts` (`shelfy.ping`/`shelfy.pair` to `EXTENSION_ID`), paired browsers with revoke; iOS Shortcut card (a `links:create` token shown once, setup steps); bookmarklet and Android share. `account.extensionStatus()`/`onExtensionStatus()` and the bridge are reusable (P2-18). Only run against fakes: the real extension is P2-23 | `web/p2-12-connections-ui` (9d739b9) |
 | UX-4 | Post cards | done (Sonnet): GAL-3 (a fallback tile no longer repeats the handle, no centered icon, muted "Media unavailable"), GAL-4 (the selected ring and tint are an overlay above the cover), GAL-8 (text excerpts fade instead of cutting a line), a 44 px quick-select hit area on narrow screens, alt text without the caption; `web/e2e/post-card.spec.ts`. The audit screenshots wait for UX-0 | `web/ux-4-post-cards` (9dc1450) |
 
 Nothing is held back by a decision any more: a task starts when its Needs have landed (wave plan below).
