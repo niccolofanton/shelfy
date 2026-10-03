@@ -6,15 +6,19 @@ import PostModal from '../components/PostModal';
 import FilterBar from '../components/FilterBar';
 import FilterDrawer from '../components/FilterDrawer';
 import Popover from '../components/Popover';
+import MenuButton from '../components/MenuButton';
+import { EmptyState, ToastHost } from '../components/ui';
+import { NARROW_QUERY, useMediaQuery } from '../components/ui/useMediaQuery';
 import { usePosts } from '../hooks/usePosts';
 import { useSearchSequence } from '../hooks/useSearchTransition';
 import { useAiSuggestions } from '../hooks/useAiSuggestions';
 import type { SyncTarget, SyncPlatform } from '../hooks/useSourceSync';
-import { useToast } from '../hooks/useToast';
+import { useToast, useToasts } from '../hooks/useToast';
 import { toApiFilters } from '../lib/postFilters';
 import { useDownloadPrefs } from '../hooks/useDownloadPrefs';
 import { useRangeSelect } from '../hooks/useRangeSelect';
 import { useViewMode } from '../hooks/useViewMode';
+import { useGridSize, applyStep } from '../hooks/useGridSize';
 import { useCapabilities, useShelfy } from '../api/ShelfyProvider';
 import { useNavigation } from '../api/navigation';
 import { errorMessageKey } from '../api/errors';
@@ -22,7 +26,6 @@ import ErrorBoundary, { ErrorPanel } from '../components/ErrorBoundary';
 import { useT, withMessages } from '../i18n';
 import {
   RefreshCw,
-  ImageOff,
   CheckSquare,
   X,
   FolderPlus,
@@ -43,7 +46,11 @@ import {
   LayoutGrid,
   Telescope,
   FileQuestion,
-  Undo2,
+  SearchX,
+  FilterX,
+  FolderOpen,
+  Inbox,
+  AlertCircle,
 } from 'lucide-react';
 import type { BulkActionKind, BulkActionParams, BulkJob, BulkOutcome } from '../api/ShelfyClient';
 
@@ -253,6 +260,11 @@ export default function Gallery({
   // is the infinite pan/zoom wall where date ordering is intentionally inactive.
   const { mode: viewMode, toggle: toggleViewMode } = useViewMode();
   const canvas = viewMode === 'canvas';
+  // Shared grid density (zoom step). On narrow the toolbar zoom control is gone,
+  // so the filter sheet's View section offers 2 or 3 columns instead (GAL-1):
+  // at <640px the responsive base is 2 columns, so the step is `cols - 2`.
+  const { step: gridStep, setStep: setGridStep } = useGridSize();
+  const narrowCols = Math.min(3, Math.max(2, applyStep(2, gridStep)));
   // Mirrored in a ref, read by the filter callbacks/effects below to size a
   // limit-reset: canvas pages a fixed CANVAS_POOL window, so resetting `limit`
   // back to LOAD_BATCH on a filter change would flash the grid (a 50-post page)
@@ -433,76 +445,93 @@ export default function Gallery({
   const [downloadSuggest, setDownloadSuggest] = useState<string[] | null>(null);
   const actionsRef = useRef<HTMLDivElement | null>(null);
 
-  // Inline feedback for bulk actions (analyze / export) — shared toast hook
-  // (exit animation unused here: the banner disappears without a motion step).
+  // Inline feedback for in-select-mode bulk actions (clear, assign, select-all)
+  // — the contextual action bar's own transient label.
   const { toast: feedback, showToast: showFeedback } = useToast();
+  // Post-exit confirmations, Undo and job progress go through the shared toast
+  // region (GAL-9): one `role="status"` host, at most 3 stacked, above the
+  // BottomNav on narrow. `show`/`dismiss` are stable (deps-safe in effects).
+  const toasts = useToasts();
+  const toastShow = toasts.show;
+  const toastDismiss = toasts.dismiss;
+  // The responsive-shell breakpoint: drives the phone toolbar / bottom
+  // selection bar / filter sheet (audit GAL-1, GAL-11, §4).
+  const narrow = useMediaQuery(NARROW_QUERY);
 
-  // Undo (bulk/single-post delete, P1-14): the handle a `delete` action
-  // returned (`deletedAt`, F11: null means nothing moved — no undo then), live
-  // only for a short window. Cleared by a click, a timeout, or a newer delete.
-  const UNDO_WINDOW_MS = 8000;
-  const [undoHandle, setUndoHandle] = useState<{ deletedAt: number; label: string } | null>(null);
-  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const armUndo = useCallback((deletedAt: number | null, label: string) => {
-    if (deletedAt == null) return;
-    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-    setUndoHandle({ deletedAt, label });
-    undoTimerRef.current = setTimeout(() => setUndoHandle(null), UNDO_WINDOW_MS);
-  }, []);
-  useEffect(
-    () => () => {
-      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-    },
-    [],
-  );
+  // Undo (bulk/single-post delete, P1-14): a delete returns a `deletedAt`
+  // restore handle (F11: null means nothing moved — no undo then). armUndo
+  // shows the confirmation as a shared toast (GAL-9): an 8s toast with an Undo
+  // action when there is something to restore, a plain confirmation otherwise.
+  // handleUndo reads the last handle from a ref.
+  const undoRef = useRef<number | null>(null);
   const handleUndo = useCallback(async (): Promise<void> => {
-    const handle = undoHandle;
-    if (!handle) return;
-    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-    setUndoHandle(null);
+    const deletedAt = undoRef.current;
+    if (deletedAt == null) return;
+    undoRef.current = null;
     try {
-      await client.restoreFromTrash({ deletedAt: handle.deletedAt });
-      showFeedback(t('fbUndone'));
+      await client.restoreFromTrash({ deletedAt });
+      toastShow(t('fbUndone'), { variant: 'success' });
       reload();
       onAssigned?.();
       onStatsChanged?.();
     } catch (err) {
       console.error('[Gallery] undo (restoreFromTrash) error:', err);
-      showFeedback(t('fbUndoError'));
+      toastShow(t('fbUndoError'), { variant: 'error' });
     }
-  }, [undoHandle, client, t, reload, onAssigned, onStatsChanged, showFeedback]);
+  }, [client, t, reload, onAssigned, onStatsChanged, toastShow]);
+  const armUndo = useCallback(
+    (deletedAt: number | null, label: string) => {
+      if (deletedAt == null) {
+        toastShow(label, { testId: 'bulk-feedback-toast' });
+        return;
+      }
+      undoRef.current = deletedAt;
+      toastShow(label, {
+        testId: 'undo-toast',
+        duration: 8000,
+        action: { label: t('undo'), onClick: handleUndo, testId: 'undo-action' },
+      });
+    },
+    [toastShow, t, handleUndo],
+  );
 
-  // Background job progress (a bulk action over 500 posts, P1-11/P1-14):
-  // minimal — an indeterminate note that clears on the job's terminal state,
-  // or on the next posts.changed/stats.changed (whichever comes first). Not
+  // Background job progress (a bulk action over 500 posts, P1-11/P1-14): a
+  // single progress toast (GAL-9) that updates in place and clears on the job's
+  // terminal state, or on the next posts.changed (whichever comes first). Not
   // the full Jobs view (P4-09 owns that seam); see ShelfyEvent's doc comment.
   const [pendingJob, setPendingJob] = useState<BulkJob | null>(null);
-  const [jobProgress, setJobProgress] = useState<number | null>(null);
   useEffect(() => {
     if (!pendingJob) return undefined;
+    const showProgress = (pct: number | null): void => {
+      toastShow(pct != null ? t('jobProgress', { pct: Math.round(pct * 100) }) : t('jobRunning'), {
+        id: 'bulk-job',
+        testId: 'bulk-job-toast',
+        variant: 'progress',
+        duration: null,
+      });
+    };
+    showProgress(null);
+    const done = (): void => {
+      setPendingJob(null);
+      toastDismiss('bulk-job');
+      reload();
+      onAssigned?.();
+      onStatsChanged?.();
+    };
     const offJob = client.on('job.updated', (evt) => {
       if (evt.id !== pendingJob.id) return;
-      setJobProgress(evt.progress);
-      if (evt.state === 'succeeded' || evt.state === 'failed' || evt.state === 'cancelled') {
-        setPendingJob(null);
-        setJobProgress(null);
-        reload();
-        onAssigned?.();
-        onStatsChanged?.();
-      }
+      if (evt.state === 'succeeded' || evt.state === 'failed' || evt.state === 'cancelled') done();
+      else showProgress(evt.progress);
     });
     // A fallback in case the event is missed: the next library-wide reload
     // this job itself caused also means it is done enough to stop waiting.
-    const offChanged = client.on('posts.changed', () => {
-      setPendingJob(null);
-      setJobProgress(null);
-    });
+    const offChanged = client.on('posts.changed', done);
     return () => {
       offJob();
       offChanged();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingJob, client]);
+  }, [pendingJob, client, toastShow, toastDismiss, t]);
 
   // PostCard's onOpen(post) doesn't forward the click event, so we capture the
   // most recent pointer event here (set on the wrapping div) to read shiftKey.
@@ -1050,7 +1079,6 @@ export default function Gallery({
       const res = await runBulkAction('clearAiDescription');
       if (res.job) {
         setPendingJob(res.job);
-        setJobProgress(null);
         showFeedback(t('fbQueued', { n: res.selected }));
       } else {
         showFeedback(t('fbDescriptionsCleared', { n: res.changed ?? n }));
@@ -1077,7 +1105,6 @@ export default function Gallery({
       const res = await runBulkAction('clearAiTags');
       if (res.job) {
         setPendingJob(res.job);
-        setJobProgress(null);
         showFeedback(t('fbQueued', { n: res.selected }));
       } else {
         showFeedback(t('fbTagsCleared', { n: res.changed ?? n }));
@@ -1104,22 +1131,19 @@ export default function Gallery({
     const n = selectedCount;
     try {
       const res = await runBulkAction('delete');
-      // F11: a null deletedAt means nothing actually moved (e.g. every
-      // selected post was already in the trash already) — no undo to offer
-      // then, so the plain toast is the only feedback for that case (and for
-      // a queued job: the undo banner would otherwise double up on it).
+      // F11: a null deletedAt means nothing actually moved (e.g. every selected
+      // post was already in the trash) — armUndo then shows a plain confirmation
+      // toast instead of an Undo one. A queued job shows its own progress toast,
+      // so skip the delete confirmation there (it would double up).
       if (res.job) {
         setPendingJob(res.job);
-        setJobProgress(null);
-        showFeedback(t('fbDeleteQueued', { n: res.selected }));
-      } else if (res.deletedAt == null) {
-        showFeedback(t('fbPostsDeleted', { n: res.changed ?? n }));
+      } else {
+        armUndo(res.deletedAt, t('fbPostsDeleted', { n: res.changed ?? n }));
       }
-      armUndo(res.deletedAt, t('fbPostsDeleted', { n: res.changed ?? n }));
       exitSelectMode();
     } catch (err) {
       console.error('[Gallery] bulk delete error:', err);
-      showFeedback(t('fbDeleteError'));
+      toastShow(t('fbDeleteError'), { variant: 'error' });
       setConfirmDeletePosts(false);
       setActionsOpen(false);
     } finally {
@@ -1288,6 +1312,17 @@ export default function Gallery({
   // Gate on `displayed` (what's on screen), not raw `posts`: during a search's
   // out-phase the old results are still held up, so the empty-state must not flash.
   const isEmpty = !loading && displayed.length === 0;
+  // Which empty state to show (GAL-2): a search with no hits, filters with no
+  // hits, an empty folder, or an empty library — never one generic message.
+  const hasSearch = !!filters.search?.trim();
+  const hasActiveFilters =
+    (!!filters.mediaType && filters.mediaType !== 'all') ||
+    (!!filters.downloadStatus && filters.downloadStatus !== 'all') ||
+    (!!filters.aiTagged && filters.aiTagged !== 'all') ||
+    !!filters.category ||
+    !!filters.contentType ||
+    (isWeb && !!filters.aiStatus) ||
+    !!filters.tag;
   // "Select all matching" (P1-14): `selected` holds the EXCLUDED ids instead
   // of the included ones while selectAllMatching is on (useRangeSelect's doc
   // comment), so the effective count and the "is everything selected" check
@@ -1367,59 +1402,413 @@ export default function Gallery({
     assignedOverlay,
   ]);
 
-  return (
-    <div data-testid="gallery-view" className="flex h-full overflow-hidden">
-      {/* Bulk-action feedback also has to survive leaving select mode: a successful
-        bulk delete calls exitSelectMode() in the same commit it sets the toast, which
-        unmounts the in-toolbar feedback span. This root-level overlay shows it once
-        we're back in browse mode, so the "N eliminati" confirmation is never lost. */}
-      {!selectMode && feedback && (
-        <div
-          key={feedback}
-          data-testid="bulk-feedback-toast"
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-[#1a1a1a] border border-[#2e2e2e] text-xs text-[#7B5CFF] tabular-nums whitespace-nowrap u-pop-in shadow-lg"
-        >
-          {feedback}
-        </div>
-      )}
+  // The single "Azioni" bulk menu, extracted so the desktop action pill and the
+  // narrow bottom selection bar (GAL-11) can render the one instance. On narrow
+  // the Popover opens as a bottom sheet (presentation="auto").
+  const bulkActionsMenu = (
+    <div className="relative shrink-0" ref={actionsRef}>
+      <button
+        data-testid="bulk-actions"
+        onClick={() => setActionsOpen((o) => !o)}
+        aria-haspopup="menu"
+        aria-expanded={actionsOpen}
+        title={t('actionsTitle')}
+        className="flex items-center gap-1.5 px-3 py-1 narrow:h-11 rounded-md text-sm font-medium text-white bg-accent hover:bg-accent-hover u-press transition-colors"
+      >
+        <Sparkles size={15} />
+        {t('actions')}
+        <ChevronDown
+          size={14}
+          className={['transition-transform', actionsOpen ? 'rotate-180' : ''].join(' ')}
+        />
+      </button>
 
-      {/* Undo (P1-14): a delete's `deletedAt` is the restore handle
-        (`client.restoreFromTrash({deletedAt})`); F11 leaves it null when
-        nothing actually moved, so there is nothing to offer then. A short
-        window, like the bulk-feedback toast above (and stacked above it, so
-        a "N eliminati" toast from a DIFFERENT action can still show at once). */}
-      {undoHandle && (
+      <Popover
+        anchorRef={actionsRef}
+        open={actionsOpen}
+        align="right"
+        presentation="auto"
+        onRequestClose={() => setActionsOpen(false)}
+        data-testid="bulk-actions-menu"
+        className="w-72 bg-[#1a1a1a] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 u-fade-in-down origin-top-right"
+      >
+        {/* ── Azioni primarie ─────────────────────────────────────
+          analyze/download need, respectively, a local model and
+          local storage: hidden by capability (desktop only,
+          until P2-P4 bring them to the web — carry-over P1-11). */}
+        {(caps.ai || caps.localFiles) && (
+          <>
+            {caps.ai && (
+              <button
+                data-testid="bulk-analyze"
+                disabled={selectedCount === 0}
+                onClick={() => {
+                  setActionsOpen(false);
+                  handleAnalyzeSelected();
+                }}
+                className="u-press w-full flex items-center gap-2.5 px-3 py-2 narrow:py-3 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
+              >
+                <Sparkles size={15} className="shrink-0" />
+                <span className="flex-1">{t('analyze')}</span>
+              </button>
+            )}
+
+            {caps.localFiles && (
+              <button
+                data-testid="bulk-download"
+                disabled={selectedCount === 0}
+                onClick={() => {
+                  setActionsOpen(false);
+                  handleDownloadSelected();
+                }}
+                className="u-press w-full flex items-center gap-2.5 px-3 py-2 narrow:py-3 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
+              >
+                <Download size={15} className="shrink-0" />
+                <span className="flex-1 min-w-0">
+                  <span className="block">{tc('download')}</span>
+                  {/* The backend enqueues missing assets only — say so, or a
+                full-library selection looks like it re-downloads everything. */}
+                  <span className="block text-[11px] text-gray-500 leading-snug">
+                    {t('downloadOnlyMissingHint')}
+                  </span>
+                </span>
+              </button>
+            )}
+
+            <div className="my-1 border-t border-[#2e2e2e]" />
+          </>
+        )}
+
+        {/* ── Aggiungi a una cartella ─────────────────────────────── */}
         <div
-          key={undoHandle.deletedAt}
-          data-testid="undo-toast"
-          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 rounded-lg bg-[#1a1a1a] border border-[#2e2e2e] text-xs text-gray-200 whitespace-nowrap u-pop-in shadow-lg"
+          className={[
+            'transition-opacity',
+            selectedCount === 0 ? 'opacity-40 pointer-events-none' : '',
+          ].join(' ')}
         >
-          {undoHandle.label}
+          <p className="px-3 pt-1.5 pb-1 text-2xs font-semibold uppercase tracking-widest text-muted flex items-center gap-1.5">
+            <FolderPlus size={12} className="shrink-0" />
+            {t('addToSource')}
+          </p>
+          <div className="max-h-44 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e]">
+            {collections.length === 0 && (
+              <p className="px-3 py-1.5 text-xs text-gray-500">{t('noSources')}</p>
+            )}
+            {collections.map((c) => {
+              const allIn = selectedCount > 0 && !!allInByCollection[c.id];
+              return (
+                <button
+                  key={c.id}
+                  data-testid={`assign-to-${c.id}`}
+                  onClick={() => assignTo(c.id)}
+                  className="u-press w-full flex items-center gap-2.5 px-3 py-1.5 narrow:py-3 text-[13px] text-gray-300 hover:bg-[#2a2a2a] hover:text-white transition-colors"
+                >
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: c.color }}
+                  />
+                  <span className="flex-1 truncate text-left">{c.name}</span>
+                  {allIn && <Check size={14} className="u-pop-in text-green-400 shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
           <button
-            data-testid="undo-action"
-            onClick={handleUndo}
-            className="u-press flex items-center gap-1 text-[#7B5CFF] font-medium hover:text-[#9b85ff] transition-colors"
+            data-testid="assign-create-new"
+            onClick={() => {
+              setActionsOpen(false);
+              setShowCreate(true);
+            }}
+            className="u-press w-full flex items-center gap-2.5 px-3 py-1.5 narrow:py-3 text-[13px] text-gray-300 hover:bg-[#2a2a2a] hover:text-white transition-colors"
           >
-            <Undo2 size={13} />
-            {t('undo')}
+            <Plus size={15} className="shrink-0" />
+            <span className="flex-1 text-left">{t('createNewSource')}</span>
           </button>
         </div>
+
+        {/* Remove from the current folder — only while viewing
+          one; the bulk-bar counterpart to PostModal's per-post
+          remove (§1.2 #12). */}
+        {collectionId != null && (
+          <button
+            data-testid="bulk-remove-from-folder"
+            disabled={selectedCount === 0}
+            onClick={() => {
+              setActionsOpen(false);
+              handleRemoveFromFolder();
+            }}
+            className="u-press w-full flex items-center gap-2.5 px-3 py-2 narrow:py-3 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
+          >
+            <FolderMinus size={15} className="shrink-0" />
+            <span className="flex-1">{t('removeFromSource')}</span>
+          </button>
+        )}
+
+        <div className="my-1 border-t border-[#2e2e2e]" />
+
+        {/* ── Pulizia + distruttiva (two-step) ──────────────────── */}
+        <button
+          data-testid={
+            confirmClearDesc ? 'bulk-clear-descriptions-confirm' : 'bulk-clear-descriptions'
+          }
+          disabled={selectedCount === 0}
+          onClick={() => {
+            if (confirmClearDesc) handleClearDescriptions();
+            else {
+              setConfirmClearDesc(true);
+              setConfirmClearTags(false);
+              setConfirmDeletePosts(false);
+            }
+          }}
+          className={[
+            'u-press w-full flex items-center gap-2.5 px-3 py-2 narrow:py-3 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
+            confirmClearDesc
+              ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+              : 'text-gray-300 hover:bg-[#2a2a2a] hover:text-white',
+          ].join(' ')}
+        >
+          <Eraser size={15} className="shrink-0" />
+          <span key={confirmClearDesc ? 'c' : 'i'} className="u-fade-in">
+            {confirmClearDesc
+              ? t('clearDescriptionsConfirm', { n: selectedCount })
+              : t('clearDescriptions')}
+          </span>
+        </button>
+
+        <button
+          data-testid={confirmClearTags ? 'bulk-clear-tags-confirm' : 'bulk-clear-tags'}
+          disabled={selectedCount === 0}
+          onClick={() => {
+            if (confirmClearTags) handleClearAiTags();
+            else {
+              setConfirmClearTags(true);
+              setConfirmClearDesc(false);
+              setConfirmDeletePosts(false);
+            }
+          }}
+          className={[
+            'u-press w-full flex items-center gap-2.5 px-3 py-2 narrow:py-3 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
+            confirmClearTags
+              ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+              : 'text-gray-300 hover:bg-[#2a2a2a] hover:text-white',
+          ].join(' ')}
+        >
+          <TagsIcon size={15} className="shrink-0" />
+          <span key={confirmClearTags ? 'c' : 'i'} className="u-fade-in">
+            {confirmClearTags ? t('clearTagsConfirm', { n: selectedCount }) : t('clearTags')}
+          </span>
+        </button>
+
+        <div className="my-1 border-t border-[#2e2e2e]" />
+
+        <button
+          data-testid={confirmDeletePosts ? 'bulk-delete-posts-confirm' : 'bulk-delete-posts'}
+          disabled={selectedCount === 0}
+          onClick={() => {
+            if (confirmDeletePosts) handleDeletePosts();
+            else {
+              setConfirmDeletePosts(true);
+              setConfirmClearDesc(false);
+              setConfirmClearTags(false);
+            }
+          }}
+          className={[
+            'u-press w-full flex items-center gap-2.5 px-3 py-2 narrow:py-3 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
+            confirmDeletePosts
+              ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+              : 'text-red-400/90 hover:bg-red-500/10 hover:text-red-300',
+          ].join(' ')}
+        >
+          <Trash2 size={15} className="shrink-0" />
+          <span key={confirmDeletePosts ? 'c' : 'i'} className="u-fade-in">
+            {confirmDeletePosts ? t('deletePostsConfirm', { n: selectedCount }) : t('deletePosts')}
+          </span>
+        </button>
+        {confirmDeletePosts && (
+          <p className="px-3 pt-1 pb-1.5 text-[10.5px] leading-snug text-gray-500">
+            {/* P1-14: on the web this moves posts to the trash
+              (undoable, the Trash view); the desktop's delete
+              stays immediate and permanent — each gets its own,
+              accurate hint rather than overstating either. */}
+            {isWeb ? t('deleteHintTrash') : t('deleteHint')}
+          </p>
+        )}
+      </Popover>
+    </div>
+  );
+
+  // The selection-bar controls shared by the desktop pill and the narrow bottom
+  // bar: the count, the select-all toggle and the exit (×). `narrow:` sizes grow
+  // them to 44px touch targets where they land in the bottom bar (GAL-11).
+  const selectionCountEl = (
+    <span
+      data-testid="selection-count"
+      className="text-sm font-medium text-gray-200 tabular-nums whitespace-nowrap shrink-0"
+    >
+      {t('selectedCount', { n: selectedCount.toLocaleString() })}
+    </span>
+  );
+  const selectAllButton = total > 0 && (
+    <button
+      data-testid="select-all-matching"
+      onClick={handleSelectAll}
+      title={allSelected ? t('deselectAllTitle') : t('selectAllTitle')}
+      className="u-press flex items-center gap-1.5 px-2.5 py-1 narrow:min-h-11 rounded-md text-sm text-[#b9a6ff] hover:bg-[#7B5CFF]/15 whitespace-nowrap shrink-0 transition-colors"
+    >
+      <ListChecks size={15} className="shrink-0" />
+      {allSelected
+        ? t('deselectAll')
+        : total > posts.length
+          ? t('selectAllN', { n: total.toLocaleString() })
+          : t('selectAll')}
+    </button>
+  );
+  const cancelButton = (
+    <button
+      data-testid="select-cancel"
+      onClick={exitSelectMode}
+      title={t('exitSelectionTitle')}
+      aria-label={t('exitSelectionTitle')}
+      className="flex items-center justify-center w-7 h-7 narrow:w-11 narrow:h-11 rounded-md text-gray-400 hover:text-white hover:bg-white/10 u-press shrink-0"
+    >
+      <X size={16} />
+    </button>
+  );
+  // The in-select-mode feedback label (clear / assign / select-all results).
+  const feedbackEl = feedback ? (
+    <span
+      key={feedback}
+      data-testid="bulk-feedback"
+      className="min-w-0 truncate text-xs text-accent tabular-nums u-pop-in"
+    >
+      {feedback}
+    </span>
+  ) : null;
+  // A one-time hint while nothing is selected yet (GAL-12; desktop range-select).
+  const selectionTip =
+    !narrow && selectedCount === 0 ? (
+      <span className="text-xs text-muted whitespace-nowrap">{t('tipRange')}</span>
+    ) : null;
+
+  // The narrow toolbar's Select action — an icon pill (the labelled button is
+  // the desktop trailing slot).
+  const narrowSelectButton = caps.bulkActions ? (
+    <button
+      data-testid="select-toggle"
+      onClick={() => setSelectMode(true)}
+      aria-label={t('selectTitle')}
+      title={t('selectTitle')}
+      className={`${FLOAT_PILL} justify-center w-11 h-11 shrink-0 text-gray-300 u-press cursor-pointer`}
+    >
+      <CheckSquare size={18} />
+    </button>
+  ) : null;
+
+  // The active-folder chip (shown while viewing one folder). Lives in the
+  // toolbar's leading slot on desktop and as its own pill on narrow, so a
+  // folder stays named on a phone too.
+  const collectionChip =
+    collectionId && collectionLabel ? (
+      <span
+        data-testid="active-collection-chip"
+        className="flex min-w-0 items-center gap-1.5 text-sm text-gray-300 u-fade-in"
+      >
+        <span
+          className="w-2 h-2 rounded-full shrink-0"
+          style={{ backgroundColor: collectionColor || '#7B5CFF' }}
+        />
+        <span className="truncate">{collectionLabel}</span>
+      </span>
+    ) : null;
+  const narrowChip = collectionChip ? (
+    <div className={`${FLOAT_PILL} h-11 min-w-0 max-w-[42%] px-3 shrink`}>{collectionChip}</div>
+  ) : null;
+
+  // The filter sheet's "View" section (narrow, GAL-1): view mode, sort, density
+  // and refresh, as 44px rows — the controls that leave the phone toolbar.
+  const sortOrderNow: SortOrder = filters.sortOrder ?? 'newest';
+  const viewControls = (
+    <div className="flex flex-col gap-0.5">
+      <button
+        data-testid="view-mode-toggle"
+        data-mode={viewMode}
+        onClick={toggleViewMode}
+        className="u-press w-full min-h-11 flex items-center gap-2.5 px-3 rounded-md text-sm text-primary hover:bg-hover transition-colors"
+      >
+        {canvas ? (
+          <LayoutGrid size={16} className="text-secondary shrink-0" />
+        ) : (
+          <Telescope size={16} className="text-accent shrink-0" />
+        )}
+        <span className="flex-1 text-left">{canvas ? t('viewGrid') : t('viewCanvas')}</span>
+      </button>
+
+      {!canvas && (
+        <button
+          data-testid="sort-toggle"
+          data-order={sortOrderNow}
+          onClick={() =>
+            handleFilterChange({
+              ...filters,
+              sortOrder: sortOrderNow === 'newest' ? 'oldest' : 'newest',
+            })
+          }
+          className="u-press w-full min-h-11 flex items-center gap-2.5 px-3 rounded-md text-sm text-primary hover:bg-hover transition-colors"
+        >
+          <ArrowDownUp size={16} className="text-secondary shrink-0" />
+          <span className="flex-1 text-left">
+            {t(SORT_OPTIONS.find((o) => o.value === sortOrderNow)?.labelKey ?? 'sortNewest')}
+          </span>
+        </button>
       )}
 
-      {/* Background-job progress (P1-11/P1-14: a bulk action over 500 posts).
-        Minimal — see pendingJob's doc comment above. */}
-      {pendingJob && (
-        <div
-          data-testid="bulk-job-toast"
-          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1a1a1a] border border-[#2e2e2e] text-xs text-gray-300 whitespace-nowrap u-pop-in shadow-lg"
-        >
-          <Loader2 size={13} className="animate-spin text-[#7B5CFF]" />
-          {jobProgress != null
-            ? t('jobProgress', { pct: Math.round(jobProgress * 100) })
-            : t('jobRunning')}
+      {/* Density — 2 or 3 columns */}
+      <div className="flex items-center gap-2 px-3 min-h-11">
+        <span className="flex-1 text-sm text-primary">{t('columns')}</span>
+        <div className="inline-flex rounded-md border border-strong overflow-hidden">
+          {[2, 3].map((c) => (
+            <button
+              key={c}
+              data-testid={`grid-cols-${c}`}
+              aria-pressed={narrowCols === c}
+              onClick={() => setGridStep(c - 2)}
+              className={[
+                'u-press w-11 h-9 text-sm font-medium transition-colors',
+                narrowCols === c ? 'bg-accent text-white' : 'text-secondary hover:bg-hover',
+              ].join(' ')}
+            >
+              {c}
+            </button>
+          ))}
         </div>
-      )}
-      <div className="relative flex flex-col flex-1 min-w-0 overflow-hidden">
+      </div>
+
+      <button
+        data-testid="gallery-refresh"
+        onClick={() => reload()}
+        disabled={loading}
+        className="u-press w-full min-h-11 flex items-center gap-2.5 px-3 rounded-md text-sm text-primary hover:bg-hover disabled:opacity-50 transition-colors"
+      >
+        <RefreshCw
+          size={16}
+          className={`text-secondary shrink-0 ${loading ? 'animate-spin' : ''}`}
+        />
+        <span className="flex-1 text-left">{t('refreshTitle')}</span>
+      </button>
+    </div>
+  );
+
+  return (
+    <div data-testid="gallery-view" className="flex h-full overflow-hidden">
+      {/* Post-exit confirmations, Undo and job progress are shown by the shared
+        toast region (GAL-9): one role="status" host, above the BottomNav on
+        narrow, each toast with an icon and a dismiss ×. */}
+      <ToastHost toasts={toasts} />
+      {/* `overflow: clip` (not hidden) can't be scrolled by script, so focusing
+        an off-screen control can never slide the grid sideways (audit GAL-1).
+        A paired `overflow-y:hidden` would force clip back to hidden, so clip
+        both axes — the inner scroller below still owns the vertical scroll. */}
+      <div className="relative flex flex-col flex-1 min-w-0 overflow-clip">
         {/* Floating frosted toolbar (~52px) — overlays the grid; one strip for
           everything above it.
           Two distinct modes:
@@ -1444,442 +1833,163 @@ export default function Gallery({
                 drawerOpen={drawerOpen}
                 onToggleDrawer={() => setDrawerOpen((o) => !o)}
                 showAiStatus={isWeb}
+                menuButton={<MenuButton />}
                 leading={
-                  <>
-                    {/* View toggle — flips the surface between the date-ordered grid
+                  narrow ? (
+                    narrowChip
+                  ) : (
+                    <>
+                      {/* View toggle — flips the surface between the date-ordered grid
                     and the infinite pan/zoom canvas. The icon previews the mode
                     you'll switch TO. In canvas mode date ordering is off, so the
                     sort toggle below hides. */}
-                    <button
-                      data-testid="view-mode-toggle"
-                      data-mode={viewMode}
-                      title={canvas ? t('viewGridTitle') : t('viewCanvasTitle')}
-                      onClick={toggleViewMode}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-gray-300 hover:text-white hover:bg-[#1a1a1a] u-press transition-colors whitespace-nowrap shrink-0"
-                    >
-                      {canvas ? (
-                        <LayoutGrid size={13} className="text-gray-500" />
-                      ) : (
-                        <Telescope size={13} className="text-[#7B5CFF]" />
-                      )}
-                      {canvas ? t('viewGrid') : t('viewCanvas')}
-                    </button>
+                      <button
+                        data-testid="view-mode-toggle"
+                        data-mode={viewMode}
+                        title={canvas ? t('viewGridTitle') : t('viewCanvasTitle')}
+                        onClick={toggleViewMode}
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-gray-300 hover:text-white hover:bg-[#1a1a1a] u-press transition-colors whitespace-nowrap shrink-0"
+                      >
+                        {canvas ? (
+                          <LayoutGrid size={13} className="text-gray-500" />
+                        ) : (
+                          <Telescope size={13} className="text-[#7B5CFF]" />
+                        )}
+                        {canvas ? t('viewGrid') : t('viewCanvas')}
+                      </button>
 
-                    {/* Sort by date — a single toggle: tap it to flip between
+                      {/* Sort by date — a single toggle: tap it to flip between
                     "Più recenti" and "Meno recenti" (no second label / no menu).
                     Hidden in canvas mode, where date ordering is inactive. */}
-                    {!canvas &&
-                      (() => {
-                        const order = filters.sortOrder ?? 'newest';
-                        const next: SortOrder = order === 'newest' ? 'oldest' : 'newest';
-                        const labelKey = SORT_OPTIONS.find((o) => o.value === order)?.labelKey;
-                        const label = labelKey ? t(labelKey) : '';
-                        return (
-                          <button
-                            data-testid="sort-toggle"
-                            data-order={order}
-                            title={t('sortToggleTitle')}
-                            onClick={() => handleFilterChange({ ...filters, sortOrder: next })}
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-gray-300 hover:text-white hover:bg-[#1a1a1a] u-press transition-colors whitespace-nowrap shrink-0"
-                          >
-                            <ArrowDownUp size={13} className="text-gray-500" />
-                            {label}
-                          </button>
-                        );
-                      })()}
+                      {!canvas &&
+                        (() => {
+                          const order = filters.sortOrder ?? 'newest';
+                          const next: SortOrder = order === 'newest' ? 'oldest' : 'newest';
+                          const labelKey = SORT_OPTIONS.find((o) => o.value === order)?.labelKey;
+                          const label = labelKey ? t(labelKey) : '';
+                          return (
+                            <button
+                              data-testid="sort-toggle"
+                              data-order={order}
+                              title={t('sortToggleTitle')}
+                              onClick={() => handleFilterChange({ ...filters, sortOrder: next })}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-gray-300 hover:text-white hover:bg-[#1a1a1a] u-press transition-colors whitespace-nowrap shrink-0"
+                            >
+                              <ArrowDownUp size={13} className="text-gray-500" />
+                              {label}
+                            </button>
+                          );
+                        })()}
 
-                    {collectionId && collectionLabel && (
-                      <span
-                        data-testid="active-collection-chip"
-                        className="flex items-center gap-1.5 text-sm text-gray-300 whitespace-nowrap shrink-0 u-fade-in"
-                      >
-                        <span
-                          className="w-2 h-2 rounded-full"
-                          style={{ backgroundColor: collectionColor || '#7B5CFF' }}
-                        />
-                        {collectionLabel}
-                      </span>
-                    )}
-                  </>
+                      {collectionChip}
+                    </>
+                  )
                 }
                 trailing={
-                  <>
-                    {/* Source-sync: fetches new posts from the source's connector in
+                  narrow ? (
+                    narrowSelectButton
+                  ) : (
+                    <>
+                      {/* Source-sync: fetches new posts from the source's connector in
                     background (Activity Center shows the progress). Only sources
                     that map to a connector listing get the button: IG / X
                     platforms, Pinterest once it has boards, native folders.
                     CloudDownload (not RefreshCw — taken by the grid refresh
                     beside it); while the run is in flight it becomes a spinner
                     and clicking it stops the run. */}
-                    {(() => {
-                      if (!onSyncSource) return null;
-                      const c =
-                        collectionId != null
-                          ? collections.find((x) => x.id === collectionId)
-                          : null;
-                      const target: SyncTarget | null = c
-                        ? isSyncPlatform(c.platform) && c.externalId != null
-                          ? { type: 'collection', platform: c.platform, collectionId: c.id }
-                          : null
-                        : platform === 'instagram' || platform === 'twitter'
-                          ? { type: 'platform', platform }
-                          : platform === 'pinterest' &&
-                              collections.some(
-                                (x) => x.platform === 'pinterest' && x.externalId != null,
-                              )
-                            ? { type: 'platform', platform }
+                      {(() => {
+                        if (!onSyncSource) return null;
+                        const c =
+                          collectionId != null
+                            ? collections.find((x) => x.id === collectionId)
                             : null;
-                      if (!target) return null;
-                      const job = target.platform ? sourceSyncJobs?.[target.platform] : undefined;
-                      const running =
-                        !!job && (job.status === 'navigating' || job.status === 'syncing');
-                      return (
-                        <button
-                          data-testid="gallery-sync-source"
-                          onClick={() => onSyncSource(target)}
-                          title={running ? t('syncStopTitle') : t('syncSourceTitle')}
-                          aria-label={running ? t('syncStopTitle') : t('syncSourceTitle')}
-                          className={[
-                            'flex items-center justify-center w-7 h-7 rounded-md u-press shrink-0',
-                            running
-                              ? 'text-amber-400 hover:bg-[#1a1a1a]'
-                              : 'text-gray-400 hover:text-white hover:bg-[#1a1a1a]',
-                          ].join(' ')}
-                        >
-                          {running ? (
-                            <Loader2 size={15} className="animate-spin" />
-                          ) : (
-                            <CloudDownload size={15} />
-                          )}
-                        </button>
-                      );
-                    })()}
+                        const target: SyncTarget | null = c
+                          ? isSyncPlatform(c.platform) && c.externalId != null
+                            ? { type: 'collection', platform: c.platform, collectionId: c.id }
+                            : null
+                          : platform === 'instagram' || platform === 'twitter'
+                            ? { type: 'platform', platform }
+                            : platform === 'pinterest' &&
+                                collections.some(
+                                  (x) => x.platform === 'pinterest' && x.externalId != null,
+                                )
+                              ? { type: 'platform', platform }
+                              : null;
+                        if (!target) return null;
+                        const job = target.platform ? sourceSyncJobs?.[target.platform] : undefined;
+                        const running =
+                          !!job && (job.status === 'navigating' || job.status === 'syncing');
+                        return (
+                          <button
+                            data-testid="gallery-sync-source"
+                            onClick={() => onSyncSource(target)}
+                            title={running ? t('syncStopTitle') : t('syncSourceTitle')}
+                            aria-label={running ? t('syncStopTitle') : t('syncSourceTitle')}
+                            className={[
+                              'flex items-center justify-center w-7 h-7 rounded-md u-press shrink-0',
+                              running
+                                ? 'text-amber-400 hover:bg-[#1a1a1a]'
+                                : 'text-gray-400 hover:text-white hover:bg-[#1a1a1a]',
+                            ].join(' ')}
+                          >
+                            {running ? (
+                              <Loader2 size={15} className="animate-spin" />
+                            ) : (
+                              <CloudDownload size={15} />
+                            )}
+                          </button>
+                        );
+                      })()}
 
-                    <button
-                      data-testid="gallery-refresh"
-                      onClick={() => reload()}
-                      disabled={loading}
-                      title={t('refreshTitle')}
-                      aria-label={t('refreshTitle')}
-                      className="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-white hover:bg-[#1a1a1a] disabled:opacity-50 disabled:cursor-not-allowed u-press shrink-0"
-                    >
-                      <RefreshCw size={15} className={loading ? 'animate-spin' : undefined} />
-                    </button>
-
-                    {caps.bulkActions && (
                       <button
-                        data-testid="select-toggle"
-                        onClick={() => setSelectMode(true)}
-                        title={t('selectTitle')}
-                        className="flex items-center gap-1.5 px-3 py-1 rounded-md text-sm text-gray-400 hover:text-white hover:bg-[#1a1a1a] u-press whitespace-nowrap shrink-0"
+                        data-testid="gallery-refresh"
+                        onClick={() => reload()}
+                        disabled={loading}
+                        title={t('refreshTitle')}
+                        aria-label={t('refreshTitle')}
+                        className="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-white hover:bg-[#1a1a1a] disabled:opacity-50 disabled:cursor-not-allowed u-press shrink-0"
                       >
-                        <CheckSquare size={15} />
-                        {t('select')}
+                        <RefreshCw size={15} className={loading ? 'animate-spin' : undefined} />
                       </button>
-                    )}
-                  </>
+
+                      {caps.bulkActions && (
+                        <button
+                          data-testid="select-toggle"
+                          onClick={() => setSelectMode(true)}
+                          title={t('selectTitle')}
+                          className="flex items-center gap-1.5 px-3 py-1 rounded-md text-sm text-gray-400 hover:text-white hover:bg-[#1a1a1a] u-press whitespace-nowrap shrink-0"
+                        >
+                          <CheckSquare size={15} />
+                          {t('select')}
+                        </button>
+                      )}
+                    </>
+                  )
                 }
               />
+            ) : narrow ? (
+              /* Selecting on a phone: the selection controls move to a bottom
+                  bar (GAL-11, rendered below). The top keeps the MenuButton so
+                  the drawer is reachable and the shell claim holds (App drops
+                  its interim top bar). */
+              <div className="pointer-events-none flex items-center h-[52px] px-3">
+                <MenuButton />
+              </div>
             ) : (
               <div className="pointer-events-none flex items-center w-full px-3 h-[52px] u-fade-in-down">
-                {/* Everything is pushed to the right: an empty flexer fills the left
-                gutter so the count, the single "Azioni" menu and the exit (✕) sit
-                together as one right-aligned floating pill. */}
+                {/* Everything is pushed to the right: an empty flexer fills the
+                  left gutter so the count, the single "Azioni" menu and the exit
+                  (✕) sit together as one right-aligned floating pill. */}
                 <div className="flex-1" />
 
                 <div className={`${FLOAT_PILL} h-9 pl-3 pr-1.5 gap-2 shrink-0`}>
-                  {feedback && (
-                    <span
-                      key={feedback}
-                      data-testid="bulk-feedback"
-                      className="text-xs text-[#7B5CFF] tabular-nums u-pop-in whitespace-nowrap"
-                    >
-                      {feedback}
-                    </span>
-                  )}
-
-                  <span
-                    data-testid="selection-count"
-                    className="text-sm font-medium text-gray-200 tabular-nums whitespace-nowrap shrink-0"
-                  >
-                    {t('selectedCount', { n: selectedCount.toLocaleString() })}
-                  </span>
-
-                  {/* Select-all toggle — lives next to the counter (not in the actions
-                menu) so the most common bulk gesture is one click away. */}
-                  {total > 0 && (
-                    <button
-                      data-testid="select-all-matching"
-                      onClick={handleSelectAll}
-                      title={allSelected ? t('deselectAllTitle') : t('selectAllTitle')}
-                      className="u-press flex items-center gap-1.5 px-2.5 py-1 rounded-md text-sm text-[#b9a6ff] hover:bg-[#7B5CFF]/15 whitespace-nowrap shrink-0 transition-colors"
-                    >
-                      <ListChecks size={15} className="shrink-0" />
-                      {allSelected
-                        ? t('deselectAll')
-                        : total > posts.length
-                          ? t('selectAllN', { n: total.toLocaleString() })
-                          : t('selectAll')}
-                    </button>
-                  )}
-
+                  {feedbackEl}
+                  {selectionTip}
+                  {selectionCountEl}
+                  {selectAllButton}
                   <div className="h-5 w-px bg-[#2e2e2e] shrink-0" />
-
-                  {/* Single "Azioni" menu: holds every bulk action (analyze/download,
-                assign-to-source, cleanup and the destructive delete) — select-all
-                lives next to the counter above. The trigger stays enabled with
-                nothing selected; the action-requiring rows disable themselves. */}
-                  <div className="relative shrink-0" ref={actionsRef}>
-                    <button
-                      data-testid="bulk-actions"
-                      onClick={() => setActionsOpen((o) => !o)}
-                      aria-haspopup="menu"
-                      aria-expanded={actionsOpen}
-                      title={t('actionsTitle')}
-                      className="flex items-center gap-1.5 px-3 py-1 rounded-md text-sm font-medium text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] u-press transition-colors"
-                    >
-                      <Sparkles size={15} />
-                      {t('actions')}
-                      <ChevronDown
-                        size={14}
-                        className={['transition-transform', actionsOpen ? 'rotate-180' : ''].join(
-                          ' ',
-                        )}
-                      />
-                    </button>
-
-                    <Popover
-                      anchorRef={actionsRef}
-                      open={actionsOpen}
-                      align="right"
-                      onRequestClose={() => setActionsOpen(false)}
-                      data-testid="bulk-actions-menu"
-                      className="w-72 bg-[#1a1a1a] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 u-fade-in-down origin-top-right"
-                    >
-                      {/* ── Azioni primarie ─────────────────────────────────────
-                        analyze/download need, respectively, a local model and
-                        local storage: hidden by capability (desktop only,
-                        until P2-P4 bring them to the web — carry-over P1-11). */}
-                      {(caps.ai || caps.localFiles) && (
-                        <>
-                          {caps.ai && (
-                            <button
-                              data-testid="bulk-analyze"
-                              disabled={selectedCount === 0}
-                              onClick={() => {
-                                setActionsOpen(false);
-                                handleAnalyzeSelected();
-                              }}
-                              className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                            >
-                              <Sparkles size={15} className="shrink-0" />
-                              <span className="flex-1">{t('analyze')}</span>
-                            </button>
-                          )}
-
-                          {caps.localFiles && (
-                            <button
-                              data-testid="bulk-download"
-                              disabled={selectedCount === 0}
-                              onClick={() => {
-                                setActionsOpen(false);
-                                handleDownloadSelected();
-                              }}
-                              className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                            >
-                              <Download size={15} className="shrink-0" />
-                              <span className="flex-1 min-w-0">
-                                <span className="block">{tc('download')}</span>
-                                {/* The backend enqueues missing assets only — say so, or a
-                              full-library selection looks like it re-downloads everything. */}
-                                <span className="block text-[11px] text-gray-500 leading-snug">
-                                  {t('downloadOnlyMissingHint')}
-                                </span>
-                              </span>
-                            </button>
-                          )}
-
-                          <div className="my-1 border-t border-[#2e2e2e]" />
-                        </>
-                      )}
-
-                      {/* ── Aggiungi a source ─────────────────────────────────── */}
-                      <div
-                        className={[
-                          'transition-opacity',
-                          selectedCount === 0 ? 'opacity-40 pointer-events-none' : '',
-                        ].join(' ')}
-                      >
-                        <p className="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-widest text-gray-600 flex items-center gap-1.5">
-                          <FolderPlus size={12} className="shrink-0" />
-                          {t('addToSource')}
-                        </p>
-                        <div className="max-h-44 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e]">
-                          {collections.length === 0 && (
-                            <p className="px-3 py-1.5 text-xs text-gray-500">{t('noSources')}</p>
-                          )}
-                          {collections.map((c) => {
-                            const allIn = selectedCount > 0 && !!allInByCollection[c.id];
-                            return (
-                              <button
-                                key={c.id}
-                                data-testid={`assign-to-${c.id}`}
-                                onClick={() => assignTo(c.id)}
-                                className="u-press w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-gray-300 hover:bg-[#2a2a2a] hover:text-white transition-colors"
-                              >
-                                <span
-                                  className="w-2 h-2 rounded-full shrink-0"
-                                  style={{ backgroundColor: c.color }}
-                                />
-                                <span className="flex-1 truncate text-left">{c.name}</span>
-                                {allIn && (
-                                  <Check size={14} className="u-pop-in text-green-400 shrink-0" />
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <button
-                          data-testid="assign-create-new"
-                          onClick={() => {
-                            setActionsOpen(false);
-                            setShowCreate(true);
-                          }}
-                          className="u-press w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-gray-300 hover:bg-[#2a2a2a] hover:text-white transition-colors"
-                        >
-                          <Plus size={15} className="shrink-0" />
-                          <span className="flex-1 text-left">{t('createNewSource')}</span>
-                        </button>
-                      </div>
-
-                      {/* Remove from the current folder — only while viewing
-                        one; the bulk-bar counterpart to PostModal's per-post
-                        remove (§1.2 #12). */}
-                      {collectionId != null && (
-                        <button
-                          data-testid="bulk-remove-from-folder"
-                          disabled={selectedCount === 0}
-                          onClick={() => {
-                            setActionsOpen(false);
-                            handleRemoveFromFolder();
-                          }}
-                          className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                        >
-                          <FolderMinus size={15} className="shrink-0" />
-                          <span className="flex-1">{t('removeFromSource')}</span>
-                        </button>
-                      )}
-
-                      <div className="my-1 border-t border-[#2e2e2e]" />
-
-                      {/* ── Pulizia + distruttiva (two-step) ──────────────────── */}
-                      <button
-                        data-testid={
-                          confirmClearDesc
-                            ? 'bulk-clear-descriptions-confirm'
-                            : 'bulk-clear-descriptions'
-                        }
-                        disabled={selectedCount === 0}
-                        onClick={() => {
-                          if (confirmClearDesc) handleClearDescriptions();
-                          else {
-                            setConfirmClearDesc(true);
-                            setConfirmClearTags(false);
-                            setConfirmDeletePosts(false);
-                          }
-                        }}
-                        className={[
-                          'u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
-                          confirmClearDesc
-                            ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
-                            : 'text-gray-300 hover:bg-[#2a2a2a] hover:text-white',
-                        ].join(' ')}
-                      >
-                        <Eraser size={15} className="shrink-0" />
-                        <span key={confirmClearDesc ? 'c' : 'i'} className="u-fade-in">
-                          {confirmClearDesc
-                            ? t('clearDescriptionsConfirm', { n: selectedCount })
-                            : t('clearDescriptions')}
-                        </span>
-                      </button>
-
-                      <button
-                        data-testid={
-                          confirmClearTags ? 'bulk-clear-tags-confirm' : 'bulk-clear-tags'
-                        }
-                        disabled={selectedCount === 0}
-                        onClick={() => {
-                          if (confirmClearTags) handleClearAiTags();
-                          else {
-                            setConfirmClearTags(true);
-                            setConfirmClearDesc(false);
-                            setConfirmDeletePosts(false);
-                          }
-                        }}
-                        className={[
-                          'u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
-                          confirmClearTags
-                            ? 'bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
-                            : 'text-gray-300 hover:bg-[#2a2a2a] hover:text-white',
-                        ].join(' ')}
-                      >
-                        <TagsIcon size={15} className="shrink-0" />
-                        <span key={confirmClearTags ? 'c' : 'i'} className="u-fade-in">
-                          {confirmClearTags
-                            ? t('clearTagsConfirm', { n: selectedCount })
-                            : t('clearTags')}
-                        </span>
-                      </button>
-
-                      <div className="my-1 border-t border-[#2e2e2e]" />
-
-                      <button
-                        data-testid={
-                          confirmDeletePosts ? 'bulk-delete-posts-confirm' : 'bulk-delete-posts'
-                        }
-                        disabled={selectedCount === 0}
-                        onClick={() => {
-                          if (confirmDeletePosts) handleDeletePosts();
-                          else {
-                            setConfirmDeletePosts(true);
-                            setConfirmClearDesc(false);
-                            setConfirmClearTags(false);
-                          }
-                        }}
-                        className={[
-                          'u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left transition-colors disabled:opacity-40 disabled:pointer-events-none',
-                          confirmDeletePosts
-                            ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
-                            : 'text-red-400/90 hover:bg-red-500/10 hover:text-red-300',
-                        ].join(' ')}
-                      >
-                        <Trash2 size={15} className="shrink-0" />
-                        <span key={confirmDeletePosts ? 'c' : 'i'} className="u-fade-in">
-                          {confirmDeletePosts
-                            ? t('deletePostsConfirm', { n: selectedCount })
-                            : t('deletePosts')}
-                        </span>
-                      </button>
-                      {confirmDeletePosts && (
-                        <p className="px-3 pt-1 pb-1.5 text-[10.5px] leading-snug text-gray-500">
-                          {/* P1-14: on the web this moves posts to the trash
-                            (undoable, the Trash view); the desktop's delete
-                            stays immediate and permanent — each gets its own,
-                            accurate hint rather than overstating either. */}
-                          {isWeb ? t('deleteHintTrash') : t('deleteHint')}
-                        </p>
-                      )}
-                    </Popover>
-                  </div>
-
-                  <button
-                    data-testid="select-cancel"
-                    onClick={exitSelectMode}
-                    title={t('exitSelectionTitle')}
-                    className="flex items-center justify-center w-7 h-7 rounded-md text-gray-400 hover:text-white hover:bg-white/10 u-press shrink-0"
-                  >
-                    <X size={16} />
-                  </button>
+                  {bulkActionsMenu}
+                  {cancelButton}
                 </div>
               </div>
             )}
@@ -2055,19 +2165,80 @@ export default function Gallery({
             </div>
           )}
 
-          {/* Empty state */}
+          {/* Empty state — one per situation (GAL-2), centred in the space below
+            the floating toolbar (GAL-13). */}
           {isEmpty && (
-            <div
-              data-testid="empty-state"
-              className="flex flex-col items-center justify-center h-full min-h-[60vh] gap-3 text-center px-6 u-fade-in-up"
-            >
-              <ImageOff size={36} className="text-[#333]" strokeWidth={1} />
+            <div className="flex h-full" style={{ paddingTop: headerH }}>
               {error ? (
-                <p className="text-red-400 text-sm leading-relaxed max-w-xs">{error}</p>
+                <EmptyState
+                  testId="empty-state"
+                  icon={AlertCircle}
+                  title={error}
+                  action={{
+                    label: t('refreshTitle'),
+                    onClick: () => reload(),
+                    icon: RefreshCw,
+                    testId: 'empty-retry',
+                  }}
+                />
+              ) : hasSearch ? (
+                <EmptyState
+                  testId="empty-state"
+                  icon={SearchX}
+                  title={t('emptySearchTitle', { q: filters.search ?? '' })}
+                  secondaryAction={{
+                    label: t('emptySearchClear'),
+                    onClick: () => handleFilterChange({ ...filters, search: '' }),
+                    testId: 'empty-clear-search',
+                  }}
+                />
+              ) : hasActiveFilters ? (
+                <EmptyState
+                  testId="empty-state"
+                  icon={FilterX}
+                  title={t('emptyFiltersTitle')}
+                  action={{
+                    label: t('emptyFiltersReset'),
+                    onClick: () =>
+                      handleFilterChange({
+                        ...filters,
+                        mediaType: 'all',
+                        downloadStatus: 'all',
+                        aiTagged: 'all',
+                        category: undefined,
+                        contentType: undefined,
+                        aiStatus: undefined,
+                        tag: undefined,
+                      }),
+                    testId: 'empty-reset-filters',
+                  }}
+                />
+              ) : collectionId != null ? (
+                <EmptyState
+                  testId="empty-state"
+                  icon={FolderOpen}
+                  title={t('emptyFolderTitle')}
+                  body={t('emptyFolderBody')}
+                />
+              ) : isWeb ? (
+                <EmptyState
+                  testId="empty-state"
+                  icon={Inbox}
+                  title={t('emptyLibraryTitle')}
+                  body={t('emptyLibraryWebBody')}
+                  action={{
+                    label: t('emptyLibrarySetup'),
+                    onClick: () => nav?.navigate({ name: 'settings', section: 'account' }),
+                    testId: 'empty-setup',
+                  }}
+                />
               ) : (
-                <p className="text-[#555] text-sm leading-relaxed max-w-xs font-display">
-                  {t('emptyTitle')} <span className="text-[#444]">{t('emptyHint')}</span>
-                </p>
+                <EmptyState
+                  testId="empty-state"
+                  icon={Inbox}
+                  title={t('emptyLibraryTitle')}
+                  body={t('emptyHint')}
+                />
               )}
             </div>
           )}
@@ -2088,7 +2259,26 @@ export default function Gallery({
         activeSource={activeSource}
         onSelectSource={onSelectSource}
         showAiStatus={isWeb}
+        filteredTotal={total}
+        viewControls={viewControls}
       />
+
+      {/* Narrow select mode: the selection bar sits at the bottom, over the
+        BottomNav (GAL-11) — [× 44] [N selected] [Select all] [Actions ▾ 44]. */}
+      {selectMode && narrow && (
+        <div
+          data-testid="selection-bar"
+          className="fixed inset-x-0 bottom-0 z-drawer flex items-center gap-2 border-t border-strong bg-elevated px-3 py-2 u-fade-in-up"
+          style={{ paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))' }}
+        >
+          {cancelButton}
+          {selectionCountEl}
+          {feedbackEl}
+          <div className="flex-1" />
+          {selectAllButton}
+          {bulkActionsMenu}
+        </div>
+      )}
 
       {activePost && !selectMode && (
         <ErrorBoundary
@@ -2118,8 +2308,8 @@ export default function Gallery({
             }
             onAssigned={() => onAssigned?.()}
             onPostDeleted={(_postId: string, deletedAt: number | null) => {
-              // See handleDeletePosts: a null deletedAt means nothing to undo.
-              if (deletedAt == null) showFeedback(t('fbPostDeleted'));
+              // armUndo shows an Undo toast when there is something to restore,
+              // a plain confirmation when deletedAt is null (nothing moved).
               armUndo(deletedAt, t('fbPostDeleted'));
               reload();
               onAssigned?.();

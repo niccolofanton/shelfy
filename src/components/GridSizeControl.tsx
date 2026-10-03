@@ -22,10 +22,15 @@ export default function GridSizeControl({
   useGridShortcuts();
 
   const btn =
-    'p-1 rounded-md text-[#888] hover:text-white hover:bg-[#222] disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-[#888] u-press';
+    'p-1 rounded-md text-muted hover:text-primary hover:bg-hover disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted u-press';
 
+  // Density is a desktop/toolbar control; on narrow it moves into the filter
+  // sheet's View section (audit GAL-1), so the toolbar instance hides itself.
   return (
-    <div className={`flex items-center gap-0.5 ${className}`} data-testid="grid-size-control">
+    <div
+      className={`flex items-center gap-0.5 narrow:hidden ${className}`}
+      data-testid="grid-size-control"
+    >
       <button
         type="button"
         onClick={smaller}

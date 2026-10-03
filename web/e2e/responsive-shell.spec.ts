@@ -260,7 +260,11 @@ test.describe('mobile (375x812) — canvas pinch', () => {
 
   test('two-finger pinch zooms the canvas', async ({ page }) => {
     await page.goto('/');
+    // On narrow the view toggle lives in the filter sheet's View section (GAL-1):
+    // open the sheet, switch to canvas, then close the sheet to reach the wall.
+    await page.getByTestId('filters-toggle').click();
     await page.getByTestId('view-mode-toggle').click();
+    await page.getByTestId('filter-sheet-handle').click();
     const canvas = page.getByTestId('post-canvas');
     await expect(canvas).toBeVisible();
     const box = (await canvas.boundingBox())!;

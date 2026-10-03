@@ -142,8 +142,9 @@ for (const { name, viewport } of NARROW) {
       await page.goto('/');
       await expect(page.getByTestId('post-card').first()).toBeVisible();
       const height = viewport.height;
-      // The top row starts below the status bar.
-      const top = (await page.getByTestId('shell-topbar').boundingBox())!;
+      // The gallery renders its own top row (its MenuButton, UX-3), so the
+      // interim shell-topbar is gone here; the menu button clears the status bar.
+      const top = (await page.getByTestId('sidebar-open').boundingBox())!;
       expect(top.y).toBeGreaterThanOrEqual(PORTRAIT_INSETS.top);
       // The BottomNav ends at the bottom edge, its tabs above the indicator.
       const nav = page.getByTestId('bottom-nav');
@@ -236,7 +237,8 @@ for (const { name, viewport } of NARROW) {
       await expect(page.getByTestId('settings-tabs')).toBeVisible();
       await page.getByTestId('bottom-nav-search').click();
       await expect(page).toHaveURL(/\/$/);
-      await expect(page.getByRole('textbox', { name: 'Search posts' })).toBeFocused();
+      // The search field is type="search" (GAL-10), so its role is searchbox.
+      await expect(page.getByRole('searchbox', { name: 'Search posts' })).toBeFocused();
     });
 
     test('an offline pill shows while the browser is offline (ST-3)', async ({ page }) => {

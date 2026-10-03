@@ -378,7 +378,7 @@ describe('Gallery — unified toolbar', () => {
 
   it('renders search, sort, zoom, Filtri, refresh and select in one strip', async () => {
     await renderGallery();
-    expect(screen.getByPlaceholderText('Search posts...')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Cerca post...')).toBeInTheDocument();
     expect(screen.getByTestId('sort-toggle')).toBeInTheDocument();
     expect(screen.getByTestId('grid-size-control')).toBeInTheDocument();
     expect(screen.getByTestId('filters-toggle')).toBeInTheDocument();
@@ -430,7 +430,7 @@ describe('Gallery — unified toolbar', () => {
     await renderGallery();
     fireEvent.click(screen.getByTestId('select-toggle'));
     // The browse-mode controls give way to the contextual action bar…
-    expect(screen.queryByPlaceholderText('Search posts...')).toBeNull();
+    expect(screen.queryByPlaceholderText('Cerca post...')).toBeNull();
     expect(screen.queryByTestId('filters-toggle')).toBeNull();
     expect(screen.queryByTestId('gallery-refresh')).toBeNull();
     // …holding the counter, the select-all toggle, the Azioni menu and the exit.

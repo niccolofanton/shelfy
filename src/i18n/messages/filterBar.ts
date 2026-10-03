@@ -11,8 +11,8 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
-    searchPlaceholder: 'Search posts...',
-    searchAria: 'Search posts',
+    searchPlaceholder: 'Cerca post...',
+    searchAria: 'Cerca post',
     clearSearch: 'Cancella ricerca',
     removeTagFilter: 'Rimuovi filtro tag',
     postsCount: '{n} post',

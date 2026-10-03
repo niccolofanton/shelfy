@@ -128,14 +128,14 @@ describe('FilterBar', () => {
   describe('search input debounce', () => {
     it('does NOT call onFiltersChange immediately when typing', () => {
       const { onFiltersChange } = setup();
-      const input = screen.getByPlaceholderText('Search posts...');
+      const input = screen.getByPlaceholderText('Cerca post...');
       fireEvent.change(input, { target: { value: 'h' } });
       expect(onFiltersChange).not.toHaveBeenCalled();
     });
 
     it('calls onFiltersChange after 300ms with the typed search value', () => {
       const { onFiltersChange } = setup();
-      const input = screen.getByPlaceholderText('Search posts...');
+      const input = screen.getByPlaceholderText('Cerca post...');
       fireEvent.change(input, { target: { value: 'hello' } });
       expect(onFiltersChange).not.toHaveBeenCalled();
       vi.advanceTimersByTime(300);
@@ -144,7 +144,7 @@ describe('FilterBar', () => {
 
     it('debounces multiple changes into a single call', () => {
       const { onFiltersChange } = setup();
-      const input = screen.getByPlaceholderText('Search posts...');
+      const input = screen.getByPlaceholderText('Cerca post...');
       fireEvent.change(input, { target: { value: 'a' } });
       fireEvent.change(input, { target: { value: 'ab' } });
       fireEvent.change(input, { target: { value: 'abc' } });

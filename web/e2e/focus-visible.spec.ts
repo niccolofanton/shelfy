@@ -60,7 +60,7 @@ test('Tab rings sidebar rows and toolbar controls; a click does not', async ({ p
 
 test('the search field rings its pill, not the bare input', async ({ page }) => {
   await page.goto('/');
-  const input = page.getByRole('textbox', { name: /search/i });
+  const input = page.getByRole('searchbox', { name: /search/i });
   await tabTo(page, input);
   expect((await outline(input)).style).toBe('none');
   const pill = input.locator('xpath=..');

@@ -10,8 +10,11 @@ import {
   Tag,
   LayoutTemplate,
   Activity,
+  Eye,
 } from 'lucide-react';
 import { useT } from '../i18n';
+import { useDialog } from '../hooks/useDialog';
+import { NARROW_QUERY, useMediaQuery } from './ui/useMediaQuery';
 import { categoryOptions, contentTypeOptions, aiStatusOptions } from '../lib/facetOptions';
 import { PLATFORM_SOURCES } from '../lib/sourceList';
 
@@ -78,6 +81,13 @@ interface FilterDrawerProps<F extends FilterDrawerFilters> {
   // desktop's query builder only has the coarser analyzed/unanalyzed split
   // that `aiTagged` already covers. Default false (the desktop build).
   showAiStatus?: boolean;
+  // The filtered post total (what the toolbar's count shows): the bottom
+  // sheet's footer applies/closes with "Show N posts" (audit GAL-1).
+  filteredTotal?: number;
+  // The Gallery-owned View controls (view mode, sort, density, refresh) shown
+  // in the sheet's "View" section on narrow, where they leave the toolbar
+  // (audit GAL-1). Null on desktop, where they stay in the toolbar.
+  viewControls?: React.ReactNode;
 }
 
 interface SelectOption {
@@ -111,7 +121,7 @@ function FacetSelect({
       aria-label={ariaLabel}
       value={value || ''}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full bg-[#141414] border border-[#272727] rounded-lg px-2.5 py-1.5 text-[12.5px] text-gray-200 outline-none focus:border-[#7B5CFF] transition-colors"
+      className="w-full bg-secondary border border-subtle rounded-md px-2.5 py-2 text-sm narrow:text-base text-primary outline-none focus:border-strong transition-colors"
     >
       <option value="">{allLabel}</option>
       {options.map((opt) => (
@@ -133,7 +143,7 @@ function formatCount(n: number | null | undefined): string {
 function Segmented({ options, value, onChange, cols }: SegmentedProps): React.JSX.Element {
   return (
     <div
-      className="grid gap-1 p-1 rounded-lg bg-[#141414] border border-[#272727]"
+      className="grid gap-1 p-1 rounded-md bg-secondary border border-subtle"
       style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
     >
       {options.map((opt) => {
@@ -144,10 +154,10 @@ function Segmented({ options, value, onChange, cols }: SegmentedProps): React.JS
             onClick={() => onChange(opt.value)}
             aria-pressed={active}
             className={[
-              'u-press px-1.5 py-1.5 rounded-md text-[12.5px] font-medium text-center leading-tight transition-colors',
+              'u-press px-1.5 py-1.5 narrow:py-2 rounded text-xs font-medium text-center leading-tight transition-colors',
               active
-                ? 'bg-[#7B5CFF] text-white shadow-sm u-pop-in'
-                : 'text-gray-400 hover:text-gray-100 hover:bg-[#202020]',
+                ? 'bg-accent text-white shadow-sm u-pop-in'
+                : 'text-secondary hover:text-primary hover:bg-hover',
             ].join(' ')}
           >
             {opt.label}
@@ -161,10 +171,8 @@ function Segmented({ options, value, onChange, cols }: SegmentedProps): React.JS
 function SectionLabel({ icon: Icon, children }: SectionLabelProps): React.JSX.Element {
   return (
     <div className="flex items-center gap-1.5 mb-2">
-      <Icon size={12} className="text-gray-500 shrink-0" />
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
-        {children}
-      </span>
+      <Icon size={12} className="text-muted shrink-0" />
+      <span className="text-2xs font-semibold uppercase tracking-wider text-muted">{children}</span>
     </div>
   );
 }
@@ -180,12 +188,13 @@ interface SourceRowOptions {
   nested?: boolean;
 }
 
-// Right-hand filters drawer that lives inside the Gallery page. Top section is a
-// mirror of the sidebar Bookmarks list (sources/subfolders); selecting a row
-// routes through onSelectSource (same path as the sidebar) so the app's active
-// source, the sidebar highlight and this drawer all stay in sync — the drawer
-// stays open and the chosen source stays highlighted. Below it are the media /
-// download / AI-tag filters that used to live in the Filtri popover.
+// Right-hand filters drawer that lives inside the Gallery page. Three
+// presentations (audit GAL-5, §4): an inline push panel at ≥1280px, an overlay
+// panel with a backdrop at 900–1279px (so it stops squashing the grid), and a
+// bottom sheet under 900px (a drag handle, a "View" section, the Library source
+// list, the facets, and a sticky [Reset] / [Show N posts] footer). The source
+// mirror shows only on narrow, where the sidebar is a drawer (GAL-6 / O5);
+// Industry and Site type show only for Websites (GAL-6 / O6).
 export default function FilterDrawer<F extends FilterDrawerFilters>({
   open,
   onClose,
@@ -196,8 +205,20 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
   activeSource,
   onSelectSource,
   showAiStatus = false,
+  filteredTotal = 0,
+  viewControls = null,
 }: FilterDrawerProps<F>): React.JSX.Element | null {
   const t: Translate = useT('filterDrawer');
+  const narrow = useMediaQuery(NARROW_QUERY);
+  // Below 1280px (but not narrow) the panel overlays the grid instead of
+  // pushing it; narrow is the bottom sheet; ≥1280px is the inline push panel.
+  const below1280 = useMediaQuery('(max-width: 1279px)');
+  const sheet = narrow;
+  const overlay = below1280 && !narrow;
+  const push = !below1280;
+  // Overlay and sheet are modal dialogs (focus trap, Escape, restore, inert);
+  // the inline push panel is part of the page, so it is not.
+  const dialogRef = useDialog<HTMLElement>({ open: open && (sheet || overlay), onClose });
 
   // Full media-type facet (§1.2 #13): every Shelfy.MediaType, not just the
   // four that fit a single-row Segmented control.
@@ -271,10 +292,28 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
     (contentType ? 1 : 0) +
     (showAiStatus && aiStatus ? 1 : 0);
 
+  // The source mirror duplicates the sidebar tree, so show it only where the
+  // sidebar is hidden — narrow (GAL-6 / O5). Industry and Site type apply only
+  // to websites (GAL-6 / O6): the source is "Websites" or the media type is
+  // Website.
+  const showSourceMirror = narrow;
+  const showWebFacets = activeSource?.value === 'web' || mediaType === 'website';
+
   const isActive = (type: ActiveSource['type'], value: string | number): boolean =>
     activeSource?.type === type && activeSource?.value === value;
 
   const customCollections = collections.filter((c) => !c.platform);
+
+  const resetFilters = (): void =>
+    onFiltersChange({
+      ...filters,
+      mediaType: 'all',
+      downloadStatus: 'all',
+      aiTagged: 'all',
+      category: undefined,
+      contentType: undefined,
+      aiStatus: undefined,
+    });
 
   // One source/subfolder row. `nested` indents it (collections under a platform).
   const sourceRow = (
@@ -287,9 +326,9 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
       aria-current={active ? 'page' : undefined}
       onClick={onClick}
       className={[
-        'u-press relative w-full flex items-center gap-2.5 pr-2 py-1.5 text-sm rounded-md cursor-pointer transition-colors',
+        'u-press relative w-full flex items-center gap-2.5 pr-2 py-2 text-sm rounded-md cursor-pointer transition-colors',
         nested ? 'pl-9' : 'pl-3',
-        active ? 'bg-[#1e1e1e] text-white' : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+        active ? 'bg-hover text-primary' : 'text-secondary hover:bg-secondary hover:text-primary',
       ].join(' ')}
     >
       {active && (
@@ -308,164 +347,131 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
         icon
       )}
       <span className="flex-1 truncate text-left">{label}</span>
-      <span className="text-[11px] text-gray-500 tabular-nums shrink-0">{formatCount(count)}</span>
+      <span className="text-caption text-muted tabular-nums shrink-0">{formatCount(count)}</span>
     </button>
   );
 
-  return (
-    <div
-      // Width-animated track (see .u-drawer-track): opens/closes by sliding instead
-      // of unmounting. `pointer-events-none` + `aria-hidden` keep the hidden panel
-      // out of tab order / hit-testing when collapsed.
-      className={`u-drawer-track shrink-0 h-full relative overflow-hidden${
-        open ? '' : ' pointer-events-none'
-      }`}
-      style={{ width: open ? 280 : 0 }}
-      aria-hidden={!open}
-    >
-      <aside
-        data-testid="filter-drawer"
-        // Fixed width, pinned to the track's right edge so the panel reveals from
-        // there as the track widens (a true right-drawer slide), never squashing.
-        className="absolute top-0 right-0 w-[280px] h-full bg-[#111111] border-l border-[#2e2e2e] flex flex-col overflow-hidden"
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 h-[52px] shrink-0 border-b border-[#2e2e2e]">
-          <span className="text-[13px] font-semibold text-gray-200">{t('title')}</span>
-          <div className="flex items-center gap-1">
-            {activeCount > 0 && (
-              <button
-                data-testid="drawer-reset"
-                onClick={() =>
-                  onFiltersChange({
-                    ...filters,
-                    mediaType: 'all',
-                    downloadStatus: 'all',
-                    aiTagged: 'all',
-                    category: undefined,
-                    contentType: undefined,
-                    aiStatus: undefined,
-                  })
-                }
-                className="u-press flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-200 transition-colors"
-              >
-                <RotateCcw size={12} />
-                {t('reset')}
-              </button>
+  const sourceList = (
+    <div className="flex flex-col gap-0.5">
+      {sourceRow('all', {
+        active: isActive('platform', 'all'),
+        onClick: () => onSelectSource?.({ type: 'platform', value: 'all' }),
+        icon: <Grid3X3 size={15} className="shrink-0 text-secondary" />,
+        label: t('allPosts'),
+        count: total,
+      })}
+
+      {PLATFORM_ROWS.map(({ id, label, Icon }) => {
+        const children = collections.filter((c) => c.platform === id);
+        return (
+          <React.Fragment key={id}>
+            {sourceRow(id, {
+              active: isActive('platform', id),
+              onClick: () => onSelectSource?.({ type: 'platform', value: id }),
+              icon: <Icon size={15} className="shrink-0" />,
+              label,
+              count: byPlatform[id] ?? 0,
+            })}
+            {children.map((c) =>
+              sourceRow(`c${c.id}`, {
+                active: isActive('collection', c.id),
+                onClick: () =>
+                  onSelectSource?.({
+                    type: 'collection',
+                    value: c.id,
+                    label: c.name,
+                    color: c.color,
+                  }),
+                dot: c.color,
+                label: c.name,
+                count: c.count ?? 0,
+                nested: true,
+              }),
             )}
-            <button
-              data-testid="drawer-close"
-              onClick={onClose}
-              title={t('closeTitle')}
-              className="u-press flex items-center justify-center w-6 h-6 rounded text-gray-500 hover:text-white hover:bg-[#1e1e1e] transition-colors"
-            >
-              <X size={15} />
-            </button>
-          </div>
+          </React.Fragment>
+        );
+      })}
+
+      {customCollections.length > 0 && (
+        <div className="mt-1.5 flex flex-col gap-0.5">
+          {customCollections.map((c) =>
+            sourceRow(`c${c.id}`, {
+              active: isActive('collection', c.id),
+              onClick: () =>
+                onSelectSource?.({
+                  type: 'collection',
+                  value: c.id,
+                  label: c.name,
+                  color: c.color,
+                }),
+              dot: c.color,
+              label: c.name,
+              count: c.count ?? 0,
+            }),
+          )}
         </div>
+      )}
+    </div>
+  );
 
-        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent p-3 space-y-4">
-          {/* Sources — mirror of the sidebar Bookmarks list */}
-          <div>
-            <SectionLabel icon={Bookmark}>{t('bookmarks')}</SectionLabel>
-            <div className="flex flex-col gap-0.5">
-              {sourceRow('all', {
-                active: isActive('platform', 'all'),
-                onClick: () => onSelectSource?.({ type: 'platform', value: 'all' }),
-                icon: <Grid3X3 size={15} className="shrink-0 text-gray-400" />,
-                label: t('allPosts'),
-                count: total,
-              })}
+  // The scrollable body: the same sections in every presentation, gated by
+  // viewport (the View section and the source mirror are narrow-only) and by
+  // the active source (the website facets).
+  const body = (
+    <>
+      {/* View controls (narrow only): view mode, sort, density, refresh —
+          moved out of the toolbar so it fits a phone (GAL-1). */}
+      {sheet && viewControls && (
+        <div data-testid="drawer-view">
+          <SectionLabel icon={Eye}>{t('view')}</SectionLabel>
+          {viewControls}
+        </div>
+      )}
 
-              {PLATFORM_ROWS.map(({ id, label, Icon }) => {
-                const children = collections.filter((c) => c.platform === id);
-                return (
-                  <React.Fragment key={id}>
-                    {sourceRow(id, {
-                      active: isActive('platform', id),
-                      onClick: () => onSelectSource?.({ type: 'platform', value: id }),
-                      icon: <Icon size={15} className="shrink-0" />,
-                      label,
-                      count: byPlatform[id] ?? 0,
-                    })}
-                    {children.map((c) =>
-                      sourceRow(`c${c.id}`, {
-                        active: isActive('collection', c.id),
-                        onClick: () =>
-                          onSelectSource?.({
-                            type: 'collection',
-                            value: c.id,
-                            label: c.name,
-                            color: c.color,
-                          }),
-                        dot: c.color,
-                        label: c.name,
-                        count: c.count ?? 0,
-                        nested: true,
-                      }),
-                    )}
-                  </React.Fragment>
-                );
-              })}
+      {/* Sources — a mirror of the sidebar, shown only where the sidebar is a
+          drawer (narrow). Titled "Library", not "Bookmarks" (§3.7). */}
+      {showSourceMirror && (
+        <div data-testid="drawer-sources">
+          <SectionLabel icon={Bookmark}>{t('library')}</SectionLabel>
+          {sourceList}
+        </div>
+      )}
 
-              {customCollections.length > 0 && (
-                <div className="mt-1.5 flex flex-col gap-0.5">
-                  {customCollections.map((c) =>
-                    sourceRow(`c${c.id}`, {
-                      active: isActive('collection', c.id),
-                      onClick: () =>
-                        onSelectSource?.({
-                          type: 'collection',
-                          value: c.id,
-                          label: c.name,
-                          color: c.color,
-                        }),
-                      dot: c.color,
-                      label: c.name,
-                      count: c.count ?? 0,
-                    }),
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+      <div data-testid="drawer-mediatype">
+        <SectionLabel icon={Film}>{t('mediaType')}</SectionLabel>
+        <Segmented
+          cols={4}
+          options={MEDIA_TYPE_OPTIONS}
+          value={mediaType}
+          onChange={(val) => onFiltersChange({ ...filters, mediaType: val })}
+        />
+      </div>
 
-          {/* Media / download / AI-tag filters (moved from the Filtri popover) */}
-          <div data-testid="drawer-mediatype">
-            <SectionLabel icon={Film}>{t('mediaType')}</SectionLabel>
-            <Segmented
-              cols={4}
-              options={MEDIA_TYPE_OPTIONS}
-              value={mediaType}
-              onChange={(val) => onFiltersChange({ ...filters, mediaType: val })}
-            />
-          </div>
+      <div data-testid="drawer-download">
+        <SectionLabel icon={HardDrive}>{t('downloadStatus')}</SectionLabel>
+        <Segmented
+          cols={3}
+          options={DOWNLOAD_OPTIONS}
+          value={downloadStatus}
+          onChange={(val) => onFiltersChange({ ...filters, downloadStatus: val })}
+        />
+      </div>
 
-          <div data-testid="drawer-download">
-            <SectionLabel icon={HardDrive}>{t('downloadStatus')}</SectionLabel>
-            <Segmented
-              cols={3}
-              options={DOWNLOAD_OPTIONS}
-              value={downloadStatus}
-              onChange={(val) => onFiltersChange({ ...filters, downloadStatus: val })}
-            />
-          </div>
+      <div data-testid="drawer-aitags">
+        <SectionLabel icon={Sparkles}>{t('aiTags')}</SectionLabel>
+        <Segmented
+          cols={3}
+          options={AI_TAGS_OPTIONS}
+          value={aiTagged}
+          onChange={(val) => onFiltersChange({ ...filters, aiTagged: val })}
+        />
+      </div>
 
-          <div data-testid="drawer-aitags">
-            <SectionLabel icon={Sparkles}>{t('aiTags')}</SectionLabel>
-            <Segmented
-              cols={3}
-              options={AI_TAGS_OPTIONS}
-              value={aiTagged}
-              onChange={(val) => onFiltersChange({ ...filters, aiTagged: val })}
-            />
-          </div>
-
-          {/* Category / content type (§1.2 #13): today only web references
-            carry either (electron/analyzer.ts's web catalog), so these only
-            ever narrow to websites — correct until P3 generalizes the
-            catalog schema to every platform. Static lists: see
-            src/lib/facetOptions.ts. */}
+      {/* Industry / Site type (GAL-6 / O6): only for Websites — today only web
+          references carry either (electron/analyzer.ts's web catalog). Static
+          lists: see src/lib/facetOptions.ts. */}
+      {showWebFacets && (
+        <>
           <div data-testid="drawer-category">
             <SectionLabel icon={Tag}>{t('category')}</SectionLabel>
             <FacetSelect
@@ -489,23 +495,234 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
               onChange={(val) => onFiltersChange({ ...filters, contentType: val || undefined })}
             />
           </div>
+        </>
+      )}
 
-          {/* AI status (web only, see showAiStatus's doc comment above). */}
-          {showAiStatus && (
-            <div data-testid="drawer-aistatus">
-              <SectionLabel icon={Activity}>{t('aiStatus')}</SectionLabel>
-              <FacetSelect
-                testId="drawer-aistatus-select"
-                ariaLabel={t('aiStatus')}
-                allLabel={t('aiStatusAll')}
-                value={aiStatus}
-                options={AI_STATUS_OPTIONS}
-                onChange={(val) => onFiltersChange({ ...filters, aiStatus: val || undefined })}
-              />
-            </div>
-          )}
+      {/* AI status (web only, see showAiStatus's doc comment above). */}
+      {showAiStatus && (
+        <div data-testid="drawer-aistatus">
+          <SectionLabel icon={Activity}>{t('aiStatus')}</SectionLabel>
+          <FacetSelect
+            testId="drawer-aistatus-select"
+            ariaLabel={t('aiStatus')}
+            allLabel={t('aiStatusAll')}
+            value={aiStatus}
+            options={AI_STATUS_OPTIONS}
+            onChange={(val) => onFiltersChange({ ...filters, aiStatus: val || undefined })}
+          />
+        </div>
+      )}
+    </>
+  );
+
+  // The header bar shared by the push and overlay presentations: title, the
+  // reset shortcut (when any facet is set) and the close button.
+  const headerBar = (
+    <div className="flex items-center justify-between px-4 h-[52px] shrink-0 border-b border-subtle">
+      <span className="text-sm font-semibold text-primary">{t('title')}</span>
+      <div className="flex items-center gap-1">
+        {activeCount > 0 && (
+          <button
+            data-testid="drawer-reset"
+            onClick={resetFilters}
+            className="u-press flex items-center gap-1 text-caption text-muted hover:text-primary transition-colors"
+          >
+            <RotateCcw size={12} />
+            {t('reset')}
+          </button>
+        )}
+        <button
+          data-testid="drawer-close"
+          onClick={onClose}
+          title={t('closeTitle')}
+          aria-label={t('closeTitle')}
+          className="u-press flex items-center justify-center w-8 h-8 rounded-md text-muted hover:text-primary hover:bg-hover transition-colors"
+        >
+          <X size={16} />
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── Inline push panel (≥1280px): the width-animated track, unchanged ──────
+  if (push) {
+    return (
+      <div
+        className={`u-drawer-track shrink-0 h-full relative overflow-hidden${
+          open ? '' : ' pointer-events-none'
+        }`}
+        style={{ width: open ? 280 : 0 }}
+        aria-hidden={!open}
+      >
+        <aside
+          data-testid="filter-drawer"
+          className="absolute top-0 right-0 w-[280px] h-full bg-sidebar border-l border-subtle flex flex-col overflow-hidden"
+        >
+          {headerBar}
+          <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent p-3 space-y-4">
+            {body}
+          </div>
+        </aside>
+      </div>
+    );
+  }
+
+  if (!open) return null;
+
+  // ── Overlay panel (900–1279px): a right panel over the grid + a backdrop ──
+  if (overlay) {
+    return (
+      <div
+        className="fixed inset-0 z-drawer"
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onClose();
+        }}
+      >
+        <div
+          data-testid="filter-drawer-backdrop"
+          aria-hidden="true"
+          className="u-backdrop-in pointer-events-none absolute inset-0 bg-black/50"
+        />
+        <aside
+          ref={dialogRef as React.RefObject<HTMLElement>}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('title')}
+          data-testid="filter-drawer"
+          className="u-fade-in absolute top-0 right-0 w-[min(360px,85vw)] h-full bg-sidebar border-l border-strong shadow-2xl flex flex-col overflow-hidden"
+        >
+          {headerBar}
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent p-3 space-y-4">
+            {body}
+          </div>
+        </aside>
+      </div>
+    );
+  }
+
+  // ── Bottom sheet (<900px): drag handle, scroll, sticky footer ─────────────
+  return (
+    <div
+      className="fixed inset-0 z-drawer"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        data-testid="filter-drawer-backdrop"
+        aria-hidden="true"
+        className="u-backdrop-in pointer-events-none absolute inset-0 bg-black/50"
+      />
+      <aside
+        ref={dialogRef as React.RefObject<HTMLElement>}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('title')}
+        data-testid="filter-drawer"
+        className="u-sheet u-sheet-in absolute inset-x-0 bottom-0 flex max-h-[85dvh] flex-col rounded-t-xl border-t border-strong bg-elevated shadow-2xl"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        <SheetHandle onClose={onClose} label={t('closeTitle')} />
+        <div className="flex items-center justify-between px-4 pb-1 shrink-0">
+          <span className="text-sm font-semibold text-primary">{t('title')}</span>
+          <button
+            data-testid="drawer-close"
+            onClick={onClose}
+            title={t('closeTitle')}
+            aria-label={t('closeTitle')}
+            className="u-press flex items-center justify-center w-11 h-11 -mr-2 rounded-md text-muted hover:text-primary hover:bg-hover transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pt-2 pb-4 space-y-5">
+          {body}
+        </div>
+        <div className="shrink-0 flex items-center gap-2 border-t border-subtle px-4 py-3">
+          <button
+            data-testid="drawer-reset"
+            onClick={resetFilters}
+            disabled={activeCount === 0}
+            className="u-press h-11 px-4 rounded-md border border-strong text-sm font-medium text-primary hover:bg-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {t('reset')}
+          </button>
+          <button
+            data-testid="drawer-apply"
+            onClick={onClose}
+            className="u-press flex-1 h-11 px-4 rounded-md bg-accent-fill text-sm font-medium text-white hover:bg-accent-hover transition-colors"
+          >
+            {t('showPosts', { n: filteredTotal.toLocaleString(), count: filteredTotal })}
+          </button>
         </div>
       </aside>
     </div>
+  );
+}
+
+// The sheet's drag handle: tap or drag down past 80px to close (mirrors
+// Popover's sheet), writing the finger's offset straight onto the panel.
+const SHEET_DISMISS_PX = 80;
+function SheetHandle({
+  onClose,
+  label,
+}: {
+  onClose: () => void;
+  label: string;
+}): React.JSX.Element {
+  const drag = React.useRef<{ id: number; y: number; dy: number } | null>(null);
+  const dragged = React.useRef(false);
+  const panelOf = (el: HTMLElement): HTMLElement | null =>
+    el.closest<HTMLElement>('[role="dialog"]');
+  const settle = (el: HTMLElement): void => {
+    const panel = panelOf(el);
+    if (panel) {
+      panel.style.transition = 'transform var(--dur-2) var(--ease-out)';
+      panel.style.transform = '';
+    }
+  };
+  return (
+    <button
+      type="button"
+      data-testid="filter-sheet-handle"
+      aria-label={label}
+      className="flex h-7 w-full shrink-0 cursor-grab touch-none items-center justify-center"
+      onPointerDown={(e) => {
+        drag.current = { id: e.pointerId, y: e.clientY, dy: 0 };
+        dragged.current = false;
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        if (!d || d.id !== e.pointerId) return;
+        d.dy = Math.max(0, e.clientY - d.y);
+        if (d.dy > 4) dragged.current = true;
+        const panel = panelOf(e.currentTarget);
+        if (panel) {
+          panel.style.transition = 'none';
+          panel.style.transform = d.dy > 0 ? `translateY(${d.dy}px)` : '';
+        }
+      }}
+      onPointerUp={(e) => {
+        const d = drag.current;
+        drag.current = null;
+        if (!d || d.id !== e.pointerId) return;
+        if (d.dy > SHEET_DISMISS_PX) onClose();
+        else settle(e.currentTarget);
+      }}
+      onPointerCancel={(e) => {
+        drag.current = null;
+        settle(e.currentTarget);
+      }}
+      onClick={() => {
+        if (dragged.current) {
+          dragged.current = false;
+          return;
+        }
+        onClose();
+      }}
+    >
+      <span aria-hidden="true" className="h-1 w-9 rounded-full bg-[#4a4a4a]" />
+    </button>
   );
 }

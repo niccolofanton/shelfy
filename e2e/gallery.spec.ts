@@ -156,7 +156,9 @@ test.describe('Gallery – post grid and filters', () => {
     await input.fill('zzznomatchzzz');
     await page.waitForTimeout(600);
     await expect(page.locator('[data-testid="empty-state"]')).toBeVisible();
-    await expect(page.getByText('No posts found')).toBeVisible();
+    // GAL-2: the empty state is now situation-specific — a search with no hits
+    // names the query instead of the generic "No posts found".
+    await expect(page.getByText(/No posts match/)).toBeVisible();
     await expect(page.locator('[data-testid="post-card"]')).toHaveCount(0);
   });
 

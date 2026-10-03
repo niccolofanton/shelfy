@@ -176,7 +176,7 @@ describe('Gallery on the web client', () => {
       expect.objectContaining({ platform: undefined, sortOrder: 'newest' }),
       expect.objectContaining({ limit: 50, cursor: null }),
     );
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'lamp' } });
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'lamp' } });
     await waitFor(
       () =>
         expect(client.listPosts).toHaveBeenLastCalledWith(

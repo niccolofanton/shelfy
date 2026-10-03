@@ -33,6 +33,11 @@ export default {
     selectTitle: 'Seleziona più post per azioni in blocco',
     // Suggested filter tags
     suggestedFilters: 'Filtri suggeriti',
+    // Density control (filter sheet's View section, narrow)
+    columns: 'Colonne',
+    // One-time selection hints (GAL-12)
+    tipRange: 'Shift-clic per selezionare un intervallo',
+    tipLongPress: 'Suggerimento: tieni premuto un post per selezionarlo',
     // Toolbar (select mode)
     selectedCount: '{n} selezionati',
     actions: 'Azioni',
@@ -47,10 +52,10 @@ export default {
     // Bulk actions menu — primary
     analyze: 'Analizza',
     downloadOnlyMissingHint: 'Scarica solo gli elementi non ancora scaricati',
-    // Assign to source
-    addToSource: 'Aggiungi a source',
-    noSources: 'Nessuna source. Creane una qui sotto.',
-    createNewSource: 'Crea nuova source',
+    // Assign to a folder
+    addToSource: 'Aggiungi a cartella',
+    noSources: 'Nessuna cartella. Creane una qui sotto.',
+    createNewSource: 'Nuova cartella',
     // Remove from the current folder (only while viewing one, §1.2 #12)
     removeFromSource: 'Rimuovi da questa cartella',
     // Cleanup + destructive (two-step)
@@ -64,7 +69,7 @@ export default {
     // P1-14: the web's delete moves posts to the trash (Cestino), undoable.
     deleteHintTrash: 'Sposta i post nel Cestino. Puoi annullare o ripristinarli da lì.',
     // Inline feedback (toasts)
-    fbAssignError: 'Errore aggiunta alla source',
+    fbAssignError: 'Errore aggiunta alla cartella',
     fbRemovedFromSource: '{n} rimossi dalla cartella',
     fbRemoveFromSourceError: 'Errore nella rimozione dalla cartella',
     fbModelFirst: 'Scarica prima un modello (Impostazioni)',
@@ -99,8 +104,18 @@ export default {
     // pendingJob doc comment)
     jobRunning: 'Elaborazione in corso…',
     jobProgress: 'Elaborazione in corso… {pct}%',
-    // Empty state
-    emptyTitle: 'Nessun post trovato.',
+    // Empty states — one per situation (GAL-2)
+    emptySearchTitle: 'Nessun post per “{q}”',
+    emptySearchClear: 'Cancella ricerca',
+    emptyFiltersTitle: 'Nessun post con questi filtri',
+    emptyFiltersReset: 'Reimposta i filtri',
+    emptyFolderTitle: 'Questa cartella è vuota',
+    emptyFolderBody: 'Seleziona dei post nella libreria, poi scegli Aggiungi a cartella.',
+    // Empty library — web (extension/share) vs desktop (import/capture, kept)
+    emptyLibraryTitle: 'La libreria è vuota',
+    emptyLibraryWebBody:
+      'Salva post da Instagram, X e Pinterest con l’estensione del browser o il foglio di condivisione.',
+    emptyLibrarySetup: 'Configura l’estensione',
     emptyHint: 'Importa un file JSON o cattura post dalla scheda Browser.',
   },
   en: {
@@ -117,6 +132,9 @@ export default {
     select: 'Select',
     selectTitle: 'Select multiple posts for bulk actions',
     suggestedFilters: 'Suggested filters',
+    columns: 'Columns',
+    tipRange: 'Shift-click to select a range',
+    tipLongPress: 'Tip: long-press a post to select it',
     selectedCount: '{n} selected',
     actions: 'Actions',
     actionsTitle: 'Bulk actions',
@@ -128,9 +146,9 @@ export default {
     deselectAllTitle: 'Clear the current selection',
     analyze: 'Analyze',
     downloadOnlyMissingHint: 'Only downloads items not yet downloaded',
-    addToSource: 'Add to source',
-    noSources: 'No source yet. Create one below.',
-    createNewSource: 'Create new source',
+    addToSource: 'Add to folder',
+    noSources: 'No folders yet. Create one below.',
+    createNewSource: 'New folder',
     // Remove from the current folder (only while viewing one, §1.2 #12)
     removeFromSource: 'Remove from this folder',
     clearDescriptions: 'Clear AI descriptions',
@@ -143,7 +161,7 @@ export default {
       'Removes the posts from the library and the downloaded files. This action is irreversible.',
     // P1-14: the web's delete moves posts to the trash, undoable.
     deleteHintTrash: 'Moves the posts to the Trash. You can undo, or restore them from there.',
-    fbAssignError: 'Error adding to source',
+    fbAssignError: 'Error adding to folder',
     fbRemovedFromSource: '{n} removed from the folder',
     fbRemoveFromSourceError: 'Error removing from the folder',
     fbModelFirst: 'Download a model first (Settings)',
@@ -178,7 +196,16 @@ export default {
     // pendingJob doc comment)
     jobRunning: 'Processing…',
     jobProgress: 'Processing… {pct}%',
-    emptyTitle: 'No posts found.',
+    emptySearchTitle: 'No posts match “{q}”',
+    emptySearchClear: 'Clear search',
+    emptyFiltersTitle: 'No posts match these filters',
+    emptyFiltersReset: 'Reset filters',
+    emptyFolderTitle: 'This folder is empty',
+    emptyFolderBody: 'Select posts in the library, then choose Add to folder.',
+    emptyLibraryTitle: 'Your library is empty',
+    emptyLibraryWebBody:
+      'Save posts from Instagram, X and Pinterest with the browser extension or the Share sheet.',
+    emptyLibrarySetup: 'Set up the extension',
     emptyHint: 'Import a JSON file or capture posts via the Browser tab.',
   },
 } satisfies LangMessages;

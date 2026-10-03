@@ -4,7 +4,7 @@
 // in a browser.
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import React from 'react';
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act, cleanup } from '@testing-library/react';
 import App from '@ui/App';
 import { ShelfyProvider } from '@ui/api/ShelfyProvider';
 import type { ShelfyClient, ShelfyEvent } from '@ui/api/ShelfyClient';
@@ -185,9 +185,12 @@ describe('deep links', () => {
   });
 });
 
-// Re-renders the app at `path` with a client the caller adjusts.
+// Re-renders the app at `path` with a client the caller adjusts. Unmounts the
+// previous tree with RTL cleanup() (not `body.innerHTML = ''`): the latter
+// orphans React portals mounted on <body> (the shared ToastHost), so the next
+// commit/unmount throws "node to be removed is not a child".
 function cleanupAndRender(path: string, adjust: (client: MockClient) => void): void {
-  document.body.innerHTML = '';
+  cleanup();
   const client = webClient();
   adjust(client);
   renderAt(path, client);
