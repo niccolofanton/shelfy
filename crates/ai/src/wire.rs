@@ -9,7 +9,9 @@ use futures_util::StreamExt as _;
 use http::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
 use http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
+use serde::Serialize;
 use serde_json::Value;
+use serde_json::value::RawValue;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -32,6 +34,57 @@ const MAX_ERROR_BYTES: usize = 64 << 10;
 pub(crate) fn endpoint(base: &Url, suffix: &str) -> Result<Url, AiError> {
     let joined = format!("{}{suffix}", base.as_str().trim_end_matches('/'));
     Url::parse(&joined).map_err(|_| AiError::bad_request("the endpoint URL is not valid"))
+}
+
+/// A request body: an object whose members are written as JSON in key order
+/// (sorted, as a [`serde_json::Map`] would), each one already serialized, so a
+/// member can carry text whose own key order must survive (a response schema).
+#[derive(Default)]
+pub(crate) struct Body(std::collections::BTreeMap<String, Box<RawValue>>);
+
+impl Body {
+    /// Sets `name` to `value`.
+    pub(crate) fn insert(&mut self, name: &str, value: &(impl Serialize + ?Sized)) {
+        let raw = serde_json::value::to_raw_value(value).expect("a JSON value serializes");
+        self.0.insert(name.to_owned(), raw);
+    }
+
+    /// Sets `name` to `json`, which must be JSON.
+    pub(crate) fn insert_json(&mut self, name: &str, json: String) {
+        let raw = RawValue::from_string(json).expect("the caller built JSON");
+        self.0.insert(name.to_owned(), raw);
+    }
+
+    /// Sets `name` to `value` unless it is set.
+    pub(crate) fn insert_if_absent(&mut self, name: &str, value: &Value) {
+        if !self.0.contains_key(name) {
+            self.insert(name, value);
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The JSON text of the body.
+    pub(crate) fn into_json(self) -> String {
+        serde_json::to_string(&self.0).expect("a JSON object serializes")
+    }
+
+    /// The JSON text of the body, as bytes.
+    pub(crate) fn into_bytes(self) -> Bytes {
+        Bytes::from(self.into_json())
+    }
+}
+
+/// An object from members that are JSON text already, in the order given
+/// (callers keep it sorted, as a [`serde_json::Map`] would).
+pub(crate) fn object(members: &[(&str, String)]) -> String {
+    let members: Vec<String> = members
+        .iter()
+        .map(|(name, json)| format!("{}:{json}", Value::from(*name)))
+        .collect();
+    format!("{{{}}}", members.join(","))
 }
 
 /// Headers of a JSON exchange.

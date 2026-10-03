@@ -14,7 +14,7 @@ use bytes::Bytes;
 use http::HeaderMap;
 use http::header::AUTHORIZATION;
 use secrecy::SecretString;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::error::{AiError, RetryHint};
 use crate::multipart::Form;
@@ -24,7 +24,7 @@ use crate::response::{Embeddings, FinishReason, ModelInfo, ServerTimings, Usage}
 use crate::sse::SseEvent;
 use crate::structured::{StructuredMode, with_json_instruction};
 use crate::turn::{Delta, StreamDecoder, Turn, content_text, count, event_json};
-use crate::wire::{self, from_error_value};
+use crate::wire::{self, Body, from_error_value, object};
 
 /// The headers of a call, with the key as a Bearer token when there is one.
 pub(crate) fn headers(key: Option<&SecretString>, stream: bool) -> Result<HeaderMap, AiError> {
@@ -44,8 +44,8 @@ pub(crate) fn chat_body(
     mode: Option<StructuredMode>,
     stream: bool,
 ) -> Bytes {
-    let mut body = Map::new();
-    body.insert("model".into(), request.model.clone().into());
+    let mut body = Body::default();
+    body.insert("model", &request.model);
     let schema = match &request.output {
         Output::Json(output) => Some(output),
         Output::Text => None,
@@ -53,7 +53,7 @@ pub(crate) fn chat_body(
     let system = match (mode, schema) {
         (Some(StructuredMode::JsonObject), Some(output)) => Some(with_json_instruction(
             request.system.as_deref(),
-            output.schema(),
+            &output.schema_text(),
         )),
         _ => request.system.clone(),
     };
@@ -62,39 +62,42 @@ pub(crate) fn chat_body(
         messages.push(json!({"role": "system", "content": system}));
     }
     messages.extend(request.messages.iter().chain(extra).map(message));
-    body.insert("messages".into(), messages.into());
+    body.insert("messages", &messages);
     if let Some(temperature) = request.temperature.filter(|_| config.send_temperature) {
-        body.insert("temperature".into(), temperature.into());
+        body.insert("temperature", &temperature);
     }
     if let Some(max_tokens) = request.max_tokens {
-        body.insert(config.max_tokens_field.as_str().into(), max_tokens.into());
+        body.insert(config.max_tokens_field.as_str(), &max_tokens);
     }
     if let Some(effort) = request.reasoning_effort {
-        body.insert("reasoning_effort".into(), effort.as_str().into());
+        body.insert("reasoning_effort", effort.as_str());
     }
     match (mode, schema) {
         (Some(StructuredMode::JsonSchema), Some(output)) => {
-            body.insert(
-                "response_format".into(),
-                json!({
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": output.name(),
-                        "schema": output.schema(),
-                        "strict": output.is_strict(),
-                    }
-                }),
+            // Members sorted by key, as a `Map` would write them, but the
+            // schema's own text: its keys keep the file's order.
+            let json_schema = object(&[
+                ("name", json!(output.name()).to_string()),
+                ("schema", output.schema_text()),
+                ("strict", json!(output.is_strict()).to_string()),
+            ]);
+            body.insert_json(
+                "response_format",
+                object(&[
+                    ("json_schema", json_schema),
+                    ("type", json!("json_schema").to_string()),
+                ]),
             );
         }
         (Some(StructuredMode::JsonObject), Some(_)) => {
-            body.insert("response_format".into(), json!({"type": "json_object"}));
+            body.insert("response_format", &json!({"type": "json_object"}));
         }
         _ => {}
     }
     if stream {
-        body.insert("stream".into(), true.into());
+        body.insert("stream", &true);
         if config.stream_usage {
-            body.insert("stream_options".into(), json!({"include_usage": true}));
+            body.insert("stream_options", &json!({"include_usage": true}));
         }
     }
     // The request's extras first: they win over the provider's.
@@ -103,10 +106,10 @@ pub(crate) fn chat_body(
         .flatten()
     {
         for (name, value) in extra_body {
-            body.entry(name.clone()).or_insert_with(|| value.clone());
+            body.insert_if_absent(name, value);
         }
     }
-    Bytes::from(Value::Object(body).to_string())
+    body.into_bytes()
 }
 
 /// One message: a string when it is text only (every server takes that),
@@ -458,6 +461,137 @@ pub(crate) fn parse_models(body: &[u8]) -> Result<Vec<ModelInfo>, AiError> {
 mod tests {
     use super::*;
     use crate::ErrorKind;
+    use crate::request::JsonOutput;
+    use crate::structured::JSON_INSTRUCTION;
+
+    /// The schema texts of `shared/ai`, as the desktop writes them
+    /// (`JSON.stringify` of the parsed file: compact, keys in file order).
+    fn shared_schemas() -> Vec<(String, String)> {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../shared/ai");
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+            if let Some(task) = name.strip_suffix(".schema.json") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                found.push((task.to_owned(), compact(&text)));
+            }
+        }
+        assert!(found.len() >= 6, "the shared schemas were found");
+        found.sort();
+        found
+    }
+
+    fn compact(text: &str) -> String {
+        let (mut out, mut in_string, mut escaped) = (String::new(), false, false);
+        for c in text.chars() {
+            if in_string {
+                out.push(c);
+                match (escaped, c) {
+                    (true, _) => escaped = false,
+                    (false, '\\') => escaped = true,
+                    (false, '"') => in_string = false,
+                    _ => {}
+                }
+            } else if c == '"' {
+                in_string = true;
+                out.push(c);
+            } else if !c.is_whitespace() {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn output_of(name: &str, text: &str) -> JsonOutput {
+        let raw = serde_json::value::RawValue::from_string(text.to_owned()).unwrap();
+        JsonOutput::from_raw(name.replace('_', "-"), &raw).unwrap()
+    }
+
+    fn request_with(output: JsonOutput) -> ChatRequest {
+        ChatRequest::new("m", vec![Message::user_text("a lamp")])
+            .with_system("Catalog the post.")
+            .with_json(output)
+    }
+
+    fn config() -> ProviderConfig {
+        ProviderConfig::new(
+            crate::ProviderKind::OpenAiCompatible,
+            crate::Source::Operator,
+            "http://localhost:1/v1".parse().unwrap(),
+        )
+    }
+
+    fn body_text(output: JsonOutput, mode: StructuredMode, stream: bool) -> String {
+        let bytes = chat_body(&config(), &request_with(output), &[], Some(mode), stream);
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[test]
+    fn a_json_schema_body_carries_the_schema_in_the_files_order() {
+        for (task, schema) in shared_schemas() {
+            let text = body_text(output_of(&task, &schema), StructuredMode::JsonSchema, false);
+            let name = task.replace('_', "-");
+            let expected = format!(
+                r#""response_format":{{"json_schema":{{"name":"{name}","schema":{schema},"strict":true}},"type":"json_schema"}}"#
+            );
+            assert!(text.contains(&expected), "{task}: {text}");
+            // The body is still one JSON object.
+            serde_json::from_str::<Value>(&text).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_catalog_schema_is_not_sorted_on_the_wire() {
+        let (_, schema) = shared_schemas()
+            .into_iter()
+            .find(|(task, _)| task == "catalog")
+            .unwrap();
+        let sorted = serde_json::from_str::<Value>(&schema).unwrap().to_string();
+        assert_ne!(schema, sorted, "the file's order is not the sorted one");
+        let text = body_text(
+            output_of("catalog", &schema),
+            StructuredMode::JsonSchema,
+            false,
+        );
+        assert!(text.contains(&schema));
+        assert!(!text.contains(&sorted));
+    }
+
+    #[test]
+    fn json_object_mode_puts_the_schema_in_the_prompt_in_the_files_order() {
+        for (task, schema) in shared_schemas() {
+            let text = body_text(output_of(&task, &schema), StructuredMode::JsonObject, false);
+            let body: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(
+                body["messages"][0]["content"],
+                format!("Catalog the post.\n\n{JSON_INSTRUCTION}\n{schema}"),
+                "{task}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_other_members_keep_their_sorted_order() {
+        let output = JsonOutput::new("t", json!({"type": "object"})).unwrap();
+        let request = request_with(output).with_max_tokens(7);
+        let bytes = chat_body(
+            &config(),
+            &request,
+            &[],
+            Some(StructuredMode::JsonSchema),
+            true,
+        );
+        assert_eq!(
+            String::from_utf8(bytes.to_vec()).unwrap(),
+            concat!(
+                r#"{"max_tokens":7,"messages":[{"content":"Catalog the post.","role":"system"},"#,
+                r#"{"content":"a lamp","role":"user"}],"model":"m","#,
+                r#""response_format":{"json_schema":{"name":"t","schema":{"type":"object"},"strict":true},"#,
+                r#""type":"json_schema"},"stream":true,"stream_options":{"include_usage":true}}"#
+            )
+        );
+    }
 
     #[test]
     fn non_streamed_answers_carry_usage_and_llama_timings() {

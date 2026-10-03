@@ -8,6 +8,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use bytes::Bytes;
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 
 use crate::error::AiError;
@@ -284,6 +285,8 @@ pub enum Output {
 pub struct JsonOutput {
     name: String,
     schema: Arc<Value>,
+    /// The schema's text in its own key order, when it was given as such.
+    raw: Option<Arc<RawValue>>,
     validator: Arc<jsonschema::Validator>,
     strict: bool,
 }
@@ -319,9 +322,26 @@ impl JsonOutput {
         Ok(Self {
             name,
             schema: Arc::new(schema),
+            raw: None,
             validator: Arc::new(validator),
             strict: true,
         })
+    }
+
+    /// Like [`JsonOutput::new`], for a schema given as JSON text. The request
+    /// body carries that text as it is, keys in the file's order: a provider
+    /// fills the answer's fields in the schema's order, and a parsed
+    /// [`Value`] sorts them.
+    ///
+    /// # Errors
+    ///
+    /// As [`JsonOutput::new`].
+    pub fn from_raw(name: impl Into<String>, raw: &RawValue) -> Result<Self, AiError> {
+        let schema = serde_json::from_str(raw.get())
+            .map_err(|_| AiError::bad_request("the JSON schema is not JSON"))?;
+        let mut output = Self::new(name, schema)?;
+        output.raw = Some(Arc::from(raw.to_owned()));
+        Ok(output)
     }
 
     /// Non-strict: OpenAI-compatible servers get `strict: false`, Anthropic
@@ -342,6 +362,14 @@ impl JsonOutput {
     #[must_use]
     pub fn schema(&self) -> &Value {
         &self.schema
+    }
+
+    /// The schema as it goes on the wire: the given text when there is one,
+    /// else the parsed schema (keys sorted).
+    pub(crate) fn schema_text(&self) -> String {
+        self.raw
+            .as_ref()
+            .map_or_else(|| self.schema.to_string(), |raw| raw.get().to_owned())
     }
 
     /// Whether the provider is asked to enforce it strictly.

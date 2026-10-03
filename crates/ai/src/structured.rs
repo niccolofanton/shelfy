@@ -39,7 +39,7 @@ pub enum StructuredMode {
 pub const JSON_INSTRUCTION: &str = "Answer with one JSON object that matches this JSON schema:";
 
 /// `system` with the JSON instruction and `schema` appended.
-pub(crate) fn with_json_instruction(system: Option<&str>, schema: &Value) -> String {
+pub(crate) fn with_json_instruction(system: Option<&str>, schema: &str) -> String {
     let instruction = format!("{JSON_INSTRUCTION}\n{schema}");
     match system {
         Some(system) if !system.is_empty() => format!("{system}\n\n{instruction}"),
@@ -189,11 +189,11 @@ mod tests {
     fn the_instruction_appends_the_compact_schema() {
         let schema = json!({"type": "object"});
         assert_eq!(
-            with_json_instruction(Some("Catalog the post."), &schema),
+            with_json_instruction(Some("Catalog the post."), &schema.to_string()),
             format!("Catalog the post.\n\n{JSON_INSTRUCTION}\n{{\"type\":\"object\"}}")
         );
         assert_eq!(
-            with_json_instruction(None, &schema),
+            with_json_instruction(None, &schema.to_string()),
             format!("{JSON_INSTRUCTION}\n{{\"type\":\"object\"}}")
         );
     }
