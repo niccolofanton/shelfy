@@ -59,6 +59,8 @@ hyper-util = { workspace = true, optional = true }
 proptest.workspace = true
 # The crate itself with the stub, so that `cargo test` reaches it without feature flags.
 shelfy-ai = { path = ".", features = ["stub"] }
+# Captures the crate's logs in the planted-key test.
+tracing-subscriber.workspace = true
 
 [[bin]]
 name = "shelfy-ai-stub"

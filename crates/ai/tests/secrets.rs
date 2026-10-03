@@ -1,16 +1,17 @@
 //! A planted key appears in no `Debug` or `Display` of requests, endpoints,
-//! providers or errors, and in no line of the stub's request log (plan §7.1,
-//! P3 lane rule 6).
+//! providers or errors, in no log line, and in no line of the stub's request
+//! log (plan §7.1, P3 lane rule 6).
 
 mod support;
 
+use std::io;
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use http::{HeaderMap, StatusCode};
 use secrecy::SecretString;
-use shelfy_ai::stub::StubConfig;
+use shelfy_ai::stub::{Fault, FaultRule, StubConfig};
 use shelfy_ai::transport::{HttpRequest, HttpResponse, Transport, TransportError};
 use shelfy_ai::{
     ChatRequest, EgressPolicy, ErrorKind, Message, Origin, Provider, ProviderConfig, ProviderKind,
@@ -20,6 +21,89 @@ use support::*;
 use url::Url;
 
 const PLANTED: &str = "sk-planted-SECRET-6f1e2d3c4b5a99";
+
+/// Collects every log line.
+#[derive(Clone, Default)]
+struct Capture(Arc<Mutex<Vec<u8>>>);
+
+impl io::Write for Capture {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Capture {
+    type Writer = Capture;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+#[tokio::test]
+async fn the_logs_never_hold_the_key() {
+    let capture = Capture::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_ansi(false)
+        .with_writer(capture.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let stub = stub_with(StubConfig {
+        api_key: Some(SecretString::from(PLANTED)),
+        ..StubConfig::default()
+    })
+    .await;
+    let provider = support::provider(
+        &stub,
+        ProviderConfig::new(
+            ProviderKind::OpenAiCompatible,
+            Source::Operator,
+            stub.openai_base(),
+        )
+        .with_key(SecretString::from(PLANTED)),
+    );
+    // A retry, a broken stream with its fallback, and a repair: every path
+    // that logs.
+    stub.inject(FaultRule::new(Fault::ServerError));
+    stub.inject(FaultRule::new(Fault::MalformedJson));
+    stub.inject(FaultRule::new(Fault::NonConformingJson));
+    let request = ChatRequest::new("m", vec![Message::user_text("x")])
+        .with_json(catalog())
+        .streamed(true);
+    let answer = provider.chat(&request, &options()).await.unwrap();
+    assert!(answer.stream_fallback && answer.repaired);
+
+    // A 401 that echoes the key.
+    let echoed = format!(r#"{{"error":{{"message":"bad key {PLANTED}"}}}}"#);
+    let echo = provider_on(
+        Echo::new(401, "application/json", &echoed),
+        config(
+            ProviderKind::OpenAiCompatible,
+            "http://100.94.10.20:8080/v1",
+        ),
+    );
+    let error = echo
+        .chat(
+            &ChatRequest::new("m", vec![Message::user_text("x")]),
+            &options(),
+        )
+        .await
+        .unwrap_err();
+    tracing::info!(error = %error, debug = ?error, "the caller logs the error");
+
+    let logs = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
+    assert!(logs.contains("retrying an AI call"), "{logs}");
+    assert!(logs.contains("retrying without streaming"), "{logs}");
+    assert!(logs.contains("repairing a JSON answer"), "{logs}");
+    assert_clean(&logs);
+}
 
 /// Records each request's `Debug` and answers with a fixed status and body.
 struct Echo {
