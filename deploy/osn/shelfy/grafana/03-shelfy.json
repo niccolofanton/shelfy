@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Shelfy web (shelfy-api on refs.niccolofanton.dev): HTTP, jobs, storage, containers and backups (plan §3.6). Source: the Shelfy repo, deploy/osn/shelfy/grafana/03-shelfy.json.",
+  "description": "Shelfy web (shelfy-api on refs.niccolofanton.dev): HTTP, jobs, storage, containers, backups, archive and ingest (plan §3.6). Source: the Shelfy repo, deploy/osn/shelfy/grafana/03-shelfy.json.",
   "editable": false,
   "graphTooltip": 2,
   "links": [],
@@ -1909,6 +1909,324 @@
           "legendFormat": "restore drill",
           "instant": true,
           "range": false
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "type": "row",
+      "title": "Archive and ingest",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 83
+      },
+      "panels": []
+    },
+    {
+      "id": 37,
+      "type": "timeseries",
+      "title": "CDN fetches by outcome",
+      "description": "Archive fetches per second by CDN host group and outcome (shelfy_media_fetch_total): stored, expired (no request; the extension refreshes), gone, blocked (counts toward the breaker), transient, rejected, breaker_open (nothing sent).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 84
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum by (host_group, outcome) (rate(shelfy_media_fetch_total[5m]))",
+          "legendFormat": "{{host_group}} {{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 38,
+      "type": "timeseries",
+      "title": "Breakers",
+      "description": "1 while a host group's breaker is open or half-open (shelfy_breaker_open): the archive hands that platform to the extension until a probe passes. The breaker alert reads the same series.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 84
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false,
+            "lineInterpolation": "stepAfter"
+          },
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "max by (host_group) (shelfy_breaker_open)",
+          "legendFormat": "{{host_group}}"
+        }
+      ]
+    },
+    {
+      "id": 39,
+      "type": "timeseries",
+      "title": "Archive backlog",
+      "description": "Items left to the server's archive per platform (shelfy_archive_backlog), as the drains last counted them: due or backed off, failed ones excluded.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 92
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum by (platform) (shelfy_archive_backlog)",
+          "legendFormat": "{{platform}}"
+        }
+      ]
+    },
+    {
+      "id": 40,
+      "type": "stat",
+      "title": "Covers archived within 15 min",
+      "description": "Share of the covers stored within 900 s of their post's insert in the selected range, and the p95 (shelfy_archive_cover_latency_seconds; posts inserted in the last 7 days only). P2 exit: at least 98 % on daily syncs.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 92
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.98
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum(increase(shelfy_archive_cover_latency_seconds_bucket{le=\"900\"}[$__range])) / sum(increase(shelfy_archive_cover_latency_seconds_count[$__range]))",
+          "legendFormat": "within 15 min",
+          "instant": true,
+          "range": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (increase(shelfy_archive_cover_latency_seconds_bucket[$__range])))",
+          "legendFormat": "p95",
+          "instant": true,
+          "range": false
+        }
+      ]
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Ingested items",
+      "description": "Items of the extension's ingest batches per second, by platform and outcome (shelfy_ingest_items_total, P2-09; no data before it ships).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "vmds"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 92
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": ["mean", "max"]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "vmds"
+          },
+          "refId": "A",
+          "expr": "sum by (platform, outcome) (rate(shelfy_ingest_items_total[5m]))",
+          "legendFormat": "{{platform}} {{outcome}}"
         }
       ]
     }
