@@ -2,10 +2,13 @@
 //! is the only place in `crates/server` and `crates/media` that builds a
 //! `reqwest` client: `tests/outbound.rs` fails the build otherwise.
 //!
-//! **Clients.** Up to three, with one configuration: rustls with `ring` and
+//! **Clients.** Three kinds, with one configuration: rustls with `ring` and
 //! the webpki roots, HTTP/2 by ALPN, no cookie store, no automatic
 //! decompression (no `Accept-Encoding` is sent), no system proxy and no
-//! automatic redirect.
+//! automatic redirect. A client's connect timeout is its purpose's
+//! ([`OutboundConfig::connect_timeout`]), so there is one public client per
+//! distinct connect timeout (two by default: 10 s, and 3 s for the operator's
+//! node).
 //!
 //! | Client | Reaches | Proxy | Resolver |
 //! |---|---|---|---|
@@ -26,7 +29,10 @@
 //!   every client: a response holds its slot until its body is read or
 //!   dropped;
 //! - one total timeout per request, every hop and the body included
-//!   ([`Purpose::timeout`]);
+//!   ([`Purpose::timeout`]), and the purpose's connect timeout within it
+//!   ([`Purpose::connect_timeout`]); a connect timeout is a connect failure
+//!   ([`EgressError::Connect`], [`EgressError::is_connect_timeout`]), so a
+//!   sleeping AI node reads as offline, not as a slow answer (F15);
 //! - redirects by our own policy: 301, 302, 303, 307 and 308, at most
 //!   [`MAX_REDIRECTS`] (5) hops, each target checked again and sent again
 //!   through the proxy when there is one. A hop to another origin keeps only
@@ -72,8 +78,6 @@ use crate::telemetry::metrics::{EGRESS_REQUESTS_TOTAL, egress_outcome};
 /// Most redirects one request follows (L11, P4-01).
 pub const MAX_REDIRECTS: u8 = 5;
 
-/// How long connecting may take, within the request's timeout.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long an idle pooled connection is kept.
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 /// Idle pooled connections kept per host.
@@ -159,7 +163,8 @@ pub enum EgressError {
     /// The redirects went past the request's limit.
     #[error("more than {0} redirects")]
     TooManyRedirects(u8),
-    /// The request, a hop or the body took longer than the timeout.
+    /// The request, a hop or the body took longer than the timeout. Not
+    /// connecting: that is [`EgressError::Connect`].
     #[error("the request timed out")]
     Timeout,
     /// The body is larger than the cap the reader set.
@@ -168,7 +173,8 @@ pub enum EgressError {
         /// The cap.
         limit: u64,
     },
-    /// No connection: DNS, TCP, TLS or the proxy's tunnel.
+    /// No connection: DNS, TCP, TLS or the proxy's tunnel, or the purpose's
+    /// connect timeout passed ([`EgressError::is_connect_timeout`]).
     #[error("the connection failed")]
     Connect(#[source] BoxError),
     /// The exchange failed after connecting.
@@ -189,22 +195,40 @@ impl EgressError {
         if is_proxy_refusal(&err) {
             return Self::Refused(Refusal::Proxy);
         }
-        if err.is_timeout() {
-            return Self::Timeout;
-        }
+        // Before the timeout: a connect timeout is also a timeout to the
+        // client, but nothing was sent, and a sleeping host is not a slow one
+        // (F15). The request's own timeout never reads as a connect error.
         if err.is_connect() {
             return Self::Connect(Box::new(err));
+        }
+        if err.is_timeout() {
+            return Self::Timeout;
         }
         Self::Network(Box::new(err))
     }
 
-    /// The `outcome` label of `shelfy_egress_requests_total`.
+    /// Whether this is a connect failure because the purpose's connect
+    /// timeout passed ([`Purpose::connect_timeout`]).
+    #[must_use]
+    pub fn is_connect_timeout(&self) -> bool {
+        let Self::Connect(source) = self else {
+            return false;
+        };
+        let source: &(dyn StdError + 'static) = source.as_ref();
+        find_source::<reqwest::Error>(source).is_some_and(reqwest::Error::is_timeout)
+            || find_source::<io::Error>(source)
+                .is_some_and(|io| io.kind() == io::ErrorKind::TimedOut)
+    }
+
+    /// The `outcome` label of `shelfy_egress_requests_total`. A connect
+    /// timeout keeps the `timeout` label it had before F15.
     fn outcome(&self) -> &'static str {
         match self {
             Self::InvalidUrl | Self::Refused(_) | Self::TooManyRedirects(_) => {
                 egress_outcome::REFUSED
             }
             Self::Timeout => egress_outcome::TIMEOUT,
+            Self::Connect(_) if self.is_connect_timeout() => egress_outcome::TIMEOUT,
             Self::TooLarge { .. } | Self::Connect(_) | Self::Network(_) | Self::Decode(_) => {
                 egress_outcome::FAILED
             }
@@ -253,13 +277,20 @@ enum Route {
     Public,
     Operator,
     Internal,
+    /// Tests only: a loopback literal address ([`Egress::loopback_for_tests`]).
+    #[cfg(any(test, feature = "test-loopback"))]
+    Loopback,
 }
 
 /// The `reqwest` clients.
 struct Clients {
-    public: reqwest::Client,
+    /// One public client per distinct connect timeout, with the purposes
+    /// that use it.
+    public: Vec<(Vec<Purpose>, reqwest::Client)>,
     operator: Option<reqwest::Client>,
     internal: Option<reqwest::Client>,
+    #[cfg(any(test, feature = "test-loopback"))]
+    loopback: reqwest::Client,
 }
 
 impl Clients {
@@ -268,21 +299,38 @@ impl Clients {
     fn build(config: &OutboundConfig) -> anyhow::Result<Self> {
         let tls = tls_config(&config.extra_roots)?;
         let lookup = &config.lookup;
-        let public = match &config.proxy {
-            Some(proxy) => builder(&tls)
-                .proxy(reqwest::Proxy::all(proxy.as_str())?)
-                .dns_resolver(PinnedResolver::new(
-                    lookup.clone(),
-                    proxy.host_str().filter(|_| proxy_host_is_name(proxy)),
-                )),
-            None => builder(&tls).no_proxy().dns_resolver(PublicResolver::new(
-                lookup.clone(),
-                config.dev_hosts.clone(),
-            )),
+        let mut public: Vec<(Vec<Purpose>, reqwest::Client)> = Vec::new();
+        for purpose in Purpose::ALL {
+            if purpose == Purpose::Capture {
+                continue;
+            }
+            let connect = config.connect_timeout(purpose);
+            if let Some((purposes, _)) = public
+                .iter_mut()
+                .find(|(purposes, _)| config.connect_timeout(purposes[0]) == connect)
+            {
+                purposes.push(purpose);
+                continue;
+            }
+            let client = match &config.proxy {
+                Some(proxy) => builder(&tls, connect)
+                    .proxy(reqwest::Proxy::all(proxy.as_str())?)
+                    .dns_resolver(PinnedResolver::new(
+                        lookup.clone(),
+                        proxy.host_str().filter(|_| proxy_host_is_name(proxy)),
+                    )),
+                None => builder(&tls, connect)
+                    .no_proxy()
+                    .dns_resolver(PublicResolver::new(
+                        lookup.clone(),
+                        config.dev_hosts.clone(),
+                    )),
+            }
+            .build()?;
+            public.push((vec![purpose], client));
         }
-        .build()?;
-        let pinned = |names: Vec<&str>| {
-            builder(&tls)
+        let pinned = |names: Vec<&str>, connect: Duration| {
+            builder(&tls, connect)
                 .no_proxy()
                 .dns_resolver(PinnedResolver::new(lookup.clone(), names))
                 .build()
@@ -295,26 +343,41 @@ impl Clients {
                         .iter()
                         .filter_map(Origin::domain)
                         .collect(),
+                    config.connect_timeout(Purpose::AiOperator),
                 )
             })
             .transpose()?;
         let internal = config
             .capture
             .as_ref()
-            .map(|origin| pinned(origin.domain().into_iter().collect()))
+            .map(|origin| {
+                pinned(
+                    origin.domain().into_iter().collect(),
+                    config.connect_timeout(Purpose::Capture),
+                )
+            })
             .transpose()?;
         Ok(Self {
             public,
             operator,
             internal,
+            // Literal addresses only: no name resolves through it.
+            #[cfg(any(test, feature = "test-loopback"))]
+            loopback: pinned(Vec::new(), config.connect_timeout(Purpose::Ai))?,
         })
     }
 
-    fn get(&self, route: Route) -> Option<&reqwest::Client> {
+    fn get(&self, route: Route, purpose: Purpose) -> Option<&reqwest::Client> {
         match route {
-            Route::Public => Some(&self.public),
+            Route::Public => self
+                .public
+                .iter()
+                .find(|(purposes, _)| purposes.contains(&purpose))
+                .map(|(_, client)| client),
             Route::Operator => self.operator.as_ref(),
             Route::Internal => self.internal.as_ref(),
+            #[cfg(any(test, feature = "test-loopback"))]
+            Route::Loopback => Some(&self.loopback),
         }
     }
 }
@@ -323,8 +386,8 @@ fn proxy_host_is_name(proxy: &Url) -> bool {
     matches!(proxy.host(), Some(Host::Domain(_)))
 }
 
-/// What every client shares.
-fn builder(tls: &rustls::ClientConfig) -> reqwest::ClientBuilder {
+/// What every client shares, and its connect timeout.
+fn builder(tls: &rustls::ClientConfig, connect_timeout: Duration) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .tls_backend_preconfigured(tls.clone())
         .redirect(reqwest::redirect::Policy::none())
@@ -334,7 +397,7 @@ fn builder(tls: &rustls::ClientConfig) -> reqwest::ClientBuilder {
         .no_deflate()
         .no_zstd()
         .no_hickory_dns()
-        .connect_timeout(CONNECT_TIMEOUT)
+        .connect_timeout(connect_timeout)
         .pool_idle_timeout(POOL_IDLE_TIMEOUT)
         .pool_max_idle_per_host(POOL_IDLE_PER_HOST)
         .user_agent(DEFAULT_USER_AGENT)
@@ -369,6 +432,12 @@ pub(crate) struct Shared {
 impl Shared {
     pub(crate) fn new(config: &OutboundConfig) -> anyhow::Result<Self> {
         anyhow::ensure!(config.max_in_flight > 0, "max_in_flight must be positive");
+        anyhow::ensure!(
+            Purpose::ALL
+                .into_iter()
+                .all(|purpose| !config.connect_timeout(purpose).is_zero()),
+            "a connect timeout must be positive"
+        );
         Ok(Self {
             clients: Clients::build(config)?,
             in_flight: Arc::new(Semaphore::new(config.max_in_flight)),
@@ -383,6 +452,10 @@ impl Shared {
         let origin = Origin::of(url).ok_or(Refusal::Scheme)?;
         if !url.username().is_empty() || url.password().is_some() {
             return Err(Refusal::Credentials);
+        }
+        #[cfg(any(test, feature = "test-loopback"))]
+        if policy.loopback && is_loopback_literal(url) {
+            return Ok(Route::Loopback);
         }
         if policy.purpose == Purpose::Capture {
             return match &self.capture {
@@ -417,6 +490,16 @@ impl Shared {
     }
 }
 
+/// Whether `url`'s host is a loopback literal address (`127.0.0.0/8`, `::1`).
+#[cfg(any(test, feature = "test-loopback"))]
+fn is_loopback_literal(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        _ => false,
+    }
+}
+
 /// A literal address: never on a host allowlist (names only), and public.
 fn check_literal(ip: std::net::IpAddr, policy: &Policy<'_>) -> Result<(), Refusal> {
     if policy.hosts.is_some() {
@@ -433,6 +516,8 @@ struct Policy<'a> {
     purpose: Purpose,
     https_only: bool,
     hosts: Option<&'a HostSet>,
+    #[cfg(any(test, feature = "test-loopback"))]
+    loopback: bool,
 }
 
 /// A handle that sends requests for one [`Purpose`]. Cheap to clone.
@@ -440,11 +525,32 @@ struct Policy<'a> {
 pub struct Egress {
     shared: Arc<Shared>,
     purpose: Purpose,
+    #[cfg(any(test, feature = "test-loopback"))]
+    loopback: bool,
 }
 
 impl Egress {
     pub(crate) fn new(shared: Arc<Shared>, purpose: Purpose) -> Self {
-        Self { shared, purpose }
+        Self {
+            shared,
+            purpose,
+            #[cfg(any(test, feature = "test-loopback"))]
+            loopback: false,
+        }
+    }
+
+    /// Tests only (F15): this handle also reaches loopback literal addresses
+    /// (`127.0.0.0/8`, `::1`) on any port, over http or https, directly, so
+    /// that a test can reach a loopback `shelfy-ai-stub` through
+    /// [`Purpose::Ai`]. Every other URL keeps the purpose's rules. It exists
+    /// only with the `test-loopback` feature, which only the server's own
+    /// dev-dependency turns on: a release build has no such route, and no
+    /// setting of the environment opens it.
+    #[cfg(any(test, feature = "test-loopback"))]
+    #[must_use]
+    pub fn loopback_for_tests(mut self) -> Self {
+        self.loopback = true;
+        self
     }
 
     /// The purpose its requests are counted under.
@@ -582,6 +688,8 @@ impl EgressRequest {
             purpose: egress.purpose,
             https_only,
             hosts: hosts.as_deref(),
+            #[cfg(any(test, feature = "test-loopback"))]
+            loopback: egress.loopback,
         };
         let mut url = url.ok_or(EgressError::InvalidUrl)?;
         let mut route = shared.route(&url, &policy).map_err(EgressError::Refused)?;
@@ -598,7 +706,7 @@ impl EgressRequest {
             }
             let client = shared
                 .clients
-                .get(route)
+                .get(route, egress.purpose)
                 .ok_or(EgressError::Refused(Refusal::Origin))?;
             let mut request = client
                 .request(method.clone(), url.clone())

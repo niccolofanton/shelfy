@@ -29,7 +29,7 @@ use clap::Args;
 use shelfy_ai::secrecy::SecretString;
 use url::Url;
 
-use crate::outbound::{Origin, OriginAllowlist};
+use crate::outbound::{Origin, OriginAllowlist, Purpose};
 
 /// Default of `SHELFY_OPERATOR_AI_LABEL`.
 pub const DEFAULT_LABEL: &str = "Operator node";
@@ -38,8 +38,9 @@ pub const DEFAULT_CONCURRENCY: u8 = 1;
 /// Default of `SHELFY_OPERATOR_AI_TIMEOUT`, in seconds.
 pub const DEFAULT_TIMEOUT_SECS: u64 = 60;
 /// The connect timeout for operator calls: a sleeping node is `offline`
-/// quickly (G3-29).
-pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+/// quickly (G3-29). The outbound client's [`Purpose::AiOperator`] applies the
+/// same value (F15).
+pub const CONNECT_TIMEOUT: Duration = Purpose::AiOperator.connect_timeout();
 /// The provider id of the operator provider, everywhere it is named.
 pub const OPERATOR_PROVIDER_ID: &str = "operator";
 

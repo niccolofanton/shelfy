@@ -7,6 +7,9 @@
 //! This file never spells the HTTP client crate's name, so that the
 //! single-construction rule can scan it like any other.
 
+mod support;
+
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -18,8 +21,9 @@ use shelfy_ai::{
     ProviderConfig, ProviderKind, RetryPolicy, Source, Timeouts, TranscribeRequest,
 };
 use shelfy_server::outbound::ai::AiTransport;
-use shelfy_server::outbound::{Lookup, OriginAllowlist, Outbound, OutboundConfig};
+use shelfy_server::outbound::{Lookup, OriginAllowlist, Outbound, OutboundConfig, Purpose};
 use shelfy_server::telemetry::metrics;
+use support::sleeping::SleepingNode;
 use url::Url;
 
 const KEY: &str = "operator-key-for-tests";
@@ -277,4 +281,110 @@ async fn a_users_provider_is_held_to_the_strict_rules() {
     assert_eq!(error.kind(), ErrorKind::Refused, "{error}");
 
     assert!(stub.requests().is_empty(), "nothing reached the stub");
+}
+
+/// The count of `series` in the rendered metrics.
+fn count(text: &str, series: &str) -> f64 {
+    text.lines()
+        .find_map(|line| line.strip_prefix(series))
+        .and_then(|rest| rest.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no {series} in\n{text}"))
+}
+
+#[tokio::test]
+async fn a_sleeping_node_is_offline_not_a_slow_answer() {
+    let node = SleepingNode::start();
+    let base = Url::parse(&format!("{}/v1", node.origin())).unwrap();
+    let outbound = Outbound::new(&OutboundConfig {
+        allow_origins: OriginAllowlist::parse(&node.origin()).unwrap(),
+        connect_timeouts: HashMap::from([(Purpose::AiOperator, Duration::from_millis(300))]),
+        ..OutboundConfig::default()
+    })
+    .unwrap();
+    let policy = EgressPolicy::new().allow(shelfy_ai::Origin::of(&base).unwrap());
+    let config = ProviderConfig::new(ProviderKind::OpenAiCompatible, Source::Operator, base)
+        .with_key(SecretString::from(KEY))
+        .with_llama_health();
+    let chat = Provider::new(config, &policy, Arc::new(AiTransport::new(&outbound))).unwrap();
+
+    // Connecting times out: offline (the service holds the work), never
+    // transient, and never retried.
+    let started = std::time::Instant::now();
+    let error = chat
+        .chat(
+            &ChatRequest::new("m", vec![Message::user_text("hello")]),
+            &options(),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Offline, "{error}");
+    assert!(error.message().contains("connect timeout"), "{error}");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        started.elapsed()
+    );
+    let error = chat.health(&options()).await.unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Offline, "{error}");
+}
+
+#[tokio::test]
+async fn the_test_transport_reaches_a_loopback_stub_as_a_users_provider() {
+    let handle = metrics::install();
+    let stub = stub().await;
+    let private: IpAddr = "127.0.0.1".parse().unwrap();
+    let outbound = Outbound::new(&OutboundConfig {
+        lookup: Lookup::fixed([("rebind.example.test", vec![private])]),
+        ..OutboundConfig::default()
+    })
+    .unwrap();
+    let transport = Arc::new(AiTransport::with_loopback_for_tests(&outbound));
+    let loopback = EgressPolicy::new().allow_loopback(true);
+    let user = |base: &str| {
+        let config = ProviderConfig::new(
+            ProviderKind::OpenAiCompatible,
+            Source::User,
+            Url::parse(base).unwrap(),
+        )
+        .with_key(SecretString::from(KEY));
+        Provider::new(config, &loopback, transport.clone()).unwrap()
+    };
+    let hello = ChatRequest::new("m", vec![Message::user_text("hello")]);
+
+    // The stub, on its own port, as a user's provider: through `Purpose::Ai`.
+    let local = user(stub.openai_base().as_str());
+    let answer = local.chat(&hello, &options()).await.unwrap();
+    assert!(!answer.text.is_empty());
+    assert_eq!(stub.requests().len(), 1);
+    assert_eq!(stub.requests()[0].auth, AuthSeen::Valid);
+
+    // A public URL still meets the strict rules.
+    let rebind = user("https://rebind.example.test/v1");
+    let error = rebind.chat(&hello, &options()).await.unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Refused, "{error}");
+    assert_eq!(stub.requests().len(), 1);
+
+    handle.run_upkeep();
+    let text = handle.render();
+    assert!(
+        count(
+            &text,
+            "shelfy_egress_requests_total{purpose=\"ai\",outcome=\"ok\"}"
+        ) >= 1.0
+    );
+}
+
+#[test]
+fn the_ai_services_connect_timeouts_are_the_clients() {
+    // The service asks for these; the client applies its purpose's (F15).
+    assert_eq!(
+        shelfy_server::ai::operator::CONNECT_TIMEOUT,
+        Purpose::AiOperator.connect_timeout()
+    );
+    assert_eq!(
+        Purpose::AiOperator.connect_timeout(),
+        Duration::from_secs(3)
+    );
+    assert_eq!(Timeouts::CATALOG.connect, Purpose::Ai.connect_timeout());
+    assert_eq!(Timeouts::CHAT.connect, Purpose::Ai.connect_timeout());
 }

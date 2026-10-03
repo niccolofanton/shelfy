@@ -70,7 +70,7 @@ pub mod client;
 pub mod limits;
 pub mod resolve;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -102,17 +102,20 @@ const MAX_RATE: f64 = 100.0;
 /// What a request is for: the `purpose` label of
 /// `shelfy_egress_requests_total` and the request's defaults.
 ///
-/// | Purpose | Label | Who | https only | Timeout | Redirects |
-/// |---|---|---|---|---|---|
-/// | `Cdn` | `cdn` | the archive's CDN fetcher (P2-04, P2-10) | yes | 30 s | 5 |
-/// | `Link` | `link` | short links and public link data (P2-11) | no | 15 s | 5 |
-/// | `Ai` | `ai` | user-configured AI providers (P3) | no | 120 s | 0 |
-/// | `AiOperator` | `ai_operator` | the operator's AI node (L15, P3): may reach `SHELFY_EGRESS_ALLOW_ORIGINS` | no | 120 s | 0 |
-/// | `Video` | `video` | on-demand video files (P4-16) | yes | 10 min | 5 |
-/// | `Feedback` | `feedback` | the feedback relay (P4-22) | yes | 20 s | 0 |
-/// | `Capture` | `capture` | the capture service, through [`Outbound::internal`] only (P4-14) | no | 11 min | 0 |
+/// | Purpose | Label | Who | https only | Timeout | Connect | Redirects |
+/// |---|---|---|---|---|---|---|
+/// | `Cdn` | `cdn` | the archive's CDN fetcher (P2-04, P2-10) | yes | 30 s | 10 s | 5 |
+/// | `Link` | `link` | short links and public link data (P2-11) | no | 15 s | 10 s | 5 |
+/// | `Ai` | `ai` | user-configured AI providers (P3) | no | 120 s | 10 s | 0 |
+/// | `AiOperator` | `ai_operator` | the operator's AI node (L15, P3): may reach `SHELFY_EGRESS_ALLOW_ORIGINS` | no | 120 s | 3 s | 0 |
+/// | `Video` | `video` | on-demand video files (P4-16) | yes | 10 min | 10 s | 5 |
+/// | `Feedback` | `feedback` | the feedback relay (P4-22) | yes | 20 s | 10 s | 0 |
+/// | `Capture` | `capture` | the capture service, through [`Outbound::internal`] only (P4-14) | no | 11 min | 10 s | 0 |
 ///
-/// A request can change its timeout, redirects and host allowlist.
+/// A request can change its timeout, redirects and host allowlist. The
+/// connect timeout belongs to the purpose's client
+/// ([`OutboundConfig::connect_timeouts`] overrides it); passing it is
+/// [`EgressError::Connect`], never [`EgressError::Timeout`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Purpose {
     /// Archive fetches from the platform CDNs.
@@ -167,6 +170,17 @@ impl Purpose {
             Self::Video => 600,
             Self::Feedback => 20,
             Self::Capture => 660,
+        })
+    }
+
+    /// The default time connecting may take, within the request's timeout
+    /// (F15): 3 s for the operator's node, so that a sleeping node is
+    /// offline quickly (G3-29); 10 s for the rest.
+    #[must_use]
+    pub const fn connect_timeout(self) -> Duration {
+        Duration::from_secs(match self {
+            Self::AiOperator => 3,
+            Self::Cdn | Self::Link | Self::Ai | Self::Video | Self::Feedback | Self::Capture => 10,
         })
     }
 
@@ -304,6 +318,9 @@ pub struct OutboundConfig {
     pub cdn_timeout: Duration,
     /// Requests in flight over every client: [`MAX_IN_FLIGHT`].
     pub max_in_flight: usize,
+    /// Connect timeouts that replace a purpose's default
+    /// ([`Purpose::connect_timeout`]); see [`OutboundConfig::connect_timeout`].
+    pub connect_timeouts: HashMap<Purpose, Duration>,
     /// `SHELFY_DEV_EGRESS_HOSTS`: names sent to loopback ports.
     pub dev_hosts: BTreeMap<String, SocketAddr>,
     /// `SHELFY_DEV_EGRESS_CA`: extra trusted roots.
@@ -323,6 +340,7 @@ impl Default for OutboundConfig {
             breaker: BreakerConfig::default(),
             cdn_timeout: cdn::FETCH_TIMEOUT,
             max_in_flight: MAX_IN_FLIGHT,
+            connect_timeouts: HashMap::new(),
             dev_hosts: BTreeMap::new(),
             extra_roots: Vec::new(),
             lookup: Lookup::system(),
@@ -331,6 +349,16 @@ impl Default for OutboundConfig {
 }
 
 impl OutboundConfig {
+    /// The time connecting may take for `purpose`: its override in
+    /// [`OutboundConfig::connect_timeouts`], else [`Purpose::connect_timeout`].
+    #[must_use]
+    pub fn connect_timeout(&self, purpose: Purpose) -> Duration {
+        self.connect_timeouts
+            .get(&purpose)
+            .copied()
+            .unwrap_or(purpose.connect_timeout())
+    }
+
     /// Validates the arguments. The dev settings need a loopback
     /// `public_url`, like `SHELFY_DEV_MAILBOX`.
     ///

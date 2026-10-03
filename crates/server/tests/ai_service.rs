@@ -18,6 +18,7 @@ use shelfy_ai::{ChatRequest, EmbedRequest, ErrorKind, JsonOutput, Message, Trans
 use shelfy_server::ai::{AI_DRAIN_KIND, AiServiceError, CallHints, Caller, OperatorConfig, Task};
 use shelfy_server::config::Config;
 use shelfy_server::control::usage_daily;
+use shelfy_server::error::{ApiError, ErrorCode};
 use shelfy_server::events::Delivery;
 use shelfy_server::events::model::ProviderState;
 use shelfy_server::ids::now_ms;
@@ -26,6 +27,7 @@ use shelfy_server::outbound::OriginAllowlist;
 use shelfy_server::telemetry::metrics;
 use support::auth::{owner, sign_in, with_session};
 use support::jobs::{Probe, kind};
+use support::sleeping::SleepingNode;
 use support::{TestState, get, json, problem, send};
 
 const KEY: &str = "operator-key-for-tests";
@@ -447,4 +449,121 @@ async fn the_new_routes_need_a_session_and_list_the_operator() {
     let usage = send(&app, with_session(get("/api/v1/me/usage/ai"), &cookie)).await;
     assert_eq!(usage.status(), StatusCode::OK);
     assert!(json(usage).await["days"].is_array());
+}
+
+#[tokio::test]
+async fn a_sleeping_node_is_held_as_offline_at_the_first_call() {
+    // F15: connecting to a sleeping node times out after the operator's 3 s
+    // connect timeout, and that is `Offline` (hold), not a transient timeout
+    // that would need a second one before the work is held.
+    let stub = stub().await;
+    let node = SleepingNode::start();
+    let t = TestState::with_config(|c| {
+        configure(c, &stub, 1, Duration::from_secs(30));
+        c.outbound.allow_origins = OriginAllowlist::parse(&node.origin()).unwrap();
+        c.operator.url = Some(format!("{}/v1", node.origin()).parse().unwrap());
+        c.operator.stt_url = None;
+    });
+    let owner_id = owner(&t);
+    let svc = t.state.ai();
+    let caller = Caller::new(&owner_id, true);
+    let request = ChatRequest::new("stub-text", vec![Message::user_text("hi")]);
+
+    let started = std::time::Instant::now();
+    let err = svc
+        .chat(&t.state, caller, Task::Chat, &request, CallHints::new())
+        .await
+        .unwrap_err();
+    let elapsed = started.elapsed();
+    assert!(
+        matches!(&err, AiServiceError::Call(e) if e.kind() == ErrorKind::Offline),
+        "{err}"
+    );
+    assert!(
+        elapsed >= Duration::from_millis(2_900) && elapsed < Duration::from_secs(8),
+        "{elapsed:?}"
+    );
+    assert_eq!(svc.operator_state(), Some(ProviderState::Offline));
+    assert_eq!(ApiError::from(err).code(), ErrorCode::ProviderOffline);
+
+    // Held: the next call does not wait on the node.
+    let held = std::time::Instant::now();
+    let err = svc
+        .chat(&t.state, caller, Task::Chat, &request, CallHints::new())
+        .await
+        .unwrap_err();
+    assert!(matches!(&err, AiServiceError::Call(e) if e.kind() == ErrorKind::Offline));
+    assert!(held.elapsed() < Duration::from_secs(1));
+}
+
+#[tokio::test]
+async fn each_fault_reaches_the_caller_as_the_kind_it_acts_on() {
+    // What `AiServiceError::Call` carries for each way the node fails, the
+    // problem the routes answer, and whether the node is held afterwards:
+    // offline holds, a rate limit or a transient error backs off (one is not
+    // a hold), an invalid key pauses, no quota and a bad request do neither.
+    let cases: [(&str, Option<FaultRule>, ErrorKind, ErrorCode, ProviderState); 5] = [
+        (
+            "rate limited",
+            Some(
+                FaultRule::new(Fault::RateLimited {
+                    retry_after_ms: 600_000,
+                })
+                .always(),
+            ),
+            ErrorKind::RateLimited,
+            ErrorCode::ProviderUnavailable,
+            ProviderState::Ok,
+        ),
+        (
+            "server error",
+            Some(FaultRule::new(Fault::ServerError).always()),
+            ErrorKind::Transient,
+            ErrorCode::ProviderUnavailable,
+            ProviderState::Ok,
+        ),
+        (
+            "unauthorized",
+            Some(FaultRule::new(Fault::Unauthorized).always()),
+            ErrorKind::InvalidKey,
+            ErrorCode::ProviderKeyInvalid,
+            ProviderState::InvalidKey,
+        ),
+        (
+            "no quota",
+            Some(FaultRule::new(Fault::QuotaExhausted).always()),
+            ErrorKind::QuotaExhausted,
+            ErrorCode::ProviderQuotaExhausted,
+            ProviderState::Ok,
+        ),
+        (
+            "refused connection",
+            None,
+            ErrorKind::Offline,
+            ErrorCode::ProviderOffline,
+            ProviderState::Offline,
+        ),
+    ];
+    for (name, fault, kind, code, state) in cases {
+        let stub = stub().await;
+        let t = TestState::with_config(|c| configure(c, &stub, 1, Duration::from_secs(30)));
+        let owner_id = owner(&t);
+        let svc = t.state.ai();
+        let caller = Caller::new(&owner_id, true);
+        match fault {
+            Some(rule) => stub.inject(rule),
+            None => stub.set_offline(true).await.unwrap(),
+        }
+        let request = ChatRequest::new("stub-text", vec![Message::user_text("hi")]);
+        let err = svc
+            .chat(&t.state, caller, Task::Chat, &request, CallHints::new())
+            .await
+            .unwrap_err();
+        let AiServiceError::Call(error) = &err else {
+            panic!("{name}: {err}");
+        };
+        assert_eq!(error.kind(), kind, "{name}: {error}");
+        assert_eq!(svc.operator_state(), Some(state), "{name}");
+        assert_eq!(ApiError::from(err).code(), code, "{name}");
+    }
 }

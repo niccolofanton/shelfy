@@ -288,7 +288,9 @@ pub fn reopens(outbound: &Outbound, group: HostGroup) -> Instant {
 /// A stable code of an outbound failure.
 fn failure(err: &EgressError) -> &'static str {
     match err {
+        // A connect timeout keeps the code it had before F15 made it `Connect`.
         EgressError::Timeout => "timeout",
+        EgressError::Connect(_) if err.is_connect_timeout() => "timeout",
         EgressError::Refused(_) | EgressError::InvalidUrl | EgressError::TooManyRedirects(_) => {
             "refused"
         }
