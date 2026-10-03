@@ -20,7 +20,7 @@ export const PLATFORM_COLORS: Record<Shelfy.Platform, string> = {
 export const PLATFORM_LABELS: Record<Shelfy.Platform, string> = {
   instagram: 'Instagram',
   pinterest: 'Pinterest',
-  twitter: 'Twitter',
+  twitter: 'X',
   web: 'Web',
   manual: 'Bookmark',
 };
@@ -67,6 +67,29 @@ function XGlyph({ size, className, ...props }: GlyphProps): React.ReactElement {
     >
       <path d="M12.6.75h2.454l-5.36 6.142L16 15.25h-4.937l-3.867-5.07-4.425 5.07H.316l5.733-6.57L0 .75h5.063l3.495 4.633L12.601.75Zm-.86 13.028h1.36L4.323 2.145H2.865z" />
     </svg>
+  );
+}
+
+// The X logo for icon slots that take a lucide-style component (`size`
+// optional): the sidebar's rows and the shared source list (UX audit SH-9: one
+// X glyph everywhere, no Twitter bird). The filled logo spans its whole
+// viewBox while lucide's stroked icons keep a margin, so it renders at 80 %
+// inside a box of the full size, which keeps rows aligned.
+export function XIcon({
+  size = 16,
+  className = '',
+}: {
+  size?: number;
+  className?: string;
+}): React.ReactElement {
+  return (
+    <span
+      aria-hidden
+      className={`inline-flex items-center justify-center ${className}`}
+      style={{ width: size, height: size }}
+    >
+      <XGlyph size={Math.round(size * 0.8)} />
+    </span>
   );
 }
 

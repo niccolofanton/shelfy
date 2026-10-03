@@ -2,8 +2,9 @@
 // custom folder — in one place, shared by the Sidebar and the gallery's
 // filter drawer (plan §1.2 #13, P1.md P1-06/P1-14) so both list the exact
 // same sources, in the same order, instead of each keeping its own copy.
-import { Globe, Instagram, Twitter, type LucideIcon } from 'lucide-react';
+import { Globe, Instagram, type LucideIcon } from 'lucide-react';
 import PinterestIcon from '../components/PinterestIcon';
+import { XIcon } from '../components/SourceIcon';
 
 // Lucide-compatible icon component: the subset of props a source row passes
 // (size + className only). Covers both lucide-react icons and PinterestIcon.
@@ -22,7 +23,9 @@ export interface PlatformSource {
 // have no folder of their own — the full media-type facets (#13) cover them.
 export const PLATFORM_SOURCES: PlatformSource[] = [
   { id: 'instagram', label: 'Instagram', Icon: Instagram },
-  { id: 'twitter', label: 'X / Twitter', Icon: Twitter },
+  // The X logo, not lucide's Twitter bird (UX audit SH-9). The label stays
+  // "X / Twitter" while the transition lasts (audit §3.7).
+  { id: 'twitter', label: 'X / Twitter', Icon: XIcon },
   { id: 'pinterest', label: 'Pinterest', Icon: PinterestIcon },
   { id: 'web', key: 'web', Icon: Globe },
 ];
