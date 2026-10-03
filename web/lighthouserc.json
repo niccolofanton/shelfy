@@ -1,0 +1,22 @@
+{
+  "ci": {
+    "collect": {
+      "url": ["http://127.0.0.1:18202/"],
+      "numberOfRuns": 1,
+      "puppeteerScript": "./web/e2e/lighthouse/login.cjs",
+      "puppeteerLaunchOptions": {
+        "headless": true,
+        "args": ["--no-sandbox", "--disable-dev-shm-usage"]
+      }
+    },
+    "assert": {
+      "assertions": {
+        "largest-contentful-paint": ["error", { "maxNumericValue": 2500 }]
+      }
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": "./.lighthouseci"
+    }
+  }
+}

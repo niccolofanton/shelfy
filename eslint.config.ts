@@ -153,6 +153,19 @@ export default tseslint.config(
     },
   },
 
+  // @lhci/cli's puppeteerScript (P1-21): CommonJS (loaded with `require()`,
+  // which fails on an ESM file in this "type": "module" package) that runs
+  // Node-side, but its callback executes in the browser page LHCI hands it
+  // (document, window) — the same split electron/**'s preload scripts have.
+  {
+    files: ['web/e2e/lighthouse/*.cjs'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'commonjs',
+      globals: { ...globals.node, ...globals.browser },
+    },
+  },
+
   // ESM/TS tooling + root config files
   {
     files: [
