@@ -68,7 +68,9 @@ A task's fields in `manifest.json`:
 
 Only portable settings belong here. llama.cpp-only knobs (the DRY sampler,
 `cache_prompt`, chat-template kwargs) stay in the desktop code; a test fails if
-one appears in these files.
+one appears in these files. Rust reads the manifest strictly: a new field needs
+its place in `TaskSpec` of both `prompts.ts` and `crates/core/src/ai/prompts.rs`,
+and a new file its line in that module's `FILES` (tests name what is missing).
 
 ## Template syntax
 
