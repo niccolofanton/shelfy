@@ -46,6 +46,10 @@ pub mod direct;
 #[cfg(feature = "stub")]
 pub mod stub;
 
+/// The key types, re-exported so that callers build keys with the same
+/// version.
+pub use secrecy;
+
 pub use error::{AiError, ErrorKind};
 pub use guard::{Egress, EgressPolicy, GuardError, Origin};
 pub use options::{CallOptions, RetryPolicy, TextCallback, Timeouts};

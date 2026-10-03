@@ -2740,6 +2740,7 @@ dependencies = [
  "serde_html_form",
  "serde_json",
  "sha2",
+ "shelfy-ai",
  "shelfy-core",
  "shelfy-media",
  "shelfy-migrate",

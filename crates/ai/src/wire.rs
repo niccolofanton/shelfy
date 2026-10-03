@@ -87,9 +87,9 @@ pub(crate) async fn bounded<T>(
 /// A transport failure as an AI error.
 pub(crate) fn from_transport(error: TransportError) -> AiError {
     match error {
-        TransportError::Blocked(guard) => AiError::new(
+        TransportError::Blocked(reason) => AiError::new(
             ErrorKind::Refused,
-            format!("the destination was refused: {guard}"),
+            format!("the destination was refused: {reason}"),
         ),
         TransportError::Connect(failure) => {
             AiError::offline(format!("could not connect: {failure}"))

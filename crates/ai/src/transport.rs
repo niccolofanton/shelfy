@@ -1,9 +1,10 @@
 //! The HTTP seam (L11).
 //!
 //! The adapters build requests and read answers; a [`Transport`] moves the
-//! bytes. The server implements it on its one outbound client (P2-04's
-//! `crates/server/src/outbound/`), which owns the egress proxy, the resolver
-//! checks and the metrics; this crate builds no HTTP client of its own. Tests,
+//! bytes. The server implements it on its one outbound client
+//! (`crates/server/src/outbound/ai.rs`, over P2-04's `Purpose::Ai` and
+//! `Purpose::AiOperator`), which owns the egress proxy, the resolver checks
+//! and the metrics; this crate builds no HTTP client for the server. Tests,
 //! the stub and the SPIKE-6 harness use `crate::direct::DirectTransport`
 //! (feature `direct`), which reaches only loopback and allowlisted endpoints.
 //!
@@ -17,20 +18,14 @@
 //!   `SHELFY_EGRESS_PROXY` when set, else only to addresses that pass
 //!   [`crate::guard::check_answers`];
 //! - never follow a redirect: the adapters treat a 3xx answer as an error;
-//! - apply [`HttpRequest::connect_timeout`] to connecting, and report every
-//!   failure before a connection exists as [`TransportError::Connect`] (the
-//!   adapters map it to [`crate::ErrorKind::Offline`]);
+//! - apply [`HttpRequest::connect_timeout`] to connecting where it can, and
+//!   report every failure before a connection exists as
+//!   [`TransportError::Connect`] (the adapters map it to
+//!   [`crate::ErrorKind::Offline`]);
+//! - give the exchange at least [`HttpRequest::timeout`]: the adapters
+//!   enforce their own deadlines and report them with the right error;
 //! - return as soon as the status and headers arrive, with the body as a
-//!   stream: the adapters read streamed answers as they come and apply the
-//!   call's own deadlines.
-//!
-//! On a `reqwest` client (P2-04's), that is: `redirect::Policy::none()`, a
-//! client per route (direct for the operator's origins, proxied for public
-//! ones), `connect_timeout` on the client, `bytes_stream()` for the body, and
-//! errors mapped by phase: a request error with `is_connect()` (refused,
-//! unreachable, DNS, connect timeout) is [`TransportError::Connect`], any later
-//! one [`TransportError::Io`], a refusal of the resolver or the proxy
-//! [`TransportError::Blocked`].
+//!   stream: the adapters read streamed answers as they come.
 
 use std::fmt;
 use std::time::Duration;
@@ -58,6 +53,9 @@ pub struct HttpRequest {
     pub egress: Egress,
     /// The longest a connection may take to open.
     pub connect_timeout: Duration,
+    /// The time the exchange has left, its body included. A transport with
+    /// its own timeout sets it no shorter.
+    pub timeout: Duration,
 }
 
 impl fmt::Debug for HttpRequest {
@@ -70,6 +68,7 @@ impl fmt::Debug for HttpRequest {
             .field("body_bytes", &self.body.len())
             .field("egress", &self.egress)
             .field("connect_timeout", &self.connect_timeout)
+            .field("timeout", &self.timeout)
             .finish()
     }
 }
@@ -126,10 +125,11 @@ impl fmt::Display for ConnectFailure {
 /// A failed exchange.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TransportError {
-    /// The guard refused the destination (a non-public answer, a non-loopback
-    /// address on the loopback route).
+    /// An egress check refused the destination before anything was sent to
+    /// it: a non-public answer, a non-loopback address on the loopback route,
+    /// the egress proxy, the server's own URL policy.
     #[error("the destination was refused: {0}")]
-    Blocked(#[from] GuardError),
+    Blocked(String),
     /// No connection could be opened.
     #[error("could not connect: {0}")]
     Connect(ConnectFailure),
@@ -140,6 +140,12 @@ pub enum TransportError {
     /// The transport cannot reach this kind of destination.
     #[error("the transport cannot reach this destination: {0}")]
     Unsupported(String),
+}
+
+impl From<GuardError> for TransportError {
+    fn from(error: GuardError) -> Self {
+        Self::Blocked(error.to_string())
+    }
 }
 
 /// Moves one request and its answer.

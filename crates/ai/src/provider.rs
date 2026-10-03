@@ -613,6 +613,7 @@ impl Provider {
             body,
             egress,
             connect_timeout: timeouts.connect,
+            timeout: body_deadline.at.saturating_duration_since(sent_at),
         };
         let response = head_deadline
             .run(self.inner.transport.send(request), call.cancel())

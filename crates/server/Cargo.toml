@@ -34,6 +34,8 @@ serde.workspace = true
 serde_html_form.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# The AI providers' adapters (P3-01); `outbound::ai` is their transport.
+shelfy-ai = { path = "../ai" }
 shelfy-core = { path = "../core" }
 shelfy-media = { path = "../media" }
 thiserror.workspace = true
@@ -66,6 +68,8 @@ http-body-util.workspace = true
 image = { workspace = true, features = ["jpeg", "png"] }
 jsonschema.workspace = true
 proptest.workspace = true
+# The test AI provider, behind the outbound client in the AI transport tests.
+shelfy-ai = { path = "../ai", features = ["stub"] }
 # The migration CLI, run end to end against the server in the migration tests.
 shelfy-migrate = { path = "../migrate" }
 tempfile.workspace = true

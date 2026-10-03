@@ -167,6 +167,7 @@ async fn admin(
         body: body.to_string().into(),
         egress: shelfy_ai::Egress::Allowlisted,
         connect_timeout: Duration::from_secs(1),
+        timeout: Duration::from_secs(5),
     };
     DirectTransport::new()
         .send(request)
@@ -271,6 +272,7 @@ async fn a_stub_that_is_shut_down_refuses_connections() {
         body: bytes::Bytes::new(),
         egress: shelfy_ai::Egress::Allowlisted,
         connect_timeout: Duration::from_secs(1),
+        timeout: Duration::from_secs(5),
     };
     assert_eq!(
         DirectTransport::new().send(request).await.unwrap_err(),

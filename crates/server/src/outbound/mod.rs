@@ -5,6 +5,7 @@
 //! | Module | Contents |
 //! |---|---|
 //! | [`client`] | the clients, requests and responses: redirects, caps, the in-flight limit, the metric |
+//! | [`ai`] | `shelfy_ai`'s transport over [`Purpose::Ai`] and [`Purpose::AiOperator`] (P3) |
 //! | [`resolve`] | the address policy, origins, host allowlists, the resolvers |
 //! | [`cdn`] | the archive's CDN fetcher and its outcomes |
 //! | [`limits`] | the host groups (three CDNs, three hydration hosts) and their rate, concurrency and jitter |
@@ -43,9 +44,9 @@
 //!   `outbound.client(Purpose::Link).get(url).hosts(group.hosts()).send()`;
 //!   read with a cap; then [`Breaker::record`] (or [`Breaker::trip`] at the
 //!   first 429, challenge or login wall, SPIKE-9).
-//! - *An AI provider* (P3): [`Purpose::Ai`] for the user's providers,
-//!   [`Purpose::AiOperator`] for the node; `post(url)` with a body;
-//!   [`EgressResponse::json_capped`] or [`EgressResponse::stream_capped`].
+//! - *An AI provider* (P3): a `shelfy_ai::Provider` on [`ai::AiTransport`],
+//!   which sends the user's providers through [`Purpose::Ai`] and the node
+//!   through [`Purpose::AiOperator`].
 //! - *The capture service* (P4-14): [`Outbound::internal`], and
 //!   [`EgressResponse::stream_capped`] for its NDJSON.
 //! - *yt-dlp* (P4-06) fetches on its own: pass `--proxy`
@@ -62,6 +63,7 @@
 //! | `SHELFY_DEV_EGRESS_HOSTS` | none | dev and tests: `host=127.0.0.1:port` pairs that bypass DNS and the address check; loopback public URL only, direct mode only |
 //! | `SHELFY_DEV_EGRESS_CA` | none | dev and tests: a PEM file of extra trusted roots (a fixture's CA); loopback public URL only |
 
+pub mod ai;
 pub mod breaker;
 pub mod cdn;
 pub mod client;
