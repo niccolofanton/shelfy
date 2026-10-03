@@ -150,8 +150,9 @@ Over a rate limit (§2.9) the API answers 429 `rate_limited` with `Retry-After`:
 ## Quotas and limits
 
 A user's usage is the bytes of the media objects their library records plus its database file
-(§2.13); `GET /api/v1/me/usage` shows it. Every store of media (archive, uploads, captures, kept
-videos, imports, migrations) reserves its bytes first and is refused when they do not fit:
+(§2.13); `GET /api/v1/me/usage` shows it. Every store of media (archive, bookmarks, captures,
+kept videos, imports, migrations) reserves its bytes first and is refused when they do not fit;
+a tus upload that will be stored is checked the same way when it is created:
 
 | Limit | Refusal |
 | --- | --- |

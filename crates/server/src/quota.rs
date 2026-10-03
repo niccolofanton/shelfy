@@ -64,16 +64,16 @@
 //! - **Dropping a reservation releases it**: a failed or cancelled store
 //!   leaves nothing behind. [`Reservation::commit_part`] commits a chunk and
 //!   keeps the rest reserved, for stores made of several transactions.
-//! - A reservation is `Send` and `'static`: it can wait in a map across
-//!   requests (tus uploads) and move into a blocking closure.
+//! - A reservation is `Send` and `'static`: it can move into a blocking
+//!   closure, or wait in a map across requests.
 //!
 //! **The hooks of the other tasks:**
 //!
 //! | Writer | Reserves | Commits | On refusal |
 //! |---|---|---|---|
 //! | P2-10 archive drain (`archive.drain`) | per object, before fetching: the cap it enforces (`IngestLimits::ARCHIVE_IMAGE`, 15 MiB) or the response's `Content-Length` once the headers are in | in the transaction that records and links the object | the item's post becomes `link_only` and the drain goes on; [`is_refused`] tells a refusal from a failure, which stays transient |
-//! | P4-08 tus uploads (web purposes) | at creation, `Upload-Length`, kept in memory under the upload id until the upload is consumed or expires (or only [`check`] at creation, and reserve at consumption) | — (the consumer does) | the creation answers the refusal |
-//! | P4-18 bookmarks | the files' total before publishing (or the reservations its uploads hold) | in the transaction that publishes the objects and creates the post | the request answers the refusal |
+//! | tus uploads (`routes/uploads.rs`, purposes that count against the quota) | nothing: [`check`] at creation against `Upload-Length` | — (the consumer reserves and commits) | the creation answers the refusal |
+//! | P4-18 bookmarks | the claimed files' total, before publishing | in the transaction that publishes the objects and creates the post | the request answers the refusal (and releases its claims) |
 //! | P4-14 capture | 80 MiB before dispatch | with the real bytes in the ingest transaction; [`bump_daily`] `captures` + 1 | the job fails with the code |
 //! | P4-16 keep a video | the file's size, before moving it from the cache into the CAS | in the transaction that records and links it; bulk keep checks 85 % of [`Quotas::budget`] first | the request or the job answers the refusal |
 //! | P4-19 import v2 | the objects the user lacks, before anything changes | per chunk, [`Reservation::commit_part`] | the job fails, nothing changed |
@@ -678,8 +678,8 @@ pub async fn reserve(state: &AppState, user_id: &str, bytes: u64) -> Result<Rese
     }
 }
 
-/// Whether `bytes` would fit now, without holding them: a store that
-/// reserves later (P4-08 may check at an upload's creation).
+/// Whether `bytes` would fit now, without holding them: for a store that
+/// reserves later (a tus upload's creation; its consumer reserves).
 ///
 /// # Errors
 ///

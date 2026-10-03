@@ -54,8 +54,9 @@
 //! the uploads of purposes other than the migration's, unfinished or waiting
 //! to be used, hold at most [`max_staged_bytes`] (the largest import plus
 //! 1 GiB): a creation past either answers 409. A purpose that counts
-//! against the quota refuses an upload that could not fit at once (the one
-//! place uploads meet the quota, marked `QUOTA(P4-07)`).
+//! against the quota refuses an upload that could not fit at once:
+//! [`crate::quota::check`], against the user's quota (`quota_exceeded`) and
+//! the media budget (`storage_full`); the consumer reserves for real.
 //!
 //! **Consumers.** A complete upload of a purpose other than the migration's
 //! is used once: its consumer (P4-10 imports, P4-18 bookmarks, P2-14
@@ -99,10 +100,10 @@ use crate::control::uploads::{
     self, ClaimRefusal, Content, ContentRefusal, Found, HashRule, NewUpload, Terminated, Upload,
     UploadMeta, UploadPurpose, clean_filename,
 };
-use crate::control::users;
 use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json, Path as UrlPath};
 use crate::ids::{new_ulid, now_ms};
+use crate::quota;
 use crate::state::{AppState, blocking};
 
 pub use crate::control::uploads::{MAX_DATABASE_BYTES, MAX_OBJECT_BYTES};
@@ -284,7 +285,10 @@ pub async fn create_upload(
         );
     }
     if purpose.quota {
-        check_quota(&state, caller.id(), length).await?;
+        // Before the bytes are sent: the consumer would refuse them after
+        // they all arrived. It reserves for real when it stores them (P4
+        // lane rule 6); this holds nothing.
+        quota::check(&state, caller.id(), length).await?;
     }
     let length = i64::try_from(length).map_err(ApiError::internal)?;
 
@@ -804,37 +808,6 @@ fn require_uploader(caller: &Caller, purpose: Option<UploadPurpose>) -> Result<(
         None => Err(ApiError::new(ErrorCode::Forbidden)
             .with_detail("this upload's purpose is unknown to this server")),
     }
-}
-
-/// Refuses an upload whose bytes could not be stored once used, before they
-/// are sent: the consumer would refuse them after they all arrived. The
-/// consumer reserves the quota for real when it stores them (P4 lane rule
-/// 6), so this only compares.
-///
-/// QUOTA(P4-07): the one place uploads meet the quota. Once `crate::quota`
-/// lands, reserve here and drop the reservation at once, which also answers
-/// `storage_full` against the media budget:
-/// `drop(quota::reserve(state, user_id, length).await?)`. Until then it
-/// compares the counted use with `users.quota_bytes` (0: unlimited, the
-/// owner).
-async fn check_quota(state: &AppState, user_id: &str, length: u64) -> Result<(), ApiError> {
-    let control = Arc::clone(state.control());
-    let user = user_id.to_owned();
-    let usage = blocking(move || control.read(|c| users::usage(c, &user))).await?;
-    let Some(usage) = usage.filter(|u| u.quota_bytes > 0) else {
-        return Ok(());
-    };
-    let after = usage
-        .used_bytes
-        .saturating_add(i64::try_from(length).unwrap_or(i64::MAX));
-    if after > usage.quota_bytes {
-        return Err(ApiError::new(ErrorCode::QuotaExceeded).with_detail(format!(
-            "the upload needs {} bytes beyond the quota of {} bytes",
-            after - usage.quota_bytes,
-            usage.quota_bytes
-        )));
-    }
-    Ok(())
 }
 
 /// The 204 of a stored chunk.

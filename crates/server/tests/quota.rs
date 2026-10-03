@@ -10,7 +10,10 @@ use std::collections::HashSet;
 use std::process::{Command, Output};
 use std::time::Duration;
 
-use axum::http::StatusCode;
+use axum::body::Body;
+use axum::http::{Request, StatusCode};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use rusqlite::{Connection, params};
 use serde_json::Value;
 use shelfy_core::repo::RepoError;
@@ -28,9 +31,9 @@ use shelfy_server::quota::{self, GIB, NOTIFICATION_CODE, Reservation};
 use shelfy_server::state::{AppState, blocking};
 use shelfy_server::telemetry::metrics::{USERS_AREA, area_bytes, sample_disk};
 use support::TestState;
-use support::auth::{owner, sign_in, with_session};
+use support::auth::{owner, sign_in, spa, with_session};
 use support::library::{ALICE, BOB};
-use support::{get, json, send};
+use support::{get, json, problem, send};
 use tokio_util::sync::CancellationToken;
 
 const HOUR: Duration = Duration::from_secs(3600);
@@ -594,6 +597,31 @@ async fn get_me_usage_shows_a_commit_at_once() {
     assert_eq!(usage["usedBytes"], 64_000);
     assert_eq!(usage["quotaBytes"], 0, "the owner is unlimited");
     assert_eq!(usage["updatedAt"], Value::Null, "a commit is not a count");
+}
+
+#[tokio::test]
+async fn an_upload_past_the_media_budget_is_refused_at_creation() {
+    let t = with_budget(1_000_000);
+    let app = t.app();
+    let cookie = sign_in(&app, &t).await;
+    let create = |length: u64| {
+        Request::post("/api/v1/uploads")
+            .header("tus-resumable", "1.0.0")
+            .header("upload-length", length.to_string())
+            .header(
+                "upload-metadata",
+                format!("purpose {}", STANDARD.encode("bookmark-original")),
+            )
+            .body(Body::empty())
+            .unwrap()
+    };
+    // The owner's quota is unlimited; the budget is not.
+    let refused = send(&app, spa(&t, create(1_000_001), &cookie)).await;
+    let refused = problem(refused, StatusCode::INSUFFICIENT_STORAGE).await;
+    assert_eq!(refused.code, ErrorCode::StorageFull);
+    let created = send(&app, spa(&t, create(900_000), &cookie)).await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    assert_eq!(t.state.quota().reserved_total(), 0, "a check holds nothing");
 }
 
 #[tokio::test]
