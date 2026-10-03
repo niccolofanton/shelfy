@@ -84,7 +84,9 @@ test.describe('Gallery – post grid and filters', () => {
 
   test('media type filter: Image', async ({ page }) => {
     await page.locator('[data-testid="filters-toggle"]').click();
-    await openMediaTypeFilter(page).getByRole('button', { name: 'Image' }).click();
+    // exact: true — P1-14 added a separate "Images" (plural, carousel-less
+    // multi-image posts) button, which this name would otherwise also match.
+    await openMediaTypeFilter(page).getByRole('button', { name: 'Image', exact: true }).click();
     const imageCount = MOCK_POSTS.filter((p) => p.mediaType === 'image').length;
     await expect(page.locator('[data-testid="post-card"]')).toHaveCount(imageCount);
   });

@@ -96,7 +96,6 @@ const API_DEFAULTS: Record<string, unknown> = {
   clearAllAnalyze: undefined,
   retryAnalyzeJob: undefined,
   clearCompletedAnalyze: undefined,
-  clearPostDescriptions: 0,
   getModelStatus: {
     ready: true,
     downloading: false,
