@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy } from 'react';
 import VirtualPostGrid from '../components/VirtualPostGrid';
 import InfiniteCanvas from '../components/InfiniteCanvas';
 import PostGridSkeleton from '../components/PostGridSkeleton';
 import PostModal from '../components/PostModal';
 import FilterBar from '../components/FilterBar';
 import FilterDrawer from '../components/FilterDrawer';
-import CollectionModal from '../components/CollectionModal';
 import Popover from '../components/Popover';
 import { usePosts } from '../hooks/usePosts';
 import { useSearchSequence } from '../hooks/useSearchTransition';
@@ -20,7 +19,7 @@ import { useCapabilities, useShelfy } from '../api/ShelfyProvider';
 import { useNavigation } from '../api/navigation';
 import { errorMessageKey } from '../api/errors';
 import ErrorBoundary, { ErrorPanel } from '../components/ErrorBoundary';
-import { useT } from '../i18n';
+import { useT, withMessages } from '../i18n';
 import {
   RefreshCw,
   ImageOff,
@@ -44,6 +43,13 @@ import {
   Telescope,
   FileQuestion,
 } from 'lucide-react';
+
+// The "new collection" dialog isn't on the first screen (plan §2.19 / F14):
+// same withMessages() pattern as App.tsx's lazy views, so its code and its
+// 'collectionModal' strings both ship in their own chunk instead of here.
+const CollectionModal = lazy(
+  withMessages(() => import('../components/CollectionModal'), 'collectionModal'),
+);
 
 // Date-sort direction surfaced by the toolbar's sort toggle.
 type SortOrder = 'newest' | 'oldest';
@@ -1849,11 +1855,13 @@ export default function Gallery({
       )}
 
       {showCreate && (
-        <CollectionModal
-          collections={collections}
-          onClose={() => setShowCreate(false)}
-          onSave={handleCreateAndAssign}
-        />
+        <Suspense fallback={null}>
+          <CollectionModal
+            collections={collections}
+            onClose={() => setShowCreate(false)}
+            onSave={handleCreateAndAssign}
+          />
+        </Suspense>
       )}
     </div>
   );

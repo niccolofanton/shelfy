@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, Suspense, lazy } from 'react';
 import {
   Grid3X3,
   Globe,
@@ -22,10 +22,14 @@ import {
 import PinterestIcon from './PinterestIcon';
 import Logo from './Logo';
 import ActivityCenter from './ActivityCenter';
-import FeedbackModal from './FeedbackModal';
-import { useT } from '../i18n';
+import { useT, withMessages } from '../i18n';
 import { useCapabilities } from '../api/ShelfyProvider';
 import { PLATFORM_SOURCES, collectionsForPlatform, customCollections } from '../lib/sourceList';
+
+// Not on the first screen (opens from the sidebar's "send feedback" action):
+// same withMessages() pattern as the other nested modals, even though
+// Sidebar itself stays eager (plan §2.19 / F14).
+const FeedbackModal = lazy(withMessages(() => import('./FeedbackModal'), 'feedback'));
 
 // Translator returned by useT — namespaced key + optional interpolation vars.
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
@@ -946,7 +950,11 @@ function Sidebar({
           )}
         </div>
 
-        {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
+        {feedbackOpen && (
+          <Suspense fallback={null}>
+            <FeedbackModal onClose={() => setFeedbackOpen(false)} />
+          </Suspense>
+        )}
       </aside>
     </>
   );

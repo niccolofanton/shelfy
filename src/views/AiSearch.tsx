@@ -1,15 +1,14 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense, lazy } from 'react';
 import VirtualPostGrid from '../components/VirtualPostGrid';
 import GridSizeControl from '../components/GridSizeControl';
 import PostGridSkeleton from '../components/PostGridSkeleton';
 import PostModal from '../components/PostModal';
-import CollectionModal from '../components/CollectionModal';
 import Chip from '../components/Chip';
 import { useAiSearch } from '../hooks/useAiSearch';
 import { useDictation } from '../hooks/useDictation';
 import { useToast } from '../hooks/useToast';
 import { postsToMarkdown, downloadMarkdown, copyPostLinks } from '../lib/exportMarkdown';
-import { useT, useLang, localeTag } from '../i18n';
+import { useT, useLang, localeTag, withMessages } from '../i18n';
 import {
   Sparkles,
   Send,
@@ -27,6 +26,13 @@ import {
   SquarePen,
   ListFilter,
 } from 'lucide-react';
+
+// Not on the first screen (opens from "save selection as a collection"): same
+// withMessages() pattern as App.tsx/Gallery.tsx/PostModal.tsx, so this is one
+// shared chunk regardless of which of the four nests it.
+const CollectionModal = lazy(
+  withMessages(() => import('../components/CollectionModal'), 'collectionModal'),
+);
 
 const ACCENT = '#7B5CFF';
 
@@ -1229,7 +1235,12 @@ export default function AiSearch({
         // No `initial` → the modal renders in "Nuova source / Crea" mode (passing
         // a truthy `initial` would flip it to edit wording). The user types the
         // name; the default is offered via the placeholder of the modal itself.
-        <CollectionModal onClose={() => setCollectionModal(null)} onSave={handleCreateCollection} />
+        <Suspense fallback={null}>
+          <CollectionModal
+            onClose={() => setCollectionModal(null)}
+            onSave={handleCreateCollection}
+          />
+        </Suspense>
       )}
 
       {toast && <Toast closing={toastClosing}>{toast}</Toast>}

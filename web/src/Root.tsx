@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, Suspense, lazy } from 'react';
 import { useLocation, useSearch } from 'wouter';
 import App from '@ui/App';
 import Logo from '@ui/components/Logo';
 import { ShelfyProvider } from '@ui/api/ShelfyProvider';
 import type { ShelfyClient } from '@ui/api/ShelfyClient';
-import { LANGUAGES, useLang } from '@ui/i18n';
+import { LANGUAGES, useLang, withMessages } from '@ui/i18n';
 import type { AuthApi, Me } from './api/auth';
 import type { Http } from './api/http';
 import DevicePage from './auth/DevicePage';
@@ -12,7 +12,6 @@ import LoginScreen from './auth/LoginScreen';
 import MagicLinkScreen from './auth/MagicLinkScreen';
 import { ReauthHost } from './auth/ReauthDialog';
 import ReauthLinkScreen from './auth/ReauthLinkScreen';
-import SharePage from './share/SharePage';
 import {
   WebNavigation,
   loginPath,
@@ -21,6 +20,23 @@ import {
   takeMagicToken,
   takeReauthToken,
 } from './routes';
+
+// Not on the first screen (only the Android share target, the bookmarklet and
+// the iOS Shortcut land here): same withMessages() pattern as the app's lazy
+// views (F14), so its own 'share' strings ship in this chunk instead of the
+// entry's. The other route pages above stay eager: they all use 'auth',
+// which LoginScreen (always eager) already needs there.
+const SharePage = lazy(withMessages(() => import('./share/SharePage'), 'share'));
+
+// Suspense fallback for SharePage: the same splash as the "checking session"
+// state below, since both replace the whole page while something loads.
+function RouteLoading(): React.JSX.Element {
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-[#0f0f0f]">
+      <Logo size={28} />
+    </div>
+  );
+}
 
 // The session is the server's (an HttpOnly cookie). Signed in, it carries the
 // user (`GET /me`) and the ShelfyClient made for them: one per session,
@@ -167,7 +183,9 @@ export default function Root({
       {route.name === 'device' ? (
         <DevicePage key={deviceCode ?? ''} auth={auth} initialCode={deviceCode} />
       ) : route.name === 'share' ? (
-        <SharePage client={client} url={route.url} text={route.text} title={route.title} />
+        <Suspense fallback={<RouteLoading />}>
+          <SharePage client={client} url={route.url} text={route.text} title={route.title} />
+        </Suspense>
       ) : (
         <ShelfyProvider client={client}>
           <WebNavigation>

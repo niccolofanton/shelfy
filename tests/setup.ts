@@ -1,6 +1,14 @@
-import { vi, beforeEach, type Mock } from 'vitest';
+import { vi, beforeEach, beforeAll, type Mock } from 'vitest';
 import '@testing-library/jest-dom';
 import type { ElectronAPI } from '../types/electron-api';
+import { loadMessages, ALL_NAMESPACES } from '../src/i18n';
+
+// Many tests render one view or modal in isolation (no App.tsx), so none of
+// its withMessages()-wrapped lazy() factories ever run (F14: most i18n
+// namespaces load lazily in the real app — see src/i18n/index.tsx). Load
+// every namespace once per test file, up front, so a test never sees an
+// untranslated "ns.key" just because of how it chose to mount its tree.
+beforeAll(() => loadMessages(ALL_NAMESPACES));
 
 // jsdom has no IntersectionObserver; the Gallery's infinite-scroll sentinel
 // needs it to exist. A no-op stub is enough for component tests.

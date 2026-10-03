@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, Suspense, lazy } from 'react';
 import {
   X,
   Instagram,
@@ -9,16 +9,22 @@ import {
   Globe,
   Bookmark,
 } from 'lucide-react';
-import { useT } from '../i18n';
+import { useT, withMessages } from '../i18n';
 import { useShelfy } from '../api/ShelfyProvider';
-import ImageLightbox, { LightboxImage } from './ImageLightbox';
+import type { LightboxImage } from './ImageLightbox';
 import PinterestIcon from './PinterestIcon';
-import CollectionModal from './CollectionModal';
 import { resolveUrl, webPageLabel, buildSlides, pickSlideMedia } from './postmodal/helpers';
 import MediaCarousel from './postmodal/MediaCarousel';
 import MetaColumn, { ApplyAiFilter, PostUpdated } from './postmodal/MetaColumn';
 import ActionsMenu from './postmodal/ActionsMenu';
 import CollectionsMenu from './postmodal/CollectionsMenu';
+
+// Neither is on the first screen — the zoom lightbox and the "new collection"
+// dialog both open from an in-modal action — so, as in App.tsx and
+// Gallery.tsx, each is its own chunk via the same withMessages() pattern,
+// nested here under the (eager) post modal shell.
+const ImageLightbox = lazy(withMessages(() => import('./ImageLightbox'), 'lightbox'));
+const CollectionModal = lazy(withMessages(() => import('./CollectionModal'), 'collectionModal'));
 
 interface PostModalProps {
   post: Shelfy.Post;
@@ -506,46 +512,51 @@ export default function PostModal({
       </div>
 
       {lightboxIndex != null && imageSlides.length > 0 && (
-        <ImageLightbox
-          images={imageSlides.map(
-            ({ s }, i): LightboxImage => ({
-              src: (s.localPath ? client.media.file(s.localPath) : s.url) || '',
-              // Web captures store tall pages as vertical chunks; match this slide's
-              // page by URL and hand the lightbox the band list so it lazy-stacks them.
-              chunks: isWeb
-                ? (() => {
-                    const pg = (Array.isArray(post.webPages) ? post.webPages : []).find(
-                      (p) => p && p.url === s.url && Array.isArray(p.chunks) && p.chunks.length > 1,
-                    );
-                    return pg
-                      ? pg.chunks
-                          ?.map((c) => client.media.file(c.screenshotPath ?? null))
-                          .filter((src): src is string => Boolean(src))
-                      : undefined;
-                  })()
-                : undefined,
-              label: isWeb
-                ? [post.webDomain, webPageLabel(s.url, post.webFinalUrl || post.postUrl, i, t)]
-                    .filter(Boolean)
-                    .join(' · ')
-                : post.authorUsername
-                  ? `@${post.authorUsername}`
-                  : '',
-              href: isWeb ? (s.url ?? undefined) : undefined,
-            }),
-          )}
-          index={lightboxIndex}
-          onClose={() => setLightboxIndex(null)}
-          onIndexChange={setLightboxIndex}
-        />
+        <Suspense fallback={null}>
+          <ImageLightbox
+            images={imageSlides.map(
+              ({ s }, i): LightboxImage => ({
+                src: (s.localPath ? client.media.file(s.localPath) : s.url) || '',
+                // Web captures store tall pages as vertical chunks; match this slide's
+                // page by URL and hand the lightbox the band list so it lazy-stacks them.
+                chunks: isWeb
+                  ? (() => {
+                      const pg = (Array.isArray(post.webPages) ? post.webPages : []).find(
+                        (p) =>
+                          p && p.url === s.url && Array.isArray(p.chunks) && p.chunks.length > 1,
+                      );
+                      return pg
+                        ? pg.chunks
+                            ?.map((c) => client.media.file(c.screenshotPath ?? null))
+                            .filter((src): src is string => Boolean(src))
+                        : undefined;
+                    })()
+                  : undefined,
+                label: isWeb
+                  ? [post.webDomain, webPageLabel(s.url, post.webFinalUrl || post.postUrl, i, t)]
+                      .filter(Boolean)
+                      .join(' · ')
+                  : post.authorUsername
+                    ? `@${post.authorUsername}`
+                    : '',
+                href: isWeb ? (s.url ?? undefined) : undefined,
+              }),
+            )}
+            index={lightboxIndex}
+            onClose={() => setLightboxIndex(null)}
+            onIndexChange={setLightboxIndex}
+          />
+        </Suspense>
       )}
 
       {showCreateCollection && (
-        <CollectionModal
-          collections={collections}
-          onClose={() => setShowCreateCollection(false)}
-          onSave={handleCreateAndAssign}
-        />
+        <Suspense fallback={null}>
+          <CollectionModal
+            collections={collections}
+            onClose={() => setShowCreateCollection(false)}
+            onSave={handleCreateAndAssign}
+          />
+        </Suspense>
       )}
     </>
   );

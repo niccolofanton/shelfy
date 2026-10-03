@@ -4,12 +4,7 @@ import Sidebar from './components/Sidebar';
 import BottomNav, { type BottomNavTarget } from './components/BottomNav';
 import WindowControls from './components/WindowControls';
 import Gallery from './views/Gallery';
-import AddSiteModal from './components/AddSiteModal';
-import AddBookmarkModal from './components/AddBookmarkModal';
 import Browser from './views/Browser';
-import Downloads from './views/Downloads';
-import CollectionModal from './components/CollectionModal';
-import RemoteAiBanner from './components/RemoteAiBanner';
 import { useAiSetupStatus } from './hooks/useAiSetup';
 import PostModal from './components/PostModal';
 import ErrorBoundary, { ErrorPanel } from './components/ErrorBoundary';
@@ -20,7 +15,7 @@ import { useWebJobs } from './hooks/useWebJobs';
 import { AnalysisProvider, useAnalysis, analysisSummary } from './hooks/useAnalysis';
 import { ActivityProvider } from './hooks/useActivity';
 import type { SourceSyncApi, SyncTarget } from './hooks/useSourceSync';
-import { useT, useLang, localeTag } from './i18n';
+import { useT, useLang, localeTag, withMessages } from './i18n';
 import { useShelfy } from './api/ShelfyProvider';
 import {
   DEFAULT_SETTINGS_SECTION,
@@ -30,21 +25,51 @@ import {
 } from './api/navigation';
 import { buildTime } from 'virtual:build-time';
 
-// AI, Websites, Settings (plan §2.19 "code-split AI, Websites, Settings and
-// Admin"; Admin has no view of its own — out of scope, E4): on the web these
-// are capability-gated off until P3/P1-20 (see `caps.ai` / `caps.websites` /
-// `caps.settings` below), but a static import still ships their JS in the
-// initial bundle for every visitor. `views/websites/model.ts` alone (the
-// biggest of these view trees) is ~25 KB uncompressed, and AiWebsites also
-// pulls in the rest of `views/websites/**`. React.lazy defers all of it to
-// its own chunk, fetched only the first time `mountedViews` (below) adds that
-// view — which capability-gated navigation on the web never does.
-const SettingsView = lazy(() => import('./views/Settings'));
-const AiTags = lazy(() => import('./views/AiTags'));
-const AiTagsQueue = lazy(() => import('./views/AiTagsQueue'));
-const AiWebsites = lazy(() => import('./views/AiWebsites'));
-const AiSearch = lazy(() => import('./views/AiSearch'));
-const AiOnboarding = lazy(() => import('./views/AiOnboarding'));
+// AI, Websites, Settings, Downloads (plan §2.19 "code-split AI, Websites,
+// Settings and Admin"; Admin has no view of its own — out of scope, E4): on
+// the web these are capability-gated off until P3/P1-20 (see `caps.ai` /
+// `caps.websites` / `caps.settings` below), but a static import still ships
+// their JS in the initial bundle for every visitor. `views/websites/model.ts`
+// alone (the biggest of these view trees) is ~25 KB uncompressed, and
+// AiWebsites also pulls in the rest of `views/websites/**`. React.lazy defers
+// all of it to its own chunk, fetched only the first time `mountedViews`
+// (below) adds that view — which capability-gated navigation on the web
+// never does.
+//
+// F14: withMessages() (src/i18n) wraps each factory so the view's own i18n
+// namespace(s) load in the same Promise as its code — Suspense below waits
+// on both, so the view never flashes an untranslated "ns.key" on first
+// render. A view that cites a namespace only through another component it
+// renders (e.g. AiTagsQueue quoting 'aiTags' strings) lists that namespace
+// here too. This is the pattern later lanes follow for a new lazy view.
+const SettingsView = lazy(
+  withMessages(() => import('./views/Settings'), 'settings', 'language', 'importModal'),
+);
+const AiTags = lazy(withMessages(() => import('./views/AiTags'), 'aiTags'));
+const AiTagsQueue = lazy(withMessages(() => import('./views/AiTagsQueue'), 'aiTags', 'aiQueue'));
+const AiWebsites = lazy(
+  // 'lightbox': views/websites/SiteDetail.tsx and detail/SectionsTab.tsx
+  // render the same ImageLightbox PostModal.tsx uses, statically — not
+  // through PostModal's own local lazy wrapper, so it needs listing here too.
+  withMessages(() => import('./views/AiWebsites'), 'aiWebsites', 'webVocab', 'lightbox'),
+);
+const AiSearch = lazy(
+  withMessages(() => import('./views/AiSearch'), 'aiSearch', 'dictation', 'chip'),
+);
+const AiOnboarding = lazy(withMessages(() => import('./views/AiOnboarding'), 'aiOnboarding'));
+const DownloadsView = lazy(withMessages(() => import('./views/Downloads'), 'downloads'));
+
+// Modals and a banner that aren't on the first screen — opened from a toolbar
+// action, or (RemoteAiBanner) shown only once `caps.ai` arrives — so each is
+// its own chunk too, following the same withMessages() pattern.
+const AddSiteModal = lazy(withMessages(() => import('./components/AddSiteModal'), 'addSite'));
+const AddBookmarkModal = lazy(
+  withMessages(() => import('./components/AddBookmarkModal'), 'addBookmark'),
+);
+const CollectionModal = lazy(
+  withMessages(() => import('./components/CollectionModal'), 'collectionModal'),
+);
+const RemoteAiBanner = lazy(withMessages(() => import('./components/RemoteAiBanner'), 'remoteAi'));
 
 // Suspense fallback for the lazy views above: a view only ever takes a beat
 // to fetch its chunk the first time it's visited (or never, on the web while
@@ -222,7 +247,7 @@ function bottomNavTargetOfView(view: View): BottomNavTarget | null {
 
 // Memo wrappers for the always-/keep-alive-mounted children: App re-renders on
 // every coalesced progress flush, so each view must only reconcile when its own
-// (stabilized) props change. Sidebar and Downloads are memoized at definition.
+// (stabilized) props change. Sidebar and Downloads are also memoized at definition.
 const GalleryMemo = React.memo(Gallery);
 const BrowserMemo = React.memo(Browser);
 const AiTagsMemo = React.memo(AiTags);
@@ -230,6 +255,7 @@ const AiTagsQueueMemo = React.memo(AiTagsQueue);
 const AiWebsitesMemo = React.memo(AiWebsites);
 const AiSearchMemo = React.memo(AiSearch);
 const SettingsMemo = React.memo(SettingsView);
+const DownloadsMemo = React.memo(DownloadsView);
 
 // Web-capture statuses counted as "active" for the sidebar badge.
 const WEB_ACTIVE_STATUS: string[] = [
@@ -897,7 +923,11 @@ function AppInner(): React.JSX.Element {
           onActivityAction={handleActivityAction}
         />
         <main className="flex-1 narrow:min-h-0 overflow-hidden relative">
-          {caps.ai && <RemoteAiBanner />}
+          {caps.ai && (
+            <Suspense fallback={null}>
+              <RemoteAiBanner />
+            </Suspense>
+          )}
           {/* Browser is always mounted so its webviews keep syncing in the background,
             even when another view is on screen; an opaque overlay covers it meanwhile.
             zIndex:0 makes this an isolated stacking context so the Browser's own
@@ -982,7 +1012,11 @@ function AppInner(): React.JSX.Element {
                         onSyncSource={caps.browser ? handleSyncSource : undefined}
                       />
                     )}
-                    {v === 'downloads' && <Downloads downloads={downloads} />}
+                    {v === 'downloads' && (
+                      <Suspense fallback={<ViewLoading />}>
+                        <DownloadsMemo downloads={downloads} />
+                      </Suspense>
+                    )}
                     {v === 'aitags' && (
                       <Suspense fallback={<ViewLoading />}>
                         <AiTagsMemo
@@ -1075,36 +1109,42 @@ function AppInner(): React.JSX.Element {
           aiVisible={caps.ai}
         />
         {collectionModal && (
-          <CollectionModal
-            initial={collectionModal.initial}
-            collections={collections}
-            onClose={() => setCollectionModal(null)}
-            onSave={handleSaveCollection}
-            onDelete={handleDeleteCollection}
-          />
+          <Suspense fallback={null}>
+            <CollectionModal
+              initial={collectionModal.initial}
+              collections={collections}
+              onClose={() => setCollectionModal(null)}
+              onSave={handleSaveCollection}
+              onDelete={handleDeleteCollection}
+            />
+          </Suspense>
         )}
         {showAddSite && (
-          <AddSiteModal
-            onClose={() => setShowAddSite(false)}
-            onAdded={() => {
-              refreshStats();
-              setShowAddSite(false);
-              setView('aiweb');
-            }}
-          />
+          <Suspense fallback={null}>
+            <AddSiteModal
+              onClose={() => setShowAddSite(false)}
+              onAdded={() => {
+                refreshStats();
+                setShowAddSite(false);
+                setView('aiweb');
+              }}
+            />
+          </Suspense>
         )}
         {showAddBookmark && (
-          <AddBookmarkModal
-            onClose={() => setShowAddBookmark(false)}
-            onAdded={() => {
-              refreshStats();
-              setShowAddBookmark(false);
-              // Jump to the "all posts" gallery (re-applies the source → reloads the
-              // grid) so the freshly-added bookmark is visible right away even if a
-              // platform filter was active.
-              handleSelectSource({ type: 'platform', value: 'all' });
-            }}
-          />
+          <Suspense fallback={null}>
+            <AddBookmarkModal
+              onClose={() => setShowAddBookmark(false)}
+              onAdded={() => {
+                refreshStats();
+                setShowAddBookmark(false);
+                // Jump to the "all posts" gallery (re-applies the source → reloads the
+                // grid) so the freshly-added bookmark is visible right away even if a
+                // platform filter was active.
+                handleSelectSource({ type: 'platform', value: 'all' });
+              }}
+            />
+          </Suspense>
         )}
         {aiModalPost && (
           <ErrorBoundary
