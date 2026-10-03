@@ -35,9 +35,10 @@ test('/p/:key opens the post over the library, and closing it leaves for /', asy
   await expect(page).toHaveURL(/\/$/);
 });
 
-test('pages this client cannot show yet say so', async ({ page }) => {
+test('/trash opens the real view (P1-14; it used to say "not available yet")', async ({ page }) => {
   await page.goto('/trash');
-  await expect(page.getByTestId('route-unavailable')).toBeVisible();
+  await expect(page.getByTestId('trash-view')).toBeVisible();
+  await expect(page.getByTestId('route-unavailable')).toHaveCount(0);
   await expect(page.getByTestId('sidebar')).toBeVisible();
 });
 

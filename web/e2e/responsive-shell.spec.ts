@@ -5,13 +5,11 @@
 // that the layout the gallery shipped with stays the same above the
 // breakpoint (the card's explicit requirement).
 //
-// Long-press enters selection through `onQuickSelect`, which Gallery only
-// wires once the `bulkActions` capability exists (P1-14) — not yet, on the
-// web. So the long-press behavior below checks what IS observable today: the
-// gesture is recognized and its trailing click is swallowed (the post does
-// not open). The full "selects the post" behavior is covered at the component
-// level in tests/components/PostCard.test.tsx, with onQuickSelect provided
-// directly, the same way Gallery will once P1-14 lands.
+// Long-press enters selection through `onQuickSelect`, which Gallery wires
+// once the `bulkActions` capability exists — on since P1-14. The long-press
+// behavior below checks the real selection (not just that the trailing click
+// is swallowed); the onQuickSelect contract itself is also covered at the
+// component level in tests/components/PostCard.test.tsx.
 //
 // Playwright's own touch emulation (`locator.tap()`) has no notion of a long
 // hold and no multi-touch pinch, so every gesture below dispatches real
@@ -218,7 +216,9 @@ function defineNarrowBehaviors(name: string, viewport: { width: number; height: 
       await expect(page.getByTestId('post-modal')).toBeHidden(); // still just previewing
     });
 
-    test('long-press is recognized and swallows the trailing click', async ({ page }) => {
+    test('long-press selects the post (P1-14: bulkActions wires onQuickSelect) and swallows the trailing click', async ({
+      page,
+    }) => {
       await page.goto('/');
       const card = page.getByTestId('post-card').first();
       const box = (await card.boundingBox())!;
@@ -228,10 +228,10 @@ function defineNarrowBehaviors(name: string, viewport: { width: number; height: 
       await page.waitForTimeout(650); // > useLongPress's 500ms delay
       await dispatchPointer(card, 'pointerup', { pointerId: 9, x, y });
       await dispatchClick(card);
-      // The browser's trailing click must not open the post — on the web,
-      // onQuickSelect itself only exists once P1-14 wires bulkActions; the
-      // long-press→selection behavior is covered with it provided directly in
-      // tests/components/PostCard.test.tsx.
+      // Long-press arms selection with exactly this post selected (the same
+      // onQuickSelect contract tests/components/PostCard.test.tsx covers
+      // directly) — the trailing click must not ALSO open the post.
+      await expect(page.getByTestId('selection-count')).toHaveText('1 selected');
       await expect(page.getByTestId('post-modal')).toBeHidden();
     });
 

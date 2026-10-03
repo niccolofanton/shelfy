@@ -31,6 +31,12 @@ export interface MockApi {
   requests: RecordedRequest[];
   // Requests that left the app's origin.
   thirdParty: string[];
+  // Artificial `GET /posts` latency, ms (default 0: instant, like every other
+  // route). P1-14: the mock answers synchronously, so a large synthetic
+  // library's infinite scroll would otherwise race ahead and load every page
+  // before a test can observe "more matches than are loaded" (select-all-
+  // matching) — a real server's network latency naturally paces it instead.
+  postsDelayMs: number;
   requestsTo(path: string, method?: string): RecordedRequest[];
 }
 
@@ -288,20 +294,70 @@ function problem(route: Route, status: number, code: string): Promise<void> {
   });
 }
 
+// A minimal `FilterParams`-shaped match (P1-11/P1-14): only the fields the
+// bulk/trash/count specs actually exercise. `trash` defaults to "library
+// only" (false/undefined), mirroring the real server.
+function matchesFilter(
+  p: Schemas['Post'],
+  filter: {
+    platform?: string | null;
+    trash?: boolean | null;
+    mediaType?: string[] | null;
+    collection?: number | null;
+  } = {},
+): boolean {
+  const inTrash = p.deletedAt != null;
+  if (filter.trash ? !inTrash : inTrash) return false;
+  if (filter.platform && p.platform !== filter.platform) return false;
+  if (filter.mediaType?.length && !filter.mediaType.includes(p.mediaType)) return false;
+  if (filter.collection != null && !p.collectionIds.includes(filter.collection)) return false;
+  return true;
+}
+
+// A `PostSelector` (P1-03/P1-11): explicit keys, or every post `filter`
+// matches minus `exceptKeys` ("select all matching").
+function resolveSelector(
+  api: MockApi,
+  selector: {
+    keys?: string[];
+    filter?: Parameters<typeof matchesFilter>[1];
+    exceptKeys?: string[];
+  },
+): Schemas['Post'][] {
+  if (selector.keys) {
+    const want = new Set(selector.keys);
+    return api.posts.filter((p) => want.has(p.key));
+  }
+  const matched = api.posts.filter((p) => matchesFilter(p, selector.filter ?? {}));
+  if (!selector.exceptKeys?.length) return matched;
+  const except = new Set(selector.exceptKeys);
+  return matched.filter((p) => !except.has(p.key));
+}
+
+// P1-11/P1-14: trashed posts count separately and drop out of the library's
+// own totals (mirroring the server, which never counts them in `GET /stats`
+// or a plain `GET /posts` without `trash=1`).
 function stats(api: MockApi): Schemas['Stats'] {
   const byPlatform = { instagram: 0, twitter: 0, pinterest: 0, web: 0, manual: 0 };
   const byMediaType: Record<string, number> = {};
+  let total = 0;
+  let trashed = 0;
   for (const post of api.posts) {
+    if (post.deletedAt != null) {
+      trashed += 1;
+      continue;
+    }
+    total += 1;
     byPlatform[post.platform] += 1;
     byMediaType[post.mediaType] = (byMediaType[post.mediaType] ?? 0) + 1;
   }
   return {
-    total: api.posts.length,
+    total,
     byPlatform,
     byMediaType,
     stored: 0,
     storedByKind: { covers: 0, images: 0, videos: 0 },
-    trashed: 0,
+    trashed,
   };
 }
 
@@ -317,6 +373,10 @@ async function answer(api: MockApi, route: Route): Promise<void> {
     body = request.postData();
   }
   api.requests.push({ method, path, query, body });
+
+  if (path === '/api/v1/posts' && api.postsDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, api.postsDelayMs));
+  }
 
   if (path === '/api/v1/auth/methods') {
     return route.fulfill({ json: { emailLink: true, passkeys: false } });
@@ -353,10 +413,171 @@ async function answer(api: MockApi, route: Route): Promise<void> {
       .filter((p): p is Schemas['Post'] => !!p);
     return route.fulfill({ json: { items } });
   }
+  // P1-14: /posts/count and /posts/bulk are explicit checks, like batch-get
+  // above — both would otherwise match the generic `/posts/{key}` regex below
+  // (its key becoming the literal string "count" or "bulk").
+  if (path === '/api/v1/posts/count') {
+    const filter = {
+      platform: query.get('platform') || undefined,
+      trash: query.get('trash') === 'true' || query.get('trash') === '1',
+      mediaType: query.getAll('mediaType'),
+      collection: query.get('collection') ? Number(query.get('collection')) : undefined,
+    };
+    const total = api.posts.filter((p) => matchesFilter(p, filter)).length;
+    return route.fulfill({ json: { total } satisfies Schemas['PostCount'] });
+  }
+  if (path === '/api/v1/posts/bulk' && method === 'POST') {
+    const { selector, action, params } = (body ?? {}) as {
+      selector?: Parameters<typeof resolveSelector>[1];
+      action: Schemas['BulkAction'];
+      params?: { collectionId?: number; collectionIds?: number[] };
+    };
+    const matched = resolveSelector(api, selector ?? {});
+    // A fresh stamp per call (not a fixed constant): two deletes in the same
+    // test must get distinct deletedAt handles, so an undo-by-deletedAt
+    // after the SECOND one never also restores the first.
+    const now = Date.now();
+    let changed = 0;
+    for (const p of matched) {
+      switch (action) {
+        case 'delete':
+          if (p.deletedAt == null) {
+            p.deletedAt = now;
+            changed += 1;
+          }
+          break;
+        case 'addToCollections':
+          for (const cid of params?.collectionIds ?? []) {
+            if (!p.collectionIds.includes(cid)) p.collectionIds = [...p.collectionIds, cid];
+          }
+          changed += 1;
+          break;
+        case 'removeFromCollection':
+          if (params?.collectionId != null && p.collectionIds.includes(params.collectionId)) {
+            p.collectionIds = p.collectionIds.filter((c) => c !== params.collectionId);
+            changed += 1;
+          }
+          break;
+        case 'clearAiDescription':
+          p.aiDescription = null;
+          p.aiStatus = null;
+          changed += 1;
+          break;
+        case 'clearAiTags':
+          p.aiTags = [];
+          p.aiStatus = null;
+          changed += 1;
+          break;
+        default:
+          break;
+      }
+    }
+    // F11: a null stamp means nothing moved — no undo handle then.
+    const deletedAt = action === 'delete' && changed > 0 ? now : null;
+    return route.fulfill({
+      json: {
+        action,
+        changed,
+        selected: matched.length,
+        deletedAt,
+        job: null,
+      } satisfies Schemas['BulkResult'],
+    });
+  }
+  if (path === '/api/v1/trash') {
+    const trashed = api.posts
+      .filter((p) => p.deletedAt != null)
+      .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
+    return route.fulfill({
+      json: {
+        items: trashed,
+        nextCursor: null,
+        total: trashed.length,
+        retentionDays: 30,
+      } satisfies Schemas['TrashPage'],
+    });
+  }
+  if (path === '/api/v1/trash/restore' && method === 'POST') {
+    const req = (body ?? {}) as {
+      deletedAt?: number;
+      selector?: Parameters<typeof resolveSelector>[1];
+    };
+    const matched =
+      typeof req.deletedAt === 'number'
+        ? api.posts.filter((p) => p.deletedAt === req.deletedAt)
+        : resolveSelector(api, req.selector ?? {});
+    let changed = 0;
+    for (const p of matched) {
+      if (p.deletedAt != null) {
+        p.deletedAt = null;
+        changed += 1;
+      }
+    }
+    return route.fulfill({
+      json: {
+        action: 'restore',
+        changed,
+        selected: matched.length,
+        deletedAt: null,
+        job: null,
+      } satisfies Schemas['BulkResult'],
+    });
+  }
+  if (path === '/api/v1/trash/empty' && method === 'POST') {
+    const trashed = api.posts.filter((p) => p.deletedAt != null);
+    api.posts = api.posts.filter((p) => p.deletedAt == null);
+    const now = T0 + 30_000;
+    return route.fulfill({
+      status: 202,
+      json: {
+        selected: trashed.length,
+        // `POST /trash/empty` always starts a job (plan: "starts the purge
+        // job"); the mock purges synchronously above, so it reports one
+        // that already finished — nothing more for a test to wait on.
+        job: {
+          id: 1,
+          kind: 'purge',
+          state: 'succeeded',
+          progress: 1,
+          stage: null,
+          postKey: null,
+          errorCode: null,
+          attempts: 0,
+          maxAttempts: 1,
+          runAt: now,
+          createdAt: now,
+          updatedAt: now,
+          finishedAt: now,
+        },
+      } satisfies Schemas['TrashEmptying'],
+    });
+  }
   if (path === '/api/v1/posts') {
-    const folder = Number(query.get('collection')) || null;
-    const items = api.posts.filter((p) => folder == null || p.collectionIds.includes(folder));
-    return route.fulfill({ json: { items, nextCursor: null, total: items.length } });
+    // The same predicate `/posts/count` and the bulk/trash selector use
+    // (platform, trash, mediaType, collection) — `GET /posts` must agree with
+    // them, or a platform-filtered gallery view and its "select all
+    // matching" would disagree on what matches.
+    const filter = {
+      platform: query.get('platform') || undefined,
+      trash: query.get('trash') === 'true' || query.get('trash') === '1',
+      mediaType: query.getAll('mediaType'),
+      collection: query.get('collection') ? Number(query.get('collection')) : undefined,
+    };
+    const matching = api.posts.filter((p) => matchesFilter(p, filter));
+    // Real paging (P1-14: large/synthetic-library specs need `total` to
+    // legitimately exceed one loaded page, to exercise "select all
+    // matching"): `cursor` is the offset of the next page, as a string.
+    const limit = Math.max(1, Math.min(200, Number(query.get('limit')) || 60));
+    const offset = Number(query.get('cursor')) || 0;
+    const items = matching.slice(offset, offset + limit);
+    const nextCursor =
+      offset + items.length < matching.length ? String(offset + items.length) : null;
+    const json: { items: typeof items; nextCursor: string | null; total?: number } = {
+      items,
+      nextCursor,
+    };
+    if (query.get('includeTotal') === 'true') json.total = matching.length;
+    return route.fulfill({ json });
   }
   const post = /^\/api\/v1\/posts\/([^/]+)$/.exec(path);
   if (post) {
@@ -528,6 +749,7 @@ export async function mockApi(page: Page, origin: string): Promise<MockApi> {
     streams: [],
     requests: [],
     thirdParty: [],
+    postsDelayMs: 0,
     requestsTo(path, method = 'GET') {
       return this.requests.filter((r) => r.path === path && r.method === method);
     },

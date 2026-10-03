@@ -97,15 +97,18 @@ test('adds this post to a folder, and the same picker removes it again (§1.2 #1
   await expect(page.getByTestId('post-modal-assign-to-1').locator('svg')).toHaveCount(0);
 });
 
-test('the sidebar has an unconditional Trash entry', async ({ page }) => {
+test('the sidebar has an unconditional Trash entry, which now opens the real view (P1-14)', async ({
+  page,
+}) => {
   await page.goto('/');
   await page.getByTestId('nav-trash').click();
   await expect(page).toHaveURL(/\/trash$/);
-  // P1-11/P1-14 build the view itself; today it says so.
-  await expect(page.getByTestId('route-unavailable')).toBeVisible();
+  await expect(page.getByTestId('trash-view')).toBeVisible();
 });
 
-test('creates a new folder from the sidebar, then deletes it (label only)', async ({ page }) => {
+test('creates a new folder from the sidebar, then deletes it (label only: it has no posts)', async ({
+  page,
+}) => {
   await page.goto('/');
   await page.getByTestId('add-source-btn').click();
   await page.getByTestId('collection-name-input').fill('Ricette');
@@ -117,7 +120,9 @@ test('creates a new folder from the sidebar, then deletes it (label only)', asyn
   await row.hover();
   await row.getByTestId('edit-collection-3').click();
   await page.getByTestId('collection-delete').click();
-  // Only "label" is offered: bulkActions (P1-14) isn't on yet.
+  // bulkActions (P1-14) is on, but a freshly created folder has 0 posts, so
+  // "label + posts" still has nothing to offer (CollectionModal gates it on
+  // postCount > 0, not just the capability).
   await expect(page.getByTestId('collection-delete-mode-posts')).toHaveCount(0);
   await page.getByTestId('collection-delete-confirm').click();
   await expect(page.getByTestId('source-collection-3')).toHaveCount(0);
