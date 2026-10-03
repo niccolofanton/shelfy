@@ -494,8 +494,9 @@ async fn requests_keep_the_group_rate_and_concurrency() {
     let mut tasks = Vec::new();
     for i in 0..6 {
         let path = format!("/rate/{i}.jpg");
-        b.fixture.route(IG, &path, [Answer::jpeg(100)]);
-        tasks.push(cdn_task(format!("https://{IG}{path}")));
+        let host = if i % 2 == 0 { IG } else { IG_OTHER };
+        b.fixture.route(host, &path, [Answer::jpeg(100)]);
+        tasks.push(cdn_task(format!("https://{host}{path}")));
     }
     for task in tasks {
         stored(task.await.unwrap());
@@ -505,24 +506,32 @@ async fn requests_keep_the_group_rate_and_concurrency() {
         "{:?}",
         started.elapsed()
     );
-    let mut arrivals: Vec<Instant> = b.fixture.hits().iter().map(|hit| hit.at).collect();
-    arrivals.sort();
-    for pair in arrivals.windows(2) {
+    // TLS and the fixture's scheduling can compress arrival gaps. Observe
+    // the actual shared pacer's reservations; paused-clock unit tests also
+    // verify that waiters cannot complete before their reserved slots.
+    let mut slots = b
+        .outbound
+        .limits()
+        .pacing_slots_for_tests(HostGroup::Instagram);
+    assert_eq!(slots.len(), 6, "every request uses the shared pacer");
+    slots.sort();
+    for pair in slots.windows(2) {
         let gap = pair[1] - pair[0];
-        assert!(gap >= Duration::from_millis(80), "{gap:?}");
+        assert!(gap >= Duration::from_millis(100), "{gap:?}");
     }
 
     // X with 2 fetches at once: never more in flight.
     let mut tasks = Vec::new();
+    let gate = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
     for i in 0..6 {
         let variant = format!("/media/slow{i}?format=jpg&name=large");
-        b.fixture.route(
-            X,
-            &variant,
-            [Answer::jpeg(100).delayed(Duration::from_millis(150))],
-        );
+        b.fixture
+            .route(X, &variant, [Answer::jpeg(100).gated(gate.clone())]);
         tasks.push(cdn_task(format!("https://{X}/media/slow{i}.jpg")));
     }
+    b.fixture.wait_for_hits(8).await; // Six rate requests, then two gated X requests.
+    assert_eq!(b.outbound.limits().free_slots(HostGroup::X), 0);
+    gate.add_permits(6);
     for task in tasks {
         stored(task.await.unwrap());
     }

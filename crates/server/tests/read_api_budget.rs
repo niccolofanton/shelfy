@@ -1,12 +1,13 @@
-//! Latency of the read API on a synthetic library the size of the reference
-//! one (6k posts, plan Appendix C), against the §6.2 budgets.
+//! Read API correctness and latency on the §6.2 synthetic 20k-post library.
 //!
 //! Server time is measured in-process, request in to body out: routing, the
 //! middleware stack, SQLite and JSON. §6.2 sets the `GET /posts` budget
 //! (60-item page: p95 ≤ 40 ms, p99 ≤ 100 ms) for a 20k library; P1-05 runs that
-//! size with `admin bench` on release builds. This test keeps the list path
-//! inside the budget on every `cargo test`, debug builds included. The search
-//! and detail numbers are printed for the record (run with `--nocapture`).
+//! size with `admin bench` on release builds. Every build checks every page
+//! and detail; release builds also enforce the unchanged latency budgets.
+//! CI runs this test in its own release job, without concurrent compiler or
+//! unit-test work. Debug timings are reported, not compared with release
+//! budgets (as in `admin bench`). Host load is recorded for interpretation.
 
 mod support;
 
@@ -24,8 +25,8 @@ const LIST_P99: Duration = Duration::from_millis(100);
 /// §6.2: `GET /posts/{key}`.
 const DETAIL_P95: Duration = Duration::from_millis(15);
 
-/// Library size: the reference library has 6,138 posts.
-const POSTS: usize = 6_000;
+/// Library size specified by §6.2 for the list budget.
+const POSTS: usize = 20_000;
 
 /// Times one request; returns the time and the JSON body.
 async fn timed(app: &Router, uri: &str) -> (Duration, Value) {
@@ -60,7 +61,24 @@ fn report(name: &str, samples: &mut [Duration]) -> (Duration, Duration) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_read_api_meets_the_budgets_on_a_6k_library() {
+async fn the_read_api_meets_the_budgets_on_a_20k_library() {
+    eprintln!(
+        "read API: profile={}, posts={POSTS}, OS={}, CPUs={:?}; budgets: list p95 {LIST_P95:?}, p99 {LIST_P99:?}, detail p95 {DETAIL_P95:?}",
+        if cfg!(debug_assertions) {
+            "debug (correctness and diagnostic timings)"
+        } else {
+            "release (strict budgets)"
+        },
+        std::env::consts::OS,
+        std::thread::available_parallelism(),
+    );
+    let load = std::process::Command::new("uptime")
+        .output()
+        .expect("record host load");
+    eprintln!(
+        "host load before: {}",
+        String::from_utf8_lossy(&load.stdout).trim()
+    );
     let t = TestState::new();
     let keys = t.write(ALICE, |tx| synthetic_library(tx, POSTS, 42)).await;
     assert_eq!(keys.len(), POSTS);
@@ -144,16 +162,25 @@ async fn the_read_api_meets_the_budgets_on_a_6k_library() {
     let (list_p95, list_p99) = report("GET /posts", &mut list);
     report("GET /search and /posts?q=", &mut search);
     let (detail_p95, _) = report("GET /posts/{key}", &mut detail);
-    assert!(
-        list_p95 <= LIST_P95,
-        "GET /posts p95 {list_p95:?} over the {LIST_P95:?} budget"
+    let load = std::process::Command::new("uptime")
+        .output()
+        .expect("record host load");
+    eprintln!(
+        "host load after: {}",
+        String::from_utf8_lossy(&load.stdout).trim()
     );
-    assert!(
-        list_p99 <= LIST_P99,
-        "GET /posts p99 {list_p99:?} over the {LIST_P99:?} budget"
-    );
-    assert!(
-        detail_p95 <= DETAIL_P95,
-        "GET /posts/{{key}} p95 {detail_p95:?} over the {DETAIL_P95:?} budget"
-    );
+    if !cfg!(debug_assertions) {
+        assert!(
+            list_p95 <= LIST_P95,
+            "GET /posts p95 {list_p95:?} over the {LIST_P95:?} budget"
+        );
+        assert!(
+            list_p99 <= LIST_P99,
+            "GET /posts p99 {list_p99:?} over the {LIST_P99:?} budget"
+        );
+        assert!(
+            detail_p95 <= DETAIL_P95,
+            "GET /posts/{{key}} p95 {detail_p95:?} over the {DETAIL_P95:?} budget"
+        );
+    }
 }

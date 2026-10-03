@@ -603,9 +603,9 @@ async fn an_open_breaker_hands_the_platform_over_and_back() {
     }
     seed(&b.t, posts).await;
 
-    // Two blocks open the breaker (two fetches at once: the third one's
-    // answer comes after it opened); the fourth item is never sent, and
-    // everything goes to the extension.
+    // Two blocks open the breaker. A third fetch may already be admitted
+    // while those answers are in flight; it may also see the open breaker.
+    // The fourth item is never sent, and everything goes to the extension.
     b.drain().await;
     let cdn = b.t.state.outbound().cdn();
     assert!(matches!(
@@ -618,7 +618,11 @@ async fn an_open_breaker_hands_the_platform_over_and_back() {
         "{:?}",
         states(&conn)
     );
-    assert_eq!(b.fixture.hits().len(), 3, "nothing sent once open");
+    let hits = b.fixture.hits().len();
+    assert!((2..=3).contains(&hits), "{hits} fetches before handoff");
+    for url in &urls[..3] {
+        assert!(b.hits(IG, url) <= 1, "no retry before handoff: {url}");
+    }
     assert_eq!(b.hits(IG, &urls[3]), 0);
     assert_eq!(fetch_state(&conn, "ig_11", 0).2.as_deref(), Some("blocked"));
     let open = archive::sync_breakers(&b.t.state).await.unwrap();

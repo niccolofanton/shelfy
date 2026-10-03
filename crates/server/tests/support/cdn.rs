@@ -130,6 +130,8 @@ pub enum Answer {
         body: Body,
         /// The wait before the answer.
         delay: Duration,
+        /// A test-controlled response barrier, independent of wall time.
+        gate: Option<Arc<tokio::sync::Semaphore>>,
     },
     /// Never answers; holds the connection until the client leaves.
     Hang,
@@ -146,6 +148,7 @@ impl Answer {
             headers: vec![("content-type".to_owned(), content_type.to_owned())],
             body: Body::Bytes(body.into()),
             delay: Duration::ZERO,
+            gate: None,
         }
     }
 
@@ -157,6 +160,7 @@ impl Answer {
             headers: Vec::new(),
             body: Body::Bytes(Vec::new()),
             delay: Duration::ZERO,
+            gate: None,
         }
     }
 
@@ -186,6 +190,7 @@ impl Answer {
             headers: vec![("content-type".to_owned(), content_type.to_owned())],
             body: Body::Large { head, len, chunked },
             delay: Duration::ZERO,
+            gate: None,
         }
     }
 
@@ -206,6 +211,15 @@ impl Answer {
         }
         self
     }
+
+    /// Holds this response until a permit is supplied by the test.
+    #[must_use]
+    pub fn gated(mut self, barrier: Arc<tokio::sync::Semaphore>) -> Self {
+        if let Self::Respond { gate, .. } = &mut self {
+            *gate = Some(barrier);
+        }
+        self
+    }
 }
 
 #[derive(Default)]
@@ -215,6 +229,7 @@ struct Script {
     hits: Vec<Hit>,
     in_flight: usize,
     peak: usize,
+    arrivals: tokio::sync::watch::Sender<usize>,
 }
 
 impl Script {
@@ -349,6 +364,18 @@ impl FixtureCdn {
         lock(&self.script).hits.clone()
     }
 
+    /// Waits for requests to reach their response barriers.
+    pub async fn wait_for_hits(&self, count: usize) {
+        let mut arrivals = lock(&self.script).arrivals.subscribe();
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            arrivals.wait_for(|&seen| seen >= count),
+        )
+        .await
+        .expect("fixture requests arrive")
+        .expect("fixture is alive");
+    }
+
     /// The requests to `host` and `target`.
     #[must_use]
     pub fn hits_of(&self, host: &str, target: &str) -> Vec<Hit> {
@@ -476,6 +503,8 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, tls: bool, scri
         });
         script.in_flight += 1;
         script.peak = script.peak.max(script.in_flight);
+        let count = script.hits.len();
+        script.arrivals.send_replace(count);
         script.answer(&host, &request.target)
     };
     match answer {
@@ -490,7 +519,11 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S, tls: bool, scri
             headers,
             body,
             delay,
+            gate,
         } => {
+            if let Some(gate) = gate {
+                gate.acquire().await.expect("test gate stays open").forget();
+            }
             tokio::time::sleep(delay).await;
             let _ = respond(&mut stream, status, &headers, &body).await;
         }

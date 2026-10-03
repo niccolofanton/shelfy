@@ -20,6 +20,12 @@ export default defineConfig({
   resolve: { alias: { '@ui': fileURLToPath(new URL('./src', import.meta.url)) } },
   test: {
     globals: true,
+    // Keep native addons in process-isolated suites: tearing down a
+    // threads-pool isolate can crash Node 24 on macOS. Bound the shared
+    // DB/browser workload so Chromium's startup deadline is not starved.
+    pool: 'forks',
+    maxWorkers: 2,
+    minWorkers: 1,
     setupFiles: ['tests/setup.ts'],
     // Only the real suites under tests/, extension/tests/ (web port MV3 extension) and
     // web/tests/ (web app). Keeps Playwright specs (e2e/) and stale agent-worktree copies

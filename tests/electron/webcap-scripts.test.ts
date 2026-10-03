@@ -1,8 +1,8 @@
 // In-page capture scripts exercised in a real headless Chromium on synthetic
-// pages. Skipped when the Playwright browser is not installed (CI without it).
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+// pages. Optional locally when Chromium is absent; required in CI.
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import fs from 'fs';
-import type { Browser, Page } from 'playwright-core';
+import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core';
 import {
   INIT_SCRIPT,
   JS_DETECT_BLOCKED,
@@ -12,17 +12,13 @@ import {
   JS_LOADER_VISIBLE,
 } from '../../electron/webcap/scripts';
 
-let browser: Browser | null = null;
-let available = false;
-try {
-  const { chromium } = await import('playwright-core');
-  available = fs.existsSync(chromium.executablePath()) || true;
-} catch {
-  available = false;
-}
+let browser: Browser;
+let context: BrowserContext | undefined;
+const available = fs.existsSync(chromium.executablePath());
 
 async function open(html: string): Promise<Page> {
-  const page = await browser!.newPage({ viewport: { width: 1440, height: 900 } });
+  context ??= await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const page = await context.newPage();
   await page.addInitScript({ content: INIT_SCRIPT });
   // Served from a real http(s) origin: init scripts run on navigation (not on
   // setContent) and relative links resolve like on a live site.
@@ -33,22 +29,23 @@ async function open(html: string): Promise<Page> {
   return page;
 }
 
-describe.skipIf(!available)('in-page capture scripts', () => {
+describe.skipIf(!available && !process.env.CI)('in-page capture scripts', () => {
   beforeAll(async () => {
-    const { chromium } = await import('playwright-core');
-    try {
-      browser = await chromium.launch({ headless: true });
-    } catch {
-      browser = null;
-    }
+    // An installed browser failing to launch is a test failure. Do not turn
+    // a hook error into five passing tests that exercised no scripts.
+    browser = await chromium.launch({ headless: true });
     // Launching Chromium can take well over the default 10 s on a loaded machine.
   }, 60_000);
   afterAll(async () => {
     await browser?.close();
   }, 30_000);
+  afterEach(async () => {
+    const finished = context;
+    context = undefined;
+    await finished?.close();
+  });
 
   it('recognises a Cloudflare interstitial but not a normal page with a captcha form', async () => {
-    if (!browser) return;
     const cf = await open(
       '<html><head><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/h/b/orchestrate"></script></head><body><h1>example.com</h1><p>Performing security verification</p></body></html>',
     );
@@ -63,7 +60,6 @@ describe.skipIf(!available)('in-page capture scripts', () => {
   });
 
   it('measures typography from visible text only and segments sections', async () => {
-    if (!browser) return;
     const page = await open(`
       <html lang="en"><head><title>Home | Acme</title>
         <meta name="description" content="Acme builds things">
@@ -108,7 +104,6 @@ describe.skipIf(!available)('in-page capture scripts', () => {
   });
 
   it('reveals IntersectionObserver-driven content without scrolling', async () => {
-    if (!browser) return;
     const page = await open(`
       <body><div style="height:3000px"></div><div id="r" style="opacity:0">revealed</div>
       <script>
@@ -122,7 +117,6 @@ describe.skipIf(!available)('in-page capture scripts', () => {
   });
 
   it('removes newsletter modals but keeps the header', async () => {
-    if (!browser) return;
     const page = await open(`
       <body><header id="h" style="position:fixed;top:0;left:0;right:0;height:70px"><a href="/">Logo</a></header>
       <div id="m" role="dialog" aria-modal="true" style="position:fixed;inset:20%;background:#fff">Subscribe to our newsletter</div>
@@ -137,7 +131,6 @@ describe.skipIf(!available)('in-page capture scripts', () => {
   });
 
   it('treats an off-screen curtain loader as gone', async () => {
-    if (!browser) return;
     const page = await open(`
       <body><div id="l" class="preloader" style="position:fixed;inset:0;background:#000"></div><p>content</p></body>`);
     expect(await page.evaluate(JS_LOADER_VISIBLE)).toBe(true);

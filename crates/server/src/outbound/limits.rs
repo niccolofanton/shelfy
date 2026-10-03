@@ -262,8 +262,13 @@ impl Pacer {
 
     /// Waits for the next slot.
     pub async fn wait(&self) {
+        self.wait_reserved().await;
+    }
+
+    async fn wait_reserved(&self) -> Instant {
         let slot = self.reserve(Instant::now());
         tokio::time::sleep_until(slot).await;
+        slot
     }
 }
 
@@ -285,6 +290,8 @@ pub struct GroupSlot {
 #[derive(Debug)]
 pub struct HostLimits {
     groups: [GroupLimit; 6],
+    #[cfg(feature = "test-loopback")]
+    pacing_slots: Mutex<Vec<(HostGroup, Instant)>>,
 }
 
 impl HostLimits {
@@ -297,6 +304,8 @@ impl HostLimits {
     #[must_use]
     pub fn new(config: &LimitsConfig) -> Self {
         Self {
+            #[cfg(feature = "test-loopback")]
+            pacing_slots: Mutex::new(Vec::new()),
             groups: HostGroup::ALL.map(|group| {
                 let limits = config.get(group);
                 assert!(limits.concurrency > 0, "a group admits one fetch");
@@ -330,7 +339,25 @@ impl HostLimits {
     /// Waits for the next request slot of `group`'s rate. Call it before
     /// every request to the group.
     pub async fn pace(&self, group: HostGroup) {
-        self.group(group).pacer.wait().await;
+        let _slot = self.group(group).pacer.wait_reserved().await;
+        #[cfg(feature = "test-loopback")]
+        self.pacing_slots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((group, _slot));
+    }
+
+    /// Test-only observations at the pacer, before DNS/TLS and HTTP receipt.
+    /// These are reserved slots, not timestamps from the remote server.
+    #[cfg(feature = "test-loopback")]
+    #[must_use]
+    pub fn pacing_slots_for_tests(&self, group: HostGroup) -> Vec<Instant> {
+        self.pacing_slots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter_map(|&(g, at)| (g == group).then_some(at))
+            .collect()
     }
 
     /// The shortest time between two requests to `group`.

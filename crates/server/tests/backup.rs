@@ -463,12 +463,49 @@ async fn a_locked_users_jobs_wait_for_the_unlock_without_using_their_tries() {
     // locked used one of the job's tries, so a restore of a few minutes
     // failed the user's jobs for good (3 tries: about 45–90 s).
     let tries = Arc::new(AtomicUsize::new(0));
+    let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+    // SQLite runs on the blocking pool. Keep virtual time fixed while its
+    // completion and the scheduler's requeue are being observed; only the
+    // explicit advances below move the restore clock.
+    struct ManualClock(std::sync::mpsc::Sender<()>);
+    impl Drop for ManualClock {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
+    // An outstanding blocking task inhibits Tokio's auto-advance without
+    // keeping the async executor busy (its timer driver must still run).
+    let (release_clock, hold_clock) = std::sync::mpsc::channel();
+    let _clock = ManualClock(release_clock);
+    let _holding = tokio::task::spawn_blocking(move || {
+        let _ = hold_clock.recv();
+    });
+    // The event hub coalesces notifications on Tokio timers. With time held
+    // fixed, observe the committed job row directly instead of waiting for
+    // those timers to fire.
+    async fn settled(
+        t: &TestState,
+        id: i64,
+        done: impl Fn(&shelfy_server::control::jobs::JobRow) -> bool,
+    ) -> shelfy_server::control::jobs::JobRow {
+        let started = Instant::now();
+        loop {
+            let job = t.job(ALICE, id).await;
+            if done(&job) {
+                return job;
+            }
+            assert!(started.elapsed() < Duration::from_secs(10), "{job:?}");
+            tokio::task::yield_now().await;
+        }
+    }
     let worker = {
         let tries = Arc::clone(&tries);
         move |ctx: JobContext| {
             let tries = Arc::clone(&tries);
+            let started = started.clone();
             async move {
                 tries.fetch_add(1, Ordering::SeqCst);
+                started.send(ctx.id()).unwrap();
                 let name = format!("job {}", ctx.id());
                 ctx.user_db(move |db: &UserDb| {
                     db.write(|tx| {
@@ -501,21 +538,42 @@ async fn a_locked_users_jobs_wait_for_the_unlock_without_using_their_tries() {
         .jobs()
         .start(t.state.clone(), CancellationToken::new());
 
-    // A restore that takes ten minutes.
-    tokio::time::sleep(Duration::from_secs(600)).await;
-    for id in [first, second] {
-        let job = t.job(ALICE, id).await;
-        assert_eq!(job.state, JobState::Queued, "still waiting: {job:?}");
-        assert_eq!(job.attempts, 0, "no try used: {job:?}");
+    // Observe completed locked attempts, one per minute including t=0.
+    // At exactly 600 s, await the eleventh requeue rather than snapshotting
+    // that attempt while it is legitimately still Running.
+    for minute in 0..=10 {
+        let id = starts.recv().await.unwrap();
+        let now = t.state.jobs().clock().now_ms();
+        let waiting = settled(&t, id, |job| {
+            job.state == JobState::Queued && job.run_at > now
+        })
+        .await;
+        assert_eq!(
+            waiting.run_at - now,
+            i64::from(USER_LOCKED_RETRY_AFTER_SECS) * 1000,
+            "{waiting:?}"
+        );
+        for id in [first, second] {
+            let job = t.job(ALICE, id).await;
+            assert_eq!(job.state, JobState::Queued, "still waiting: {job:?}");
+            assert_eq!(job.attempts, 0, "no try used: {job:?}");
+        }
+        assert_eq!(tries.load(Ordering::SeqCst), minute + 1);
+        if minute < 10 {
+            // Tokio rounds timer deadlines to the next millisecond. Pass
+            // that tick too, while observing completion before moving on.
+            tokio::time::advance(Duration::from_millis(60_001)).await;
+        }
     }
     // About one try a minute for the user, not one per job: the user's
     // other jobs wait while the library is locked.
     let tried = tries.load(Ordering::SeqCst);
-    assert!((9..=11).contains(&tried), "{tried} tries in 10 minutes");
+    assert_eq!(tried, 11, "{tried} tries over ten minutes, including t=0");
 
     unlock_library(&t.data_dir().users_dir(), ALICE).unwrap();
+    tokio::time::advance(Duration::from_millis(60_001)).await;
     for id in [first, second] {
-        let done = t.wait_job(ALICE, id, |job| job.state.is_final()).await;
+        let done = settled(&t, id, |job| job.state.is_final()).await;
         assert_eq!(done.state, JobState::Succeeded);
         assert_eq!(done.attempts, 0);
     }

@@ -9,6 +9,8 @@ name: CI
 #   run the same suite. It also checks that the generated artifacts are current: the
 #   golden fixtures and the API client types (web/src/api/schema.d.ts, from
 #   crates/server/openapi.json).
+# - read-api-budget: the strict §6.2 list/detail budgets, release build and
+#   20k synthetic posts, on a runner without concurrent unit tests.
 # - rust: the Cargo workspace (crates/): rustfmt, clippy with warnings as errors, tests
 #   and cargo-deny, on the toolchain pinned in rust-toolchain.toml. Its tests include
 #   the check that crates/server/openapi.json matches the Rust routes.
@@ -57,6 +59,9 @@ jobs:
           node-version: '22'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The synthetic in-page capture script suite must exercise Chromium;
+      # an absent browser on this runner must not silently omit the tests.
+      - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm run lint
       - run: pnpm run typecheck
       - run: pnpm run test:run
@@ -76,6 +81,20 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  # §6.2 measures release server time on a 20k-post library. Give the strict
+  # budget probe its own runner rather than timing alongside debug suites.
+  read-api-budget:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@v2
+      - name: Read API release budgets on a 20k-post library
+        env:
+          CARGO_INCREMENTAL: '0'
+          RUST_TEST_THREADS: '1'
+        run: cargo test --release -p shelfy-server --test read_api_budget --locked -- --nocapture
 
   ssrf:
     runs-on: ubuntu-latest
