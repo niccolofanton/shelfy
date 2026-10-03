@@ -10,10 +10,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import edits from './edits';
 import extractContentTerms from './extract-content-terms';
+import hosts from './hosts';
 import mergeSets from './merge';
+import sanitize from './sanitize';
 import { render, type GoldenSet } from './lib';
 
-const SETS: GoldenSet[] = [extractContentTerms, edits, ...mergeSets];
+const SETS: GoldenSet[] = [extractContentTerms, edits, ...mergeSets, sanitize, hosts];
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT_DIR = path.join(ROOT, 'shared/golden');

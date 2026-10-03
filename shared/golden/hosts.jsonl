@@ -1,0 +1,2 @@
+{"golden":"hosts","source":"extension/src/shared/hosts.ts#PINTEREST_HOSTS","generator":"scripts/golden/hosts.ts","format":1}
+{"id":"pinterest-hosts","args":["pinterest"],"output":["pinterest.com","pinterest.it","pinterest.de","pinterest.fr","pinterest.es","pinterest.co.uk","pinterest.ca","pinterest.com.au","pinterest.jp","pinterest.com.mx","pinterest.at","pinterest.ch","pinterest.pt","pinterest.se","pinterest.dk","pinterest.nz","pinterest.ie","pinterest.ph","pinterest.cl","pinterest.co.kr","pinterest.ru"]}

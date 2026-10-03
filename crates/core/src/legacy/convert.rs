@@ -231,17 +231,9 @@ pub fn json_string_array(value: Option<&str>) -> Vec<String> {
     }
 }
 
-/// The expiry of a signed Instagram/Facebook CDN URL: its `oe` query
-/// parameter (hex unix seconds), in ms.
-pub fn cdn_url_expiry_ms(url: &str) -> Option<i64> {
-    let query = url.split_once('?')?.1;
-    let query = query.split('#').next().unwrap_or(query);
-    let oe = query.split('&').find_map(|pair| pair.strip_prefix("oe="))?;
-    if oe.is_empty() || oe.len() > 12 {
-        return None;
-    }
-    i64::from_str_radix(oe, 16).ok().map(|s| s * 1_000)
-}
+/// The expiry of a signed Instagram/Facebook CDN URL; it lives with ingest
+/// ([`crate::ingest::hosts`]) and is re-exported here for the legacy reader.
+pub use crate::ingest::hosts::cdn_url_expiry_ms;
 
 /// A string that is a local filesystem path, as the desktop stores them
 /// (absolute POSIX or Windows paths), rather than a URL.
@@ -355,12 +347,10 @@ mod tests {
     }
 
     #[test]
-    fn cdn_expiry() {
+    fn cdn_expiry_is_reexported() {
         let url =
             "https://scontent.cdninstagram.com/v/t51/x.jpg?stp=dst&_nc_ht=x&oe=65A1B2C3&_nc_sid=1";
         assert_eq!(cdn_url_expiry_ms(url), Some(0x65A1_B2C3 * 1_000));
-        assert_eq!(cdn_url_expiry_ms("https://pbs.twimg.com/media/x.jpg"), None);
-        assert_eq!(cdn_url_expiry_ms("https://x/y?oe=zz"), None);
     }
 
     #[test]

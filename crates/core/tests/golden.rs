@@ -16,6 +16,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_json::value::RawValue;
+use shelfy_core::ingest::hosts::PINTEREST_HOSTS;
+use shelfy_core::ingest::sanitize::clean_item;
 use shelfy_core::repo::Platform;
 use shelfy_core::repo::posts::{self, AiPatch, NewPost, UserContentPatch};
 use shelfy_core::schema::{self, Kind};
@@ -23,7 +25,13 @@ use shelfy_core::search::terms::{SHORT_CONTENT_TERMS, STOPWORDS, extract_content
 
 /// Golden sets with a check in this file; `<dir>/` stands for every file in
 /// that directory.
-const CHECKED: &[&str] = &["edits", "extract-content-terms", "merge/"];
+const CHECKED: &[&str] = &[
+    "edits",
+    "extract-content-terms",
+    "hosts",
+    "merge/",
+    "sanitize",
+];
 
 #[derive(Deserialize)]
 struct Header {
@@ -133,6 +141,28 @@ fn merge_matches_the_desktop() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+#[test]
+fn sanitize_matches_the_desktop() {
+    // The desktop's `sanitizeInterceptedBatch` returns the items it keeps; the
+    // port's `clean_item` keeps or rejects each one (`sanitize_batch` then
+    // derives keys and dates, which the desktop does not).
+    check("sanitize", |(items, platform): (Vec<Value>, String)| {
+        let platform: Platform = platform.parse().unwrap();
+        items
+            .iter()
+            .filter_map(|item| clean_item(platform, item).ok())
+            .collect::<Vec<_>>()
+    });
+}
+
+#[test]
+fn pinterest_hosts_match_the_extension() {
+    check("hosts", |(platform,): (String,)| {
+        assert_eq!(platform, "pinterest");
+        PINTEREST_HOSTS
+    });
 }
 
 #[derive(Deserialize)]

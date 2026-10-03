@@ -15,6 +15,8 @@ what the desktop returns.
 | `extract-content-terms` | `electron/db.ts#extractContentTerms` | `shelfy_core::search::terms::extract_content_terms` |
 | `edits` | `electron/db.ts#updateUserContent`, `#updateAiAnalysis` | `shelfy_core::repo::posts::{update_user_content, update_ai}` |
 | `merge/*` (one file per scenario) | `electron/db.ts#bulkUpsert` | `shelfy_core::ingest::merge::upsert_batch` |
+| `sanitize` | `src/lib/browserSanitize.ts#sanitizeInterceptedBatch` | `shelfy_core::ingest::sanitize::clean_item` (the shared rules of `sanitize_batch`) |
+| `hosts` | `extension/src/shared/hosts.ts#PINTEREST_HOSTS` (the extension, not the desktop) | `shelfy_core::ingest::hosts::PINTEREST_HOSTS` |
 
 The `edits` cases each start from a bare post on a fresh desktop library
 (`openDesktopDb()`, below), apply their steps with the real functions, and
