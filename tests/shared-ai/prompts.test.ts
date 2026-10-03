@@ -52,6 +52,13 @@ const VARIABLES: Record<TaskName, { system: TemplateVars[]; user: TemplateVars[]
   suggest: { system: [{}], user: [{ query: 'q' }] },
   cluster_refine: { system: [{}], user: [{ tags: '- a\n- b (c)' }, { tags: '' }] },
   aliases: { system: [{}], user: [{ candidates: 'a', vocabulary: 'b' }] },
+  web_design: {
+    system: [{}],
+    user: [
+      { frames: true, ground: 'Measured fonts and palette', digest: 'Page content' },
+      { frames: false, ground: '', digest: '' },
+    ],
+  },
 };
 
 describe('shared/ai', () => {
