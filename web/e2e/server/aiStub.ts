@@ -10,7 +10,14 @@ export async function startAiStub(): Promise<() => void> {
     if (stub && stub.exitCode === null && !stub.killed) return;
     const child = spawn(
       E2E.stubBin,
-      ['--listen', `127.0.0.1:${E2E.stubPort}`, '--key-env', 'SHELFY_E2E_STUB_KEY'],
+      [
+        '--listen',
+        `127.0.0.1:${E2E.stubPort}`,
+        '--key-env',
+        'SHELFY_E2E_STUB_KEY',
+        '--latency-ms',
+        String(E2E.stubLatencyMs),
+      ],
       { env: process.env, stdio: ['ignore', 'ignore', 'inherit'] },
     );
     stub = child;

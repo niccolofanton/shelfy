@@ -19,6 +19,7 @@ use rusqlite::OptionalExtension as _;
 use serde::Serialize;
 use shelfy_core::ai::estimate::{Estimate, Pace};
 use shelfy_core::ai::queue::{self as core_queue, Item, Mode, Reach, ScopeCounts, StateCounts};
+use shelfy_core::repo::settings::{self, AiPrices};
 use shelfy_core::selector::Selector;
 use tokio::time::Duration;
 use utoipa::ToSchema;
@@ -118,7 +119,7 @@ pub struct AnalyzeEstimate {
 }
 
 impl AnalyzeEstimate {
-    fn of(estimate: Estimate, route: &super::Route) -> Self {
+    fn of(estimate: Estimate, route: &super::Route, prices: Option<AiPrices>) -> Self {
         Self {
             input_tokens: estimate.input_tokens,
             output_tokens: estimate.output_tokens,
@@ -127,8 +128,14 @@ impl AnalyzeEstimate {
                 .is_operator()
                 .then_some(estimate.eta_ms)
                 .flatten(),
-            // The operator node is the owner's own; cloud pricing is P3-19.
-            cost_usd: None,
+            cost_usd: if route.provider.is_operator() {
+                None
+            } else {
+                estimate.cost_usd(
+                    prices.map(|p| p.input_per_million_usd),
+                    prices.map(|p| p.output_per_million_usd),
+                )
+            },
         }
     }
 }
@@ -201,6 +208,21 @@ pub async fn analyze_with_preview(
             super::Task::Catalog,
         )
         .await?;
+    let prices = match &route.provider {
+        super::ProviderRef::Operator => None,
+        super::ProviderRef::User(id) => {
+            let id = id.clone();
+            read(state, user_id, move |conn| {
+                Ok(settings::read(conn)?
+                    .ai
+                    .providers
+                    .into_iter()
+                    .find(|p| p.id == id)
+                    .and_then(|p| p.prices))
+            })
+            .await?
+        }
+    };
     if let Some(token) = confirm_token {
         let confirm = take_confirm(&token, user_id, &selector, mode, deep, now)
             .ok_or_else(|| ApiError::new(crate::error::ErrorCode::ConfirmTokenInvalid))?;
@@ -215,7 +237,11 @@ pub async fn analyze_with_preview(
                 waiting_for_media: 0,
                 already_queued: 0,
             },
-            estimate: AnalyzeEstimate::of(Estimate::of(enqueued, measured_ms_per_post()), &route),
+            estimate: AnalyzeEstimate::of(
+                Estimate::of(enqueued, measured_ms_per_post()),
+                &route,
+                prices,
+            ),
             queued: true,
             enqueued,
             confirm_token: None,
@@ -239,7 +265,7 @@ pub async fn analyze_with_preview(
     if counts.analyzable == 0 {
         return Ok(AnalyzeResult {
             counts: counts.into(),
-            estimate: AnalyzeEstimate::of(estimate, &route),
+            estimate: AnalyzeEstimate::of(estimate, &route, prices),
             queued: false,
             enqueued: 0,
             confirm_token: None,
@@ -249,7 +275,7 @@ pub async fn analyze_with_preview(
         let enqueued = enqueue_now(state, user_id, &selector, mode, deep, now).await?;
         return Ok(AnalyzeResult {
             counts: counts.into(),
-            estimate: AnalyzeEstimate::of(estimate, &route),
+            estimate: AnalyzeEstimate::of(estimate, &route, prices),
             queued: true,
             enqueued,
             confirm_token: None,
@@ -259,7 +285,7 @@ pub async fn analyze_with_preview(
     let token = store_confirm(user_id, selector, mode, deep, ids, now, &route);
     Ok(AnalyzeResult {
         counts: counts.into(),
-        estimate: AnalyzeEstimate::of(estimate, &route),
+        estimate: AnalyzeEstimate::of(estimate, &route, prices),
         queued: false,
         enqueued: 0,
         confirm_token: Some(token),
@@ -603,4 +629,38 @@ where
 {
     let db = state.user_db(user_id).await?;
     crate::state::blocking(move || db.read(|conn| f(conn))).await
+}
+
+#[cfg(test)]
+mod estimate_tests {
+    use super::*;
+    use shelfy_ai::ProviderKind;
+
+    #[test]
+    fn priced_cloud_estimates_use_both_token_prices_and_operator_remains_unpriced() {
+        let estimate = Estimate {
+            input_tokens: 1_000_000,
+            output_tokens: 500_000,
+            eta_ms: Some(1000),
+            ..Estimate::default()
+        };
+        let mut route = super::super::Route {
+            provider: super::super::ProviderRef::User("cloud".into()),
+            kind: ProviderKind::OpenAiCompatible,
+            model: "synthetic".into(),
+            task: super::super::Task::Catalog,
+        };
+        let prices = Some(AiPrices {
+            input_per_million_usd: 2.0,
+            output_per_million_usd: 8.0,
+        });
+        let cloud = AnalyzeEstimate::of(estimate, &route, prices);
+        assert_eq!(cloud.cost_usd, Some(6.0));
+        assert_eq!(cloud.eta_ms, None);
+        assert_eq!(AnalyzeEstimate::of(estimate, &route, None).cost_usd, None);
+        route.provider = super::super::ProviderRef::Operator;
+        let operator = AnalyzeEstimate::of(estimate, &route, prices);
+        assert_eq!(operator.cost_usd, None);
+        assert_eq!(operator.eta_ms, Some(1000));
+    }
 }

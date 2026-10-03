@@ -285,3 +285,13 @@ describe('live AI stream subscription', () => {
     expect(FakeEventSource.last.closed).toBe(true);
   });
 });
+
+it('adds AI streaming without broadening a deliberately filtered event URL', () => {
+  const s = stream({ url: '/api/v1/events?topics=posts.changed' });
+  const off = s.on('ai.stream', () => {});
+  const topics = new URL(FakeEventSource.last.url, 'http://localhost').searchParams.getAll(
+    'topics',
+  );
+  expect(topics).toEqual(['posts.changed', 'ai.stream']);
+  off();
+});

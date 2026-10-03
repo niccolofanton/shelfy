@@ -1,3 +1,9 @@
+import Gallery from '../../src/views/Gallery';
+import { ShelfyProvider } from '../../src/api/ShelfyProvider';
+import type { ShelfyClient } from '../../src/api/ShelfyClient';
+import { WEB_CAPABILITIES } from '../src/api/httpClient';
+import { toPost, webMedia } from '../src/api/mapping';
+import { apiPost } from './fixtures';
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -166,4 +172,44 @@ it('maps selectors, retries confirms with the same idempotency key and gates the
       events,
     }).ai,
   ).toBeUndefined();
+});
+
+it('selects every matching gallery post by filter with an excluded key, without enumerating the library', async () => {
+  const h = fixture();
+  const client = {
+    capabilities: { ...WEB_CAPABILITIES, ai: true, aiQueue: true },
+    ai: { webQueue: h.api },
+    media: webMedia,
+    listPosts: vi.fn(async () => ({
+      posts: [toPost(apiPost({ key: 'ig_1' }))],
+      total: 200,
+      nextCursor: 'next',
+    })),
+    resolveAllIds: vi.fn(async () => null),
+    countPosts: vi.fn(async () => 200),
+    on: () => () => {},
+    reportError: vi.fn(),
+  } as unknown as ShelfyClient;
+  ui(
+    <ShelfyProvider client={client}>
+      <Gallery />
+    </ShelfyProvider>,
+  );
+  const card = await screen.findByTestId('post-card');
+  fireEvent.click(screen.getByTestId('select-toggle'));
+  fireEvent.click(screen.getByTestId('select-all-matching'));
+  await waitFor(() => expect(screen.getByTestId('selection-count')).toHaveTextContent('200'));
+  fireEvent.click(card.querySelector('[data-testid="select-checkbox"]')!);
+  expect(screen.getByTestId('selection-count')).toHaveTextContent('199');
+  fireEvent.click(screen.getByTestId('bulk-actions'));
+  fireEvent.click(await screen.findByTestId('bulk-analyze'));
+  await waitFor(() =>
+    expect(h.api.estimate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selector: { filter: expect.any(Object), exceptKeys: ['ig_1'] },
+        mode: 'selected',
+      }),
+    ),
+  );
+  expect(h.api.confirm).not.toHaveBeenCalled();
 });

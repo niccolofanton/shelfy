@@ -161,11 +161,12 @@ export function createEventStream(options: EventStreamOptions = {}): EventStream
       let requestedUrl = url;
       if ((listeners.get('ai.stream')?.size ?? 0) > 0) {
         const separator = url.includes('?') ? '&' : '?';
+        const explicitTopics = new URLSearchParams(url.split('?')[1] ?? '').has('topics');
+        const topics = explicitTopics
+          ? ['ai.stream']
+          : EVENT_NAMES.filter((name) => !['hello', 'resync'].includes(name));
         requestedUrl +=
-          separator +
-          EVENT_NAMES.filter((name) => !['hello', 'resync'].includes(name))
-            .map((name) => `topics=${encodeURIComponent(name)}`)
-            .join('&');
+          separator + topics.map((name) => `topics=${encodeURIComponent(name)}`).join('&');
       }
       es = new Source(resumeUrl(requestedUrl, lastEventId));
     } catch (err) {

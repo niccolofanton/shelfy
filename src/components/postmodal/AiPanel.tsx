@@ -406,6 +406,11 @@ export default function AiPanel({
     setUserOverride(null);
   }, [post.id]);
 
+  // A newly persisted web analysis replaces a previous manual-clear snapshot.
+  useEffect(() => {
+    if (webQueue && post.aiStatus === 'done') setOverride(null);
+  }, [webQueue, post.aiStatus, post.aiAnalyzedAt]);
+
   const liveDescription = (status === 'done' && job?.description) || post.aiDescription;
   const liveTags = status === 'done' && job?.tags?.length ? job.tags : post.aiTags;
   const liveSaveReason = post.aiSaveReason;

@@ -1169,7 +1169,10 @@ function AppInner(): React.JSX.Element {
             </span>
           </div>
         )}
-        <main ref={mainRef} className="flex-1 narrow:min-h-0 overflow-hidden relative">
+        <main
+          ref={mainRef}
+          className={`flex-1 narrow:min-h-0 overflow-hidden relative ${client.aiProviders ? 'flex flex-col' : ''}`}
+        >
           {client.aiProviders ? (
             <Suspense fallback={null}>
               <ProviderStatusBanner api={client.aiProviders} />
@@ -1212,7 +1215,9 @@ function AppInner(): React.JSX.Element {
             'browser' tab. Each layer fades in once, on first mount only. */}
           <div
             style={{
-              position: 'absolute',
+              position: client.aiProviders ? 'relative' : 'absolute',
+              flex: client.aiProviders ? 1 : undefined,
+              minHeight: 0,
               inset: 0,
               zIndex: 2,
               background: '#0f0f0f',

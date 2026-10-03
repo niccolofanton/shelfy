@@ -49,6 +49,7 @@ export const E2E = {
   stubControlPort,
   byokStubPort,
   byokStubUrl: `http://[::1]:${byokStubPort}`,
+  stubLatencyMs: Number(process.env.SHELFY_E2E_STUB_LATENCY_MS || 0),
   stubBin: resolve(repoRoot, process.env.SHELFY_E2E_STUB_BIN || 'target/release/shelfy-ai-stub'),
   origin,
   apiUrl: `http://localhost:${apiPort}`,
@@ -77,6 +78,7 @@ export const E2E = {
   // order regardless of CLI argument order, so "account" runs before "jobs"
   // every time either file is run as part of the full suite.
   jobsEmail: 'jobs@example.test',
+  queueEmail: 'queue@example.test',
   // The server's environment: email goes to a dev mailbox, so the
   // re-authentication dialog offers it too.
   serverEnv: {
