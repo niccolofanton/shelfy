@@ -1,3 +1,4 @@
+import { errorCodeOf } from '../../api/errors';
 import React, { useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AnalyzeRequest, AnalyzeResult, WebAiQueueApi } from '../../api/ai/webQueue';
@@ -24,11 +25,13 @@ export default function AnalyzeDialog({
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  const [expired, setExpired] = useState(false);
   const ref = useDialog({ onClose, closeOnEscape: !busy });
   useEffect(() => {
     let active = true;
     setResult(null);
     setError(null);
+    setExpired(false);
     void api
       .estimate(request)
       .then((value) => {
@@ -52,6 +55,10 @@ export default function AnalyzeDialog({
       onClose();
     } catch (e) {
       setError(e);
+      if (errorCodeOf(e) === 'confirm_token_invalid') {
+        setResult(null);
+        setExpired(true);
+      }
     } finally {
       setBusy(false);
     }
@@ -112,7 +119,7 @@ export default function AnalyzeDialog({
           </button>
           {!result && error != null && (
             <button className={BUTTON} onClick={() => setAttempt((x) => x + 1)}>
-              {t('retryJob')}
+              {t(expired ? 'recomputeEstimate' : 'retryJob')}
             </button>
           )}
           <button

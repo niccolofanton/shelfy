@@ -1,3 +1,4 @@
+import { requestProviderConnection } from './providerConnection';
 import React, { useState } from 'react';
 import type { AiQueueItemState, AnalyzeRequest, WebAiQueueApi } from '../../api/ai/webQueue';
 import { useT } from '../../i18n';
@@ -9,10 +10,12 @@ import { useAiQueueStream, useWebAiQueue } from './useWebAiQueue';
 export default function WebAiQueue({
   api,
   active,
+  canConnect = false,
   onOpenPost,
 }: {
   api: WebAiQueueApi;
   active: boolean;
+  canConnect?: boolean;
   onOpenPost?: (key: string) => void;
 }): React.JSX.Element {
   const t = useT('aiQueue');
@@ -86,7 +89,16 @@ export default function WebAiQueue({
       {actionError != null && <InlineNote tone="error">{failure(actionError)}</InlineNote>}
       {page && (
         <>
-          {!page.providerState && <InlineNote tone="info">{t('noProvider')}</InlineNote>}
+          {!page.providerState && (
+            <>
+              <InlineNote tone="info">{t('noProvider')}</InlineNote>
+              {canConnect && (
+                <button className={BUTTON} onClick={() => requestProviderConnection('catalog')}>
+                  {t('connectProvider')}
+                </button>
+              )}
+            </>
+          )}
           {page.providerState && page.providerState !== 'ok' && (
             <InlineNote tone="info">
               {t('waitingProvider', { state: page.providerState })}

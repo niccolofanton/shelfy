@@ -181,6 +181,8 @@ test('a member without a provider gets an actionable empty state and no model do
       queue.getByRole('button', { name: 'Analyze missing', exact: true }),
     ).toBeDisabled();
     await expect(queue.getByText(/download.*model/i)).toHaveCount(0);
+    await queue.getByRole('button', { name: 'Connect provider', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Connect provider' })).toBeVisible();
   } finally {
     await context.close();
   }

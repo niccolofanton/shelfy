@@ -712,9 +712,15 @@ export default function AiTagsQueue({
   onOpenPost,
   active = true,
 }: AiTagsQueueProps): React.JSX.Element {
-  const api = useShelfy().ai?.webQueue;
+  const client = useShelfy();
+  const api = client.ai?.webQueue;
   return api ? (
-    <WebAiQueue api={api} active={active} onOpenPost={onOpenPost} />
+    <WebAiQueue
+      api={api}
+      active={active}
+      canConnect={!!client.aiProviders?.management}
+      onOpenPost={onOpenPost}
+    />
   ) : (
     <DesktopAiTagsQueue onOpenPost={onOpenPost} />
   );

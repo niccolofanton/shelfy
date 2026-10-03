@@ -213,3 +213,57 @@ it('selects every matching gallery post by filter with an excluded key, without 
   );
   expect(h.api.confirm).not.toHaveBeenCalled();
 });
+
+it('recomputes an expired preview explicitly and requires a fresh confirmation', async () => {
+  const h = fixture();
+  vi.mocked(h.api.confirm).mockRejectedValueOnce({ code: 'confirm_token_invalid' });
+  vi.mocked(h.api.estimate)
+    .mockResolvedValueOnce(preview)
+    .mockResolvedValueOnce({ ...preview, confirmToken: 'fresh' });
+  const queued = vi.fn();
+  ui(
+    <AnalyzeDialog
+      api={h.api}
+      request={{ selector: { keys: ['x_1'] }, mode: 'selected' }}
+      onClose={vi.fn()}
+      onQueued={queued}
+    />,
+  );
+  await screen.findByTestId('analyze-estimate');
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm analysis' }));
+  const recompute = await screen.findByRole('button', { name: 'Recompute estimate' });
+  expect(h.api.estimate).toHaveBeenCalledOnce();
+  expect(h.api.confirm).toHaveBeenCalledOnce();
+  expect(queued).not.toHaveBeenCalled();
+  fireEvent.click(recompute);
+  await screen.findByTestId('analyze-estimate');
+  expect(h.api.estimate).toHaveBeenCalledTimes(2);
+  expect(h.api.confirm).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm analysis' }));
+  await waitFor(() => expect(queued).toHaveBeenCalledWith(1));
+  expect(h.api.confirm).toHaveBeenLastCalledWith(expect.any(Object), 'fresh');
+});
+
+it('requests catalog provider setup and refreshes the queue after routing changes', async () => {
+  const h = fixture();
+  vi.mocked(h.api.get).mockResolvedValue({ ...page, providerState: null });
+  const connection = vi.fn();
+  window.addEventListener('shelfy:provider-connection', connection);
+  const view = ui(<WebAiQueue api={h.api} active canConnect />);
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'Connect provider' }));
+    expect(connection).toHaveBeenCalledOnce();
+    expect((connection.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      task: 'catalog',
+      provider: undefined,
+    });
+    vi.mocked(h.api.get).mockResolvedValue(page);
+    act(() => window.dispatchEvent(new CustomEvent('shelfy:provider-settings-changed')));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Analyze missing' })).toBeEnabled(),
+    );
+  } finally {
+    window.removeEventListener('shelfy:provider-connection', connection);
+    view.unmount();
+  }
+});

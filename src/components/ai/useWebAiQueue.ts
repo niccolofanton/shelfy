@@ -1,3 +1,4 @@
+import { PROVIDER_SETTINGS_CHANGED } from './providerConnection';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AiQueueItemState, WebAiQueueApi, WebAiQueuePage } from '../../api/ai/webQueue';
 
@@ -27,13 +28,15 @@ export function useWebAiQueue(api?: WebAiQueueApi, active = true, state?: AiQueu
     setPage(null);
     void refresh();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const unsubscribe = api.onChanged(() => {
+    const changed = () => {
       if (!timer)
         timer = setTimeout(() => {
           timer = undefined;
           void refresh();
         }, 200);
-    });
+    };
+    const unsubscribe = api.onChanged(changed);
+    window.addEventListener(PROVIDER_SETTINGS_CHANGED, changed);
     // A lost live update cannot leave the durable queue stale indefinitely.
     const poll = setInterval(() => {
       void refresh();
@@ -43,6 +46,7 @@ export function useWebAiQueue(api?: WebAiQueueApi, active = true, state?: AiQueu
       // eslint-disable-next-line react-hooks/exhaustive-deps
       sequence.current++;
       unsubscribe();
+      window.removeEventListener(PROVIDER_SETTINGS_CHANGED, changed);
       clearTimeout(timer);
       clearInterval(poll);
     };

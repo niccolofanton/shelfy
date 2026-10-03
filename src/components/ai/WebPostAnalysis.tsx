@@ -1,3 +1,4 @@
+import { requestProviderConnection } from './providerConnection';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useShelfy } from '../../api/ShelfyProvider';
 import type { WebAiQueueApi } from '../../api/ai/webQueue';
@@ -72,7 +73,16 @@ export default function WebPostAnalysis({
   };
   return (
     <section className="rounded-lg border border-[#292929] p-3" data-testid="web-post-analysis">
-      {!page?.providerState && page && <InlineNote tone="info">{t('noProvider')}</InlineNote>}
+      {!page?.providerState && page && (
+        <>
+          <InlineNote tone="info">{t('noProvider')}</InlineNote>
+          {client.aiProviders?.management && (
+            <button className={BUTTON} onClick={() => requestProviderConnection('catalog')}>
+              {t('connectProvider')}
+            </button>
+          )}
+        </>
+      )}
       {page?.providerState && page.providerState !== 'ok' && (
         <InlineNote tone="info">{t('waitingProvider', { state: page.providerState })}</InlineNote>
       )}

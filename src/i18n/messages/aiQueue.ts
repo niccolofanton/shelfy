@@ -14,6 +14,8 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    recomputeEstimate: 'Ricalcola preventivo',
+    connectProvider: 'Collega provider',
     analyzeAll: 'Rianalizza tutti',
     retryErrors: 'Riprova errori',
     previewTitle: 'Analizza post',
@@ -109,6 +111,8 @@ export default {
       'Nessuna analisi in coda. Usa "Analizza mancanti" per generare i tag dei post scaricati.',
   },
   en: {
+    recomputeEstimate: 'Recompute estimate',
+    connectProvider: 'Connect provider',
     analyzeAll: 'Reanalyze all',
     retryErrors: 'Retry errors',
     previewTitle: 'Analyze posts',
