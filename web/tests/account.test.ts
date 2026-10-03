@@ -229,7 +229,7 @@ describe('account', () => {
 });
 
 describe('web capabilities', () => {
-  it('turn on the account, Settings, links and Jobs for a signed-in user, and nothing else yet', () => {
+  it('turn on account, Settings, links, Jobs and activity for a signed-in user', () => {
     expect(webCapabilities(null)).toBe(WEB_CAPABILITIES);
     expect(webCapabilities(OWNER)).toEqual({
       ...WEB_CAPABILITIES,
@@ -237,6 +237,7 @@ describe('web capabilities', () => {
       settings: true,
       links: true,
       jobs: true,
+      activity: true,
     });
   });
 
