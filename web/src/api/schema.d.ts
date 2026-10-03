@@ -1241,8 +1241,12 @@ export interface paths {
      * Creates an upload (tus creation).
      * @description Answers 201 with `Location: /api/v1/uploads/{id}`. 412 without
      *     `Tus-Resumable: 1.0.0`; 400 without a valid `Upload-Length`; 422 for bad
-     *     metadata; 413 when the length is over the purpose's limit (300 MiB for an
-     *     object, 4 GiB for a database); 409 with too many unfinished uploads.
+     *     metadata or an unknown purpose; 403 when the purpose is not the caller's
+     *     (the migration's need a `migrate` token; bookmarks and imports a session
+     *     or an `uploads` token); 413 over the purpose's size; 409 with too many
+     *     unfinished uploads, or too many bytes waiting; 403 `quota_exceeded` when
+     *     a bookmark could not fit in the quota. A session sends `X-Shelfy-Client:
+     *     web` and the public `Origin`.
      */
     post: operations['createUpload'];
     delete?: never;
@@ -1265,7 +1269,8 @@ export interface paths {
      * Terminates an upload (tus termination): its row and its bytes are
      *     removed, whether it was complete or not.
      * @description 204; 412 without `Tus-Resumable: 1.0.0`; 404 for an unknown or another
-     *     user's upload; 409 while a `PATCH` writes it.
+     *     user's upload; 403 when its purpose is not the caller's; 409 while a
+     *     `PATCH` writes it, and once a consumer used it (`upload_consumed`).
      */
     delete: operations['deleteUpload'];
     options?: never;
@@ -1273,7 +1278,8 @@ export interface paths {
      * Where an upload stands, so a client can resume it (tus core).
      * @description 200 with `Upload-Offset` and `Upload-Length`; no body, errors included:
      *     412 without `Tus-Resumable: 1.0.0`, 404 for an unknown, expired or
-     *     another user's upload.
+     *     another user's upload, 403 when its purpose is not the caller's, 409 once
+     *     a consumer used it.
      */
     head: operations['getUploadOffset'];
     /**
@@ -1282,7 +1288,9 @@ export interface paths {
      *     `Upload-Offset`, which must be the upload's current offset (409
      *     otherwise, with the current `Upload-Offset`). Bytes that arrive before a
      *     connection breaks are kept. When the last byte arrives the server checks
-     *     the declared SHA-256 and type: a mismatch deletes the upload (422).
+     *     them against the purpose: a declared SHA-256 that does not match deletes
+     *     the upload (422 `sha256`), and so do bytes of another type (422 `ext`
+     *     against a declared type, 415 `unsupported_media_type` otherwise).
      */
     patch: operations['appendUpload'];
     trace?: never;
@@ -1881,6 +1889,7 @@ export interface components {
       | 'not_found'
       | 'method_not_allowed'
       | 'conflict'
+      | 'upload_consumed'
       | 'payload_too_large'
       | 'unsupported_media_type'
       | 'validation_failed'
@@ -5606,8 +5615,10 @@ export interface operations {
         'Upload-Length': number;
         /**
          * @description Comma-separated `key base64(value)` pairs: `purpose`
-         *     (`migration-object` or `migration-db`), `sha256` (lowercase hex) and,
-         *     for an object, `ext`.
+         *     (`migration-object`, `migration-db`, `bookmark-original`,
+         *     `bookmark-preview` or `import`); `sha256` (lowercase hex; required for
+         *     the migration's purposes); for a migration object, `ext`; optionally
+         *     `filename`, kept as a label.
          */
         'Upload-Metadata': string;
       };
