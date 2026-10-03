@@ -841,12 +841,15 @@ async fn cancel_sends_sigterm_and_removes_partial_files() {
     let tools = VideoTools::new(config);
     let cancel = CancellationToken::new();
     let request = scenario("slow");
-    let started = Arc::new(Mutex::new(None));
-    let seen = started.clone();
+    let mut cancelled_at = None;
     let canceller = cancel.clone();
-    let mut on_progress = move |_: Progress| {
-        // The partial file exists by now; cancel.
-        seen.lock().unwrap().get_or_insert_with(Instant::now);
+    let mut on_progress = |_: Progress| {
+        // Progress is the fixture's readiness handshake, after its TERM trap,
+        // child and partial file exist. Cancel this known-running group.
+        let partial = fs::read_to_string(fakes.state("cancel.ready")).unwrap();
+        assert_eq!(fs::metadata(partial.trim()).unwrap().len(), 65_536);
+        assert!(fakes.state("grandchild.pid").exists());
+        cancelled_at.get_or_insert_with(Instant::now);
         canceller.cancel();
     };
     let err = tools
@@ -854,10 +857,14 @@ async fn cancel_sends_sigterm_and_removes_partial_files() {
         .await
         .unwrap_err();
     assert!(matches!(err, VideoError::Cancelled), "{err:?}");
-    let cancelled_at = started.lock().unwrap().expect("progress was reported");
+    let cancelled_at = cancelled_at.expect("progress was reported");
     // SIGTERM ended it, well before the grace.
     assert!(cancelled_at.elapsed() < Duration::from_secs(5));
     assert_eq!(fakes.state_files("term.").len(), 1, "SIGTERM came first");
+    let pid = fs::read_to_string(fakes.state("ytdlp.pid")).unwrap();
+    let grandchild = fs::read_to_string(fakes.state("grandchild.pid")).unwrap();
+    assert!(wait_gone(&pid), "yt-dlp is still running");
+    assert!(wait_gone(&grandchild), "its child is still running");
     assert_eq!(fakes.leftovers(), Vec::<String>::new());
 }
 

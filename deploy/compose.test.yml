@@ -41,9 +41,9 @@ services:
     image: ${SHELFY_TEST_IMAGE:-shelfy-api:local}
     pull_policy: never
     restart: unless-stopped
-    user: "10100:10100"
+    user: '10100:10100'
     read_only: true
-    tmpfs: ["/tmp:size=256m,mode=1777"]
+    tmpfs: ['/tmp:size=256m,mode=1777']
     environment:
       SHELFY_PUBLIC_URL: http://localhost:${SHELFY_TEST_PORT:-8081}
       SHELFY_DATA_DIR: /data/shelfy
@@ -56,20 +56,20 @@ services:
       - ${SHELFY_TEST_DATA:-shelfy-test-data}:/data/shelfy
     ports:
       # The API, on the loopback only.
-      - "127.0.0.1:${SHELFY_TEST_PORT:-8081}:8080"
+      - '127.0.0.1:${SHELFY_TEST_PORT:-8081}:8080'
     # Metrics stay unpublished: as on the VPS, only the compose network
     # reaches :9464.
     expose:
-      - "9464"
+      - '9464'
     mem_limit: 768m
     memswap_limit: 1g
     cpus: 1.5
     pids_limit: 256
     cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ['no-new-privileges:true']
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD", "/app/shelfy-server", "healthcheck"]
+      test: ['CMD', '/app/shelfy-server', 'healthcheck']
       interval: 5s
       timeout: 5s
       retries: 3
@@ -80,7 +80,7 @@ services:
     image: axllent/mailpit:v1.31.3@sha256:ed9b00c609e77e99c79b93f1178255ebc271868920f2c69a8d166bd5634ed10d
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${SHELFY_TEST_MAILPIT_PORT:-8025}:8025"
+      - '127.0.0.1:${SHELFY_TEST_MAILPIT_PORT:-8025}:8025'
 
   # --- SSRF suite (profile `ssrf`, P4-02; plan §6.1, SPIKE-4) ---------------
   #
@@ -101,7 +101,7 @@ services:
     profiles: [ssrf]
     image: coredns/coredns:1.12.0@sha256:40384aa1f5ea6bfdc77997d243aec73da05f27aed0c5e9d65bfa98933c519d97
     restart: unless-stopped
-    command: ["-conf", "/etc/coredns/Corefile"]
+    command: ['-conf', '/etc/coredns/Corefile']
     volumes:
       - ./egress/ssrf/Corefile:/etc/coredns/Corefile:ro
       - ./egress/ssrf/hosts:/etc/coredns/hosts:ro
@@ -123,9 +123,11 @@ services:
       shelfy-ssrf:
         ipv4_address: 10.133.0.10
     mem_limit: 64m
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ['no-new-privileges:true']
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O-", "http://localhost/"]
+      # nginx's fixture listens on IPv4. On IPv6-enabled CI hosts BusyBox
+      # wget resolves localhost to ::1 and does not fall back after refusal.
+      test: ['CMD', 'wget', '-q', '-O-', 'http://127.0.0.1/']
       interval: 3s
       timeout: 3s
       retries: 5
@@ -136,7 +138,7 @@ services:
     image: ${SHELFY_EGRESS_TEST_IMAGE:-shelfy-egress:local}
     pull_policy: never
     restart: unless-stopped
-    user: "10101:10101"
+    user: '10101:10101'
     read_only: true
     # Production arguments (config.yaml + acl.yaml) plus the one test-only flag:
     # the fixture subnet is allowed so the positive controls have somewhere to
@@ -149,18 +151,18 @@ services:
       - ./egress/config.yaml:/etc/shelfy-egress/config.yaml:ro
       - ./egress/acl.yaml:/etc/shelfy-egress/acl.yaml:ro
     # The proxy's only resolver is the test CoreDNS: unlisted names get NXDOMAIN.
-    dns: ["10.133.0.2"]
+    dns: ['10.133.0.2']
     ports:
       # The proxy on the loopback, for `cargo test --test ssrf`. Not published
       # in production: only the capture network reaches it there.
-      - "127.0.0.1:${SHELFY_SSRF_PORT:-4750}:4750"
+      - '127.0.0.1:${SHELFY_SSRF_PORT:-4750}:4750'
     networks:
       shelfy-ssrf:
         ipv4_address: 10.133.0.3
     mem_limit: 96m
     cpus: 0.5
     cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
+    security_opt: ['no-new-privileges:true']
     depends_on:
       shelfy-ssrf-resolver:
         condition: service_started

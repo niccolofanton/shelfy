@@ -87,13 +87,27 @@ jobs:
         run: DOCKER_BUILDKIT=1 docker build -f deploy/docker/shelfy-egress.Dockerfile -t shelfy-egress:local .
       - name: Start the egress proxy, resolver and fixtures
         run: docker compose -f deploy/compose.test.yml -p shelfy-ssrf up -d --wait shelfy-ssrf-egress
+      # Distroless carries no probe executable: compose only knows that the
+      # proxy is running. Wait for its listener, fixture DNS and allowed HTTP
+      # path to work together before running the full positive/negative suite.
+      - name: Wait for an allowed request through the proxy
+        run: |
+          curl --fail --silent --show-error --noproxy '' \
+            --proxy http://127.0.0.1:4750 --max-time 2 \
+            --retry 10 --retry-connrefused --retry-all-errors --retry-delay 1 \
+            http://allowed.fixture.test/ | rg --fixed-strings --line-regexp 'shelfy ssrf fixture ok'
       - name: Run the SSRF suite against the real proxy
         env:
           SHELFY_SSRF_PROXY: http://127.0.0.1:4750
         run: cargo test -p shelfy-server --test ssrf --locked -- --nocapture
       - name: Proxy decisions (for the §3.7 log check)
         if: always()
-        run: docker compose -f deploy/compose.test.yml -p shelfy-ssrf logs shelfy-ssrf-egress
+        run: |
+          docker compose -f deploy/compose.test.yml -p shelfy-ssrf ps -a
+          docker compose -f deploy/compose.test.yml -p shelfy-ssrf logs shelfy-ssrf-resolver shelfy-ssrf-fixture shelfy-ssrf-egress
+          for id in $(docker compose -f deploy/compose.test.yml -p shelfy-ssrf ps -a -q); do
+            docker inspect --format '{{.Name}} {{json .State}}' "$id"
+          done
       - name: Tear down
         if: always()
         run: docker compose -f deploy/compose.test.yml -p shelfy-ssrf down -v

@@ -139,9 +139,16 @@ case "$scenario" in
   slow)
     # Stops on SIGTERM, and says so outside its run directory. The sleep runs
     # in the background so that `wait` returns as soon as the signal arrives.
+    # Signal/job diagnostics must not hit the runner's already-closed stderr:
+    # dash could otherwise die of SIGPIPE before recording its TERM trap.
+    exec 2>/dev/null
     trap 'echo term > "$state/term.$$"; finish 143' TERM
     dd if=/dev/zero bs=1024 count=64 2>/dev/null > "$dir/video.f137.mp4.part"
     sleep 30 &
+    echo $! > "$state/grandchild.pid"
+    # Publishing this file before progress is the cancellation handshake:
+    # the trap, partial and process group are all ready for the test to stop.
+    echo "$dir/video.f137.mp4.part" > "$state/cancel.ready"
     echo "shelfy-progress downloading 65536 1000000 NA"
     wait $!
     finish 0
