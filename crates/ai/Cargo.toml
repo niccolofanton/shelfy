@@ -1,0 +1,69 @@
+[package]
+name = "shelfy-ai"
+description = "AI provider adapters (OpenAI-compatible, Anthropic, whisper.cpp) and the test stub"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# No workspace crate: the desktop can reuse the adapters (P6). The crate builds no HTTP
+# client of its own; the server plugs its outbound client into `transport::Transport` (L11).
+
+[features]
+# A plain-HTTP transport for loopback and allowlisted endpoints: tests, the stub and the
+# SPIKE-6 harness. Never the server's transport.
+direct = [
+  "dep:http-body-util",
+  "dep:hyper",
+  "dep:hyper-util",
+  "hyper/client",
+  "hyper/http1",
+  "hyper-util/tokio",
+]
+# The test provider: `shelfy_ai::stub` and the `shelfy-ai-stub` binary.
+stub = [
+  "direct",
+  "dep:axum",
+  "dep:clap",
+  "hyper/server",
+  "hyper-util/server",
+  "hyper-util/service",
+]
+
+[dependencies]
+base64.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+getrandom.workspace = true
+http.workspace = true
+jsonschema.workspace = true
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+axum = { workspace = true, optional = true }
+clap = { workspace = true, optional = true, features = ["env"] }
+http-body-util = { workspace = true, optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest.workspace = true
+# The crate itself with the stub, so that `cargo test` reaches it without feature flags.
+shelfy-ai = { path = ".", features = ["stub"] }
+
+[[bin]]
+name = "shelfy-ai-stub"
+path = "src/main.rs"
+required-features = ["stub"]
+
+[lints]
+workspace = true

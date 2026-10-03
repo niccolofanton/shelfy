@@ -4,6 +4,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "crates/ai",
   "crates/core",
   "crates/media",
   "crates/migrate",
@@ -23,14 +24,22 @@ publish = false
 anyhow = "1.0.104"
 axum = { version = "0.8.9", features = ["macros"] }
 base64 = { version = "0.22.1", default-features = false, features = ["std"] }
+# Request and response bodies of the AI adapters (`shelfy-ai`); already under axum.
+bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive"] }
 fast_image_resize = "6.1.0"
 # Stream combinators for SSE bodies; the features axum already enables.
 futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 getrandom = "0.4.3"
+# The request and response types of `shelfy-ai`'s transport seam, shared with axum and reqwest.
+http = "1.5.0"
 http-body-util = "0.1.5"
 # `Retry-After` given as an HTTP date, in the outbound client (P2-04).
 httpdate = "1.0.3"
+# HTTP/1 connections of `shelfy-ai`'s test transport and stub (features `direct`, `stub`).
+# The server's outbound HTTP is P2-04's client (L11), not these.
+hyper = { version = "1.11.1", default-features = false }
+hyper-util = { version = "0.1.21", default-features = false }
 # No default features: a crate enables only the codecs it decodes (no AVIF, EXR, TIFF…).
 image = { version = "0.25.10", default-features = false }
 jsonschema = { version = "0.58.4", default-features = false }
@@ -69,6 +78,8 @@ rusqlite_migration = "2.6.0"
 # TLS of the outbound client, with `ring`: the provider lettre and ureq already use. Never
 # `aws_lc_rs` (a second provider and a C build).
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+# Provider keys and the operator key (§2.15, §7.1): never printed, wiped on drop.
+secrecy = "0.10.3"
 serde = { version = "1.0.229", features = ["derive"] }
 # Query strings with repeated keys (`?mediaType=image&mediaType=video`); parsing only.
 serde_html_form = { version = "0.4.1", default-features = false, features = ["de", "std"] }
