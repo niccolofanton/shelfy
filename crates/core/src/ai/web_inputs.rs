@@ -154,3 +154,10 @@ pub fn select(conn: &Connection, post_id: i64) -> Result<Option<WebInputs>> {
         post,
     }))
 }
+
+/// Websites in a frozen preview population (no widening or live selector).
+pub fn count_ids(conn: &Connection, ids: &[i64]) -> Result<u64> {
+    let ids = serde_json::to_string(ids).expect("integer ids serialize");
+    let n=conn.query_row("SELECT count(*) FROM posts WHERE (platform='web' OR media_type='website') AND id IN (SELECT value FROM json_each(?1))",[ids],|r|r.get::<_,i64>(0))?;
+    Ok(u64::try_from(n).unwrap_or(0))
+}

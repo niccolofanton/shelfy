@@ -229,7 +229,7 @@ pub async fn analyze_with_preview(
         if confirm.provider != route.provider.id() || confirm.model != route.model {
             return Err(ApiError::new(crate::error::ErrorCode::ConfirmTokenInvalid));
         }
-        let enqueued =
+        let (enqueued, web) =
             enqueue_ids(state, user_id, confirm.ids, confirm.mode, confirm.deep, now).await?;
         return Ok(AnalyzeResult {
             counts: AnalyzeCounts {
@@ -238,7 +238,7 @@ pub async fn analyze_with_preview(
                 already_queued: 0,
             },
             estimate: AnalyzeEstimate::of(
-                Estimate::of(enqueued, measured_ms_per_post()),
+                Estimate::of_catalogs(enqueued.saturating_sub(web), web, measured_ms_per_post()),
                 &route,
                 prices,
             ),
@@ -248,18 +248,23 @@ pub async fn analyze_with_preview(
         });
     }
 
-    let (counts, ids) = {
+    let (counts, ids, web) = {
         let selector = selector.clone();
         read(state, user_id, move |conn| {
             // The displayed estimate and confirmed population come from the
             // same snapshot, even while another import changes the library.
             let counts = core_queue::scope_counts(conn, &selector, mode, now)?;
             let ids = core_queue::eligible_ids(conn, &selector, mode)?;
-            Ok((counts, ids))
+            let web = shelfy_core::ai::web_inputs::count_ids(conn, &ids)?;
+            Ok((counts, ids, web))
         })
         .await?
     };
-    let estimate = Estimate::of(counts.analyzable, measured_ms_per_post());
+    let estimate = Estimate::of_catalogs(
+        counts.analyzable.saturating_sub(web),
+        web,
+        measured_ms_per_post(),
+    );
 
     // Nothing to do, or a single post: no confirmation needed (plan §2.9).
     if counts.analyzable == 0 {
@@ -542,14 +547,16 @@ pub async fn queue_view(
     status: Option<String>,
     cursor: Option<i64>,
 ) -> Result<QueueView, ApiError> {
-    let (counts, items, next) = read(state, user_id, move |conn| {
+    let (counts, items, next, web) = read(state, user_id, move |conn| {
         let counts = core_queue::state_counts(conn)?;
         let (items, next) = core_queue::list(conn, status.as_deref(), cursor, PAGE_SIZE)?;
-        Ok::<_, ApiError>((counts, items, next))
+        let web:i64=conn.query_row("SELECT count(*) FROM posts p WHERE deleted_at IS NULL AND ai_status IN ('pending','analyzing') AND (platform='web' OR media_type='website') AND EXISTS(SELECT 1 FROM web_captures c WHERE c.id=p.current_capture_id AND c.post_id=p.id)",[],|r|r.get(0)).map_err(shelfy_core::repo::RepoError::from)?;
+        Ok::<_, ApiError>((counts, items, next, u64::try_from(web).unwrap_or(0)))
     })
     .await?;
     let outstanding = counts.pending + counts.analyzing;
-    let eta_ms = Estimate::of(outstanding, measured_ms_per_post()).eta_ms;
+    let eta_ms =
+        Estimate::of_catalogs(outstanding.saturating_sub(web), web, measured_ms_per_post()).eta_ms;
     let owner = crate::jobs::ai_drain::is_owner(state, user_id).await?;
     let caller = super::Caller::new(user_id, owner);
     let provider_state =
@@ -636,29 +643,35 @@ async fn enqueue_ids(
     mode: Mode,
     deep: bool,
     now: i64,
-) -> Result<u64, ApiError> {
+) -> Result<(u64, u64), ApiError> {
     let written = library::write(state, user_id, ChangeReason::Ai, move |tx| {
         let mut n = 0;
+        let mut web = 0;
         // Recheck eligibility without widening the population the user confirmed.
         for id in ids {
-            let key: Option<String> = tx
-                .query_row("SELECT key FROM posts WHERE id=?1", [id], |r| r.get(0))
+            let key: Option<(String, bool)> = tx
+                .query_row(
+                    "SELECT key,(platform='web' OR media_type='website') FROM posts WHERE id=?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
                 .optional()?;
-            if let Some(key) = key {
+            if let Some((key, is_web)) = key {
                 let selector = Selector::Keys(vec![key]);
                 if core_queue::mark_pending(tx, &selector, mode, now)? > 0 {
                     core_queue::set_deep(tx, &[id], deep, now)?;
                     n += 1;
+                    web += u64::from(is_web);
                 }
             }
         }
         Ok(Change {
-            value: n,
+            value: (n, web),
             keys: None,
         })
     })
     .await?;
-    if written.value > 0 {
+    if written.value.0 > 0 {
         crate::jobs::ai_drain::enqueue(state.jobs(), user_id).await?;
     }
     Ok(written.value)

@@ -339,3 +339,60 @@ async fn recorded_p4_capture_keeps_measured_facets_and_sends_four_768px_jpegs() 
     driver.abort();
     scheduler.abort().await;
 }
+
+#[tokio::test]
+async fn mixed_preview_and_confirmation_use_the_rich_web_budget_without_dry_run_admission() {
+    use serde_json::json;
+    use support::{
+        auth::{sign_in, with_session},
+        json as response_json, post_json, send,
+    };
+    let (_stub, t, user) = fixture(true).await;
+    seed(&t, &user).await;
+    t.write(&user, |tx| {
+        let mut post = NewPost::new("x_quote", Platform::Twitter, "quote", "text", 1);
+        post.caption = Some("Synthetic lamp".into());
+        posts::insert(tx, &post, 1)
+    })
+    .await;
+    let app = t.app();
+    let cookie = sign_in(&app, &t).await;
+    let body =
+        json!({"selector":{"keys":["web_test","x_quote"]},"mode":"selected","estimateOnly":true});
+    let response = send(
+        &app,
+        with_session(post_json("/api/v1/ai/analyze", body.to_string()), &cookie),
+    )
+    .await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let preview = response_json(response).await;
+    assert_eq!(preview["estimate"]["outputTokens"], 768 + 2048);
+    assert_eq!(
+        preview["estimate"]["inputTokens"],
+        750 + 2 * 900 + 4000 + 4 * 900
+    );
+    assert_eq!(preview["queued"], false);
+    assert!(preview["estimate"]["costUsd"].is_null());
+    assert_eq!(
+        t.state
+            .user_db(&user)
+            .await
+            .unwrap()
+            .read(queue::state_counts)
+            .unwrap()
+            .pending,
+        0
+    );
+    let mut confirmed = body;
+    confirmed["estimateOnly"] = false.into();
+    confirmed["confirmToken"] = preview["confirmToken"].clone();
+    let mut request = post_json("/api/v1/ai/analyze", confirmed.to_string());
+    request
+        .headers_mut()
+        .insert("idempotency-key", "web-mixed-confirm".parse().unwrap());
+    let response = send(&app, with_session(request, &cookie)).await;
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let result = response_json(response).await;
+    assert_eq!(result["enqueued"], 2);
+    assert_eq!(result["estimate"]["outputTokens"], 768 + 2048);
+}

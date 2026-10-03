@@ -137,3 +137,24 @@ fn digest_budget_and_p4_metadata_wrapper_are_preserved() {
         1
     );
 }
+
+#[test]
+fn mixed_preview_budgets_web_design_and_keeps_social_quotes_unchanged() {
+    use shelfy_core::ai::estimate::Estimate;
+    assert_eq!(Estimate::of_catalogs(3, 0, None), Estimate::of(3, None));
+    let quote = Estimate::of_catalogs(2, 3, Some(1000));
+    assert_eq!(quote.posts, 5);
+    assert_eq!(quote.output_tokens, 2 * 768 + 3 * 2048);
+    assert_eq!(quote.eta_ms, Some(5000));
+    assert!(quote.input_tokens > Estimate::of(5, None).input_tokens);
+    assert_eq!(Estimate::of_catalogs(0, 0, None).eta_ms, None);
+    let (c, id) = fixture();
+    capture(&c, id, 1);
+    let social = posts::insert(
+        &c,
+        &NewPost::new("x_quote", Platform::Twitter, "quote", "text", 1),
+        1,
+    )
+    .unwrap();
+    assert_eq!(web_inputs::count_ids(&c, &[id, social]).unwrap(), 1);
+}

@@ -189,3 +189,10 @@ Parity fixtures live under `shared/golden/ai/web-design/`; regenerate with
 `pnpm exec tsx scripts/golden/run.ts shared-ai-index ai/web-design`. Server tests
 exercise the scrubbed P4 recorded capture, four actual JPEG inputs, measured
 facets and the capture-id fence.
+
+Analyze previews, confirmed admissions and queue ETA separate website and
+social counts. The website quote budgets 4,000 context tokens, four estimated
+vision frames and the actual `web_design.maxTokens` response cap. Without a
+measured operator pace its ETA scales the social fallback by that cap; real
+usage and priced BYOK calculations continue through the common AI service.
+`estimateOnly` never enqueues, and confirmation retains its frozen IDs.

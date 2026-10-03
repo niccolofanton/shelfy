@@ -53,6 +53,33 @@ impl Estimate {
         }
     }
 
+    /// A mixed preview: web design has an 8k digest, measured facts and up to
+    /// four 768px frames. Keep social estimates unchanged and budget the rich
+    /// website response using its actual manifest cap.
+    pub fn of_catalogs(social: u64, web: u64, ms_per_post: Option<u64>) -> Self {
+        let mut estimate = Self::of(social, ms_per_post);
+        let web_output = u64::from(prompts::max_tokens(Task::WebDesign, 0));
+        let web_input = 4_000 + 4 * INPUT_FRAME_TOKENS;
+        let web_pace = ms_per_post.unwrap_or_else(|| {
+            DEFAULT_MS_PER_POST.saturating_mul(web_output)
+                / u64::from(prompts::max_tokens(Task::Catalog, 0)).max(1)
+        });
+        estimate.posts = estimate.posts.saturating_add(web);
+        estimate.input_tokens = estimate
+            .input_tokens
+            .saturating_add(web.saturating_mul(web_input));
+        estimate.output_tokens = estimate
+            .output_tokens
+            .saturating_add(web.saturating_mul(web_output));
+        estimate.eta_ms = (estimate.posts > 0).then(|| {
+            estimate
+                .eta_ms
+                .unwrap_or(0)
+                .saturating_add(web.saturating_mul(web_pace))
+        });
+        estimate
+    }
+
     /// The price in US dollars for a priced BYOK route, from its per-million
     /// input and output token prices; `None` for the operator node (its node
     /// is the owner's own, so there is no per-token price).
