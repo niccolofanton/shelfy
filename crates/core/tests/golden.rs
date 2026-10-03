@@ -13,6 +13,7 @@ mod golden_tag_search;
 mod golden_tags;
 mod golden_taxonomy;
 mod golden_taxonomy_prompt;
+mod golden_web_design;
 mod golden_web_sanitize;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,6 +45,7 @@ const CHECKED: &[&str] = &[
     "ai/taxonomy-prompts/",
     "ai/tags/",
     "ai/web-sanitize",
+    "ai/web-design/",
     "edits",
     "extract-content-terms",
     "hosts",

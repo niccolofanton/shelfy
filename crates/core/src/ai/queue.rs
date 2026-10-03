@@ -50,6 +50,7 @@ const NEEDS_MEDIA: &str = "p.media_type IN ('image','images','carousel','video',
 /// On the alias `p`.
 const HAS_INPUTS: &str = "(p.cover_object IS NOT NULL \
      OR EXISTS (SELECT 1 FROM post_media m WHERE m.post_id = p.id AND (m.object_id IS NOT NULL OR m.video_object_id IS NOT NULL)) \
+     OR EXISTS (SELECT 1 FROM web_captures c WHERE c.id=p.current_capture_id AND c.post_id=p.id AND (c.hero_object IS NOT NULL OR length(trim(c.title))>0 OR json_array_length(CASE WHEN json_valid(c.pages_json) THEN c.pages_json END)>0)) \
      OR (p.media_type NOT IN ('image','images','carousel','video','file') \
          AND p.caption IS NOT NULL AND trim(p.caption) <> ''))";
 

@@ -15,11 +15,13 @@ pub struct WebInputs {
     pub digest: String,
     pub tech: Vec<String>,
     pub frames: Vec<FrameObject>,
+    /// The measured desktop web fields, including P4 metadata wrapper.
+    pub post: Value,
 }
 
 pub fn select(conn: &Connection, post_id: i64) -> Result<Option<WebInputs>> {
     let row=conn.query_row("SELECT p.key,c.id,c.title,c.meta_json,c.pages_json,c.tech_json,c.hero_object
-        FROM posts p JOIN web_captures c ON c.id=p.current_capture_id WHERE p.id=?1 AND p.deleted_at IS NULL",[post_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Option<i64>>(6)?))).optional()?;
+        FROM posts p JOIN web_captures c ON c.id=p.current_capture_id WHERE p.id=?1 AND c.post_id=p.id AND p.deleted_at IS NULL",[post_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Option<i64>>(6)?))).optional()?;
     let Some((key, capture_id, title, meta, pages, tech, hero)) = row else {
         return Ok(None);
     };
@@ -30,6 +32,23 @@ pub fn select(conn: &Connection, post_id: i64) -> Result<Option<WebInputs>> {
     let meta = json(meta);
     let pages = json(pages);
     let tech = json(tech);
+    let (palette, fonts, awards, traits, domain, author)=conn.query_row("SELECT c.palette_json,c.fonts_json,c.awards_json,c.traits_json,p.web_domain,p.author_name FROM web_captures c JOIN posts p ON p.id=c.post_id WHERE c.id=?1",[capture_id],|r|Ok((r.get::<_,Option<String>>(0)?,r.get::<_,Option<String>>(1)?,r.get::<_,Option<String>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?,r.get::<_,Option<String>>(5)?)))?;
+    let mut measured = meta
+        .get("metadata")
+        .filter(|v| v.is_object())
+        .cloned()
+        .unwrap_or_else(|| meta.clone());
+    if !measured.is_object() {
+        measured = serde_json::json!({});
+    }
+    if tech.is_array() {
+        measured["tech"] = tech.clone();
+    }
+    let traits = json(traits);
+    if traits.is_object() {
+        measured["traits"] = traits;
+    }
+    let post = serde_json::json!({"webMeta":measured,"webPalette":json(palette),"webFonts":json(fonts),"webAwards":json(awards),"webDomain":domain,"authorName":author});
     let mut parts = title.into_iter().collect::<Vec<_>>();
     if let Some(description) = meta.get("description").and_then(Value::as_str) {
         parts.push(description.into());
@@ -132,5 +151,6 @@ pub fn select(conn: &Connection, post_id: i64) -> Result<Option<WebInputs>> {
         digest,
         tech: hints,
         frames,
+        post,
     }))
 }

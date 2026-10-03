@@ -230,6 +230,13 @@ impl Example<'_> {
             .unwrap_or(false);
         (0..count)
             .map(|n| {
+                if let Some(values) = items
+                    .get("enum")
+                    .and_then(Value::as_array)
+                    .filter(|v| !v.is_empty())
+                {
+                    return values[(n as usize) % values.len()].clone();
+                }
                 let value = self.of(&items, depth + 1);
                 match value {
                     Value::String(text) if unique || n > 0 => json!(format!("{text}-{}", n + 1)),
@@ -376,5 +383,21 @@ mod tests {
         assert!((norm - 1.0).abs() < 1e-4);
         assert_eq!(embedding("lamp", 24), vector);
         assert_ne!(embedding("chair", 24), vector);
+    }
+}
+
+#[cfg(test)]
+mod array_enum_regression {
+    use super::*;
+    #[test]
+    fn closed_vocabulary_arrays_never_invent_suffixed_enum_values() {
+        let schema = json!({"type":"array","items":{"type":"string","enum":["minimal","editorial"]},"minItems":1,"maxItems":3});
+        let example = schema_example(&schema, "test");
+        assert_eq!(example, json!(["minimal", "editorial"]));
+        assert!(
+            jsonschema::validator_for(&schema)
+                .unwrap()
+                .is_valid(&example)
+        );
     }
 }

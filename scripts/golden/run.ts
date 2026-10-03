@@ -59,9 +59,11 @@ const { default: aiAliasSets } = await import('./ai-aliases');
 const { default: aiChatSets } = await import('./ai-chat');
 const { default: taxonomyPromptSets } = await import('./ai-taxonomy-prompts');
 const { default: aiTagSets } = await import('./ai-tags');
+const { default: webDesignSets } = await import('./ai-web-design');
 const { default: webSanitize } = await import('./ai-web-sanitize');
 const SETS: GoldenSet[] = [
   webSanitize,
+  ...webDesignSets,
   ...taxonomyPromptSets,
   ...aiClusterSets,
   ...aiAliasSets,

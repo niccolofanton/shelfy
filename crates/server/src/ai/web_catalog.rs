@@ -3,11 +3,10 @@ use super::{AiServiceError, CallHints, Caller, Task};
 use crate::jobs::{JobContext, JobError};
 use shelfy_ai::{ChatRequest, ErrorKind, Image, ImageType, JsonOutput, Message, Part};
 use shelfy_core::ai::{
-    catalog::{CatalogKind, CatalogRequest},
-    normalize,
+    catalog::CatalogRequest,
     prompts::{self, Task as PromptTask},
     template::Var,
-    web_inputs,
+    web_design, web_inputs,
 };
 use shelfy_core::repo::posts::AiPatch;
 use shelfy_media::{digest::Digest, kind::MediaKind, pool::ImagePool, store::MediaStore};
@@ -23,30 +22,17 @@ fn prompt(
     input: &web_inputs::WebInputs,
     frames: bool,
 ) -> Result<CatalogRequest, prompts::PromptError> {
-    let task = PromptTask::WebCatalog;
-    let schema = prompts::response_schema(task).expect("web schema");
-    let enums = |key: &str| {
-        schema.value["properties"][key]["enum"]
-            .as_array()
-            .expect("web enum")
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let purposes = enums("purpose");
-    let industries = enums("industry");
-    let tech = input.tech.join(", ");
+    let task = PromptTask::WebDesign;
+    let schema = prompts::response_schema(task).expect("web design schema");
+    let ground = web_design::ground(&input.post);
     Ok(CatalogRequest {
         system: prompts::system_prompt(task, &[])?,
         user: prompts::user_prompt(
             task,
             &[
                 ("frames", Var::Flag(frames)),
-                ("caption", Var::Text(&input.digest)),
-                ("tech", Var::Text(&tech)),
-                ("purposes", Var::Text(&purposes)),
-                ("industries", Var::Text(&industries)),
+                ("digest", Var::Text(&input.digest)),
+                ("ground", Var::Text(&ground.to_string())),
             ],
         )?,
         schema,
@@ -130,11 +116,16 @@ pub async fn catalog(
         .await
         .map_err(CatalogError::Provider)?;
     super::queue::record_duration(started.elapsed().as_millis() as u64);
-    let catalog = normalize::parse_catalog(CatalogKind::Web, &response.text)
-        .map_err(|_| CatalogError::Schema)?;
-    let mut patch = catalog.into_patch(route.provider.id(), &route.model);
-    patch.web = Some(Some(
-        serde_json::from_str(&response.text).map_err(|_| CatalogError::Schema)?,
-    ));
-    Ok(patch)
+    let raw = response
+        .json
+        .or_else(|| serde_json::from_str(&response.text).ok())
+        .ok_or(CatalogError::Schema)?;
+    if !web_design::valid(&raw) {
+        return Err(CatalogError::Schema);
+    }
+    Ok(web_design::patch(
+        &web_design::map(&raw, &input.post, &route.model),
+        route.provider.id(),
+        &route.model,
+    ))
 }

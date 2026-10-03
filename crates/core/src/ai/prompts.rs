@@ -95,6 +95,18 @@ pub const FILES: &[(&str, &str)] = &[
         "web_catalog.user.md",
         include_str!("../../../../shared/ai/web_catalog.user.md"),
     ),
+    (
+        "web_design.schema.json",
+        include_str!("../../../../shared/ai/web_design.schema.json"),
+    ),
+    (
+        "web_design.system.md",
+        include_str!("../../../../shared/ai/web_design.system.md"),
+    ),
+    (
+        "web_design.user.md",
+        include_str!("../../../../shared/ai/web_design.user.md"),
+    ),
 ];
 
 /// `shared/ai/manifest.json`, as embedded.
@@ -107,6 +119,8 @@ pub enum Task {
     Catalog,
     /// Website cataloging (AI-09).
     WebCatalog,
+    /// Rich desktop design catalog and measured facets.
+    WebDesign,
     /// Screenshot quality check (AI-23).
     Qc,
     /// The search chat (AI-35).
@@ -121,9 +135,10 @@ pub enum Task {
 
 impl Task {
     /// Every task, in manifest order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Catalog,
         Self::WebCatalog,
+        Self::WebDesign,
         Self::Qc,
         Self::Chat,
         Self::Suggest,
@@ -137,6 +152,7 @@ impl Task {
         match self {
             Self::Catalog => "catalog",
             Self::WebCatalog => "web_catalog",
+            Self::WebDesign => "web_design",
             Self::Qc => "qc",
             Self::Chat => "chat",
             Self::Suggest => "suggest",

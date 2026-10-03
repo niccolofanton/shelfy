@@ -112,8 +112,10 @@ async fn capture_admission_is_opt_in_and_drain_persists_web_schema() {
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "{:?}",
-            db.read(queue::state_counts).unwrap()
+            "{:?} errors={:?} requests={:?}",
+            db.read(queue::state_counts).unwrap(),
+            db.read(queue::errors_by_code).unwrap(),
+            stub.requests()
         );
         tokio::task::yield_now().await;
     }
@@ -145,7 +147,7 @@ async fn capture_admission_is_opt_in_and_drain_persists_web_schema() {
     let body = requests[0].body.as_ref().unwrap().to_string();
     assert!(body.contains("Design & furniture") && body.contains("React"));
     assert!(!body.contains("<b>"));
-    assert_eq!(body.matches("<<<CAPTION>>>").count(), 1);
+    assert_eq!(body.matches("<<<CAPTION>>>").count(), 0);
     assert_eq!(
         ai::queue::enqueue_web(&t.state, &user, "web_test", 1)
             .await
@@ -196,4 +198,144 @@ async fn qc_loading_is_explicit_and_reason_is_sanitized() {
     assert!(!result.ok && result.ready);
     assert_eq!(result.status, "loading");
     assert_eq!(result.reason.as_deref(), Some("Spinner & skeleton"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn recorded_p4_capture_keeps_measured_facets_and_sends_four_768px_jpegs() {
+    use base64::Engine as _;
+    use rusqlite::params;
+    use serde_json::{Value, json};
+    use shelfy_media::{MediaKind, digest::Digest, store::MediaStore};
+    let (stub, t, user) = fixture(true).await;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../capture/fixtures/recorded/basic");
+    let m: Value =
+        serde_json::from_slice(&std::fs::read(root.join("manifest.json")).unwrap()).unwrap();
+    let store = MediaStore::new(t.state.config().data_dir.users_dir())
+        .user(&user)
+        .unwrap();
+    let mut files = vec![];
+    for name in [
+        "p0-hero.webp",
+        "p0-band0.webp",
+        "p0-band1.webp",
+        "p0-band2.webp",
+        "p0-footer.webp",
+    ] {
+        let bytes = std::fs::read(root.join(name)).unwrap();
+        let digest = Digest::of(&bytes);
+        let path = store.object_path(&digest, MediaKind::Webp);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, &bytes).unwrap();
+        files.push((digest.as_bytes().to_vec(), bytes.len()));
+    }
+    let mut pages = m["pages"].as_array().unwrap().clone();
+    for p in &mut pages {
+        p.as_object_mut().unwrap().remove("assets");
+    }
+    let capture=t.write(&user,move|tx|{
+        let id=posts::insert(tx,&NewPost::new("web_test",Platform::Web,"test","website",1),1)?;
+        for (i,(hash,bytes)) in files.iter().enumerate(){tx.execute("INSERT INTO media_objects(id,sha256,ext,mime,bytes,role,origin,created_at) VALUES (?1,?2,'webp','image/webp',?3,'band','capture',1)",params![(i+1) as i64,hash,*bytes as i64])?;}
+        // Same NewCapture shape and metadata wrapper written by P4-14 ingest.
+        let mut c=shelfy_core::web::captures::NewCapture::new(1);c.title=m["title"].as_str().map(str::to_owned);c.requested_url=m["url"].as_str().map(str::to_owned);c.final_url=m["finalUrl"].as_str().map(str::to_owned);c.palette=Some(m["palette"].clone());c.fonts=Some(m["typography"]["fonts"].clone());c.tech=Some(m["tech"].clone());c.traits=Some(m["traits"].clone());c.awards=Some(m["awards"].clone());c.meta=Some(json!({"description":m["description"],"metadata":m["webMeta"],"capture":{"jobId":99}}));c.pages=pages;c.hero_object=Some(1);
+        use shelfy_core::web::{AssetRole,captures::{self,NewAsset}};
+        let assets=vec![NewAsset::new(0,AssetRole::Hero,0,1),NewAsset::new(0,AssetRole::Band,0,2),NewAsset::new(0,AssetRole::Band,1,3),NewAsset::new(0,AssetRole::Band,2,4),NewAsset::new(0,AssetRole::Footer,0,5)];
+        captures::insert(tx,id,&c,&assets,1)
+    }).await;
+    flags(&t, &user).await;
+    assert_eq!(
+        ai::queue::enqueue_web(&t.state, &user, "web_test", capture)
+            .await
+            .unwrap(),
+        1
+    );
+    let scheduler = t
+        .state
+        .jobs()
+        .start(t.state.clone(), tokio_util::sync::CancellationToken::new());
+    let driver = tokio::spawn(async {
+        loop {
+            tokio::time::advance(Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+    let db = t.state.user_db(&user).await.unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if db.read(queue::state_counts).unwrap().done == 1 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{:?} errors={:?} requests={:?}",
+            db.read(queue::state_counts).unwrap(),
+            db.read(queue::errors_by_code).unwrap(),
+            stub.requests()
+        );
+        tokio::task::yield_now().await;
+    }
+    let body = stub.requests()[0].body.clone().unwrap();
+    let content = body["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["role"] == "user")
+        .unwrap()["content"]
+        .as_array()
+        .unwrap();
+    let images = content
+        .iter()
+        .filter(|v| v["type"] == "image_url")
+        .collect::<Vec<_>>();
+    assert_eq!(images.len(), 4);
+    for image in images {
+        let data = image["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("data:image/jpeg;base64,")
+            .unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(data)
+            .unwrap();
+        let decoded = image::load_from_memory(&bytes).unwrap();
+        assert_eq!(decoded.width().max(decoded.height()), 768);
+    }
+    assert_eq!(
+        body["response_format"]["json_schema"]["name"],
+        "web_catalog_v2"
+    );
+    let text = body.to_string();
+    assert!(
+        text.contains("indigo")
+            && text.contains("dark")
+            && text.contains("GROUND TRUTH")
+            && text.contains("Section 1")
+    );
+    let catalog: Value = db
+        .read(|c| {
+            Ok::<_, shelfy_core::repo::RepoError>(
+                serde_json::from_str::<Value>(&c.query_row(
+                    "SELECT ai_web_json FROM posts",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )?)
+                .unwrap(),
+            )
+        })
+        .unwrap();
+    assert_eq!(catalog["schema"], 2);
+    assert!(catalog["observations"].is_string());
+    assert!(catalog["notableDetails"].is_array());
+    assert!(catalog["referenceFor"].is_array());
+    assert_eq!(catalog["facets"]["scheme"], json!(["dark"]));
+    assert!(
+        catalog["facets"]["color"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("indigo"))
+    );
+    assert_eq!(catalog["facets"].as_object().unwrap().len(), 19);
+    driver.abort();
+    scheduler.abort().await;
 }

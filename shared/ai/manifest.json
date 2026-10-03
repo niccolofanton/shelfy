@@ -60,6 +60,18 @@
       "schema": { "name": "tag_aliases", "file": "aliases.schema.json" },
       "temperature": 0.1,
       "maxTokens": { "base": 256, "perItem": 24, "max": 2048 }
+    },
+    "web_design": {
+      "about": "Design curator website catalog v2 with desktop evidence and measured facets.",
+      "system": "web_design.system.md",
+      "user": "web_design.user.md",
+      "schema": {
+        "name": "web_catalog_v2",
+        "file": "web_design.schema.json"
+      },
+      "temperature": 0.2,
+      "maxTokens": 2048,
+      "captionMax": 8000
     }
   }
 }

@@ -48,6 +48,7 @@ and the layer an answer writes.
 |---|---|---|---|
 | `catalog` | social cataloging (AI-08) | `catalog.*` | `frames`, `caption`, `vocabulary` |
 | `web_catalog` | website cataloging (AI-09) | `web_catalog.*` | `frames`, `caption`, `tech`, `purposes`, `industries` |
+| `web_design` | rich website design catalog (P3-27), matching `electron/webcap/ai-catalog.ts` | `web_design.*` | `frames`, `digest`, `ground` |
 | `qc` | screenshot quality check (AI-23) | `qc.*` | — |
 | `chat` | the search chat (AI-35) | `chat.system.md` | `broad`, `specific`, `active`, `perTierCap`, `maxKeywords`, the sentinels `generalOpen` … `removeClose` |
 | `suggest` | suggestion chips (AI-41) | `suggest.*` | `query` |
@@ -160,3 +161,31 @@ An output-schema change bumps `schemaVersion` here and `SCHEMA_VERSION` in
 `crates/core/src/ai/prompts.rs` (a test ties them); web results store it in
 `ai_schema_version`. A catalog prompt change also needs a real-run report
 before it lands (P3 lane rule 9).
+
+## Website design parity
+
+The legacy `web_catalog` manifest task returns purpose, industry and tag tiers.
+The desktop capture pipeline uses a different design v2 contract: observations,
+secondary site type, audience, style, theme, colour mood, density, layout, hero,
+imagery, typography, components, craft, notable details, reference uses, summary
+and description. New server captures use the additive `web_design` namespace,
+whose system prompt and schema are pinned against the actual desktop exports.
+The original social and legacy website contracts remain versioned independently.
+
+`ai::web_design::map` matches the actual desktop `mapCatalog`: every output field,
+all 19 facet families, font-class corrections, technology confidence threshold,
+legacy tag tiers/entities/keywords, language and save reason. The complete result
+is stored in `posts.ai_web_json`; existing website facets and similarity read it.
+Input metadata accepts both migrated v1 captures and P4's nested
+`meta_json.metadata` shape, including palette, fonts, technologies, motion/layout
+traits and awards. The sanitized page digest has an 8,000 UTF-16-unit budget.
+
+The server's image budget follows P3-27: hero plus up to three stored bands or
+sections at 768 px. The desktop also composes an overview and varies screenshot
+budgets by provider; those media-selection rules are not claimed as identical.
+No screenshot, font, colour or motion evidence is inferred from remote downloads.
+
+Parity fixtures live under `shared/golden/ai/web-design/`; regenerate with
+`pnpm exec tsx scripts/golden/run.ts shared-ai-index ai/web-design`. Server tests
+exercise the scrubbed P4 recorded capture, four actual JPEG inputs, measured
+facets and the capture-id fence.

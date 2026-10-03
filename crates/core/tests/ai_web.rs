@@ -109,3 +109,31 @@ fn recapture_without_auto_enqueue_retires_old_inflight_claim() {
         .unwrap();
     assert_eq!(status, None);
 }
+
+#[test]
+fn digest_budget_and_p4_metadata_wrapper_are_preserved() {
+    let (c, id) = fixture();
+    capture(&c, id, 1);
+    c.execute("UPDATE web_captures SET pages_json=?1,meta_json=?2,fonts_json=?3,traits_json=?4 WHERE id=1",params![json!([{"contentText":"word ".repeat(5000)}]).to_string(),json!({"description":"Studio","metadata":{"scheme":"dark","lang":"it","siteName":"Measured studio"}}).to_string(),json!([{"family":"Inter","classification":"sans"}]).to_string(),json!({"webgl":true}).to_string()]).unwrap();
+    let input = web_inputs::select(&c, id).unwrap().unwrap();
+    assert!(input.digest.encode_utf16().count() <= 8000);
+    assert!(input.digest.ends_with('…'));
+    assert_eq!(input.post["webMeta"]["scheme"], "dark");
+    assert_eq!(input.post["webMeta"]["lang"], "it");
+    assert_eq!(input.post["webMeta"]["traits"]["webgl"], true);
+    assert_eq!(input.post["webFonts"][0]["family"], "Inter");
+    assert!(!shelfy_core::ai::web_design::valid(
+        &json!({"site_type":"agency"})
+    ));
+    assert_eq!(
+        queue::scope_counts(
+            &c,
+            &shelfy_core::selector::Selector::Keys(vec!["web_test".into()]),
+            queue::Mode::Missing,
+            1,
+        )
+        .unwrap()
+        .analyzable,
+        1
+    );
+}

@@ -1,0 +1,363 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "observations": {
+      "type": "string",
+      "maxLength": 900
+    },
+    "site_type": {
+      "type": "string",
+      "enum": [
+        "portfolio-individual",
+        "portfolio-studio",
+        "agency",
+        "saas",
+        "product",
+        "app",
+        "landing-campaign",
+        "e-commerce",
+        "editorial",
+        "blog",
+        "documentation",
+        "web-app",
+        "event",
+        "corporate",
+        "nonprofit",
+        "hospitality",
+        "directory",
+        "personal",
+        "other"
+      ]
+    },
+    "site_type_secondary": {
+      "type": "string",
+      "enum": [
+        "none",
+        "portfolio-individual",
+        "portfolio-studio",
+        "agency",
+        "saas",
+        "product",
+        "app",
+        "landing-campaign",
+        "e-commerce",
+        "editorial",
+        "blog",
+        "documentation",
+        "web-app",
+        "event",
+        "corporate",
+        "nonprofit",
+        "hospitality",
+        "directory",
+        "personal",
+        "other"
+      ]
+    },
+    "industry": {
+      "type": "string",
+      "enum": [
+        "design-creative",
+        "architecture-interior",
+        "art-culture",
+        "photography-film",
+        "music",
+        "fashion",
+        "beauty",
+        "luxury",
+        "furniture-home",
+        "food-drink",
+        "hospitality-travel",
+        "real-estate",
+        "health-wellness",
+        "medical",
+        "education",
+        "fintech",
+        "crypto-web3",
+        "ai-ml",
+        "developer-tools",
+        "b2b-saas",
+        "consumer-tech",
+        "automotive",
+        "energy-climate",
+        "sports",
+        "gaming",
+        "media-publishing",
+        "nonprofit",
+        "public-sector",
+        "legal-consulting",
+        "retail",
+        "events",
+        "other"
+      ]
+    },
+    "audience": {
+      "type": "string",
+      "maxLength": 90
+    },
+    "style": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "minimal",
+          "editorial",
+          "corporate",
+          "technical",
+          "type-led",
+          "image-led",
+          "dark-elegant",
+          "luxury-refined",
+          "playful",
+          "organic",
+          "illustrative",
+          "swiss-grid",
+          "bento",
+          "gradient-rich",
+          "glassmorphism",
+          "monochrome",
+          "3d-immersive",
+          "futuristic",
+          "handcrafted",
+          "collage",
+          "experimental",
+          "retro",
+          "y2k",
+          "maximalist",
+          "neo-brutalist",
+          "brutalist"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 3
+    },
+    "theme": {
+      "type": "string",
+      "enum": ["light", "dark", "mixed", "colorful"]
+    },
+    "color_mood": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "monochrome",
+          "neutral",
+          "earthy",
+          "pastel",
+          "vibrant",
+          "neon",
+          "muted",
+          "warm",
+          "cool",
+          "high-contrast",
+          "gradient-rich",
+          "duotone"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 3
+    },
+    "density": {
+      "type": "string",
+      "enum": ["airy", "balanced", "dense"]
+    },
+    "layout_patterns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "split hero",
+          "centered hero",
+          "full-bleed hero",
+          "oversized wordmark",
+          "bento grid",
+          "asymmetric grid",
+          "masonry",
+          "card grid",
+          "horizontal scroll",
+          "sticky stacking sections",
+          "pinned scroll story",
+          "project index list",
+          "long-form article",
+          "single-page scroll",
+          "sidebar navigation",
+          "mega menu",
+          "marquee band",
+          "big footer",
+          "tabbed sections",
+          "alternating media rows",
+          "full-screen sections",
+          "magazine layout"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 5
+    },
+    "hero_type": {
+      "type": "string",
+      "enum": [
+        "typographic",
+        "product-shot",
+        "photography",
+        "video",
+        "3d-webgl",
+        "illustration",
+        "ui-screenshot",
+        "collage",
+        "gradient-abstract",
+        "carousel",
+        "minimal-text",
+        "other"
+      ]
+    },
+    "imagery": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "photography",
+          "product-photography",
+          "illustration",
+          "3d-renders",
+          "ui-screenshots",
+          "abstract-graphics",
+          "icons",
+          "video",
+          "typography-only",
+          "data-visualization"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 3
+    },
+    "typography": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "oversized display",
+          "serif editorial",
+          "neo-grotesk",
+          "geometric sans",
+          "monospace accents",
+          "condensed display",
+          "mixed serif-sans",
+          "all-caps headings",
+          "tight tracking",
+          "small dense text",
+          "script accents",
+          "variable-weight play"
+        ]
+      },
+      "minItems": 1,
+      "maxItems": 3
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "sticky header",
+          "mega menu",
+          "hamburger menu",
+          "marquee",
+          "carousel",
+          "tabs",
+          "accordion faq",
+          "pricing table",
+          "testimonials",
+          "logo wall",
+          "case study cards",
+          "product grid",
+          "newsletter signup",
+          "video player",
+          "map",
+          "timeline",
+          "stats band",
+          "team grid",
+          "filters",
+          "search",
+          "cart",
+          "contact form",
+          "code snippets",
+          "comparison table",
+          "awards badges"
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 6
+    },
+    "craft": {
+      "type": "string",
+      "enum": ["template", "solid", "polished", "exceptional"]
+    },
+    "notable_details": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 140
+      },
+      "minItems": 1,
+      "maxItems": 3
+    },
+    "reference_for": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 140
+      },
+      "minItems": 1,
+      "maxItems": 3
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 40
+      },
+      "minItems": 4,
+      "maxItems": 8
+    },
+    "search_keywords": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 80
+      },
+      "minItems": 3,
+      "maxItems": 6
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 320
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 720
+    }
+  },
+  "required": [
+    "observations",
+    "site_type",
+    "site_type_secondary",
+    "industry",
+    "audience",
+    "style",
+    "theme",
+    "color_mood",
+    "density",
+    "layout_patterns",
+    "hero_type",
+    "imagery",
+    "typography",
+    "components",
+    "craft",
+    "notable_details",
+    "reference_for",
+    "tags",
+    "search_keywords",
+    "summary",
+    "description"
+  ]
+}
