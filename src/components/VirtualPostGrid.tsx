@@ -104,11 +104,20 @@ function VirtualPostGrid({
     () =>
       scrollRef?.current?.clientWidth || (typeof window !== 'undefined' ? window.innerWidth : 1280),
   );
+  const [containerHeight, setContainerHeight] = useState<number>(
+    () =>
+      scrollRef?.current?.clientHeight || (typeof window !== 'undefined' ? window.innerHeight : 0),
+  );
   useEffect(() => {
     const el = scrollRef?.current;
     const update = (): void => {
       setBaseCols(colsForWidth(window.innerWidth));
-      if (el) setContainerWidth(el.clientWidth);
+      if (el) {
+        setContainerWidth(el.clientWidth);
+        setContainerHeight(el.clientHeight);
+      } else {
+        setContainerHeight(window.innerHeight);
+      }
     };
     update();
     const ro = el && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(update) : null;
@@ -211,8 +220,12 @@ function VirtualPostGrid({
   // first painted rows, then disable the stagger as soon as the user scrolls (or
   // after a short grace window) so subsequently mounted rows appear instantly.
   const [firstPaint, setFirstPaint] = useState<boolean>(true);
+  const hasPosts = posts.length > 0;
   useEffect(() => {
-    if (!firstPaint) return undefined;
+    // The grid mounts before its first API page arrives. Waiting for actual
+    // cards keeps a slow response from spending the entire entrance/priority
+    // window on the empty grid.
+    if (!firstPaint || !hasPosts) return undefined;
     const el = scrollRef?.current;
     const stop = (): void => setFirstPaint(false);
     const t = setTimeout(stop, 600);
@@ -222,7 +235,7 @@ function VirtualPostGrid({
       el?.removeEventListener('scroll', stop);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [firstPaint]);
+  }, [firstPaint, hasPosts]);
 
   // No scroll-velocity placeholder swap: the real native-scroll jank wasn't the
   // PostCard mount cost (a fast fling reveals <1 row/frame — trivial). It was the
@@ -285,7 +298,7 @@ function VirtualPostGrid({
               // Viewport-first fetchpriority (plan §2.19): only the rows
               // painted on the very first frame compete ahead of the rest —
               // the same gate that already limits the entrance stagger above.
-              priority={firstPaint}
+              priority={firstPaint && topInset + rowIndex * rowHeight < containerHeight}
             />
           </div>
         ))}

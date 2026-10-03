@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -78,4 +78,49 @@ describe('VirtualPostGrid overscan default', () => {
     render(<VirtualPostGrid posts={POSTS} scrollRef={scrollRef} onOpen={vi.fn()} overscan={9} />);
     expect(seenOverscan.at(-1)).toBe(9);
   });
+});
+
+describe('VirtualPostGrid first content priority', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+    seenOverscan.length = 0;
+  });
+
+  it.each([
+    { height: 212, high: 2 },
+    { height: 823, high: 8 },
+  ])(
+    'prioritizes visible rows after a slow first page at height $height',
+    async ({ height, high }) => {
+      const VirtualPostGrid = await freshGridWithPointer(false);
+      vi.useFakeTimers();
+      vi.stubGlobal('innerWidth', 412);
+      vi.stubGlobal('innerHeight', height);
+      const posts = Array.from({ length: 12 }, (_, i) => ({
+        id: `post-${i}`,
+        platform: 'instagram',
+        mediaType: 'image',
+        thumbnailUrl: `https://cdn.example.test/${i}.webp`,
+      })) as Shelfy.Post[];
+      const props = { scrollRef: null, topInset: 49, onOpen: vi.fn() };
+      const view = render(<VirtualPostGrid {...props} posts={[]} />);
+
+      act(() => vi.advanceTimersByTime(1_000));
+      view.rerender(<VirtualPostGrid {...props} posts={posts} />);
+
+      const images = screen.getAllByRole('img');
+      expect(
+        images.slice(0, high).every((image) => image.getAttribute('fetchpriority') === 'high'),
+      ).toBe(true);
+      expect(
+        images.slice(high).every((image) => image.getAttribute('fetchpriority') === 'auto'),
+      ).toBe(true);
+      act(() => vi.advanceTimersByTime(600));
+      expect(
+        screen.getAllByRole('img').every((image) => image.getAttribute('fetchpriority') === 'auto'),
+      ).toBe(true);
+    },
+  );
 });
