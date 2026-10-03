@@ -1707,6 +1707,22 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/stt/transcriptions': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['transcribeAudio'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/sync-runs': {
     parameters: {
       query?: never;
@@ -3003,6 +3019,7 @@ export interface components {
       | 'import_format_unknown'
       | 'import_checkpoint_unbound'
       | 'provider_key_invalid'
+      | 'stt_too_long'
       | 'ai_not_configured'
       | 'ai_vault_disabled'
       | 'ai_consent_required'
@@ -3011,6 +3028,8 @@ export interface components {
       | 'provider_quota_exhausted'
       | 'confirm_token_invalid'
       | 'capture_blocked'
+      | 'capture_unavailable'
+      | 'capture_daily_limit'
       | 'unsupported_link'
       | 'not_available'
       | 'user_locked'
@@ -3019,9 +3038,7 @@ export interface components {
       | 'internal'
       | 'storage_full'
       | 'unavailable'
-      | 'timeout'
-      | 'capture_unavailable'
-      | 'capture_daily_limit';
+      | 'timeout';
     ErrorEvent: {
       code: string;
     };
@@ -5770,6 +5787,9 @@ export interface components {
       | 'migrate'
       | 'library:read'
       | 'library:write';
+    Transcription: {
+      text: string;
+    };
     /** @description The purge that empties the trash. */
     TrashEmptying: {
       /** @description The `purge` job: its progress arrives as `job.updated`. */
@@ -5883,6 +5903,8 @@ export interface components {
        */
       twitter: number;
     };
+    /** Format: binary */
+    WavBody: string;
     /** @description The current capture of a website, without its page texts. */
     WebCapture: {
       /** @description Awards, as captured. */
@@ -8588,6 +8610,33 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  transcribeAudio: {
+    parameters: {
+      query?: {
+        language?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'audio/wav': components['schemas']['WavBody'];
+      };
+    };
+    responses: {
+      /** @description Final transcript; audio is discarded. 16 kHz mono 16-bit PCM, at most 120 seconds and 25 MiB; 10 requests/minute per user. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Transcription'];
+        };
       };
       default: components['responses']['Problem'];
     };

@@ -18,7 +18,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -130,7 +130,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -795,7 +795,7 @@
     "/api/v1/collections/{id}/posts/{key}": {
       "delete": {
         "tags": ["library"],
-        "summary": "Takes one post out of a collection (\u00a71.2 #12). Taking out a post that is\nnot in it changes nothing.",
+        "summary": "Takes one post out of a collection (§1.2 #12). Taking out a post that is\nnot in it changes nothing.",
         "operationId": "removeCollectionPost",
         "parameters": [
           {
@@ -1005,7 +1005,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -1336,7 +1336,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Unique request key, 1\u2013255 visible ASCII bytes; replayed for 24 hours.",
+            "description": "Unique request key, 1–255 visible ASCII bytes; replayed for 24 hours.",
             "required": true,
             "schema": {
               "type": "string"
@@ -1414,7 +1414,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -1472,7 +1472,7 @@
           {
             "name": "wait",
             "in": "query",
-            "description": "Seconds to wait for a task when none is ready (0\u201325; default 0).",
+            "description": "Seconds to wait for a task when none is ready (0–25; default 0).",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1483,7 +1483,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Most tasks to lease (1\u201350; default 20).",
+            "description": "Most tasks to lease (1–50; default 20).",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1613,7 +1613,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1\u2013200 (larger values are clamped). Default 60.",
+            "description": "Page size, 1–200 (larger values are clamped). Default 60.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -1725,7 +1725,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -2361,7 +2361,7 @@
           {
             "name": "days",
             "in": "query",
-            "description": "Days up to today (UTC), 1\u2013365; default 30.",
+            "description": "Days up to today (UTC), 1–365; default 30.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2390,14 +2390,14 @@
     "/api/v1/migrations": {
       "post": {
         "tags": ["migration"],
-        "summary": "Starts installing an uploaded bundle (plan \u00a74.1 step 5): enqueues the\n`migrate` job.",
+        "summary": "Starts installing an uploaded bundle (plan §4.1 step 5): enqueues the\n`migrate` job.",
         "description": "Answers 202 with the install, polled at `Location`; its progress also\narrives as `job.updated`. 422 when the upload is not a complete bundle\ndatabase of this user; 409 when the web library is not empty and `merge`\nis false, or another install of the library is queued or running. Send an\n`Idempotency-Key`: a repeat gets the first answer back.",
         "operationId": "startMigration",
         "parameters": [
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -2557,7 +2557,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1\u2013200 (larger values are clamped). Default 60.",
+            "description": "Page size, 1–200 (larger values are clamped). Default 60.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -2821,7 +2821,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Free-text search over tags, keywords, entities, description, note,\ncaption, author and page text (plan \u00a72.14). At most 500 characters.",
+            "description": "Free-text search over tags, keywords, entities, description, note,\ncaption, author and page text (plan §2.14). At most 500 characters.",
             "required": false,
             "schema": {
               "type": "string"
@@ -2871,7 +2871,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1\u2013200 (larger values are clamped). Default 60.",
+            "description": "Page size, 1–200 (larger values are clamped). Default 60.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -3008,7 +3008,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3214,7 +3214,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Free-text search (plan \u00a72.14). At most 500 characters.",
+            "description": "Free-text search (plan §2.14). At most 500 characters.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3621,7 +3621,7 @@
           {
             "name": "q",
             "in": "query",
-            "description": "Free text, matched against tags, keywords, entities, description, note,\ncaption, author and page text (plan \u00a72.14). At most 500 characters.",
+            "description": "Free text, matched against tags, keywords, entities, description, note,\ncaption, author and page text (plan §2.14). At most 500 characters.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3685,7 +3685,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1\u2013200 (larger values are clamped). Default 60.",
+            "description": "Page size, 1–200 (larger values are clamped). Default 60.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -3828,7 +3828,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3889,7 +3889,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3989,6 +3989,47 @@
         ]
       }
     },
+    "/api/v1/stt/transcriptions": {
+      "post": {
+        "tags": ["library"],
+        "operationId": "transcribeAudio",
+        "parameters": [
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "audio/wav": {
+              "schema": {
+                "$ref": "#/components/schemas/WavBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Final transcript; audio is discarded. 16 kHz mono 16-bit PCM, at most 120 seconds and 25 MiB; 10 requests/minute per user.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transcription"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/sync-runs": {
       "get": {
         "tags": ["extension"],
@@ -4025,7 +4066,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size (1\u2013100).",
+            "description": "Page size (1–100).",
             "required": false,
             "schema": {
               "type": "integer",
@@ -4238,7 +4279,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -4379,7 +4420,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -4886,7 +4927,7 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size, 1\u2013200 (larger values are clamped). Default 60.",
+            "description": "Page size, 1–200 (larger values are clamped). Default 60.",
             "required": false,
             "schema": {
               "type": "integer",
@@ -4973,7 +5014,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -5022,7 +5063,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "A key you choose for this request, 1\u2013255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -5852,7 +5893,7 @@
       },
       "ArchiveState": {
         "type": "string",
-        "description": "Archive progress of a post's media (plan \u00a72.13).",
+        "description": "Archive progress of a post's media (plan §2.13).",
         "enum": ["pending", "partial", "done", "failed", "client", "link_only"]
       },
       "AuthMethods": {
@@ -6108,7 +6149,7 @@
       },
       "Capabilities": {
         "type": "object",
-        "description": "What the account can do on this server (plan \u00a72.19). A capability turns\non with the phase that brings it; until then it is `false`.",
+        "description": "What the account can do on this server (plan §2.19). A capability turns\non with the phase that brings it; until then it is `false`.",
         "required": [
           "admin",
           "passkeys",
@@ -6192,7 +6233,7 @@
       },
       "ChangeReason": {
         "type": "string",
-        "description": "What changed posts (plan \u00a72.10).",
+        "description": "What changed posts (plan §2.10).",
         "enum": ["ingest", "archive", "ai", "edit", "delete", "capture", "import"]
       },
       "ChatBody": {
@@ -6292,7 +6333,7 @@
           },
           "view": {
             "type": "string",
-            "description": "The view whose boundary caught the error (`gallery`, `postModal`,\n`settings`): 1\u201364 characters of letters, digits, `.`, `_`, `-`, `:`."
+            "description": "The view whose boundary caught the error (`gallery`, `postModal`,\n`settings`): 1–64 characters of letters, digits, `.`, `_`, `-`, `:`."
           }
         },
         "additionalProperties": false
@@ -6444,7 +6485,7 @@
           },
           "name": {
             "type": "string",
-            "description": "The name, 1\u2013200 characters once trimmed."
+            "description": "The name, 1–200 characters once trimmed."
           },
           "selector": {
             "$ref": "#/components/schemas/PostSelector",
@@ -6530,7 +6571,7 @@
           },
           "name": {
             "type": "string",
-            "description": "The new name, 1\u2013200 characters once trimmed."
+            "description": "The new name, 1–200 characters once trimmed."
           },
           "position": {
             "type": "integer",
@@ -6578,7 +6619,7 @@
         "properties": {
           "disclaimerVersion": {
             "type": "string",
-            "description": "The version of the disclaimer the app showed (`2026-10`): 1\u201332\ncharacters among `A\u2013Z`, `a\u2013z`, `0\u20139`, `.`, `_` and `-`."
+            "description": "The version of the disclaimer the app showed (`2026-10`): 1–32\ncharacters among `A–Z`, `a–z`, `0–9`, `.`, `_` and `-`."
           },
           "privacyVersion": {
             "type": "string",
@@ -6633,7 +6674,7 @@
           },
           "token": {
             "type": "string",
-            "description": "The value (`shx_\u2026`), for `Authorization: Bearer`. Shown only now:\nthe server keeps its hash."
+            "description": "The value (`shx_…`), for `Authorization: Bearer`. Shown only now:\nthe server keeps its hash."
           }
         }
       },
@@ -6749,7 +6790,7 @@
               },
               "token": {
                 "type": "string",
-                "description": "The `migrate` token (`shx_\u2026`), for `Authorization: Bearer`."
+                "description": "The `migrate` token (`shx_…`), for `Authorization: Bearer`."
               },
               "tokenId": {
                 "type": "string",
@@ -6825,6 +6866,7 @@
           "import_format_unknown",
           "import_checkpoint_unbound",
           "provider_key_invalid",
+          "stt_too_long",
           "ai_not_configured",
           "ai_vault_disabled",
           "ai_consent_required",
@@ -6833,6 +6875,8 @@
           "provider_quota_exhausted",
           "confirm_token_invalid",
           "capture_blocked",
+          "capture_unavailable",
+          "capture_daily_limit",
           "unsupported_link",
           "not_available",
           "user_locked",
@@ -6841,9 +6885,7 @@
           "internal",
           "storage_full",
           "unavailable",
-          "timeout",
-          "capture_unavailable",
-          "capture_daily_limit"
+          "timeout"
         ]
       },
       "ErrorEvent": {
@@ -7110,7 +7152,7 @@
       },
       "ExtensionStatusEvent": {
         "type": "object",
-        "description": "`extension.status`: whether the user's browser extension is connected\n(plan \u00a72.10, contract C8), sent when `connected` or `version` changes.\n`GET /api/v1/extension/status` answers the same object.",
+        "description": "`extension.status`: whether the user's browser extension is connected\n(plan §2.10, contract C8), sent when `connected` or `version` changes.\n`GET /api/v1/extension/status` answers the same object.",
         "required": ["connected", "version", "lastSeenAt"],
         "properties": {
           "connected": {
@@ -7360,7 +7402,7 @@
           },
           "q": {
             "type": ["string", "null"],
-            "description": "Free-text search (plan \u00a72.14). At most 500 characters.",
+            "description": "Free-text search (plan §2.14). At most 500 characters.",
             "default": null
           },
           "source": {
@@ -7817,7 +7859,7 @@
           },
           "errorCode": {
             "type": ["string", "null"],
-            "description": "Why the job failed (`failed`), or why its last try failed before a\nretry. A stable code (`lease_expired`, `unavailable`, \u2026), never prose."
+            "description": "Why the job failed (`failed`), or why its last try failed before a\nretry. A stable code (`lease_expired`, `unavailable`, …), never prose."
           },
           "finishedAt": {
             "type": ["integer", "null"],
@@ -7831,7 +7873,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "Kind (`archive.drain`, `migrate`, \u2026)."
+            "description": "Kind (`archive.drain`, `migrate`, …)."
           },
           "maxAttempts": {
             "type": "integer",
@@ -7888,7 +7930,7 @@
       },
       "JobState": {
         "type": "string",
-        "description": "State of a job (plan \u00a72.6 `jobs.state`).",
+        "description": "State of a job (plan §2.6 `jobs.state`).",
         "enum": ["queued", "running", "succeeded", "failed", "cancelled"]
       },
       "JobUpdatedEvent": {
@@ -7907,7 +7949,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "Job kind (`archive.drain`, `capture.site`, \u2026)."
+            "description": "Job kind (`archive.drain`, `capture.site`, …)."
           },
           "postKey": {
             "type": ["string", "null"],
@@ -8173,7 +8215,7 @@
       },
       "MediaObject": {
         "type": "object",
-        "description": "A stored object (plan \u00a72.13). Its URLs are same-origin and immutable.",
+        "description": "A stored object (plan §2.13). Its URLs are same-origin and immutable.",
         "required": ["url", "g480Url", "sha256", "mime", "bytes", "width", "height", "durationMs"],
         "properties": {
           "bytes": {
@@ -8221,7 +8263,7 @@
       },
       "MergeCounts": {
         "type": "object",
-        "description": "What a merge did with the bundle's rows (plan \u00a74.2: the duplicate policy\nof P1-10 for posts the library already had).",
+        "description": "What a merge did with the bundle's rows (plan §4.2: the duplicate policy\nof P1-10 for posts the library already had).",
         "properties": {
           "aiFilled": {
             "type": "integer",
@@ -8477,7 +8519,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "description": "A stable code: an API error code (`validation_failed`, `conflict`,\n`quota_exceeded`, `storage_full`, `user_locked`, `internal`\u2026) or a\njob code (`lease_expired`, `cancelled`)."
+            "description": "A stable code: an API error code (`validation_failed`, `conflict`,\n`quota_exceeded`, `storage_full`, `user_locked`, `internal`…) or a\njob code (`lease_expired`, `cancelled`)."
           },
           "detail": {
             "type": "string",
@@ -8538,7 +8580,7 @@
       },
       "MigrationReport": {
         "type": "object",
-        "description": "The reconciliation report of an install (plan \u00a74.3): counts only.",
+        "description": "The reconciliation report of an install (plan §4.3): counts only.",
         "properties": {
           "archive": {
             "$ref": "#/components/schemas/ArchiveCounts",
@@ -8684,7 +8726,7 @@
           },
           "name": {
             "type": "string",
-            "description": "The name, 1\u2013200 characters once trimmed."
+            "description": "The name, 1–200 characters once trimmed."
           }
         },
         "additionalProperties": false
@@ -8715,7 +8757,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "description": "What happened (`job.failed`, \u2026), stable like an error code."
+            "description": "What happened (`job.failed`, …), stable like an error code."
           },
           "createdAt": {
             "type": "integer",
@@ -8729,7 +8771,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "Area (`job`, `migration`, `quota`, \u2026)."
+            "description": "Area (`job`, `migration`, `quota`, …)."
           },
           "params": {
             "type": "object",
@@ -8787,7 +8829,7 @@
           },
           "ext": {
             "type": "string",
-            "description": "Extension of its type in the store's allowlist (`jpg`, `webp`, `mp4`\u2026)."
+            "description": "Extension of its type in the store's allowlist (`jpg`, `webp`, `mp4`…)."
           },
           "sha256": {
             "type": "string",
@@ -8813,7 +8855,7 @@
           },
           "token": {
             "type": "string",
-            "description": "The `extension` token (`shx_\u2026`) for `Authorization: Bearer`. Shown\nonly now; keep it where page scripts cannot read it."
+            "description": "The `extension` token (`shx_…`) for `Authorization: Bearer`. Shown\nonly now; keep it where page scripts cannot read it."
           },
           "tokenId": {
             "type": "string",
@@ -9092,7 +9134,7 @@
           },
           "key": {
             "type": "string",
-            "description": "Public id (plan \u00a72.8), for example `ig_3141592653589793238`."
+            "description": "Public id (plan §2.8), for example `ig_3141592653589793238`."
           },
           "media": {
             "type": "array",
@@ -9138,7 +9180,7 @@
           },
           "thumbhash": {
             "type": ["string", "null"],
-            "description": "ThumbHash placeholder of the cover (\u2264 25 bytes), standard base64."
+            "description": "ThumbHash placeholder of the cover (≤ 25 bytes), standard base64."
           },
           "updatedAt": {
             "type": "integer",
@@ -9684,7 +9726,7 @@
       },
       "ProviderState": {
         "type": "string",
-        "description": "The state of an AI provider (plan \u00a72.15 \"Reliability\", P3-09). The circuit\nbreaker and the operator's health probe move a provider between these.",
+        "description": "The state of an AI provider (plan §2.15 \"Reliability\", P3-09). The circuit\nbreaker and the operator's health probe move a provider between these.",
         "enum": ["ok", "degraded", "offline", "down", "invalid_key"]
       },
       "ProviderStatusEvent": {
@@ -9900,7 +9942,7 @@
             "items": {
               "type": "string"
             },
-            "description": "How the authenticator is reached (`internal`, `hybrid`, `usb`\u2026)."
+            "description": "How the authenticator is reached (`internal`, `hybrid`, `usb`…)."
           },
           "type": {
             "type": "string",
@@ -10191,7 +10233,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ProviderState",
-                "description": "The provider's state (`ok`, `offline`, \u2026); an offline node means the\nqueue is waiting, not stuck."
+                "description": "The provider's state (`ok`, `offline`, …); an offline node means the\nqueue is waiting, not stuck."
               },
               {
                 "type": "null"
@@ -10379,7 +10421,7 @@
         "properties": {
           "coverBytes": {
             "$ref": "#/components/schemas/SizeStats",
-            "description": "Sizes of the covers' `g480` renditions rendered by this install (plan\n\u00a76.2 budget: p50 \u226435 KB, p95 \u226460 KB).",
+            "description": "Sizes of the covers' `g480` renditions rendered by this install (plan\n§6.2 budget: p50 ≤35 KB, p95 ≤60 KB).",
             "default": null
           },
           "existing": {
@@ -10419,7 +10461,7 @@
           "wanted": {
             "type": "integer",
             "format": "int64",
-            "description": "Objects the grid shows: covers, slides 1\u20133, site heroes.",
+            "description": "Objects the grid shows: covers, slides 1–3, site heroes.",
             "default": 0,
             "minimum": 0
           }
@@ -10772,7 +10814,7 @@
           "aiConcurrency": {
             "type": "integer",
             "format": "int32",
-            "description": "Maximum simultaneous BYOK calls (1\u20138); the operator stays serial.",
+            "description": "Maximum simultaneous BYOK calls (1–8); the operator stays serial.",
             "minimum": 0
           },
           "aiDictationInterim": {
@@ -11044,7 +11086,7 @@
       },
       "SyncProgressEvent": {
         "type": "object",
-        "description": "`sync.progress`: a sync run advanced (plan \u00a72.10, contract C8), sent at\nmost once a second per run. The counters are the run's running totals.",
+        "description": "`sync.progress`: a sync run advanced (plan §2.10, contract C8), sent at\nmost once a second per run. The counters are the run's running totals.",
         "required": [
           "runId",
           "platform",
@@ -11660,7 +11702,7 @@
       },
       "TokenScope": {
         "type": "string",
-        "description": "What a token may do (\u00a72.9).",
+        "description": "What a token may do (§2.9).",
         "enum": [
           "ingest",
           "tasks",
@@ -11671,6 +11713,15 @@
           "library:read",
           "library:write"
         ]
+      },
+      "Transcription": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        }
       },
       "TrashEmptying": {
         "type": "object",
@@ -11828,6 +11879,10 @@
           }
         }
       },
+      "WavBody": {
+        "type": "string",
+        "format": "binary"
+      },
       "WebCapture": {
         "type": "object",
         "description": "The current capture of a website, without its page texts.",
@@ -11940,7 +11995,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "shx_",
-        "description": "A scoped API token (`shx_\u2026`) of the extension, the iOS Shortcut, migration CLI or a library client. The independent library:read and library:write scopes grant only the routes that name them; write does not imply read. Tokens cannot call routes that only accept the session."
+        "description": "A scoped API token (`shx_…`) of the extension, the iOS Shortcut, migration CLI or a library client. The independent library:read and library:write scopes grant only the routes that name them; write does not imply read. Tokens cannot call routes that only accept the session."
       },
       "session": {
         "type": "apiKey",

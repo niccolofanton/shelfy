@@ -89,6 +89,8 @@ pub enum ErrorCode {
     ImportCheckpointUnbound,
     /// 422: the AI provider refused the key.
     ProviderKeyInvalid,
+    /// 422: the WAV contains more than 120 seconds of audio.
+    SttTooLong,
     /// 422: no AI provider can serve this task on this server. The operator
     /// provider is not configured and the account has no provider that fits
     /// (a vision task needs a vision model), so the request has no route
@@ -176,6 +178,7 @@ impl ErrorCode {
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::ValidationFailed
             | Self::ImportFormatUnknown
+            | Self::SttTooLong
             | Self::ProviderKeyInvalid
             | Self::CaptureBlocked
             | Self::UnsupportedLink
@@ -250,6 +253,7 @@ impl ErrorCode {
             Self::ImportFormatUnknown => "import_format_unknown",
             Self::ImportCheckpointUnbound => "import_checkpoint_unbound",
             Self::ProviderKeyInvalid => "provider_key_invalid",
+            Self::SttTooLong => "stt_too_long",
             Self::AiNotConfigured => "ai_not_configured",
             Self::AiVaultDisabled => "ai_vault_disabled",
             Self::AiConsentRequired => "ai_consent_required",
@@ -615,6 +619,7 @@ mod tests {
             ErrorCode::UnsupportedMediaType,
             ErrorCode::ValidationFailed,
             ErrorCode::ProviderKeyInvalid,
+            ErrorCode::SttTooLong,
             ErrorCode::AiNotConfigured,
             ErrorCode::AiVaultDisabled,
             ErrorCode::AiConsentRequired,

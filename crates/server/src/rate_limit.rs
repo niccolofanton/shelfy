@@ -173,6 +173,8 @@ pub struct RateLimitConfig {
     pub suggest: Option<Quota>,
     /// Client error reports of a user: 10 per minute (P1 assumption).
     pub client_errors: Option<Quota>,
+    /// Dictation requests: 10 per minute per user.
+    pub stt: Option<Quota>,
     /// Most keys each limiter tracks.
     pub max_keys: u64,
 }
@@ -184,6 +186,7 @@ impl Default for RateLimitConfig {
             search: Some(Quota::per_second(5)),
             suggest: Some(Quota::per_second(1).burst(2)),
             client_errors: Some(Quota::per_minute(10)),
+            stt: Some(Quota::per_minute(10)),
             max_keys: MAX_KEYS,
         }
     }
@@ -199,6 +202,7 @@ impl RateLimitConfig {
             search: None,
             suggest: None,
             client_errors: None,
+            stt: None,
             max_keys: MAX_KEYS,
         }
     }
@@ -215,6 +219,8 @@ pub enum Scope {
     Suggest,
     /// Client error reports.
     ClientErrors,
+    /// One-recording dictation.
+    Stt,
 }
 
 impl Scope {
@@ -225,6 +231,7 @@ impl Scope {
             Self::Search => "too many searches from this user",
             Self::Suggest => "too many suggestions from this user",
             Self::ClientErrors => "too many error reports from this user",
+            Self::Stt => "too many dictation requests from this user",
         }
     }
 }
@@ -240,6 +247,7 @@ pub fn route_scope(method: &Method, path: &str, query: Option<&str>) -> Option<S
         "/api/v1/posts" | "/api/v1/posts/count" if read && has_text_query(query) => {
             Some(Scope::Search)
         }
+        "/api/v1/stt/transcriptions" if *method == Method::POST => Some(Scope::Stt),
         "/api/v1/client-errors" if *method == Method::POST => Some(Scope::ClientErrors),
         _ => None,
     }
@@ -340,6 +348,7 @@ pub struct RateLimits {
     search: Option<Limiter>,
     suggest: Option<Limiter>,
     client_errors: Option<Limiter>,
+    stt: Option<Limiter>,
 }
 
 impl RateLimits {
@@ -352,6 +361,7 @@ impl RateLimits {
             search: limiter(config.search),
             suggest: limiter(config.suggest),
             client_errors: limiter(config.client_errors),
+            stt: limiter(config.stt),
         }
     }
 
@@ -363,6 +373,7 @@ impl RateLimits {
             Scope::Search => self.search.as_ref(),
             Scope::Suggest => self.suggest.as_ref(),
             Scope::ClientErrors => self.client_errors.as_ref(),
+            Scope::Stt => self.stt.as_ref(),
         }
     }
 
@@ -645,5 +656,26 @@ mod tests {
         );
         assert_eq!(route_scope(get, "/api/v1/posts/{key}", Some("q=x")), None);
         assert_eq!(route_scope(&Method::POST, "/api/v1/search", None), None);
+    }
+    #[test]
+    fn dictation_has_a_ten_per_minute_bucket_independent_for_each_user() {
+        let config = RateLimitConfig::default();
+        let quota = config.stt.unwrap();
+        assert_eq!(quota.period(), Duration::from_secs(6));
+        assert_eq!(quota.burst_size(), 10);
+        assert_eq!(
+            route_scope(&Method::POST, "/api/v1/stt/transcriptions", None),
+            Some(Scope::Stt)
+        );
+        assert_eq!(
+            route_scope(&Method::GET, "/api/v1/stt/transcriptions", None),
+            None
+        );
+        let limits = RateLimits::new(&config);
+        for _ in 0..10 {
+            assert!(limits.check(Scope::Stt, "alice").is_ok());
+        }
+        assert!(limits.check(Scope::Stt, "alice").is_err());
+        assert!(limits.check(Scope::Stt, "bob").is_ok());
     }
 }

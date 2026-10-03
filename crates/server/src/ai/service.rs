@@ -581,6 +581,9 @@ impl AiService {
     }
 
     fn descriptor_route(&self, provider: &AiProvider, task: Task) -> Option<Route> {
+        if task == Task::Stt && provider.kind != AiProviderKind::OpenaiCompatible {
+            return None;
+        }
         let model = match task {
             Task::Catalog => provider.models.catalog.clone()?,
             Task::Qc => provider
@@ -712,13 +715,15 @@ impl AiService {
         hints: CallHints,
     ) -> Result<Transcript, AiServiceError> {
         let route = self.route(state, caller, Task::Stt).await?;
+        let mut request = request.clone();
+        request.model = (!route.model.is_empty()).then(|| route.model.clone());
         let guard = self
             .begin_cancellable(state, caller, &route, hints.cancel.as_ref())
             .await?;
         let options = self.call_options(&route, hints);
         let result = until_cancelled(
             guard.cancel.as_ref(),
-            guard.provider.transcribe(request, &options),
+            guard.provider.transcribe(&request, &options),
         )
         .await;
         let generation = guard.cancel.clone();

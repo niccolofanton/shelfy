@@ -117,6 +117,7 @@ pub mod search_suggest;
 pub mod selector;
 pub mod sites;
 pub mod stats;
+pub mod stt;
 pub mod sync_runs;
 pub mod tag_aliases;
 pub mod tag_clusters;
@@ -641,12 +642,14 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(ingest_tasks::list_extension_tasks));
     let upload_chunks = OpenApiRouter::default().routes(routes!(uploads::append_upload));
     // Capture batches are larger (up to 8 MiB, ≤ 500 items).
+    let stt = OpenApiRouter::default().routes(routes!(stt::transcribe_audio));
     let ingest = OpenApiRouter::default().routes(routes!(ingest::ingest_batch));
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .merge(RouteLimits::STANDARD.apply(standard))
         .merge(RouteLimits::STREAM.apply(streams))
         .merge(RouteLimits::UPLOAD_CHUNK.apply(upload_chunks))
         .merge(RouteLimits::INGEST.apply(ingest))
+        .merge(RouteLimits::STT.apply(stt))
         .merge(RouteLimits::STANDARD.apply(media::router()))
         .layer(Extension(Arc::new(uploads::UploadLocks::default())))
         .layer(Extension(Arc::new(crate::ai::chat::ChatRuns::default())))

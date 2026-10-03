@@ -22,9 +22,10 @@
 pub mod operator;
 pub mod providers;
 pub mod queue;
-pub mod suggest;
 pub mod runs;
 pub mod service;
+pub mod stt;
+pub mod suggest;
 pub mod vault;
 
 mod breaker;
