@@ -1917,6 +1917,30 @@ async function analyzeFrames(
   return normalizeCatalogOutput(parsed, kind, modelUsed);
 }
 
+// The fields runJob writes for a finished catalog (db.updateAiAnalysis): the web
+// port's AiPatch of the same answer is checked against them (golden fixtures).
+function catalogAnalysisFields(
+  result: AnalyzeResult,
+  model: string,
+): NonNullable<Parameters<typeof db.updateAiAnalysis>[1]> {
+  return {
+    description: result.description,
+    tags: result.tags,
+    entities: result.entities,
+    keywords: result.keywords,
+    language: result.language,
+    saveReason: result.saveReason,
+    generalTags: result.generalTags,
+    specificTags: result.specificTags,
+    // category/contentType are populated only for web (purpose→ai_content_type,
+    // industry→ai_category); undefined on the social path → columns untouched.
+    category: result.category,
+    contentType: result.contentType,
+    status: 'done',
+    model,
+  };
+}
+
 // ─── Web reference catalog v2 ───────────────────────────────────────────────────
 
 async function analyzeWebCatalog(
@@ -3474,34 +3498,8 @@ async function runJob(key: string, route: AiRoute): Promise<void> {
       kind,
       visionProvider,
     );
-    const {
-      description,
-      tags,
-      generalTags,
-      specificTags,
-      entities,
-      keywords,
-      saveReason,
-      language,
-      category,
-      contentType,
-    } = result;
-    db.updateAiAnalysis(post.id, {
-      description,
-      tags,
-      entities,
-      keywords,
-      language,
-      saveReason,
-      generalTags,
-      specificTags,
-      // category/contentType are populated only for web (purpose→ai_content_type,
-      // industry→ai_category); undefined on the social path → columns untouched.
-      category,
-      contentType,
-      status: 'done',
-      model: result.modelUsed || modelName,
-    });
+    const { description, tags, entities, keywords, saveReason, language } = result;
+    db.updateAiAnalysis(post.id, catalogAnalysisFields(result, result.modelUsed || modelName));
     const finishedAt = Date.now();
     patchJob(key, {
       status: 'done',
@@ -3883,6 +3881,7 @@ export {
   // The desktop functions the web port is checked against (golden fixtures,
   // scripts/golden/ai-*.ts). The catalog ones live in shared/ai/catalog.ts.
   normalizeCatalogOutput,
+  catalogAnalysisFields,
   stripPromptMarkers,
   buildWebUserPrompt,
   parseTagBlock,

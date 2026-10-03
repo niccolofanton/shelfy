@@ -6,6 +6,7 @@
 //! fails for a file without one. How to regenerate the files and add a
 //! function: `scripts/golden/README.md`.
 
+mod golden_ai;
 mod golden_merge;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,6 +31,7 @@ use shelfy_core::web::{color, similar};
 /// Golden sets with a check in this file; `<dir>/` stands for every file in
 /// that directory.
 const CHECKED: &[&str] = &[
+    "ai/catalog/",
     "edits",
     "extract-content-terms",
     "hosts",

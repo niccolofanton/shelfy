@@ -18,6 +18,7 @@
 //!
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.4.
 
+pub mod ai;
 pub mod bulk;
 pub mod db;
 pub mod generation;

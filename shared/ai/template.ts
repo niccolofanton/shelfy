@@ -29,13 +29,15 @@ export class TemplateError extends Error {
   }
 }
 
+// Blanks are spaces and tabs only (not `\s`, whose sets differ between JavaScript and
+// Rust), and a comment may hold any character: the Rust renderer uses the same patterns.
 const NAME = '[A-Za-z][A-Za-z0-9_]*';
-const OPEN = new RegExp(`^\\{\\{\\s*#(if|unless)\\s+(${NAME})\\s*\\}\\}$`);
-const ELSE = /^\{\{\s*else\s*\}\}$/;
-const CLOSE = /^\{\{\s*\/(if|unless)\s*\}\}$/;
-const COMMENT = /^\{\{!.*\}\}$/;
-const VARIABLE = new RegExp(`\\{\\{\\s*(${NAME})\\s*\\}\\}`, 'g');
-const STRAY = /\{\{\s*(?:[#/!]|else\s*\}\})/;
+const OPEN = new RegExp(`^\\{\\{[ \\t]*#(if|unless)[ \\t]+(${NAME})[ \\t]*\\}\\}$`);
+const ELSE = /^\{\{[ \t]*else[ \t]*\}\}$/;
+const CLOSE = /^\{\{[ \t]*\/(if|unless)[ \t]*\}\}$/;
+const COMMENT = /^\{\{![\s\S]*\}\}$/;
+const VARIABLE = new RegExp(`\\{\\{[ \\t]*(${NAME})[ \\t]*\\}\\}`, 'g');
+const STRAY = /\{\{[ \t]*(?:[#/!]|else[ \t]*\}\})/;
 
 interface Section {
   kind: 'if' | 'unless';

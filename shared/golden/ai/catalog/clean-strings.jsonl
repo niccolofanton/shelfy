@@ -1,0 +1,13 @@
+{"golden":"ai/catalog/clean-strings","source":"electron/analyzer.ts#cleanStringArray (shared/ai/catalog.ts)","generator":"scripts/golden/ai-catalog.ts","format":1}
+{"id":"empty","args":[[],{}],"output":[]}
+{"id":"trim-lower-dedupe","args":[[" Design ","design","DESIGN","Glass"],{}],"output":["design","glass"]}
+{"id":"drop-blanks","args":[[""," ","\t\n","a"],{}],"output":["a"]}
+{"id":"keep-case","args":[["Studio Lumen","studio lumen","IKEA","ikea"],{"keepCase":true}],"output":["Studio Lumen","IKEA"]}
+{"id":"cap","args":[["a","b","c","d"],{"cap":2}],"output":["a","b"]}
+{"id":"cap-counts-kept-only","args":[["a","A","","b","c"],{"cap":2}],"output":["a","b"]}
+{"id":"cap-zero","args":[["a","b"],{"cap":0}],"output":["a"]}
+{"id":"keep-case-cap","args":[["X","x","Y","Z"],{"keepCase":true,"cap":2}],"output":["X","Y"]}
+{"id":"js-whitespace","args":[[" nbsp ","﻿bom"," em　","nel"],{}],"output":["nbsp","bom","em","nel"]}
+{"id":"unicode-case","args":[["Città","CITTÀ","ΟΔΟΣ","οδος","İstanbul","STRASSE","straße","日本語","Ⅻ"],{}],"output":["città","οδος","i̇stanbul","strasse","straße","日本語","ⅻ"]}
+{"id":"unicode-keep-case","args":[["Città","CITTÀ","ΟΔΟΣ","İstanbul"],{"keepCase":true}],"output":["Città","ΟΔΟΣ","İstanbul"]}
+{"id":"combining","args":[["café","café"],{}],"output":["café","café"]}

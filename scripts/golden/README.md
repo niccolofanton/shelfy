@@ -17,6 +17,22 @@ what the desktop returns.
 | `merge/*` (one file per scenario) | `electron/db.ts#bulkUpsert` | `shelfy_core::ingest::merge::upsert_batch` |
 | `sanitize` | `src/lib/browserSanitize.ts#sanitizeInterceptedBatch` | `shelfy_core::ingest::sanitize::clean_item` (the shared rules of `sanitize_batch`) |
 | `hosts` | `extension/src/shared/hosts.ts#PINTEREST_HOSTS` (the extension, not the desktop) | `shelfy_core::ingest::hosts::PINTEREST_HOSTS` |
+| `ai/catalog/templates` | `shared/ai/template.ts#renderTemplate` | `shelfy_core::ai::template::render` |
+| `ai/catalog/markers` | `electron/analyzer.ts#stripPromptMarkers` | `shelfy_core::ai::catalog::strip_prompt_markers` |
+| `ai/catalog/clean-strings` | `electron/analyzer.ts#cleanStringArray` | `shelfy_core::ai::normalize::clean_string_array` |
+| `ai/catalog/user-prompt` | `electron/analyzer.ts#buildUserPrompt` (social and web) | `shelfy_core::ai::catalog::user_prompt` |
+| `ai/catalog/request` | `shared/ai/catalog.ts#catalogRequest` | `shelfy_core::ai::catalog::request` |
+| `ai/catalog/normalize` | `electron/analyzer.ts#normalizeCatalogOutput` | `shelfy_core::ai::normalize::catalog` |
+| `ai/catalog/apply` | `electron/analyzer.ts#catalogAnalysisFields` into `updateAiAnalysis` | `Catalog::into_patch` into `update_ai` |
+
+The catalog functions of `electron/analyzer.ts` are re-exports of
+`shared/ai/catalog.ts`, which the desktop and the scripts share; the header of
+`scripts/golden/ai-catalog.ts` lists the inputs the port rejects on purpose.
+
+`run.ts` also writes a generated file: `shared/ai/index.ts`, the prompts and
+schemas of `shared/ai/` as the desktop reads them (`shared-ai.ts` builds it;
+`shared/ai/README.md`). It runs before the sets, which load `shared/ai/`
+through it, and `--check` fails while it is stale like a golden file.
 
 The `edits` cases each start from a bare post on a fresh desktop library
 (`openDesktopDb()`, below), apply their steps with the real functions, and

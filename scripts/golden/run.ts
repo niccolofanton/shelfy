@@ -51,6 +51,7 @@ for (const generated of GENERATED) {
   }
 }
 
+const { default: aiCatalogSets } = await import('./ai-catalog');
 const SETS: GoldenSet[] = [
   extractContentTerms,
   edits,
@@ -58,6 +59,7 @@ const SETS: GoldenSet[] = [
   sanitize,
   hosts,
   ...webSiteSets,
+  ...aiCatalogSets,
 ];
 
 const known = [...SETS.map((s) => s.name), ...GENERATED.map((g) => g.name)];

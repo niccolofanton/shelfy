@@ -1,12 +1,15 @@
 # Build context of shelfy-api.Dockerfile: BuildKit reads this file instead of a
 # root .dockerignore. Only what the image needs goes in: the Cargo workspace
-# without its tests, and the built web app.
+# without its tests, the AI prompts and schemas it embeds (shared/ai/), and the
+# built web app.
 *
 !Cargo.toml
 !Cargo.lock
 !crates/
+!shared/ai/
 !web/dist/
 crates/*/tests/
+shared/ai/fixtures/
 crates/*/examples/
 crates/*/benches/
 crates/server/openapi.json

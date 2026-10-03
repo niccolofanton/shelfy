@@ -8,12 +8,15 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Checks AI answers against the response schemas of shared/ai/ (no network features).
+jsonschema.workspace = true
 moka.workspace = true
 regex.workspace = true
 rusqlite.workspace = true
 rusqlite_migration.workspace = true
 serde.workspace = true
-serde_json.workspace = true
+# `raw_value`: AI response schemas are sent with their keys in the file's order.
+serde_json = { workspace = true, features = ["raw_value"] }
 sha1.workspace = true
 thiserror.workspace = true
 url.workspace = true

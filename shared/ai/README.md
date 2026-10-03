@@ -20,8 +20,26 @@ the desktop app and the web server so that both products catalog the same way.
 | `template.ts` | the template renderer |
 | `prompts.ts` | the tasks: rendered prompts, response schemas, sampling |
 | `catalog.ts` | the catalog prompts and the normalization of their answers |
+| `fixtures/` | synthetic posts and answers for offline tests (`posts.json`, `answers.json`, `invalid-answers.json`) |
 
 A prompt or schema file that the manifest does not name fails the generator.
+
+## The Rust side
+
+`crates/core/src/ai/` reads the same files with `include_str!` (the image
+build copies `shared/ai/` for it):
+
+| Module | What |
+|---|---|
+| `prompts` | the manifest's tasks: `system_prompt`, `user_prompt`, `response_schema` (compact JSON in the file's key order, for providers), `max_tokens`, `SCHEMA_VERSION` (2) |
+| `template` | the template renderer |
+| `catalog` | `CatalogKind::of(platform, media_type)` and `request(kind, text, hints, has_frames)` |
+| `normalize` | `catalog(kind, answer)`: the answer checked against its schema (an `OutputError` otherwise, nothing written), then normalized; `Catalog::into_patch(provider, model)`: the `AiPatch` of a finished analysis (status `done`, `ai_schema_version` 2, tiers) |
+
+Golden sets under `shared/golden/ai/catalog/` (written by
+`scripts/golden/ai-catalog.ts`) pin the Rust port to the desktop byte for byte:
+the renderer, the markers, the user prompts, whole requests, the normalization
+and the layer an answer writes.
 
 ## Tasks
 

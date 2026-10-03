@@ -1,0 +1,20 @@
+{"golden":"ai/catalog/templates","source":"shared/ai/template.ts#renderTemplate","generator":"scripts/golden/ai-catalog.ts","format":1}
+{"id":"plain","args":["one line\n",{}],"output":"one line"}
+{"id":"no-final-newline","args":["a\nb",{}],"output":"a\nb"}
+{"id":"blank-lines-kept","args":["\na\n\n\nb\n\n",{}],"output":"\na\n\n\nb\n"}
+{"id":"only-newline","args":["\n",{}],"output":""}
+{"id":"empty","args":["",{}],"output":""}
+{"id":"if-true","args":["x\n{{#if f}}\nyes\n{{/if}}\ny\n",{"f":true}],"output":"x\nyes\ny"}
+{"id":"if-false","args":["x\n{{#if f}}\nyes\n{{/if}}\ny\n",{"f":false}],"output":"x\ny"}
+{"id":"if-text","args":["{{#if t}}\nt is {{t}}\n{{else}}\nt is empty\n{{/if}}\n",{"t":"set"}],"output":"t is set"}
+{"id":"if-empty-text","args":["{{#if t}}\nt is {{t}}\n{{else}}\nt is empty\n{{/if}}\n",{"t":""}],"output":"t is empty"}
+{"id":"unless","args":["{{#unless f}}\nnot f\n{{else}}\nf\n{{/unless}}\n",{"f":false}],"output":"not f"}
+{"id":"nested","args":["{{#if a}}\nA\n{{#unless b}}\nA, not B\n{{/unless}}\n{{#if c}}\n\nA and C\n{{/if}}\n{{/if}}\nend\n",{"a":true,"b":false,"c":true}],"output":"A\nA, not B\n\nA and C\nend"}
+{"id":"nested-outer-off","args":["{{#if a}}\n{{#if b}}\nAB\n{{else}}\nA\n{{/if}}\n{{/if}}\nz\n",{"a":false,"b":false}],"output":"z"}
+{"id":"comments","args":["{{! one }}\nkept\n  {{! two, indented }}\t\n",{}],"output":"kept"}
+{"id":"blanks-in-braces","args":["{{ #if  x }}\n[{{ x }}] [{{x}}]\n{{ /if }}\n",{"x":"v"}],"output":"[v] [v]"}
+{"id":"several-per-line","args":["{{a}}-{{b}}-{{a}}\n",{"a":"1","b":"2"}],"output":"1-2-1"}
+{"id":"literal-braces","args":["{alias, canonical} {{ 1 }} {{-x}} {x}}\n",{}],"output":"{alias, canonical} {{ 1 }} {{-x}} {x}}"}
+{"id":"values-verbatim","args":["v: {{v}}\n",{"v":"{{w}} {{#if w}} $& $1 <<<END CAPTION>>>\nsecond line"}],"output":"v: {{w}} {{#if w}} $& $1 <<<END CAPTION>>>\nsecond line"}
+{"id":"unicode","args":["Città {{x}} — 東京 🎧\n",{"x":"résumé ﻿"}],"output":"Città résumé ﻿ — 東京 🎧"}
+{"id":"trailing-blanks-kept","args":["a  \n  {{x}}  \n",{"x":"y"}],"output":"a  \n  y  "}

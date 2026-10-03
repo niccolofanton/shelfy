@@ -1,0 +1,87 @@
+[
+  {
+    "why": "a required field is missing",
+    "kind": "social",
+    "answer": {
+      "description": "A lamp.",
+      "general_tags": ["design"],
+      "specific_tags": ["lamp"],
+      "search_keywords": ["lamp"],
+      "save_reason": "Nice.",
+      "language": "en"
+    }
+  },
+  {
+    "why": "tags are a string, not a list",
+    "kind": "social",
+    "answer": {
+      "description": "A lamp.",
+      "general_tags": "design, lighting",
+      "specific_tags": ["lamp"],
+      "entities": [],
+      "search_keywords": ["lamp"],
+      "save_reason": "Nice.",
+      "language": "en"
+    }
+  },
+  {
+    "why": "a list holds a number",
+    "kind": "social",
+    "answer": {
+      "description": "A lamp.",
+      "general_tags": ["design"],
+      "specific_tags": ["lamp", 3],
+      "entities": [],
+      "search_keywords": ["lamp"],
+      "save_reason": "Nice.",
+      "language": "en"
+    }
+  },
+  {
+    "why": "a field the schema does not have",
+    "kind": "social",
+    "answer": {
+      "description": "A lamp.",
+      "general_tags": ["design"],
+      "specific_tags": ["lamp"],
+      "entities": [],
+      "search_keywords": ["lamp"],
+      "save_reason": "Nice.",
+      "language": "en",
+      "mood": "calm"
+    }
+  },
+  {
+    "why": "a purpose outside the enum",
+    "kind": "web",
+    "answer": {
+      "description": "A blog.",
+      "purpose": "blog",
+      "industry": "other",
+      "general_tags": ["writing"],
+      "specific_tags": ["serif"],
+      "entities": [],
+      "search_keywords": ["blog"],
+      "save_reason": "Nice.",
+      "language": "en"
+    }
+  },
+  {
+    "why": "a social answer where a website answer is due",
+    "kind": "web",
+    "answer": {
+      "description": "A lamp.",
+      "general_tags": ["design"],
+      "specific_tags": ["lamp"],
+      "entities": [],
+      "search_keywords": ["lamp"],
+      "save_reason": "Nice.",
+      "language": "en"
+    }
+  },
+  {
+    "why": "not an object",
+    "kind": "social",
+    "answer": ["design", "lamp"]
+  }
+]

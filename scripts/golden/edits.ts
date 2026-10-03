@@ -22,10 +22,10 @@ import type BetterSqlite3 from 'better-sqlite3';
 import { openDesktopDb, withDesktopClock, type GoldenCase, type GoldenSet } from './lib';
 
 /** The pinned clock of the run: 2026-10-02T00:00:00Z. */
-const NOW_MS = 1_790_899_200_000;
+export const NOW_MS = 1_790_899_200_000;
 
 /** `[alias, canonical norm, canonical form, status]` rows of `tag_alias`. */
-type Alias = [string, string, string, 'accepted' | 'proposed'];
+export type Alias = [string, string, string, 'accepted' | 'proposed'];
 
 const ALIASES: Alias[] = [
   ['lampade', 'lampada', 'Lampada', 'accepted'],
@@ -44,7 +44,7 @@ interface UserFields {
   manualTags?: string[];
 }
 
-interface AiFields {
+export interface AiFields {
   description?: string | null;
   tags?: string[] | null;
   status?: string | null;
@@ -174,7 +174,7 @@ const CASES: [string, Step[]][] = [
 type Row = Record<string, unknown>;
 
 /** What a case records: a post's two layers after its steps. */
-function layers(handle: BetterSqlite3.Database, id: string): unknown {
+export function layers(handle: BetterSqlite3.Database, id: string): unknown {
   const row = handle
     .prepare(
       `SELECT user_note, user_tags, ai_status, ai_model, ai_description, ai_tags, ai_category,

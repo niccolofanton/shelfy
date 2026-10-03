@@ -2660,6 +2660,7 @@ dependencies = [
 name = "shelfy-core"
 version = "0.1.0"
 dependencies = [
+ "jsonschema",
  "moka",
  "proptest",
  "regex",

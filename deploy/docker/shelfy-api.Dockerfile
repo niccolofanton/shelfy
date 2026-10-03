@@ -47,6 +47,8 @@ RUN cargo chef cook --release --locked --recipe-path recipe.json \
     --package shelfy-server --bin shelfy-server
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+# The core embeds the AI prompts and schemas with include_str!.
+COPY shared/ai shared/ai
 RUN cargo build --release --locked --package shelfy-server --bin shelfy-server \
     && install -D -m 0755 target/release/shelfy-server /out/shelfy-server
 

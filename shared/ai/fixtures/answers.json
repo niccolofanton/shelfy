@@ -1,0 +1,70 @@
+{
+  "lamp": {
+    "description": "A walnut desk lamp with a spun-brass dome shade, photographed on a white desk.",
+    "general_tags": ["design", "lighting"],
+    "specific_tags": ["desk lamp", "walnut", "spun brass", "product photography", "lamp shade"],
+    "entities": ["Studio Lumen"],
+    "search_keywords": ["walnut desk lamp", "brass shade lamp design", "studio lumen lamp"],
+    "save_reason": "A reference for warm materials and a clean silhouette in lighting design.",
+    "language": "en"
+  },
+  "typeface": {
+    "description": "A type specimen of a variable grotesque sans-serif across nine weights and italics.",
+    "general_tags": ["typography", "design"],
+    "specific_tags": [
+      "type specimen",
+      "variable font",
+      "grotesque",
+      "sans-serif",
+      "italics",
+      "Type Specimen"
+    ],
+    "entities": ["Kestrel Grotesk"],
+    "search_keywords": ["variable grotesque specimen", "kestrel grotesk weights"],
+    "save_reason": "Shows how a variable sans behaves across weights.",
+    "language": "en"
+  },
+  "stairs": {
+    "description": "A walk down concrete stairs in a brutalist housing estate at dusk.",
+    "general_tags": ["architecture", "Brutalism", "photography", "urbanism"],
+    "specific_tags": [
+      "concrete stairs",
+      "barbican estate",
+      "dusk",
+      "walkthrough video",
+      "board-marked concrete",
+      "raw concrete",
+      "stairwell",
+      "london"
+    ],
+    "entities": ["Barbican Estate", "barbican estate"],
+    "search_keywords": ["barbican concrete stairs", "brutalist stairwell video"],
+    "save_reason": "Atmospheric reference for brutalist circulation spaces.",
+    "language": "en"
+  },
+  "quote": {
+    "description": "A design quote about restraint.",
+    "general_tags": ["design"],
+    "specific_tags": ["design quote", "minimalism", "dieter rams"],
+    "entities": ["Dieter Rams"],
+    "search_keywords": ["less but better quote", "dieter rams good design"],
+    "save_reason": "A principle worth keeping in mind.",
+    "language": "en"
+  },
+  "studio-site": {
+    "description": "The site of an architecture and interiors studio for small hotels: warm off-white palette, serif headlines, full-bleed project photography.",
+    "purpose": "portfolio",
+    "industry": "architecture",
+    "general_tags": ["architecture", "web design"],
+    "specific_tags": [
+      "serif headlines",
+      "full-bleed photography",
+      "off-white palette",
+      "project index"
+    ],
+    "entities": ["Halden Studio", "Next.js", "GSAP", "Vercel"],
+    "search_keywords": ["architecture studio portfolio site", "hotel interiors studio website"],
+    "save_reason": "A calm, photography-led portfolio layout.",
+    "language": "en"
+  }
+}
