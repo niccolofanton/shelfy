@@ -310,13 +310,20 @@ export default function Popover({
       panel.style.transition = animate ? 'transform var(--dur-2) var(--ease-out)' : 'none';
       panel.style.transform = dy > 0 ? `translateY(${dy}px)` : '';
     };
+    // The layer itself takes the scrim's clicks: useDialog makes the panel's
+    // siblings inert, and an inert scrim could not be tapped.
     return createPortal(
-      <div className="fixed inset-0" style={{ zIndex: Z.popover }}>
+      <div
+        data-testid="popover-scrim"
+        className="fixed inset-0"
+        style={{ zIndex: Z.popover }}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) onRequestCloseRef.current?.();
+        }}
+      >
         <div
           aria-hidden="true"
-          data-testid="popover-scrim"
-          className="u-backdrop-in absolute inset-0 bg-black/50"
-          onClick={() => onRequestCloseRef.current?.()}
+          className="u-backdrop-in pointer-events-none absolute inset-0 bg-black/50"
         />
         <div
           ref={sheetRef}

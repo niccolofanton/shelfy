@@ -17,7 +17,10 @@
 //   inertOthers?:   default true: everything outside the dialog becomes
 //                   `inert` (no focus, no clicks, hidden from screen readers),
 //                   whether the dialog is portaled to <body> or not. Live
-//                   regions (toasts) stay live.
+//                   regions (toasts) stay live. So put the scrim AROUND the
+//                   dialog (its parent, closing when the click's target is
+//                   the scrim itself), not beside it: a sibling turns inert
+//                   and can't be clicked.
 //
 // While open, Tab and Shift+Tab cycle inside the dialog. Dialogs and popovers
 // stack in the order they open (src/components/ui/layers.ts): only the
