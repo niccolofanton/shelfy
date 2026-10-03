@@ -108,6 +108,15 @@ export class FakeShelfyApi {
   maxBatchItems = 500;
   /** Require these Access headers on every request (header mode). */
   requireAccess: { clientId: string; clientSecret: string } | null = null;
+  /** Config values per platform over the defaults (e.g. a killed mode, a lower page cap). */
+  readonly platformConfig: Partial<Record<Platform, Record<string, unknown>>> = {};
+  /** What the next POST /sync-runs answers (P2-13: incremental, resume cursor), then cleared. */
+  nextRunAnswer: {
+    incremental?: boolean;
+    stopAfterKnown?: number;
+    resumeCursor?: string | null;
+    collectionId?: number | null;
+  } | null = null;
   private readonly codes = new Set<string>();
   private readonly tokens = new Map<string, { installId: string; tokenId: string }>();
   private readonly idempotency = new Map<string, { fingerprint: string; response: FakeResponse }>();
@@ -146,6 +155,7 @@ export class FakeShelfyApi {
       passive: !this.killed.has(name),
       scroll: true,
       ...base,
+      ...this.platformConfig[name],
     });
     return {
       minVersion: this.minVersion,
@@ -278,12 +288,14 @@ export class FakeShelfyApi {
       scanned: 0,
       batches: 0,
     });
+    const answer = this.nextRunAnswer ?? {};
+    this.nextRunAnswer = null;
     return json(201, {
       id,
-      incremental: false,
-      stopAfterKnown: 10,
-      collectionId: null,
-      resumeCursor: null,
+      incremental: answer.incremental ?? false,
+      stopAfterKnown: answer.stopAfterKnown ?? 10,
+      collectionId: answer.collectionId ?? null,
+      resumeCursor: answer.resumeCursor ?? null,
     });
   }
 

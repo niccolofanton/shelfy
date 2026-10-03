@@ -1,5 +1,5 @@
-// The queue's IndexedDB store (database `shelfy`, version 1; record shapes in types.ts). Each
-// transaction spans the four stores, is read-write with strict durability (a capture is
+// The queue's IndexedDB store (database `shelfy`, version 2; record shapes in types.ts). Each
+// transaction spans every store, is read-write with strict durability (a capture is
 // acknowledged to the page only once it is on disk), and transactions run one after the other.
 // Inside a transaction the queue awaits only these request wrappers: a promise that resolves
 // from a request's success event continues while the transaction is still active.
@@ -7,17 +7,19 @@
 import {
   emptyMeta,
   normalizeMeta,
+  normalizeRun,
   type Batch,
   type Chunk,
   type QueueMeta,
   type QueueStore,
   type QueueTx,
   type Run,
+  type RunKeys,
 } from './types';
 
 export const QUEUE_DB_NAME = 'shelfy';
-const QUEUE_DB_VERSION = 1;
-const STORES = ['chunks', 'batches', 'runs', 'meta'] as const;
+const QUEUE_DB_VERSION = 2;
+const STORES = ['chunks', 'batches', 'runs', 'meta', 'runKeys'] as const;
 const META_KEY = 'meta';
 
 function request<T>(req: IDBRequest<T>): Promise<T> {
@@ -30,15 +32,23 @@ function request<T>(req: IDBRequest<T>): Promise<T> {
 export function openQueueDb(name = QUEUE_DB_NAME): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const open = indexedDB.open(name, QUEUE_DB_VERSION);
-    open.onupgradeneeded = () => {
+    open.onupgradeneeded = (event) => {
       const db = open.result;
-      // Version 1: created from scratch.
-      const chunks = db.createObjectStore('chunks', { keyPath: 'seq', autoIncrement: true });
-      chunks.createIndex('group', 'group');
-      const batches = db.createObjectStore('batches', { keyPath: 'id' });
-      batches.createIndex('runId', 'runId');
-      db.createObjectStore('runs', { keyPath: 'id' });
-      db.createObjectStore('meta', { keyPath: 'key' });
+      if (event.oldVersion < 1) {
+        // Version 1 (P2-06): the queue.
+        const chunks = db.createObjectStore('chunks', { keyPath: 'seq', autoIncrement: true });
+        chunks.createIndex('group', 'group');
+        const batches = db.createObjectStore('batches', { keyPath: 'id' });
+        batches.createIndex('runId', 'runId');
+        db.createObjectStore('runs', { keyPath: 'id' });
+        db.createObjectStore('meta', { keyPath: 'key' });
+      }
+      if (event.oldVersion < 2) {
+        // Version 2 (P2-13): the accepted keys of each run.
+        const runKeys = db.createObjectStore('runKeys', { keyPath: 'id' });
+        runKeys.createIndex('runId', 'runId');
+        runKeys.createIndex('at', 'at');
+      }
     };
     open.onsuccess = () => {
       const db = open.result;
@@ -55,6 +65,7 @@ function wrap(tx: IDBTransaction): QueueTx {
   const batches = tx.objectStore('batches');
   const runs = tx.objectStore('runs');
   const meta = tx.objectStore('meta');
+  const runKeys = tx.objectStore('runKeys');
   return {
     meta: async () => {
       const value = await request(meta.get(META_KEY));
@@ -81,10 +92,25 @@ function wrap(tx: IDBTransaction): QueueTx {
     },
     runBatchIds: async (runId) =>
       (await request(batches.index('runId').getAllKeys(IDBKeyRange.only(runId)))).map(String),
-    getRun: async (id) => ((await request(runs.get(id))) as Run | undefined) ?? null,
+    getRun: async (id) => {
+      const run = (await request(runs.get(id))) as Run | undefined;
+      return run ? normalizeRun(run) : null;
+    },
     putRun: async (run: Run) => void (await request(runs.put(run))),
     deleteRun: async (id) => void (await request(runs.delete(id))),
-    runs: async () => (await request(runs.getAll())) as Run[],
+    runs: async () => ((await request(runs.getAll())) as Run[]).map(normalizeRun),
+    putRunKeys: async (record: RunKeys) => void (await request(runKeys.put(record))),
+    runKeys: async (runId) =>
+      ((await request(runKeys.index('runId').getAll(IDBKeyRange.only(runId)))) as RunKeys[]).sort(
+        (a, b) => a.at - b.at,
+      ),
+    pruneRunKeys: async (before) => {
+      const ids = await request(
+        runKeys.index('at').getAllKeys(IDBKeyRange.upperBound(before, true)),
+      );
+      for (const id of ids) await request(runKeys.delete(id));
+      return ids.length;
+    },
   };
 }
 

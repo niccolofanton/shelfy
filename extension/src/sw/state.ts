@@ -6,6 +6,7 @@ import { passiveAllowed, type ConfigService } from './config';
 import type { Queue } from './queue/queue';
 import type { Counters } from './queue/types';
 import type { ConnectionCheck, SettingsStore, Status } from './settings';
+import type { SyncView } from './sync/history';
 
 export interface PanelState {
   version: string;
@@ -28,6 +29,10 @@ export interface PanelState {
   lastOkAt: number | null;
   connection: ConnectionCheck | null;
   census: CensusCounts | null;
+  /** Explicit syncs: live ones first, then the recent closed ones (P2-13). */
+  syncs: SyncView[];
+  /** The server's kill switches of the sync modes (C3), per platform (P2-13). */
+  serverModes: Record<Platform, { replay: boolean; scroll: boolean }>;
 }
 
 export interface StateDeps {
@@ -38,16 +43,18 @@ export interface StateDeps {
   queue: Queue;
   config: ConfigService;
   census(): CensusCounts | null;
+  syncs?(): Promise<SyncView[]>;
 }
 
 export async function panelState(deps: StateDeps): Promise<PanelState> {
-  const [pairing, status, settings, config, stored, snapshot] = await Promise.all([
+  const [pairing, status, settings, config, stored, snapshot, syncs] = await Promise.all([
     deps.store.pairing(),
     deps.store.status(),
     deps.store.settings(),
     deps.config.current(),
     deps.store.config(),
     deps.queue.snapshot(),
+    deps.syncs?.() ?? Promise.resolve([]),
   ]);
   return {
     version: deps.version,
@@ -71,5 +78,15 @@ export async function panelState(deps: StateDeps): Promise<PanelState> {
     lastOkAt: status.lastOkAt,
     connection: status.connection,
     census: deps.debug ? deps.census() : null,
+    syncs,
+    serverModes: Object.fromEntries(
+      PLATFORMS.map((platform) => [
+        platform,
+        {
+          replay: platform === 'instagram' && config.platforms[platform].replay,
+          scroll: config.platforms[platform].scroll,
+        },
+      ]),
+    ) as Record<Platform, { replay: boolean; scroll: boolean }>,
   };
 }
