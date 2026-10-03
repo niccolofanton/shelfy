@@ -22,6 +22,7 @@
 //! | `bookmark-original` | a session or an `uploads` token | 200 MiB | optional | of a type of the store's allowlist, sniffed | 24 h |
 //! | `bookmark-preview` | a session or an `uploads` token | 2 MiB | optional | a JPEG, PNG, GIF or WebP image | 24 h |
 //! | `import` | a session or an `uploads` token | `SHELFY_IMPORT_MAX_GB` (10 GiB) | optional | a JSON document or a zip archive | 24 h |
+//! | `archive-object` | an `uploads` token (the browser extension, P2-14) | 15 MiB | required | an image of the declared `ext` | 24 h |
 //!
 //! The routes take the three credentials ([`crate::routes::TOKEN_ROUTES`]);
 //! every request checks the caller against the upload's purpose
