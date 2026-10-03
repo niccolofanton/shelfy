@@ -162,6 +162,24 @@ export const MSG = {
   pairingForget: 'shelfy/pairing.forget',
   /** worker → extension pages: something the panel shows changed; it pulls the state. */
   stateChanged: 'shelfy/state.changed',
+  // P2-13, the sync controller (content/sync/, sw/sync/). Parsers in the "Sync controller"
+  // block at the end of this file.
+  /** panel → worker: sync the listing of a tab now (trigger `manual`). */
+  syncStart: 'shelfy/sync.start',
+  /** panel → worker: stop the sync running in a tab. */
+  syncStop: 'shelfy/sync.stop',
+  /** worker → bridge (chrome.tabs.sendMessage): start the controller with this plan. */
+  syncRun: 'shelfy/sync.run',
+  /** worker → bridge: stop the controller (the user, or the worker saw the tab leave). */
+  syncAbort: 'shelfy/sync.abort',
+  /** controller → worker: run a MAIN-world helper in the controller's document. */
+  syncMain: 'shelfy/sync.main',
+  /** controller → worker: the run's consecutive-known count, after its items were ingested. */
+  syncKnown: 'shelfy/sync.known',
+  /** controller → worker: phase and counters (at most once a second). */
+  syncProgress: 'shelfy/sync.progress',
+  /** controller → worker: the walk ended, and why. */
+  syncEnd: 'shelfy/sync.end',
 } as const;
 
 const MAX_DOC_ID_LEN = 64;
@@ -256,6 +274,10 @@ export interface BridgePong {
   docId: string;
   /** The signed-in Pinterest user the page shows (Pinterest pages only). */
   viewer: string | null;
+  /** The page's heading (`main h1`, else `h1`), trimmed: names a new folder (P2-13). */
+  heading?: string | null;
+  /** The sync the controller of this document runs, if any (P2-13). */
+  syncing?: string | null;
 }
 
 // ── Panel → worker ──────────────────────────────────────────────────────────
@@ -373,3 +395,272 @@ export interface PingAnswer {
 
 /** Answer of every other C9 message: `{ok: true}` or a code the SPA maps to its own message. */
 export type ExternalAnswer = { ok: true } | { ok: false; code: string };
+
+// ── Sync controller (P2-13) ─────────────────────────────────────────────────
+//
+//   panel ── MSG.syncStart/syncStop ──► worker (sw/sync/) ── MSG.syncRun/syncAbort ──► bridge
+//   bridge: content/sync/controller.ts ── MSG.syncMain/syncKnown/syncProgress/syncEnd ──► worker
+//   worker ── chrome.scripting (MAIN world) ──► main/replay.ts ── SHELFY_REPLAY_PAGE ──► bridge
+//   bridge ── SHELFY_REPLAY_GATE ──► main/replay.ts (continue, stop, or jump to a cursor)
+//
+// The replay messages cross the page's window like the hook's: the page can read and forge
+// them. The worst a page can do is stop its own replay or report a wrong cursor.
+
+/** MAIN → ISOLATED: the IG replay read a page (main/replay.ts inlines the value). */
+export const REPLAY_PAGE_MESSAGE = 'SHELFY_REPLAY_PAGE';
+/** ISOLATED → MAIN: the controller's answer at a page boundary of a gated replay. */
+export const REPLAY_GATE_MESSAGE = 'SHELFY_REPLAY_GATE';
+/** IG `next_max_id` cursors, with room (C4 `resumeCursor`). */
+export const MAX_CURSOR_LEN = 4096;
+const MAX_RUN_ID_LEN = 64;
+
+/** The modes a sync walks with; each has its config kill switch (C3). */
+export const SYNC_MODES = ['replay', 'scroll'] as const;
+export type SyncMode = (typeof SYNC_MODES)[number];
+
+export const SYNC_PHASES = ['starting', 'replay', 'ssr', 'scroll', 'ending'] as const;
+export type SyncPhase = (typeof SYNC_PHASES)[number];
+
+/**
+ * Why a walk ended: the C4 stop reasons, plus `stalled` (the scroll reached the bottom, or gave
+ * up, without an end-of-feed signal), which closes the run `done` without a stop reason, so the
+ * server never takes it for a full walk.
+ */
+export const SYNC_END_REASONS = [
+  'end_of_feed',
+  'known_run',
+  'page_cap',
+  'time_cap',
+  'user',
+  'login_required',
+  'error',
+  'stalled',
+] as const;
+export type SyncEndReason = (typeof SYNC_END_REASONS)[number];
+
+export type GateAction = 'continue' | 'stop' | 'jump';
+
+export interface ReplayPageMessage {
+  /** The replay's id (one per replay, chosen by the controller). */
+  id: string;
+  /** Pages read so far. */
+  page: number;
+  /** The cursor of the next page (`next_max_id`), null at the end of the feed. */
+  cursor: string | null;
+  /** The replay waits for a gate answer before it reads the next page. */
+  wait: boolean;
+}
+
+export function parseReplayPageMessage(data: unknown): ReplayPageMessage | null {
+  if (!isRecord(data) || data.type !== REPLAY_PAGE_MESSAGE) return null;
+  const id = boundedString(data.id, MAX_SCOPE_ID_LEN);
+  if (!id || typeof data.page !== 'number' || !Number.isSafeInteger(data.page) || data.page < 0)
+    return null;
+  const cursor = data.cursor === null ? null : boundedString(data.cursor, MAX_CURSOR_LEN);
+  if (data.cursor !== null && cursor === null) return null;
+  return { id, page: data.page, cursor, wait: data.wait === true };
+}
+
+const isOneOf = <T extends string>(list: readonly T[], value: unknown): value is T =>
+  typeof value === 'string' && (list as readonly string[]).includes(value);
+
+const count = (value: unknown, max = 1_000_000_000): number | null =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= max
+    ? value
+    : null;
+
+/** What the worker hands the controller (MSG.syncRun): everything it needs, nothing secret. */
+export interface SyncPlan {
+  /** The local run id (sw/queue `Run.id`). */
+  runId: string;
+  platform: Platform;
+  /** The listing the run walks (shared/listing.ts `listingKey`): leaving it ends the run. */
+  listingKey: string;
+  /** Stop at the first page boundary where `stopAfterKnown` consecutive items were known. */
+  incremental: boolean;
+  stopAfterKnown: number;
+  /** Where a capped walk of this source stopped: walk the head, then continue from here. */
+  resumeCursor: string | null;
+  /** The config kill switches (C3): a killed mode is skipped and reported. */
+  replay: boolean;
+  scroll: boolean;
+  scrollSettleMs: number;
+  maxSteps: number;
+  maxRunMs: number;
+}
+
+export interface SyncRunMessage extends SyncPlan {
+  kind: typeof MSG.syncRun;
+}
+
+export function parseSyncRunMessage(value: unknown): SyncRunMessage | null {
+  if (!isRecord(value) || value.kind !== MSG.syncRun) return null;
+  const runId = boundedString(value.runId, MAX_RUN_ID_LEN);
+  const listingKey = boundedString(value.listingKey, 512);
+  const stopAfterKnown = count(value.stopAfterKnown, 10_000);
+  const scrollSettleMs = count(value.scrollSettleMs, 60_000);
+  const maxSteps = count(value.maxSteps, 16_000);
+  const maxRunMs = count(value.maxRunMs, 1_800_000);
+  const resumeCursor =
+    value.resumeCursor === null ? null : boundedString(value.resumeCursor, MAX_CURSOR_LEN);
+  if (!runId || !listingKey || !isPlatform(value.platform)) return null;
+  if (stopAfterKnown === null || scrollSettleMs === null || maxSteps === null || maxRunMs === null)
+    return null;
+  if (value.resumeCursor !== null && resumeCursor === null) return null;
+  return {
+    kind: MSG.syncRun,
+    runId,
+    platform: value.platform,
+    listingKey,
+    incremental: value.incremental === true,
+    stopAfterKnown: Math.max(1, stopAfterKnown),
+    resumeCursor,
+    replay: value.replay === true,
+    scroll: value.scroll === true,
+    scrollSettleMs,
+    maxSteps,
+    maxRunMs,
+  };
+}
+
+export const SYNC_MAIN_OPS = ['replay', 'pinterest_ssr'] as const;
+export type SyncMainOp = (typeof SYNC_MAIN_OPS)[number];
+
+export interface SyncMainRequest {
+  kind: typeof MSG.syncMain;
+  runId: string;
+  op: SyncMainOp;
+  /** The replay's id, for its page and gate messages (op `replay`). */
+  replayId: string | null;
+}
+
+export function parseSyncMainRequest(value: unknown): SyncMainRequest | null {
+  if (!isRecord(value) || value.kind !== MSG.syncMain) return null;
+  const runId = boundedString(value.runId, MAX_RUN_ID_LEN);
+  if (!runId || !isOneOf(SYNC_MAIN_OPS, value.op)) return null;
+  const replayId = value.op === 'replay' ? boundedString(value.replayId, MAX_SCOPE_ID_LEN) : null;
+  if (value.op === 'replay' && !replayId) return null;
+  return { kind: MSG.syncMain, runId, op: value.op, replayId };
+}
+
+export interface SyncKnownRequest {
+  kind: typeof MSG.syncKnown;
+  runId: string;
+  /** Start counting again from 0 (the replay jumped to the resume cursor). */
+  reset: boolean;
+}
+
+export function parseSyncKnownRequest(value: unknown): SyncKnownRequest | null {
+  if (!isRecord(value) || value.kind !== MSG.syncKnown) return null;
+  const runId = boundedString(value.runId, MAX_RUN_ID_LEN);
+  return runId ? { kind: MSG.syncKnown, runId, reset: value.reset === true } : null;
+}
+
+/**
+ * The run's trailing run of known items, in item order. `settled`: every item the controller
+ * relayed so far was ingested; false when the API is unreachable, and then the controller does
+ * not stop on a count it cannot trust.
+ */
+export type SyncKnownAnswer = { ok: true; streak: number; settled: boolean } | { ok: false };
+
+export interface SyncProgressMessage {
+  kind: typeof MSG.syncProgress;
+  runId: string;
+  phase: SyncPhase;
+  steps: number;
+  replayPages: number;
+}
+
+export function parseSyncProgressMessage(value: unknown): SyncProgressMessage | null {
+  if (!isRecord(value) || value.kind !== MSG.syncProgress) return null;
+  const runId = boundedString(value.runId, MAX_RUN_ID_LEN);
+  const steps = count(value.steps);
+  const replayPages = count(value.replayPages);
+  if (!runId || !isOneOf(SYNC_PHASES, value.phase) || steps === null || replayPages === null)
+    return null;
+  return { kind: MSG.syncProgress, runId, phase: value.phase, steps, replayPages };
+}
+
+export interface SyncEndMessage {
+  kind: typeof MSG.syncEnd;
+  runId: string;
+  reason: SyncEndReason;
+  /** The replay's cursor when the page cap stopped it (P2-G2). */
+  resumeCursor: string | null;
+  errorCode: string | null;
+  /** Modes the config killed, skipped. */
+  skipped: SyncMode[];
+  steps: number;
+  replayPages: number;
+}
+
+export function parseSyncEndMessage(value: unknown): SyncEndMessage | null {
+  if (!isRecord(value) || value.kind !== MSG.syncEnd) return null;
+  const runId = boundedString(value.runId, MAX_RUN_ID_LEN);
+  if (!runId || !isOneOf(SYNC_END_REASONS, value.reason)) return null;
+  const resumeCursor =
+    value.resumeCursor === null || value.resumeCursor === undefined
+      ? null
+      : boundedString(value.resumeCursor, MAX_CURSOR_LEN);
+  const errorCode =
+    value.errorCode === null || value.errorCode === undefined
+      ? null
+      : boundedString(value.errorCode, 64);
+  const skipped = Array.isArray(value.skipped)
+    ? SYNC_MODES.filter((mode) => (value.skipped as unknown[]).includes(mode))
+    : [];
+  return {
+    kind: MSG.syncEnd,
+    runId,
+    reason: value.reason,
+    resumeCursor,
+    errorCode,
+    skipped,
+    steps: count(value.steps) ?? 0,
+    replayPages: count(value.replayPages) ?? 0,
+  };
+}
+
+/** Where an explicit sync files its posts (IMP-10's chooser): the listing's collection, or none. */
+export const SYNC_COLLECTION_CHOICES = ['auto', 'none'] as const;
+export type SyncCollectionChoice = (typeof SYNC_COLLECTION_CHOICES)[number];
+
+export interface SyncStartRequest {
+  kind: typeof MSG.syncStart;
+  tabId: number;
+  collection: SyncCollectionChoice;
+  /** The name of a collection created for the folder or board (the page heading by default). */
+  name: string | null;
+}
+
+const MAX_COLLECTION_NAME_LEN = 120;
+
+export function parseSyncStartRequest(value: unknown): SyncStartRequest | null {
+  if (!isRecord(value) || value.kind !== MSG.syncStart) return null;
+  if (typeof value.tabId !== 'number' || !Number.isSafeInteger(value.tabId)) return null;
+  if (!isOneOf(SYNC_COLLECTION_CHOICES, value.collection)) return null;
+  const name =
+    typeof value.name === 'string' && value.name.trim()
+      ? value.name.trim().slice(0, MAX_COLLECTION_NAME_LEN)
+      : null;
+  return { kind: MSG.syncStart, tabId: value.tabId, collection: value.collection, name };
+}
+
+export interface SyncStopRequest {
+  kind: typeof MSG.syncStop;
+  tabId: number;
+}
+
+export function parseSyncStopRequest(value: unknown): SyncStopRequest | null {
+  if (!isRecord(value) || value.kind !== MSG.syncStop) return null;
+  return typeof value.tabId === 'number' && Number.isSafeInteger(value.tabId)
+    ? { kind: MSG.syncStop, tabId: value.tabId }
+    : null;
+}
+
+/**
+ * Answer to MSG.syncStart (and the shape P2-15's `shelfy.sync.start` maps to C9): the codes are
+ * `not_paired`, `outdated`, `busy`, `disabled`, `not_a_listing`, `not_own_board`, `reload_tab`,
+ * or an API failure code (sw/errors.ts failureCode).
+ */
+export type SyncStartAnswer = { ok: true; runId: string } | { ok: false; code: string };

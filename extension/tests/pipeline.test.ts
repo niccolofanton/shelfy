@@ -112,7 +112,15 @@ describe('hook → bridge → worker → API', () => {
     runtimeListeners[0]({ kind: MSG.bridgePing }, { id: 'another-extension' }, sendResponse);
     runtimeListeners[0]({ kind: MSG.stateGet }, { id: 'test-extension' }, sendResponse);
     expect(sendResponse.mock.calls).toEqual([
-      [{ ok: true, docId: expect.stringMatching(/^[0-9a-f]{24}$/), viewer: null }],
+      [
+        {
+          ok: true,
+          docId: expect.stringMatching(/^[0-9a-f]{24}$/),
+          viewer: null,
+          heading: null,
+          syncing: null,
+        },
+      ],
     ]);
   });
 

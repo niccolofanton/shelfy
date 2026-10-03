@@ -195,3 +195,14 @@ export function passiveScope(
   }
   return { ok: true, listing, wire };
 }
+
+/**
+ * The listing an explicit sync of `pageUrl` walks (P2-13): a saved listing (SAVED_PATTERNS)
+ * that is a sync target, i.e. not the IG folder index. Unlike classifyListing, which reads any
+ * X page as the bookmarks, it needs the page itself to be the listing.
+ */
+export function syncTarget(platform: Platform, pageUrl: string): Listing | null {
+  if (!SAVED_PATTERNS[platform].test(pageUrl)) return null;
+  const listing = classifyListing(platform, pageUrl);
+  return listing && toWireListing(listing) ? listing : null;
+}

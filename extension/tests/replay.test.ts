@@ -15,7 +15,7 @@ import {
   type ReplayOptions,
   type ReplayResult,
 } from '../src/main/replay';
-import { SCOPE_MESSAGE } from '../src/shared/protocol';
+import { REPLAY_PAGE_MESSAGE, SCOPE_MESSAGE } from '../src/shared/protocol';
 
 declare const jsdom: { reconfigure(options: { url: string }): void };
 
@@ -86,10 +86,17 @@ describe('igFeedReplay', () => {
       '/api/v1/feed/collection/17890000000000001/posts/?max_id=CUR_1',
       '/api/v1/feed/collection/17890000000000001/posts/?max_id=CUR%2F2',
     ]);
-    // The scope type is inlined in the replay (it must be self-contained): pin it to protocol.
+    // The message types are inlined in the replay (it must be self-contained): pin them to
+    // protocol. Each page boundary but the last reports the next cursor.
     expect(posted.map((m) => [m.type, m.phase])).toEqual([
       [SCOPE_MESSAGE, 'start'],
+      [REPLAY_PAGE_MESSAGE, undefined],
+      [REPLAY_PAGE_MESSAGE, undefined],
       [SCOPE_MESSAGE, 'end'],
+    ]);
+    expect(posted.filter((m) => m.type === REPLAY_PAGE_MESSAGE)).toEqual([
+      { type: REPLAY_PAGE_MESSAGE, id: 'r1', page: 1, cursor: 'CUR_1', wait: false },
+      { type: REPLAY_PAGE_MESSAGE, id: 'r1', page: 2, cursor: 'CUR/2', wait: false },
     ]);
   });
 
