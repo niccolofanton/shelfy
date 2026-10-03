@@ -122,7 +122,7 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-11 | Trash and bulk by selector | done; the independent review found no cross-user leak, 1 high, 4 medium and 7 low issues, fixed in F11 | `web/p1-11-trash-bulk` (f44eb36, 7cb89a9) |
 | P1-23 | First osn PR, part 3: apply stage 2 (DNS, Access, backups) | done on 2026-10-03, except the live SSE measurements (moved to P1-26, see below): `server-v0.1.0-rc.2` deployed; control schema upgraded to v3 and libraries to v2; Hermes unchanged. Backups are on. The first db and media snapshots are saved in `restic/shelfy`, the restore drill verified 2 databases with 0 problems, and `shelfy_backup_last_success` is 1. The Access service token `shelfy-refs-clients` was created by `just cf-apply` after O5 (the user token "Scope Minimo Token" needed Access: Service Tokens Edit) and is stored in SOPS. `/health` answers 200 through Access with it, and 302 without. | osn 44926e5, e65a777 |
 | P1-06 | Post modal, folders and Sidebar on the seam | done (Sonnet): web Playwright 41/41, desktop e2e at the F2 baseline | `web/p1-06-modal-folders` (7 commits, …560e84e) |
-| P1-08 | Gallery performance and the JS budget | running (Sonnet) | `web/p1-08-gallery-perf` |
+| P1-08 | Gallery performance and the JS budget | done (Sonnet): initial JS 277 → 214 KB gzip under a 220 KB size-limit gate in CI; 6k and 20k synth libraries scroll at a median 119–120 fps with a worst frame of 27–32 ms; 0 third-party requests | `web/p1-08-gallery-perf` (9 commits) |
 | P1-24 | SPIKE-8: passkeys on the owner's devices | partial on 2026-10-03: passkeys registered in Chrome on macOS and Safari on iOS. Still to do: a passkey sign-in on each, the iOS home-screen app, Android, and Safari on macOS | owner |
 | P1-25 | Reference library on the VPS and the first restore drill | done on 2026-10-03 except the owner's look: the owner's current desktop library (6,138 posts, 980.9 MiB) migrated through Access with every count matching; restore drill on the real libraries green. [Report](reports/p1-vps.md) | lead |
 | P1-16 | First osn PR, part 1: prepare (code only) | done; draft [osn PR #29](https://github.com/niccolofanton/osn/pull/29) | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` (967c83a…b5b94af) |
@@ -211,6 +211,10 @@ Facts from integrated lanes that a later task must act on. The lead copies each 
 | P4 | The purge marks objects `unreferenced_since`; the GC (P4-12) deletes files and rows. To add `removeStoredMedia`, add a variant to `shelfy_core::bulk::Action` and drop its `not_available` arm in `BulkAction::resolve`. File-touching actions must always run as jobs; `start()` picks inline or job by count only. | P1-11 |
 | P2, P3 | `fetchMedia` (P2) and `analyze` (P3) plug into P1-11's bulk the same way; the job payload `{action, params, selection, at}` is generic. `analyze` may instead delegate to `POST /ai/analyze` and its confirm step. | P1-11 |
 | P1-14 | From P1-06: the `bulkActions` capability in `web/src/api/httpClient.ts` is the one flag to turn on; it unlocks AiPanel's clear menu and CollectionModal's "delete with posts". `addPostsToCollections(postIds, collectionIds)` takes keys only, so select-all-matching needs a seam method on `POST /posts/bulk {selector, action: addToCollections}`. The Trash entry (`nav-trash`, route `/trash`) shows "not available yet" until you build the view. `src/lib/sourceList.ts` holds the platform list for the filter drawer. `web/e2e/api.ts` mocks every write route in memory. | P1-06 |
+| P1-21, all UI lanes | The initial JS is 215.4 KB gzip against the 220 KB size-limit gate after P1-08 and P2-07: about 4.5 KB of margin. New views go behind `React.lazy`. | P1-08, P2-07 |
+| P1-21, all UI lanes | `web/playwright.config.ts` now blocks service workers by default: a registered worker hides the page's fetches from `page.route()`, so the API mocks stop applying. `web/e2e/service-worker.spec.ts` opts back in. | P2-07 |
+| P2-11 | `/share` (P2-07) already calls `POST /links` with contract C7 through `src/api/links.ts`; it answers 404 until P2-11 lands. | P2-07 |
+| P2-12 | The iOS Shortcut steps are drafted in the P2-07 report: a `links:create` token, then "Get Contents of URL" `POST /api/v1/links` with `{"url": <Shortcut Input>}`. | P2-07 |
 | P2 | On Instagram the replay is required for every listing: the passive walker reads nothing from today's saved-folder GraphQL (`PolarisProfilePostsTabContentQuery_connection`). | SPIKE-3 |
 
 ### P2–P6
@@ -235,7 +239,7 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 | P2-04 | Outbound HTTP client, CDN fetcher, host limits, breaker (with P4-01, L11) | running (Opus) | `web/p2-04-outbound` |
 | P2-05 | Parser: direct video URLs and an IG REST entry | running (Opus) | `web/p2-05-parser-video` |
 | P2-06 | Extension core: build, pairing, API client, offline queue, passive capture | running (Opus) | `web/p2-06-extension-core` |
-| P2-07 | PWA, Android share target, `/share` page, bookmarklet | running (Sonnet) | `web/p2-07-pwa-share` |
+| P2-07 | PWA, Android share target, `/share` page, bookmarklet | done (Sonnet): service worker (shell precache, network-only API, g480 cache-first), share target, `/share` against contract C7; web Playwright 48/48 | `web/p2-07-pwa-share` (6 commits) |
 | P4-04 | Core: web captures, versions, delete modes | done: `crates/core/src/web/captures.rs`, 17 tests | `web/p4-04-web-captures` (53755a7) |
 | P4-06 | Media: yt-dlp and ffmpeg tools | running (Opus) | `web/p4-06-video-tools` |
 | P4-07 | Quotas, usage accounting, limits | running (Opus) | `web/p4-07-quotas` |
