@@ -54,6 +54,7 @@ These owner decisions override the plan where they conflict.
 | E20 | 2026-10-03 | The owner confirms the remaining cloud lanes are Claude lanes and the Claude credits are exhausted, and asks Codex to take them over. Recover all pushed branches first; resume submitted code with review fixes, and take the remaining phase cards in dependency order. No wait for Claude credit reset. | E19's temporary reservation of running Claude cloud lanes |
 | E21 | 2026-10-03 | The owner requests 5–10 parallel agents, explicitly GPT-6.1 Sol with high reasoning, then sets the maximum to 10. Codex config is updated and the owner restarts the app; the new runtime exposes 10 subagent slots plus the lead. Recover existing worktrees after restart before starting additional independent tasks. | Earlier per-session cap of three subagents; historical Opus/Sonnet lane preferences |
 | E22 | 2026-10-03 | The owner reiterates the priority: improve the tagging AI harness and, after validation, launch it on all saved Instagram posts in the owner profile. Continue gold-set tuning, then deploy/configure the verified engine and launch the owner Instagram run under E15/L19. | No new scope restriction beyond E15; reiterates the next operational priority |
+| E23 | 2026-10-03 | The owner asks to continue until the whole authorized conversion is 100% complete, including implementation, integration, deploy and real verification. Keep E22 tagging priority and ten parallel agents. Only observed evidence closes a gate. | Continue the full remaining scope without asking to start each wave |
 
 ### Lead decisions
 
@@ -424,3 +425,11 @@ Tasks the owner added on 2026-10-03, in the order they run. X1 can start before 
 | P3-13 | Preserved engine work resumed after app restart; 500-post offline/restart/pause/retry acceptance passes. Final concurrency validation, full workspace checks and integration remain. No production AI run yet. |
 | X1 baseline correction | Run `baseline-20261003-1854` returned eight schema-valid answers, but four video inputs accidentally had no frames because nested paths were unresolved. Excluded from media-quality comparisons; rerun after strict media preflight. Earlier `baseline-20261003-1848` is also invalid (builder argument bug). |
 | Agent capacity | User-set maximum 10 subagents; after app restart the runtime confirms 11 total slots including the lead. All newly launched lanes explicitly use GPT-6.1 Sol / high. |
+
+### E23 current integration update
+
+- Integrated P3-13 (7b4bd8b), P3-05 plus queue selector compatibility (27262f6/e7a715a), F13 (aaa1efa), P2-08 (7048243), UX-0 (3936c54).
+- Root combined checks:172 tests pass (activity hooks/API, i18n parity, real Chromium capture scripts). Remaining combined Rust/full CI checks follow the next integration batch.
+- Prior CI7a2adfd: Rust/Node/web mock+live pass. SSRF readiness failed because runner has no rg;11cb5b9 preserves exact assertion using grep. Lighthouse4.43s remains F18.
+- Active lanes: P2-17, P3-04, P3-07, P3-16, P3-18, P3-19, P4-10, admin cover backfill, export/token independent review, X1. Ready work remains preserved for rebase/integration.
+- OSN152598a wires operator variables with concurrency1/timeout240. Compose validation on VPS passed read-only; operator disabled until verified endpoint/key/release setup. No production tagging yet.
