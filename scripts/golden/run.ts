@@ -61,9 +61,11 @@ const { default: taxonomyPromptSets } = await import('./ai-taxonomy-prompts');
 const { default: aiTagSets } = await import('./ai-tags');
 const { default: webDesignSets } = await import('./ai-web-design');
 const { default: webSanitize } = await import('./ai-web-sanitize');
+const { default: suggestSets } = await import('./ai-suggest');
 const SETS: GoldenSet[] = [
   webSanitize,
   ...webDesignSets,
+  ...suggestSets,
   ...taxonomyPromptSets,
   ...aiClusterSets,
   ...aiAliasSets,

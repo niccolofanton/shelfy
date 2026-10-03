@@ -113,6 +113,7 @@ pub mod posts;
 pub mod reauth;
 pub mod search;
 pub mod search_chat;
+pub mod search_suggest;
 pub mod selector;
 pub mod sites;
 pub mod stats;
@@ -170,6 +171,8 @@ const PROBLEM_RESPONSE: &str = "Problem";
         FieldError,
         event::ServerEvent,
         search_chat::ChatEvents,
+        search_suggest::SuggestBody,
+        crate::ai::suggest::SuggestResult,
         event::EventTopic,
         event::HelloEvent,
         event::ResyncEvent,
@@ -566,6 +569,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(bulk::bulk_posts))
         .routes(routes!(posts::get_post, post_edit::update_post))
         .routes(routes!(search::search))
+        .routes(routes!(search_suggest::search_suggest))
         .routes(routes!(tags::overview))
         .routes(routes!(tags::list))
         .routes(routes!(tags::entities))

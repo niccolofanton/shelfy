@@ -169,6 +169,8 @@ pub struct RateLimitConfig {
     pub user: Option<Quota>,
     /// Searches of a user: 5 per second.
     pub search: Option<Quota>,
+    /// Suggestion chips: 1 per second, 2 at once.
+    pub suggest: Option<Quota>,
     /// Client error reports of a user: 10 per minute (P1 assumption).
     pub client_errors: Option<Quota>,
     /// Most keys each limiter tracks.
@@ -180,6 +182,7 @@ impl Default for RateLimitConfig {
         Self {
             user: Some(Quota::per_second(20).burst(60)),
             search: Some(Quota::per_second(5)),
+            suggest: Some(Quota::per_second(1).burst(2)),
             client_errors: Some(Quota::per_minute(10)),
             max_keys: MAX_KEYS,
         }
@@ -194,6 +197,7 @@ impl RateLimitConfig {
         Self {
             user: None,
             search: None,
+            suggest: None,
             client_errors: None,
             max_keys: MAX_KEYS,
         }
@@ -207,6 +211,8 @@ pub enum Scope {
     User,
     /// Searches.
     Search,
+    /// AI suggestion chips.
+    Suggest,
     /// Client error reports.
     ClientErrors,
 }
@@ -217,6 +223,7 @@ impl Scope {
         match self {
             Self::User => "too many requests from this user",
             Self::Search => "too many searches from this user",
+            Self::Suggest => "too many suggestions from this user",
             Self::ClientErrors => "too many error reports from this user",
         }
     }
@@ -229,6 +236,7 @@ pub fn route_scope(method: &Method, path: &str, query: Option<&str>) -> Option<S
     let read = *method == Method::GET || *method == Method::HEAD;
     match path {
         "/api/v1/search" if read => Some(Scope::Search),
+        "/api/v1/search/suggest" if *method == Method::POST => Some(Scope::Suggest),
         "/api/v1/posts" | "/api/v1/posts/count" if read && has_text_query(query) => {
             Some(Scope::Search)
         }
@@ -330,6 +338,7 @@ fn nanos(duration: Duration) -> u64 {
 pub struct RateLimits {
     user: Option<Limiter>,
     search: Option<Limiter>,
+    suggest: Option<Limiter>,
     client_errors: Option<Limiter>,
 }
 
@@ -341,6 +350,7 @@ impl RateLimits {
         Self {
             user: limiter(config.user),
             search: limiter(config.search),
+            suggest: limiter(config.suggest),
             client_errors: limiter(config.client_errors),
         }
     }
@@ -351,6 +361,7 @@ impl RateLimits {
         match scope {
             Scope::User => self.user.as_ref(),
             Scope::Search => self.search.as_ref(),
+            Scope::Suggest => self.suggest.as_ref(),
             Scope::ClientErrors => self.client_errors.as_ref(),
         }
     }
@@ -498,6 +509,8 @@ mod tests {
         assert_eq!((user.period(), user.burst_size()), (50 * MS, 60));
         let search = config.search.unwrap();
         assert_eq!((search.period(), search.burst_size()), (200 * MS, 5));
+        let suggest = config.suggest.unwrap();
+        assert_eq!((suggest.period(), suggest.burst_size()), (1000 * MS, 2));
         let reports = config.client_errors.unwrap();
         assert_eq!(
             (reports.period(), reports.burst_size()),
@@ -545,6 +558,28 @@ mod tests {
         assert_eq!(
             reports.check_at(&alice(), t0 + Duration::from_secs(1)),
             Err(Duration::from_secs(5))
+        );
+    }
+
+    #[test]
+    fn suggestions_allow_two_at_once_then_one_each_second() {
+        let limiter = Limiter::new(RateLimitConfig::default().suggest.unwrap(), MAX_KEYS);
+        let at = Duration::from_secs(10);
+        assert_eq!(limiter.check_at(&alice(), at), Ok(()));
+        assert_eq!(limiter.check_at(&alice(), at), Ok(()));
+        assert_eq!(limiter.check_at(&alice(), at), Err(Duration::from_secs(1)));
+        assert_eq!(limiter.check_at(&alice(), at + 1000 * MS), Ok(()));
+        assert_eq!(
+            limiter.check_at(&alice(), at + 1000 * MS),
+            Err(Duration::from_secs(1))
+        );
+        assert_eq!(
+            route_scope(&Method::POST, "/api/v1/search/suggest", None),
+            Some(Scope::Suggest)
+        );
+        assert_eq!(
+            route_scope(&Method::GET, "/api/v1/search/suggest", None),
+            None
         );
     }
 

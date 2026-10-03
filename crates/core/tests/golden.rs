@@ -39,6 +39,7 @@ use shelfy_core::web::{color, similar};
 /// that directory.
 const CHECKED: &[&str] = &[
     "ai/catalog/",
+    "ai/suggest/",
     "ai/clusters/",
     "ai/aliases/",
     "ai/chat/",
@@ -904,4 +905,11 @@ fn import_normalization_matches_desktop_bytes() {
             shelfy_core::import::normalize::desktop(&value, platform)
         });
     }
+}
+
+#[test]
+fn suggestion_requests_match_desktop() {
+    check("ai/suggest/request", |(query,): (String,)| {
+        shelfy_core::ai::suggest::request(&query).unwrap()
+    });
 }
