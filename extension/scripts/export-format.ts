@@ -30,9 +30,10 @@ export interface ExportMedia {
   expiresAt: number | null;
 }
 
+export type ExportSource = CaptureSource | 'accepted';
 export interface ExportItemListing {
   key: string;
-  sources: CaptureSource[];
+  sources: ExportSource[];
   firstCapturedAt: number;
   lastCapturedAt: number;
 }

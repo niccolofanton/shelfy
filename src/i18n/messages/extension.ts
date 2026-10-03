@@ -10,6 +10,9 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    'sync.exportReport': 'Esporta report delle sincronizzazioni',
+    'sync.reportEmpty': 'Nessun elemento accettato negli ultimi 7 giorni.',
+    'sync.reportFailed': 'Impossibile esportare il report. Riprova.',
     'tasks.title': 'Recupero media',
     'tasks.waitingInstagram': '{count} elementi in attesa — apri Instagram',
     'tasks.waiting': '{count} elementi in attesa',
@@ -237,6 +240,9 @@ export default {
     'sync.refused.not_syncing': 'Nessuna sincronizzazione in corso in questa scheda.',
   },
   en: {
+    'sync.exportReport': 'Export run report',
+    'sync.reportEmpty': 'No accepted items in the last 7 days.',
+    'sync.reportFailed': 'Could not export the report. Try again.',
     'tasks.title': 'Media recovery',
     'tasks.waitingInstagram': '{count} items waiting — open Instagram',
     'tasks.waiting': '{count} items waiting',

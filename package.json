@@ -37,6 +37,7 @@
     "test:e2e": "tsx build/esbuild-electron.ts && playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:web": "playwright test -c web/playwright.config.ts",
+    "test:e2e:extension": "playwright test -c extension/e2e/playwright.config.ts",
     "test:e2e:web:server": "playwright test -c web/e2e/server/playwright.config.ts",
     "perf:gallery": "cross-env PERF=1 playwright test e2e/perf-gallery.spec.ts --workers=1",
     "perf:gallery:web": "cross-env PERF=1 playwright test -c web/playwright.config.ts web/e2e/perf-gallery.spec.ts --workers=1",

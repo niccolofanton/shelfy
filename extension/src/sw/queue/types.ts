@@ -125,6 +125,11 @@ export function normalizeRun(value: Run): Run {
 
 /** The keys one ingest batch got accepted under (C5 `results[].key`), for the run report. */
 export interface RunKeys {
+  /** Additive metadata: legacy unbound records are excluded from exports. */
+  accountTokenId?: string;
+  platform?: Platform;
+  listingKey?: string;
+  trigger?: Trigger;
   /** The batch's Idempotency-Key. */
   id: string;
   runId: string;
@@ -259,6 +264,7 @@ export interface QueueTx {
   putRunKeys(record: RunKeys): Promise<void>;
   /** A run's accepted keys, oldest batch first. */
   runKeys(runId: string): Promise<RunKeys[]>;
+  allRunKeys(): Promise<RunKeys[]>;
   /** Deletes the records older than `before`; returns how many. */
   pruneRunKeys(before: number): Promise<number>;
 }

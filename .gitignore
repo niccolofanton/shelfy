@@ -93,3 +93,6 @@ FIX-REVIEW-REPORT.md
 # Cloudflare Worker local state (feedback relay)
 .wrangler/
 **/.dev.vars
+
+# Synthetic extension CI artifacts
+extension/e2e-results/

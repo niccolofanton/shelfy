@@ -176,6 +176,7 @@ export const MSG = {
   plannerStartAll: 'shelfy/planner.start-all',
   plannerStop: 'shelfy/planner.stop',
   plannerSchedule: 'shelfy/planner.schedule',
+  syncReport: 'shelfy/sync.report',
   syncStart: 'shelfy/sync.start',
   /** panel → worker: stop the sync running in a tab. */
   syncStop: 'shelfy/sync.stop',

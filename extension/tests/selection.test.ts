@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { type SelectDeps, SelectionService } from '../src/content/select/service';
 import { MSG } from '../src/shared/protocol';
 import { hasMessage, translate } from '../src/shared/i18n';
+import { exportRunReport } from '../src/sw/sync/report';
 import { harness, igItem } from './helpers';
 
 function selectionHarness(count = 0) {
@@ -58,6 +59,7 @@ function selectionHarness(count = 0) {
     },
     client: { ext: '0.2.0', parser: 'fixture' },
     changed: () => undefined,
+    accepted: (record) => h.queue.recordAcceptedKeys(record),
   };
   const service = new SelectionService(deps);
   const restart = () => new SelectionService(deps);
@@ -71,6 +73,19 @@ const sender = {
 };
 
 describe('extension selection', () => {
+  it('exports server-accepted selection keys without captured content', async () => {
+    const h = selectionHarness(1);
+    await h.pairNow();
+    const answer = await h.service.command(7, 'import', 'en', 'none', null);
+    expect(answer.ok).toBe(true);
+    const report = await exportRunReport(h.queue, h.store, Date.now());
+    expect(report.runs[0]).toMatchObject({
+      trigger: 'selection',
+      listingKey: 'instagram:ig_collection:17899999999',
+      keys: ['ig_3400000000000000001'],
+    });
+    expect(JSON.stringify(report)).not.toContain('caption');
+  });
   it('looks up bounded chunks with the extension token, matches DOM aliases, opens the saved permalink', async () => {
     const h = selectionHarness();
     await h.pairNow();

@@ -191,6 +191,12 @@ jobs:
       - run: rustup toolchain install --no-self-update
       - uses: Swatinem/rust-cache@v2
       - run: CARGO_TARGET_DIR="$PWD/target" CARGO_INCREMENTAL=0 cargo build --release -p shelfy-server
+      - name: Share the real server build with extension CI
+        uses: actions/upload-artifact@v4
+        with:
+          name: shelfy-server-e2e
+          path: target/release/shelfy-server
+          retention-days: 1
       # The live AI settings specs launch the deterministic provider. Building
       # shelfy-server alone does not enable the stub's required feature.
       - name: Build the live suite's AI test provider
@@ -199,6 +205,43 @@ jobs:
       - run: pnpm run test:e2e:web:server
         env:
           CI: 'true'
+
+  # P2-19 exercises the unpacked MV3 extension with real server APIs and
+  # TLS CDN fixtures. It neither signs into social accounts nor proves P2-23 parity.
+  extension-e2e:
+    needs: web-e2e-live
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.20.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: shelfy-server-e2e
+          path: target/release
+      - run: chmod +x target/release/shelfy-server
+      - run: pnpm run web:build
+      - run: pnpm run test:e2e:extension
+        env:
+          CI: 'true'
+      - name: Build the production-origin extension artifact
+        run: pnpm exec tsx extension/build.ts --out extension/dist
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extension-e2e-results
+          path: extension/e2e-results
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-dist
+          path: extension/dist
+          retention-days: 14
 
   lighthouse:
     runs-on: ubuntu-latest

@@ -104,6 +104,7 @@ function wrap(tx: IDBTransaction): QueueTx {
       ((await request(runKeys.index('runId').getAll(IDBKeyRange.only(runId)))) as RunKeys[]).sort(
         (a, b) => a.at - b.at,
       ),
+    allRunKeys: async () => (await request(runKeys.getAll())) as RunKeys[],
     pruneRunKeys: async (before) => {
       const ids = await request(
         runKeys.index('at').getAllKeys(IDBKeyRange.upperBound(before, true)),

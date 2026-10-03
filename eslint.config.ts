@@ -33,6 +33,7 @@ export default tseslint.config(
       'dist/**',
       'dist-electron/**',
       'extension/dist/**',
+      'extension/e2e-results/**',
       'web/dist/**',
       'capture/dist/**',
       'release/**',

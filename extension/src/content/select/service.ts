@@ -16,6 +16,7 @@ import {
 import { failureCode } from '../../sw/errors';
 import { itemBytes, prefilterBatch, type WireItem } from '../../sw/prefilter';
 import type { SettingsStore, StorageArea } from '../../sw/settings';
+import type { RunKeys } from '../../sw/queue/types';
 import type { Sender } from '../../sw/router';
 import { selectMain } from './main';
 
@@ -27,6 +28,7 @@ export interface SelectDeps {
   execute: typeof chrome.scripting.executeScript;
   client: { ext: string; parser: string };
   changed(): void;
+  accepted?(record: RunKeys): Promise<void>;
 }
 export type SelectAnswer =
   | { ok: true; enabled: boolean; count: number; imported?: number; pending?: boolean }
@@ -331,6 +333,18 @@ export class SelectionService {
       if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
       if (!response.ok) return no(failureCode(response.failure));
       const result = parseIngestResult(response.data);
+      await this.deps.accepted?.({
+        id: batch.id,
+        runId: journal.runId,
+        serverRunId: journal.runId,
+        accountTokenId: ctx.tokenId,
+        platform: journal.platform,
+        listingKey: journal.listingKey,
+        trigger: 'selection',
+        at: Date.now(),
+        keys: result.results.map((entry) => entry.key),
+      });
+      if (!(await this.paired(tabId, ctx.tokenId))) return no('not_paired');
       for (const item of result.results) {
         const entry = batch.entries[item.index];
         if (entry && /^(ig|x|pin)_[A-Za-z0-9_-]{1,196}$/.test(item.key))

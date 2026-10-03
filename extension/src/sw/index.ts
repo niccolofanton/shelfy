@@ -42,6 +42,7 @@ import { Router } from './router';
 import { SettingsStore } from './settings';
 import { panelState } from './state';
 import { SyncService } from './sync/service';
+import { exportRunReport } from './sync/report';
 import { Uploader } from './uploader';
 
 const ALARM = {
@@ -137,7 +138,9 @@ const uploader = new Uploader({
   changed,
   closed: async (run): Promise<void> => {
     await sync.closed(run);
-    if (run.trigger !== 'passive') await pollTasks();
+    // C6 long-polls for up to 25 seconds. It must not hold the uploader's
+    // flush lock: the next incremental run needs its page accepted at the gate.
+    if (run.trigger !== 'passive') void pollTasks().catch((err: unknown) => log('tasks', err));
   },
 });
 
@@ -217,6 +220,7 @@ const plannerScheduler = new PlannerScheduler({
 });
 
 const selection = new SelectionService({
+  accepted: (record) => queue.recordAcceptedKeys(record),
   api,
   store,
   storage: chrome.storage.local,
@@ -441,6 +445,7 @@ const router = new Router(chrome.runtime.id, origin, log)
     return { ok: true };
   })
   // P2-13: explicit syncs. The panel starts and stops them; the tab's controller reports.
+  .internal(MSG.syncReport, 'page', () => exportRunReport(queue, store, now()))
   .internal(MSG.syncStart, 'page', async (message) => {
     const request = parseSyncStartRequest(message);
     if (!request) return { ok: false, code: 'bad_request' };

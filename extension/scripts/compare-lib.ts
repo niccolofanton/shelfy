@@ -1,3 +1,4 @@
+import { runReportExport } from './run-report-export';
 // SPIKE-3 parity: the extension's capture vs the desktop's, per listing. CLI: compare.ts.
 //
 // Desktop data read (nothing else, never written):
@@ -27,7 +28,12 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
-import { parseExportFile, type ExportFile, type ExportItem } from './export-format';
+import {
+  parseExportFile,
+  type ExportFile,
+  type ExportItem,
+  type ExportSource,
+} from './export-format';
 import { canonicalIdentity } from '../src/shared/identity';
 import { listingKey, parseListingKey, type ListingKind } from '../src/shared/listing';
 import {
@@ -278,7 +284,10 @@ export function selectExtension(
         const inScope = wholePlatform
           ? SYNC_KINDS[spec.platform].includes(parsed.kind)
           : membership.key === spec.key;
-        return inScope && membership.sources.some((source) => !excludeSources.has(source));
+        return (
+          inScope &&
+          membership.sources.some((source) => source === 'accepted' || !excludeSources.has(source))
+        );
       }),
   );
 }
@@ -294,7 +303,7 @@ export interface MissingPost {
 export interface ExtraItem {
   key: string;
   postUrl: string;
-  sources: CaptureSource[];
+  sources: ExportSource[];
 }
 
 export interface ListingComparison {
@@ -403,7 +412,7 @@ export function compareListing(
       .map((alias) => aliasToGroup.get(alias))
       .find((g): g is number => g !== undefined);
     if (group === undefined) {
-      const sources = new Set<CaptureSource>();
+      const sources = new Set<ExportSource>();
       for (const membership of item.listings) for (const s of membership.sources) sources.add(s);
       extra.push({ key: item.key, postUrl: item.postUrl, sources: [...sources] });
     } else if (matchedGroups.has(group)) duplicates += 1;
@@ -499,7 +508,7 @@ function percent(value: number | null): string {
 
 export function formatReport(report: CompareReport, show = DEFAULT_SHOW): string {
   const lines: string[] = [];
-  lines.push('SPIKE-3 parity: extension export vs desktop');
+  lines.push('Shelfy parity: extension vs desktop');
   lines.push(
     `  desktop:   ${report.desktop.kind} ${report.desktop.path} (${report.desktop.rows} posts)`,
   );
@@ -582,12 +591,13 @@ export function formatReport(report: CompareReport, show = DEFAULT_SHOW): string
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
 export const USAGE = `Usage:
-  pnpm exec tsx extension/scripts/compare.ts --extension <export.json>
+  pnpm exec tsx extension/scripts/compare.ts (--run-report <report.json> | --extension <export.json>)
       (--desktop-db <shelfy.sqlite> | --desktop-export <saved-posts.json>)
       [--listing <key>]... [--exclude-source <source>]... [--threshold <0-1 or %>]
       [--json <report.json>] [--show <n>]
 
-  --extension       "Export JSON" file from the extension side panel
+  --run-report      accepted keys exported from the product extension (7-day retention)
+  --extension       legacy SPIKE-3 "Export JSON" file (choose exactly one input)
   --desktop-db      desktop library DB, opened read-only (quit the desktop app first)
   --desktop-export  desktop JSON export ({posts, collections})
   --listing         listing key to compare (repeatable); default: every comparable listing in
@@ -619,6 +629,7 @@ function parseThreshold(raw: string | undefined): number {
 
 const CLI_OPTIONS = {
   extension: { type: 'string' },
+  'run-report': { type: 'string' },
   'desktop-db': { type: 'string' },
   'desktop-export': { type: 'string' },
   listing: { type: 'string', multiple: true },
@@ -647,11 +658,17 @@ export function runCompareCli(argv: readonly string[], io: CliIo): number {
     return 0;
   }
   try {
-    if (!values.extension) throw new Error('--extension is required');
+    const input = values['run-report'] ?? values.extension;
+    if (!input || (!!values.extension && !!values['run-report']))
+      throw new Error('pass exactly one of --extension or --run-report');
     const dbPath = values['desktop-db'];
     const exportPath = values['desktop-export'];
     if (!dbPath === !exportPath)
       throw new Error('pass exactly one of --desktop-db or --desktop-export');
+    if (values['run-report'] && values['exclude-source']?.length)
+      throw new Error(
+        '--exclude-source is only available for capture exports; run reports contain accepted keys',
+      );
     const excludeSources = new Set<CaptureSource>();
     for (const source of values['exclude-source'] ?? []) {
       if (!isSource(source))
@@ -662,7 +679,9 @@ export function runCompareCli(argv: readonly string[], io: CliIo): number {
     const show = values.show === undefined ? DEFAULT_SHOW : Number(values.show);
     if (!Number.isInteger(show) || show < 0) throw new Error(`invalid --show "${values.show}"`);
 
-    const extension = loadExtensionExport(values.extension);
+    const extension = values['run-report']
+      ? runReportExport(JSON.parse(readFileSync(input, 'utf8')))
+      : loadExtensionExport(input);
     const desktop = dbPath ? loadDesktopDb(dbPath) : loadDesktopExport(exportPath as string);
     const keys = values.listing?.length ? values.listing : defaultListingKeys(extension);
     for (const key of keys)
@@ -670,7 +689,7 @@ export function runCompareCli(argv: readonly string[], io: CliIo): number {
     const report = buildReport(
       desktop,
       extension,
-      values.extension,
+      input,
       keys,
       { threshold, excludeSources },
       io.now?.() ?? new Date(),

@@ -14,6 +14,7 @@ import {
   type SyncStartAnswer,
 } from '../../shared/protocol';
 import type { PanelState } from '../../sw/state';
+import type { RunReport } from '../../shared/run-report';
 import type { SyncView } from '../../sw/sync/history';
 import { button, el, setText } from '../dom';
 import type { PanelContext, PanelSection } from '../section';
@@ -168,7 +169,34 @@ export const syncSection: PanelSection = {
     );
     stop.hidden = true;
     const actions = el('div', { className: 'actions' });
-    actions.append(start, stop);
+    const exportReport = button(
+      t('sync.exportReport'),
+      () => {
+        exportReport.disabled = true;
+        void ctx
+          .send<RunReport>({ kind: MSG.syncReport })
+          .then((report) => {
+            if (!report.runs?.length) {
+              setText(status, t('sync.reportEmpty'));
+              return;
+            }
+            const url = URL.createObjectURL(
+              new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' }),
+            );
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `shelfy-run-report-${new Date().toISOString().slice(0, 10)}.json`;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          })
+          .catch(() => setText(status, t('sync.reportFailed')))
+          .finally(() => {
+            exportReport.disabled = false;
+          });
+      },
+      { testId: 'sync-export-report' },
+    );
+    actions.append(start, stop, exportReport);
 
     root.append(
       el('h2', { text: t('sync.title') }),

@@ -112,6 +112,7 @@ export class MemoryQueueStore implements QueueStore {
           .filter((record) => record.runId === runId)
           .sort((a, b) => a.at - b.at)
           .map(copy),
+      allRunKeys: async () => [...state().runKeys.values()].map(copy),
       pruneRunKeys: async (before) => {
         let removed = 0;
         for (const [id, record] of state().runKeys)

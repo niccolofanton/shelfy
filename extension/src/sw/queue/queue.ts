@@ -19,6 +19,7 @@ import type { BatchClient, CollectionMode, IngestResult } from '../contracts';
 import { itemBytes, type WireItem } from '../prefilter';
 import {
   RUN_SYNC_DEFAULTS,
+  RUN_KEYS_TTL_MS,
   type Batch,
   type Chunk,
   type Counters,
@@ -427,6 +428,14 @@ export class Queue {
     });
   }
 
+  /** Records accepted keys from direct C5 clients, such as selection imports. */
+  recordAcceptedKeys(record: RunKeys): Promise<void> {
+    return this.store.transaction(async (tx) => {
+      await tx.putRunKeys(record);
+      await tx.pruneRunKeys(record.at - RUN_KEYS_TTL_MS);
+    });
+  }
+
   /** The server took the batch. */
   complete(batchId: string, result: IngestResult, at: number): Promise<void> {
     return this.store.transaction(async (tx) => {
@@ -449,8 +458,17 @@ export class Queue {
             run.knownStreak = entry.outcome === 'known' ? run.knownStreak + 1 : 0;
         });
         const keys = result.results.map((entry) => entry.key);
+        const owner = touched.get(batch.runId);
         if (keys.length)
           await tx.putRunKeys({
+            ...(owner?.accountTokenId
+              ? {
+                  accountTokenId: owner.accountTokenId,
+                  platform: owner.platform,
+                  listingKey: owner.listingKey,
+                  trigger: owner.trigger,
+                }
+              : {}),
             id: batch.key,
             runId: batch.runId,
             serverRunId: batch.sentRunId,
@@ -624,6 +642,10 @@ export class Queue {
       await tx.putRun(run);
       return run;
     });
+  }
+
+  acceptedRecords(): Promise<RunKeys[]> {
+    return this.store.transaction((tx) => tx.allRunKeys());
   }
 
   /** The keys the server accepted for a run, in the last 7 days (P2-19's run report). */
