@@ -157,6 +157,18 @@ describe('web AI settings', () => {
     view.unmount();
     expect(h.listeners.size).toBe(0);
   });
+  it('diagnoses embedding and dictation routes for a text-only operator, including explicit overrides', async () => {
+    const h = fixture([
+      { ...NODE, models: { text: 'text-only', vision: null, embed: null }, stt: false },
+    ]);
+    settings(h.api);
+    await screen.findByLabelText('Cataloging');
+    expect(screen.getAllByText('No provider is available for this route.')).toHaveLength(2);
+    fireEvent.change(screen.getByLabelText('Embeddings'), { target: { value: 'operator' } });
+    fireEvent.change(screen.getByLabelText('Dictation'), { target: { value: 'operator' } });
+    expect(screen.getAllByText('No provider is available for this route.')).toHaveLength(2);
+  });
+
   it('keeps the newest SSE status when an older provider snapshot finishes later', async () => {
     const h = fixture();
     let complete!: (providers: AiProviderSummary[]) => void;

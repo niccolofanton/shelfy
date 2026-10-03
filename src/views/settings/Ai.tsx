@@ -130,11 +130,18 @@ export default function AiSettings({ api }: { api: AiProvidersApi }): React.JSX.
               {AI_TASKS.map((task) => {
                 const chosen = draft.aiRouting[task];
                 const vision = task === 'catalog' || task === 'qc';
+                const supports = (provider: NonNullable<typeof providers>[number]): boolean =>
+                  vision
+                    ? !!provider.models.vision
+                    : task === 'embed'
+                      ? !!provider.models.embed
+                      : task === 'stt'
+                        ? provider.stt
+                        : true;
                 const effective = chosen
                   ? providers?.find((p) => p.id === chosen)
-                  : providers?.find((p) => !vision || p.models.vision !== null);
-                const noRoute =
-                  providers !== null && (!effective || (vision && !effective.models.vision));
+                  : providers?.find(supports);
+                const noRoute = providers !== null && (!effective || !supports(effective));
                 return (
                   <div key={task}>
                     <label className="grid grid-cols-[minmax(100px,1fr)_minmax(120px,1fr)] items-center gap-3 text-xs text-gray-300">
