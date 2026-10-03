@@ -219,6 +219,7 @@ async fn language_and_none_status_facets_match_lists_counts_and_bulk_filter_quer
             UPDATE posts SET ai_language='it' WHERE key='ig_3101';",
         )
         .unwrap();
+        Ok(())
     })
     .await;
     let app = t.app_as(ALICE);
