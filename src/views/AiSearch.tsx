@@ -737,6 +737,7 @@ export default function AiSearch({
 }: AiSearchProps): React.JSX.Element {
   const t = useT('aiSearch');
   const td = useT('dictation');
+  const { lang } = useLang();
   const client = useShelfy();
   const isWeb = !client.capabilities.localModels;
   const [mobileTab, setMobileTab] = useState<'chat' | 'results'>('chat');
@@ -790,7 +791,23 @@ export default function AiSearch({
     if (!clean) return;
     setDraft((d) => (d.trim() ? `${d.trim()} ${clean}` : clean));
   }, []);
-  const dictation = useDictation({ onResult: handleDictationResult, language: 'it' });
+  const dictation = useDictation({
+    onResult: handleDictationResult,
+    language: isWeb ? lang : 'it',
+  });
+
+  // Composer and open result dialogs contain account data outside the chat store.
+  useEffect(() => {
+    if (!isWeb) return;
+    const clearLocal = () => {
+      setDraft('');
+      setActivePost(null);
+      setCollectionModal(null);
+      setMobileTab('chat');
+    };
+    clearLocal();
+    return client.ai?.search?.onSessionEnded?.(clearLocal);
+  }, [client, isWeb]);
 
   // ── Detail modal: open on card click + step through the current results ────
   const goPrevPost = useCallback(() => {
@@ -861,6 +878,7 @@ export default function AiSearch({
 
   const onInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.nativeEvent.isComposing) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         handleSend();
@@ -908,7 +926,7 @@ export default function AiSearch({
         return;
       }
       await client.addPostsToCollections(ids, [created.id]);
-      // Trust the backend count; show the number only when it's a real value.
+      // The collection action saves the currently loaded result slice.
       showToast(t('collectionCreatedWithPosts', { name, n: ids.length }));
     },
     [collectionModal, showToast, t, client],

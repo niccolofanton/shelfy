@@ -8,6 +8,7 @@ import type { ChatSearchResult } from '../../../types/electron-api';
 import type { AiSearchApi } from '@ui/api/ai';
 import { WEB_CAPABILITIES } from '../../src/api/httpClient';
 const callbacks = new Map<AiSearchApi, (v: unknown) => void>();
+const sessions = new Map<AiSearchApi, Set<() => void>>();
 function api() {
   const value = {
     byTags: vi.fn(async () => ({ posts: [], total: 2 })),
@@ -30,6 +31,15 @@ function api() {
       return () => callbacks.delete(value);
     }),
     onResultsStale: vi.fn(() => () => {}),
+    onSessionEnded: vi.fn((cb: () => void) => {
+      const listeners = sessions.get(value) ?? new Set<() => void>();
+      sessions.set(value, listeners);
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+        if (!listeners.size) sessions.delete(value);
+      };
+    }),
     getProviders: vi.fn(async () => []),
     selectProvider: vi.fn(async () => []),
     getModelStatus: vi.fn(async () => ({ ready: false })),
@@ -153,5 +163,20 @@ describe('web conversation and filter state', () => {
     expect(screen.queryByTestId('active-tag-chip')).toBeNull();
     expect(first.cancelChat).toHaveBeenCalled();
     expect(callbacks.has(first)).toBe(false);
+  });
+  it('clears the conversation and filters immediately when the session ends', async () => {
+    const search = api();
+    render(
+      <ShelfyProvider client={client(search)}>
+        <AiSearch />
+      </ShelfyProvider>,
+    );
+    send('private session');
+    await screen.findByTestId('chat-message-assistant');
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'private draft' } });
+    act(() => sessions.get(search)?.forEach((cb) => cb()));
+    expect(screen.getByTestId('chat-input')).toHaveValue('');
+    expect(screen.queryByText('private session')).toBeNull();
+    expect(screen.queryByTestId('active-tag-chip')).toBeNull();
   });
 });
