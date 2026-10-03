@@ -55,6 +55,8 @@ export default {
       'La conferma è scaduta o non corrisponde. Richiedi una nuova stima.',
     'code.validation_failed': 'Alcuni valori non sono validi.',
     'code.provider_key_invalid': 'Il provider AI ha rifiutato la chiave.',
+    'code.import_format_unknown':
+      'Il file di importazione non è valido o usa un formato non supportato.',
     'code.ai_not_configured': 'Nessun provider AI è configurato per questa operazione.',
     'code.ai_vault_disabled':
       'Il server non è ancora configurato per salvare le chiavi dei provider AI.',
@@ -113,6 +115,7 @@ export default {
       'The confirmation expired or does not match. Request a new estimate.',
     'code.validation_failed': 'Some values are not valid.',
     'code.provider_key_invalid': 'The AI provider refused the key.',
+    'code.import_format_unknown': 'The import file is invalid or uses an unsupported format.',
     'code.ai_not_configured': 'No AI provider is set up for this task.',
     'code.ai_vault_disabled': 'The server is not yet configured to store AI provider keys.',
     'code.ai_consent_required': 'Sending your content to this provider needs your consent first.',
