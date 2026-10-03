@@ -36,13 +36,21 @@ Status: todo.
 From the owner's handoff of 2026-10-03 (§17.4–17.5), for when P3-13 has landed and passed its acceptance tests:
 
 1. Tag the next server release on a tip whose CI is green (F20), after re-running the whole suite on that tip.
-2. In osn: pin the image; set `SHELFY_OPERATOR_AI_URL` (with `/v1`), `_KEY`, `_MODEL=ornith-1.5-35b-a3b`, `_VISION_MODEL=qwen3.8-27b`, `_CONCURRENCY=1` and an explicit `_TIMEOUT` (the documented default is 60 s; a catalog answer can take about 150 s on qwen), `SHELFY_OPERATOR_STT_URL` and `_KEY`, and the AI and STT origins in `SHELFY_EGRESS_ALLOW_ORIGINS` (the osn env template does not have these names yet). Record Hermes's state before and after; run `admin ai-probe operator` (never print the keys).
+2. In osn: pin the image; set `SHELFY_OPERATOR_AI_URL` (with `/v1`), `_KEY`, `_MODEL=ornith-1.5-35b-a3b`, `_VISION_MODEL=qwen3.8-27b`, `_CONCURRENCY=1` and `_TIMEOUT=240`, `SHELFY_OPERATOR_STT_URL` and `_KEY`, and the AI and STT origins in `SHELFY_EGRESS_ALLOW_ORIGINS` (osn f2d209d now wires these names; encrypted credential and exact origins are prepared, not applied). Record Hermes's state before and after; run `admin ai-probe operator` (never print the keys).
 3. Run the 40-post gold sample on the node, one request at a time after `health` and `models`; keep a private report (composite, per field, worst cases, done/gated/error, observed pace). The scorer's 1.000 on the gold itself is a format self-check, not the node's score.
 4. Check the latest backup and the deployed version; find the owner's user id through the admin CLI.
-5. Ask for the estimate on an Instagram selector with mode `all`; note `waitingForMedia` and `alreadyQueued`. At the lane's provisional 180 s per post, 3,997 posts take about 200 hours at concurrency 1: measure the pace on the 40 posts and update the ETA first. The install left 1,641 posts in `client` and 223 pending, and not every video was migrated, so the run will exclude posts without media: list them in aggregate with a recovery path.
+5. Ask for the estimate on an Instagram selector with mode `all`; note `waitingForMedia` and `alreadyQueued`. The latest read-only census has 3,997 active Instagram posts: 2,136 analyzable, 1,861 waiting and zero queued. All waiting covers have expired URLs. Keep the full Instagram scope visible while recovering media; do not call the eligible subset the completed full library.
 6. Confirm with the returned token and a stable Idempotency-Key; watch one post go pending → analyzing → done with its tags saved; then monitor done, error, waiting, provider state and backlog without re-launching `all` while the first run is queued.
 
-Status: todo (needs P3-13).
+Status: engine integrated; production deploy and owner run not started. X1 full40 validation is running serially on Ornyth.
+
+Additional gates and recovery, recorded on 2026-10-03:
+
+- Match the evaluated input profile: `deep=true` gives still images at 1024; the owner Instagram library currently has no stored video objects, so this does not imply frame extraction. Use poster/slide plus weak caption evidence; do not download all videos or run STT implicitly.
+- Admin helper `24a3368` can recover 81 existing poster files from the verified private bundle. After backup, perform its live default dry-run first. Stop only Shelfy API, apply with `--server-stopped --apply`, restart and recount readiness. Do not substitute the local mirror dry-run for a live check.
+- Remaining expired URLs need P2-17 refresh through the already authenticated Instagram tab. Its synthetic tests pass; independent review is correcting legacy queue account binding before deployment. No automated live social action has run yet.
+- P3-18 settings and P3-16 taxonomy jobs are integrated; P3-20 queue UI and BYOK remain separate tracked work. The owner first run must still verify persisted tags and progress on production.
+- Record the exact release commit, CI run, image digest, backup evidence and unchanged Hermes health/restart count. The latest published CI85c37a8 has all blocking jobs green; Lighthouse F18 remains open. No new release tag exists after rc.5 yet.
 
 ## P2-13: the first real syncs (owner, P2-23)
 
