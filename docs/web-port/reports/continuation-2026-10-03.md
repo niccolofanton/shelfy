@@ -73,3 +73,10 @@ Ownership is taken from the latest log, not inferred from a missing remote branc
 | `512f96c` | feat(extension): add "Sync now" and the folder chooser to the side panel (P2-13) |
 | `227f9cf` | test(extension): add the sync smoke test on synthetic pages (P2-13) |
 | `abdd810` | docs(web-port): mark P2-13 done, add its notes and the first real sync checks |
+
+## Review of submitted cloud branches
+
+| Branch | Review status | Action |
+|---|---|---|
+| P2-14 `c16c863` | F22 blocker: forged/stale upload completion and polling lease ownership require hardening | Resume submitted code in local review lane; do not mark complete or deploy unchanged |
+| UX-0 `5b739eb` | Candidate ready for rebase and verification; Jobs target-size KNOWN list predates UX-6 | Reconcile stale known findings and run real-server UX suite before integration |
