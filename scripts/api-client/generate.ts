@@ -29,7 +29,9 @@ const COMMAND = 'pnpm exec tsx scripts/api-client/generate.ts';
 /** The generated file, formatted. */
 async function render(): Promise<string> {
   const document = JSON.parse(fs.readFileSync(SOURCE, 'utf8')) as OpenAPI3;
-  const ast = await openapiTS(document, { silent: true });
+  // A server-side default does not require callers to send that property.
+  // Preserve OpenAPI's explicit `required` list for request bodies.
+  const ast = await openapiTS(document, { silent: true, defaultNonNullable: false });
   const header =
     COMMENT_HEADER +
     '// Types of the Shelfy Web API, from crates/server/openapi.json.\n' +

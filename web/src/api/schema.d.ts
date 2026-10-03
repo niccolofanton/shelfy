@@ -2424,7 +2424,7 @@ export interface components {
        * @description Validity in whole days: 1..365, default 90 when omitted. Never indefinite.
        * @default 90
        */
-      ttlDays: number;
+      ttlDays?: number;
     };
     /**
      * @description Which assets of a post are archived: the desktop's "asset types to
@@ -2444,7 +2444,7 @@ export interface components {
        * @description Posts by `archive_state`.
        * @default {}
        */
-      byState: {
+      byState?: {
         [key: string]: number;
       };
       /**
@@ -2453,42 +2453,42 @@ export interface components {
        *     tasks.
        * @default 0
        */
-      igCoverExpired: number;
+      igCoverExpired?: number;
       /**
        * Format: int64
        * @description Instagram covers whose URL has no expiry.
        * @default 0
        */
-      igCoverNoExpiry: number;
+      igCoverNoExpiry?: number;
       /**
        * Format: int64
        * @description Instagram covers to archive whose signed URL is still valid: archive
        *     them first, before they expire.
        * @default 0
        */
-      igCoverValid: number;
+      igCoverValid?: number;
       /**
        * Format: int64
        * @description Image slides without a stored image.
        * @default 0
        */
-      imageSlidesPending: number;
+      imageSlidesPending?: number;
       /**
        * Format: int64
        * @default 0
        */
-      otherCover: number;
+      otherCover?: number;
       /**
        * Format: int64
        * @default 0
        */
-      pinterestCover: number;
+      pinterestCover?: number;
       /**
        * Format: int64
        * @description X covers to archive (they do not expire).
        * @default 0
        */
-      xCover: number;
+      xCover?: number;
     };
     /**
      * @description Archive progress of a post's media (plan §2.13).
@@ -2917,7 +2917,7 @@ export interface components {
        * Format: int32
        * @default 6
        */
-      maxPages: number | null;
+      maxPages?: number | null;
       singlePage?: boolean;
       url: string;
     };
@@ -3335,77 +3335,77 @@ export interface components {
        * @description Only posts with this AI-detected language.
        * @default null
        */
-      aiLanguage: string | null;
+      aiLanguage?: string | null;
       /**
        * @description Only posts with this AI status.
        * @default null
        */
-      aiStatus: string | null;
+      aiStatus?: string | null;
       /** @default null */
-      aiTagged: components['schemas']['YesNo'] | null;
+      aiTagged?: components['schemas']['YesNo'] | null;
       /**
        * @description Only posts with this AI category.
        * @default null
        */
-      category: string | null;
+      category?: string | null;
       /**
        * Format: int64
        * @description Only posts in this collection (its `id`).
        * @default null
        */
-      collection: number | null;
+      collection?: number | null;
       /**
        * @description Suggested concepts: more search terms, combined with `q` by
        *     `conceptMode`. Repeatable in a query.
        * @default []
        */
-      concept: string[];
+      concept?: string[];
       /** @default null */
-      conceptMode: components['schemas']['MatchMode'] | null;
+      conceptMode?: components['schemas']['MatchMode'] | null;
       /**
        * @description Only posts with this AI content type.
        * @default null
        */
-      contentType: string | null;
+      contentType?: string | null;
       /**
        * @description Only posts with this AI entity.
        * @default null
        */
-      entity: string | null;
+      entity?: string | null;
       /**
        * @description Only posts of these kinds: any of them. Repeatable in a query.
        * @default []
        */
-      mediaType: components['schemas']['MediaType'][];
+      mediaType?: components['schemas']['MediaType'][];
       /** @default null */
-      platform: components['schemas']['Platform'] | null;
+      platform?: components['schemas']['Platform'] | null;
       /**
        * @description Free-text search (plan §2.14). At most 500 characters.
        * @default null
        */
-      q: string | null;
+      q?: string | null;
       /** @default null */
-      source: components['schemas']['PostSource'] | null;
+      source?: components['schemas']['PostSource'] | null;
       /** @default null */
-      stored: components['schemas']['YesNo'] | null;
+      stored?: components['schemas']['YesNo'] | null;
       /**
        * @description Only posts with this tag (the gallery's tag chip; always a filter).
        * @default null
        */
-      tag: string | null;
+      tag?: string | null;
       /** @default null */
-      tagMode: components['schemas']['MatchMode'] | null;
+      tagMode?: components['schemas']['MatchMode'] | null;
       /**
        * @description Tags of the AI views, combined by `tagMode`. Repeatable in a query.
        *     With `q` in `or` mode they widen the search.
        * @default []
        */
-      tags: string[];
+      tags?: string[];
       /**
        * @description The trash instead of the library: `true` (or `1` in a query).
        * @default null
        */
-      trash: boolean | null;
+      trash?: boolean | null;
     };
     /** @description Health of the process. */
     Health: {
@@ -3540,59 +3540,59 @@ export interface components {
        * Format: int64
        * @default 0
        */
-      collections: number;
+      collections?: number;
       /**
        * Format: int64
        * @default 0
        */
-      mediaObjects: number;
+      mediaObjects?: number;
       /**
        * Format: int64
        * @default 0
        */
-      memberships: number;
+      memberships?: number;
       /**
        * Format: int64
        * @default 0
        */
-      postEntities: number;
+      postEntities?: number;
       /**
        * Format: int64
        * @default 0
        */
-      postTags: number;
+      postTags?: number;
       /**
        * @description Posts by platform.
        * @default {}
        */
-      posts: {
+      posts?: {
         [key: string]: number;
       };
       /**
        * Format: int64
        * @default 0
        */
-      slides: number;
+      slides?: number;
       /**
        * Format: int64
        * @default 0
        */
-      tagAliases: number;
+      tagAliases?: number;
       /**
        * Format: int64
        * @default 0
        */
-      tagClusters: number;
+      tagClusters?: number;
       /**
        * Format: int64
        * @default 0
        */
-      webCaptureAssets: number;
+      webCaptureAssets?: number;
       /**
        * Format: int64
        * @default 0
        */
-      webCaptures: number;
+      webCaptures?: number;
     };
     /** @description The objects the install stored. */
     InstalledObjects: {
@@ -3601,23 +3601,23 @@ export interface components {
        * @description Already in the store (an earlier install, or another post's file).
        * @default 0
        */
-      alreadyStored: number;
+      alreadyStored?: number;
       /**
        * Format: int64
        * @default 0
        */
-      bytes: number;
+      bytes?: number;
       /**
        * Format: int64
        * @description Moved into the store from uploads.
        * @default 0
        */
-      fromUploads: number;
+      fromUploads?: number;
       /**
        * Format: int64
        * @default 0
        */
-      total: number;
+      total?: number;
     };
     /**
      * @description Whether an accepted item was new or already saved (contract C5).
@@ -3922,74 +3922,74 @@ export interface components {
        * @description Merged posts that took the bundle's analysis or date.
        * @default 0
        */
-      aiFilled: number;
+      aiFilled?: number;
       /**
        * Format: int64
        * @default 0
        */
-      aliasesAdded: number;
+      aliasesAdded?: number;
       /**
        * Format: int64
        * @description The bundle's site versions: new, or already there (same post and
        *     capture time).
        * @default 0
        */
-      capturesAdded: number;
+      capturesAdded?: number;
       /**
        * Format: int64
        * @default 0
        */
-      capturesPresent: number;
+      capturesPresent?: number;
       /**
        * Format: int64
        * @default 0
        */
-      clusterMembershipsAdded: number;
+      clusterMembershipsAdded?: number;
       /**
        * Format: int64
        * @default 0
        */
-      clustersAdded: number;
+      clustersAdded?: number;
       /**
        * Format: int64
        * @description The bundle's collections: new, or the library's of the same folder
        *     (`platform` and `external_id`, else the same name).
        * @default 0
        */
-      collectionsInserted: number;
+      collectionsInserted?: number;
       /**
        * Format: int64
        * @default 0
        */
-      collectionsMatched: number;
+      collectionsMatched?: number;
       /**
        * Format: int64
        * @default 0
        */
-      datesFilled: number;
+      datesFilled?: number;
       /**
        * Format: int64
        * @description The bundle's memberships: new, or already there.
        * @default 0
        */
-      membershipsAdded: number;
+      membershipsAdded?: number;
       /**
        * Format: int64
        * @default 0
        */
-      membershipsPresent: number;
+      membershipsPresent?: number;
       /**
        * Format: int64
        * @description Merged posts whose notes were joined, and manual tags added.
        * @default 0
        */
-      notesJoined: number;
+      notesJoined?: number;
       /**
        * @description The bundle's posts by platform: inserted as new posts, or merged into
        *     the post with the same key.
        * @default {}
        */
-      posts: {
+      posts?: {
         [key: string]: components['schemas']['MergedPosts'];
       };
       /**
@@ -3998,18 +3998,18 @@ export interface components {
        *     a user layer): its media and AI layers replaced the stored ones.
        * @default 0
        */
-      replaced: number;
+      replaced?: number;
       /**
        * Format: int64
        * @default 0
        */
-      tagsAdded: number;
+      tagsAdded?: number;
       /**
        * Format: int64
        * @description Merged posts that did not change.
        * @default 0
        */
-      unchanged: number;
+      unchanged?: number;
     };
     MergeSuggestion: {
       canonical: string;
@@ -4030,12 +4030,12 @@ export interface components {
        * Format: int64
        * @default 0
        */
-      inserted: number;
+      inserted?: number;
       /**
        * Format: int64
        * @default 0
        */
-      merged: number;
+      merged?: number;
     };
     /** @description An install of a migration bundle: a `migrate` job. */
     Migration: {
@@ -4146,7 +4146,7 @@ export interface components {
        *       "xCover": 0
        *     }
        */
-      archive: components['schemas']['ArchiveCounts'];
+      archive?: components['schemas']['ArchiveCounts'];
       /**
        * @description What `shelfy-migrate` counted in the desktop library and wrote to the
        *     bundle, as it sent it.
@@ -4157,7 +4157,7 @@ export interface components {
        * @description How long the install took, ms.
        * @default 0
        */
-      durationMs: number;
+      durationMs?: number;
       /**
        * @description Rows of the web library after the install.
        * @default {
@@ -4174,17 +4174,17 @@ export interface components {
        *       "webCaptures": 0
        *     }
        */
-      installed: components['schemas']['InstalledCounts'];
+      installed?: components['schemas']['InstalledCounts'];
       /**
        * @description What the merge did, for a merge.
        * @default null
        */
-      merge: components['schemas']['MergeCounts'];
+      merge?: components['schemas']['MergeCounts'];
       /**
        * @description Whether the bundle replaced an empty library or was merged into one.
        * @default replace
        */
-      mode: components['schemas']['InstallMode'];
+      mode?: components['schemas']['InstallMode'];
       /**
        * @default {
        *       "alreadyStored": 0,
@@ -4193,13 +4193,13 @@ export interface components {
        *       "total": 0
        *     }
        */
-      objects: components['schemas']['InstalledObjects'];
+      objects?: components['schemas']['InstalledObjects'];
       /**
        * @description The file the previous library is kept in for 7 days, next to the
        *     live one.
        * @default null
        */
-      previous: string;
+      previous?: string;
       /**
        * @default {
        *       "existing": 0,
@@ -4210,13 +4210,13 @@ export interface components {
        *       "wanted": 0
        *     }
        */
-      renditions: components['schemas']['RenditionCounts'];
+      renditions?: components['schemas']['RenditionCounts'];
       /**
        * @description The desktop settings the library took (`language`,
        *     `archiveAssetTypes`); settings the web library had already win.
        * @default []
        */
-      settings: string[];
+      settings?: string[];
     };
     /**
      * @description What the install is doing.
@@ -5084,7 +5084,7 @@ export interface components {
        * Format: int32
        * @default 6
        */
-      maxPages: number | null;
+      maxPages?: number | null;
       singlePage?: boolean | null;
     };
     /** @description Body of `POST /api/v1/auth/magic-links/redeem`. */
@@ -5138,42 +5138,42 @@ export interface components {
        *     §6.2 budget: p50 ≤35 KB, p95 ≤60 KB).
        * @default null
        */
-      coverBytes: components['schemas']['SizeStats'];
+      coverBytes?: components['schemas']['SizeStats'];
       /**
        * Format: int64
        * @description Already rendered in the store.
        * @default 0
        */
-      existing: number;
+      existing?: number;
       /**
        * Format: int64
        * @description Images the pipeline could not decode.
        * @default 0
        */
-      failed: number;
+      failed?: number;
       /**
        * Format: int64
        * @description Types the pipeline does not decode (AVIF, videos, PDF).
        * @default 0
        */
-      notRenderable: number;
+      notRenderable?: number;
       /**
        * Format: int64
        * @default 0
        */
-      rendered: number;
+      rendered?: number;
       /**
        * Format: int64
        * @description Posts whose ThumbHash was set.
        * @default 0
        */
-      thumbhashes: number;
+      thumbhashes?: number;
       /**
        * Format: int64
        * @description Objects the grid shows: covers, slides 1–3, site heroes.
        * @default 0
        */
-      wanted: number;
+      wanted?: number;
     };
     /**
      * @description The posts to bring back from the trash: exactly one of `selector` and
@@ -5410,22 +5410,22 @@ export interface components {
        * Format: int64
        * @default 0
        */
-      count: number;
+      count?: number;
       /**
        * Format: int64
        * @default 0
        */
-      max: number;
+      max?: number;
       /**
        * Format: int64
        * @default 0
        */
-      p50: number;
+      p50?: number;
       /**
        * Format: int64
        * @default 0
        */
-      p95: number;
+      p95?: number;
     };
     /**
      * @description Kind of slide (`post_media.kind`).
