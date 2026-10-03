@@ -26,7 +26,7 @@ name: Release server
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 #
 # Jobs that run third-party build code (npm and cargo build scripts) hold a
-# read-only token; only `image`, `egress-image` (packages, id-token) and
+# read-only token; only `image`, `egress-image`, `capture-image` (packages, id-token) and
 # `release` (contents) can write. Actions that run with a write token are
 # pinned by commit.
 # `egress-image` (P4-02) builds ghcr.io/<owner>/shelfy-egress (Smokescreen with
@@ -49,6 +49,7 @@ env:
   INTEGRATION_BRANCH: web/foundations
   IMAGE_NAME: shelfy-api
   EGRESS_IMAGE_NAME: shelfy-egress
+  CAPTURE_IMAGE_NAME: shelfy-capture
 
 jobs:
   validate:
@@ -262,6 +263,75 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  capture-image:
+    name: Capture image (linux/amd64)
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+      id-token: write # cosign keyless signing
+    outputs:
+      image: ${{ steps.names.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: names
+        name: Image name and tags
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${CAPTURE_IMAGE_NAME}"
+          {
+            echo "image=$image"
+            echo "tags<<EOF"
+            echo "$image:$VERSION"
+            echo "$image:sha-${GITHUB_SHA::7}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/docker/shelfy-capture.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.names.outputs.tags }}
+          labels: |
+            org.opencontainers.image.version=${{ needs.validate.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=shelfy-capture
+          cache-to: type=gha,mode=max,scope=shelfy-capture
+      - name: SBOM (syft)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ steps.names.outputs.image }}@${{ steps.build.outputs.digest }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: spdx-json
+          output-file: shelfy-capture.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign the image (cosign, keyless)
+        env:
+          IMAGE: ${{ steps.names.outputs.image }}@${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "$IMAGE"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom-capture
+          path: shelfy-capture.spdx.json
+          if-no-files-found: error
+          retention-days: 7
+
   migrate:
     name: shelfy-migrate (${{ matrix.target }})
     needs: validate
@@ -316,7 +386,7 @@ jobs:
 
   release:
     name: GitHub release
-    needs: [validate, image, egress-image, migrate]
+    needs: [validate, image, egress-image, capture-image, migrate]
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release and upload its assets
@@ -334,6 +404,10 @@ jobs:
         with:
           name: sbom-egress
           path: assets
+      - uses: actions/download-artifact@v8
+        with:
+          name: sbom-capture
+          path: assets
       - name: Create or update the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -343,6 +417,8 @@ jobs:
           DIGEST: ${{ needs.image.outputs.digest }}
           EGRESS_IMAGE: ${{ needs.egress-image.outputs.image }}
           EGRESS_DIGEST: ${{ needs.egress-image.outputs.digest }}
+          CAPTURE_IMAGE: ${{ needs.capture-image.outputs.image }}
+          CAPTURE_DIGEST: ${{ needs.capture-image.outputs.digest }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
@@ -355,9 +431,10 @@ jobs:
             echo
             echo "- Image (linux/amd64): \`$IMAGE:$VERSION\`, digest \`$DIGEST\`, signed with cosign (keyless)."
             echo "- Egress proxy (linux/amd64): \`$EGRESS_IMAGE:$VERSION\`, digest \`$EGRESS_DIGEST\`, signed with cosign (keyless). Pin it as SHELFY_EGRESS_VERSION."
+            echo "- Capture (linux/amd64): \`$CAPTURE_IMAGE:$VERSION\`, digest \`$CAPTURE_DIGEST\`, signed with cosign (keyless)."
             echo "- \`shelfy-migrate\` for macOS (arm64, x64), Windows (x64) and Linux (x64, static)."
             echo "  It moves a desktop library to the server: deploy/README.md, \"Moving a desktop library\"."
-            echo "- \`shelfy-api.spdx.json\`, \`shelfy-egress.spdx.json\`: the images' SBOMs (syft). \`SHA256SUMS\`: checksums of the files."
+            echo "- \`shelfy-api.spdx.json\`, \`shelfy-egress.spdx.json\`, \`shelfy-capture.spdx.json\`: the images' SBOMs (syft). \`SHA256SUMS\`: checksums of the files."
           } > "$notes"
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber -- *

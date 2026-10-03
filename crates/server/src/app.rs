@@ -40,7 +40,11 @@
 //! carries the headers like any other answer.
 
 use axum::Router;
+use axum::extract::{ConnectInfo, Request, State};
 use axum::middleware;
+use axum::middleware::Next;
+use axum::response::Response;
+use std::net::SocketAddr;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::compression::CompressionLayer;
@@ -49,9 +53,10 @@ use utoipa_axum::router::OpenApiRouter;
 
 use crate::auth;
 use crate::auth::access::{AccessPolicy, Gate};
-use crate::error::{self, ApiError};
+use crate::error::{self, ApiError, ErrorCode};
 use crate::jobs;
 use crate::jobs::idempotency::Idempotency;
+use crate::net::IpNet;
 use crate::rate_limit;
 use crate::routes;
 use crate::security_headers::{self, SecurityHeaders};
@@ -127,6 +132,10 @@ pub fn build_with_access(
                     security_headers::apply,
                 ))
                 .layer(middleware::from_fn_with_state(
+                    state.config().capture_subnet,
+                    capture_peer,
+                ))
+                .layer(middleware::from_fn_with_state(
                     state.clone(),
                     rate_limit::by_client,
                 ))
@@ -143,4 +152,28 @@ pub fn build_with_access(
 
 async fn not_found() -> ApiError {
     ApiError::not_found()
+}
+
+/// Refuses the capture network on either listener using only the TCP peer.
+/// Missing peers are allowed for in-process callers; both real listeners attach
+/// ConnectInfo. A capture peer cannot evade this rule with forwarded headers or
+/// an otherwise valid session/token.
+///
+/// # Errors
+///
+/// A peer in the configured subnet receives a generic forbidden problem.
+pub async fn capture_peer(
+    State(subnet): State<Option<IpNet>>,
+    request: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    if let Some(subnet) = subnet
+        && request
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .is_some_and(|ConnectInfo(peer)| subnet.contains(peer.ip()))
+    {
+        return Err(ApiError::new(ErrorCode::Forbidden));
+    }
+    Ok(next.run(request).await)
 }

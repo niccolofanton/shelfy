@@ -25,6 +25,7 @@
 //! | `SHELFY_EGRESS_ALLOW_ORIGINS` | none | exact origins of the operator's AI node, reachable at a private address (L15) |
 //! | `SHELFY_MASTER_KEY`, `SHELFY_MASTER_KEY_PREVIOUS` | none | base64 of 32 bytes; current seals BYOK keys, previous reads old rows during rotation; never in backups |
 //! | `SHELFY_CAPTURE_URL` | none | the capture service, the only origin of the internal client |
+//! | `SHELFY_CAPTURE_SUBNET` | none | reject capture-network TCP peers on both listeners; forwarded client headers cannot override it |
 //! | `SHELFY_ARCHIVE_RATE_INSTAGRAM`, `…_X`, `…_PINTEREST` | `2` | CDN requests per second per host group |
 //! | `SHELFY_ARCHIVE_MODE_INSTAGRAM`, `…_X`, `…_PINTEREST` | `server` | who archives the platform's media: `server` or `auto` (the server; its breaker hands over to the extension while open) or `client` (the extension) |
 //! | `SHELFY_DEV_EGRESS_HOSTS`, `SHELFY_DEV_EGRESS_CA` | none | dev and tests: fixture hosts on loopback ports, and their CA; loopback public URL only |
@@ -166,6 +167,10 @@ pub struct ServeArgs {
         value_parser = TrustedProxies::parse
     )]
     pub trusted_proxies: TrustedProxies,
+
+    /// Capture-network CIDR whose TCP peers cannot reach the API or metrics.
+    #[arg(long, env = "SHELFY_CAPTURE_SUBNET", value_name = "CIDR", value_parser = crate::net::IpNet::parse)]
+    pub capture_subnet: Option<crate::net::IpNet>,
 
     #[command(flatten)]
     pub mail: MailArgs,
@@ -339,6 +344,8 @@ pub struct Config {
     pub user_db_cache: UserDbCacheConfig,
     /// Proxies whose `CF-Connecting-IP` is believed.
     pub trusted_proxies: TrustedProxies,
+    /// Capture peers are refused using their socket address, before authentication.
+    pub capture_subnet: Option<crate::net::IpNet>,
     /// Outgoing email (SMTP, the dev mailbox, or off).
     pub mail: MailConfig,
     /// Session lifetimes and sign-in limits (plan §2.11).
@@ -412,6 +419,7 @@ impl Config {
             public_url,
             log_format: args.log_format,
             trusted_proxies: args.trusted_proxies,
+            capture_subnet: args.capture_subnet,
             mail,
             web,
             outbound,
@@ -438,6 +446,7 @@ impl Config {
             user_db: UserDbConfig::default(),
             user_db_cache: UserDbCacheConfig::default(),
             trusted_proxies: TrustedProxies::default(),
+            capture_subnet: None,
             mail: MailConfig::Disabled,
             auth: AuthConfig::default(),
             rate_limits: RateLimitConfig::default(),
@@ -664,6 +673,30 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_subnet_rejects_invalid_cidr_at_cli_parse() {
+        #[derive(clap::Parser)]
+        struct Cli {
+            #[command(flatten)]
+            args: ServeArgs,
+        }
+        use clap::Parser as _;
+        for bad in [
+            "10.134.0.0/33",
+            "::/129",
+            "capture",
+            "10.134.0.0/24,10.135.0.0/24",
+        ] {
+            assert!(Cli::try_parse_from(["test", "--capture-subnet", bad]).is_err());
+        }
+        for value in ["10.134.0.0/24", "fd00::/64"] {
+            let args = Cli::try_parse_from(["test", "--capture-subnet", value])
+                .unwrap()
+                .args;
+            assert!(args.capture_subnet.is_some());
+        }
+    }
 
     #[test]
     fn public_url_keeps_the_origin_only() {

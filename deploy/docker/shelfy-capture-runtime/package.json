@@ -1,0 +1,17 @@
+{
+  "name": "shelfy-capture-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "@duckduckgo/autoconsent": "16.43.2",
+    "@ghostery/adblocker": "2.18.2",
+    "@ghostery/adblocker-playwright": "2.18.2",
+    "playwright-core": "1.60.0",
+    "tldts-experimental": "7.4.16",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.1",
+    "tsx": "4.22.4"
+  }
+}

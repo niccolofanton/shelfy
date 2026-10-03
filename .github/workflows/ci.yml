@@ -131,6 +131,37 @@ jobs:
         if: always()
         run: docker compose -f deploy/compose.test.yml -p shelfy-ssrf down -v
 
+  capture-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: pnpm
+      - name: Require an isolated host gateway
+        run: test "$(docker version --format '{{.Server.Version}}' | cut -d. -f1)" -ge 28
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run web:build
+      - name: Build production API, egress and capture images
+        run: |
+          docker build -f deploy/docker/shelfy-api.Dockerfile -t shelfy-api:local .
+          docker build -f deploy/docker/shelfy-egress.Dockerfile -t shelfy-egress:local .
+          docker build -f deploy/docker/shelfy-capture.Dockerfile -t shelfy-capture:local .
+          docker image inspect shelfy-capture:local --format '{{.Architecture}} {{.Size}}'
+      - name: Start and check the real capture stack
+        run: |
+          docker compose -f deploy/compose.test.yml --profile capture up -d --wait
+          deploy/capture-isolation-check.sh
+      - name: Capture stack state
+        if: always()
+        run: docker compose -f deploy/compose.test.yml --profile capture ps -a
+      - name: Tear down synthetic data and work
+        if: always()
+        run: docker compose -f deploy/compose.test.yml --profile capture down -v
+
   web-e2e:
     runs-on: ubuntu-latest
     steps:

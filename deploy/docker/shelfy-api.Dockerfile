@@ -113,7 +113,7 @@ RUN apt-get update \
     && groupadd --gid 10100 shelfy \
     && useradd --uid 10100 --gid shelfy --no-create-home --home-dir /nonexistent \
       --shell /usr/sbin/nologin shelfy \
-    && install --directory --owner=10100 --group=10100 --mode=0750 /data/shelfy \
+    && install --directory --owner=10100 --group=10100 --mode=0750 /data/shelfy /data/shelfy/work /data/shelfy/work/capture \
     && ln -s /opt/yt-dlp/yt-dlp /usr/local/bin/yt-dlp
 COPY --from=yt-dlp /opt/yt-dlp /opt/yt-dlp
 COPY --from=web /web /app/web

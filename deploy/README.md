@@ -55,6 +55,7 @@ validated at start: a bad one stops the process with a message.
 | `SHELFY_WEB_DIR` | none (`/app/web` in the image) | The built web app (`web/dist`) to serve. Its `index.html` answers every path that no route takes and that is not under `/api`, `/media`, `/health` or `/.well-known`; files under `/assets/` are immutable. The directory must hold `index.html`, or the start fails. Unset: the API only |
 | `SHELFY_EGRESS_PROXY` | none | The egress proxy (§3.2: `http://shelfy-egress:4750`, from P4). Set: every outbound request goes through it, and the proxy resolves names and refuses private destinations. Unset: the server connects directly, and its own resolver refuses loopback, private, link-local (169.254.169.254 included), CGNAT, ULA, multicast and IPv4-mapped addresses. In both modes only http(s) on ports 80 and 443 is allowed, with at most 5 redirects, each checked again |
 | `SHELFY_EGRESS_ALLOW_ORIGINS` | none | Exact origins `scheme://host:port`, comma-separated, of the operator's own AI node (L15), reached directly even at a private address (a Tailscale `100.64.0.0/10` address). Only the operator's AI integration uses them; URLs a user enters keep the strict rules. Never put a user-reachable service here |
+| `SHELFY_CAPTURE_SUBNET` | none | CIDR of the isolated capture network. Refuses its socket peers before any route on API `:8080` and metrics `:9464`, regardless of forwarded headers or credentials. Required when capture is deployed |
 | `SHELFY_CAPTURE_URL` | none | The capture service (§3.2: `http://shelfy-capture:8080`, P4): the only origin the internal client reaches, without the proxy |
 | `SHELFY_MASTER_KEY` | none | Base64 of exactly 32 random bytes; seals BYOK credentials with per-user HKDF-SHA256 and XChaCha20-Poly1305. Invalid values stop startup without echoing them. Empty/unset disables the vault; the operator provider remains available. Keep in SOPS/container environment and the operator password manager, never in backup directories |
 | `SHELFY_MASTER_KEY_PREVIOUS` | none | Previous master key during rotation, in the same format. Reads old rows while new writes use the current key. Remove only after `admin rekey` succeeds; never backed up |
@@ -465,3 +466,45 @@ fail or are stopped; run it on Linux, as the VPS does:
 ```sh
 docker run --rm -v "$PWD:/w:ro" -w /w debian:bookworm-slim deploy/test-backup-jobs.sh
 ```
+
+## Capture image and isolation checks
+
+Build `deploy/docker/shelfy-capture.Dockerfile` from the repository root. Its
+locked runtime installs Playwright 1.60.0, Chromium headless shell, Debian
+ffmpeg, fonts and the adblock engine at build time. The image runs as uid 10100;
+no browser or filter downloads are needed at runtime. The measured linux/arm64
+image is 1,275,757,087 bytes (1.19 GiB uncompressed); Debian ffmpeg and fonts
+make it larger than the original 600 MB estimate.
+
+Docker Engine **28 or newer** is required for capture: an internal bridge alone
+still exposes the host gateway on older engines. The capture network sets
+`gateway_mode_ipv4: isolated`, has no external resolver, and is the capture
+container's only network. API joins it with `SHELFY_CAPTURE_SUBNET=10.134.0.0/24`;
+the API's other network accepts ordinary clients. The egress proxy alone joins
+both capture and fixture networks. Its fixture `--allow-range` is test-only.
+
+```sh
+docker build -f deploy/docker/shelfy-capture.Dockerfile -t shelfy-capture:local .
+docker image inspect shelfy-capture:local --format '{{.Architecture}} {{.Size}}'
+docker build -f deploy/docker/shelfy-egress.Dockerfile -t shelfy-egress:local .
+docker compose -f deploy/compose.test.yml --profile capture up -d --wait
+deploy/capture-isolation-check.sh
+```
+
+The API image initializes the shared `work/capture` volume as uid 10100 before
+the capture service mounts it at `/work`. The volume contains only job work,
+never the library or token vault. An existing bind mount must already be writable
+by uid 10100. The capture process has a read-only root, `/tmp` tmpfs, 512 MiB shm,
+all capabilities dropped, no new privileges, the checked-in seccomp profile,
+1.5 CPU and 1536 MiB memory (1792 MiB including swap).
+
+The checker verifies direct TCP and DNS refusals, the API and metrics peer guard,
+the P4-02 proxy catalogue, private redirects and a real fixture capture with
+manifest and image files. It reports the renderer's namespace and seccomp layers.
+On a kernel that forbids unprivileged user namespaces, explicitly set
+`SHELFY_DISABLE_SANDBOX=1` and recreate capture to use SPIKE-4's documented fallback;
+the checker reports `off`, and all other container/network restrictions stay in
+force. It never retries a failed sandbox by weakening the container.
+
+The release workflow builds `shelfy-capture` for linux/amd64, signs its digest with
+cosign and publishes `shelfy-capture.spdx.json` beside the API and egress SBOMs.

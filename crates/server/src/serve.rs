@@ -246,9 +246,15 @@ impl Server {
             )
             .with_graceful_shutdown(token.clone().cancelled_owned())
             .into_future();
-            let metrics = axum::serve(metrics_listener, telemetry::metrics::router(metrics))
-                .with_graceful_shutdown(token.clone().cancelled_owned())
-                .into_future();
+            let metrics_app = telemetry::metrics::router(metrics).layer(
+                axum::middleware::from_fn_with_state(config.capture_subnet, app::capture_peer),
+            );
+            let metrics = axum::serve(
+                metrics_listener,
+                metrics_app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .with_graceful_shutdown(token.clone().cancelled_owned())
+            .into_future();
             let mut servers = pin!(async { tokio::try_join!(api, metrics).map(|_| ()) });
             let mut shutdown = pin!(shutdown);
             tokio::select! {
