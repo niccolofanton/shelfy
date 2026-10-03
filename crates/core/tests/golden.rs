@@ -8,20 +8,24 @@
 
 mod golden_merge;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, params};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+use serde_json::json;
 use serde_json::value::RawValue;
 use shelfy_core::ingest::hosts::PINTEREST_HOSTS;
 use shelfy_core::ingest::sanitize::clean_item;
 use shelfy_core::repo::Platform;
-use shelfy_core::repo::posts::{self, AiPatch, NewPost, UserContentPatch};
+use shelfy_core::repo::posts::{self, AiLayer, AiPatch, NewPost, UserContentPatch};
 use shelfy_core::schema::{self, Kind};
 use shelfy_core::search::terms::{SHORT_CONTENT_TERMS, STOPWORDS, extract_content_terms};
+use shelfy_core::web::captures::{self, CaptureStatus, NewCapture};
+use shelfy_core::web::sites::{self, PageRequest, SiteQuery, SiteSort};
+use shelfy_core::web::{color, similar};
 
 /// Golden sets with a check in this file; `<dir>/` stands for every file in
 /// that directory.
@@ -31,6 +35,7 @@ const CHECKED: &[&str] = &[
     "hosts",
     "merge/",
     "sanitize",
+    "web/",
 ];
 
 #[derive(Deserialize)]
@@ -85,6 +90,44 @@ fn check<A: DeserializeOwned, R: serde::Serialize>(name: &str, port: impl Fn(A) 
                 "  {}\n    desktop: {}\n    rust:    {actual}",
                 case.id,
                 case.output.get()
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{name}: {} of {} cases differ from the desktop:\n{}",
+        failures.len(),
+        cases.len(),
+        failures.join("\n")
+    );
+}
+
+/// Like [`check`], but compares the deserialized Rust value instead of the
+/// raw JSON text: for an output with floats, `serde_json` always writes a
+/// decimal point (`0.0`) where `JSON.stringify` drops it for a whole number
+/// (`0`) — the same IEEE754 value, different bytes. Byte comparison still
+/// catches a real difference (floats from the same formula either match
+/// exactly or are clearly wrong), so this only trades the stricter check for
+/// one that is not fooled by that one formatting quirk.
+fn check_numeric<A, R>(name: &str, port: impl Fn(A) -> R)
+where
+    A: DeserializeOwned,
+    R: DeserializeOwned + PartialEq + std::fmt::Debug,
+{
+    let text = read(name);
+    let cases = parse(name, &text);
+    assert!(!cases.is_empty(), "{name}: no cases");
+    let mut failures = Vec::new();
+    for case in &cases {
+        let args: A = serde_json::from_str(case.args.get())
+            .unwrap_or_else(|e| panic!("{name}/{}: bad args: {e}", case.id));
+        let expected: R = serde_json::from_str(case.output.get())
+            .unwrap_or_else(|e| panic!("{name}/{}: bad recorded output: {e}", case.id));
+        let actual = port(args);
+        if actual != expected {
+            failures.push(format!(
+                "  {}\n    desktop: {expected:?}\n    rust:    {actual:?}",
+                case.id
             ));
         }
     }
@@ -398,5 +441,436 @@ fn edits_match_the_desktop() {
             }
         }
         layers(&conn, id)
+    });
+}
+
+// ── web/*: colour math and "similar sites" (P4-05) ──────────────────────────
+//
+// `q` and the domain-prefix match are not golden: the port's FTS5 search
+// replaces the desktop's `LIKE` scan on purpose (see
+// `shelfy_core::web::sites`'s module docs), the same way `repo::posts`'s own
+// search is plain-Rust-tested, never golden, against the desktop.
+
+use std::collections::HashMap;
+
+fn web_library() -> Connection {
+    let mut conn = Connection::open_in_memory().unwrap();
+    schema::migrate(&mut conn, Kind::Library).unwrap();
+    conn
+}
+
+/// A web post, optionally with a current capture carrying `palette` and/or
+/// an AI layer carrying `ai_web_json.facets` — mirrors
+/// `scripts/golden/web-sites.ts`'s `insertSite` without going through
+/// `upsertWebReference`/`applyAiAnalysis` either, for the same reason: full,
+/// direct control over the fixture shape.
+/// One day in milliseconds, for `web_site`'s `days_ago`.
+const DAY_MS: i64 = 86_400_000;
+
+#[allow(clippy::too_many_arguments)]
+fn web_site(
+    conn: &Connection,
+    key: &str,
+    domain: &str,
+    title: &str,
+    palette: Option<Value>,
+    facets: Option<Value>,
+    days_ago: i64,
+) {
+    let at = NOW_MS - days_ago * DAY_MS;
+    let mut post = NewPost::new(key, Platform::Web, key, "website", at);
+    post.web_domain = Some(domain.to_owned());
+    post.author_name = Some(title.to_owned());
+    if let Some(facets) = facets {
+        post.ai = Some(AiLayer {
+            status: Some("done".into()),
+            web: Some(serde_json::json!({ "facets": facets })),
+            ..AiLayer::default()
+        });
+    }
+    let id = posts::insert(conn, &post, at).unwrap();
+    if let Some(palette) = palette {
+        let mut capture = NewCapture::new(at);
+        capture.status = CaptureStatus::Done;
+        capture.palette = Some(palette);
+        captures::insert(conn, id, &capture, &[], at).unwrap();
+    }
+}
+
+#[test]
+fn hex_to_lab_matches_the_desktop() {
+    // `cbrt`/`powf` are not required to be bit-identical across platforms
+    // (unlike +, -, *, / under IEEE754): V8's `Math.cbrt`/`Math.pow` and
+    // Rust's libm can differ by a couple of ULP on the same input. An
+    // absolute-or-relative epsilon many orders above that noise floor
+    // (~2.2e-16 relative) still catches any real algorithmic difference.
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1e-9)
+    }
+    let text = read("web/hex-to-lab");
+    let cases = parse("web/hex-to-lab", &text);
+    assert!(!cases.is_empty(), "web/hex-to-lab: no cases");
+    let mut failures = Vec::new();
+    for case in &cases {
+        let (hex,): (String,) = serde_json::from_str(case.args.get()).unwrap();
+        let expected: Option<[f64; 3]> = serde_json::from_str(case.output.get()).unwrap();
+        let actual = color::hex_to_lab(&hex).map(|l| [l.l, l.a, l.b]);
+        let matches = match (expected, actual) {
+            (None, None) => true,
+            (Some(e), Some(a)) => e.iter().zip(a.iter()).all(|(&x, &y)| close(x, y)),
+            _ => false,
+        };
+        if !matches {
+            failures.push(format!(
+                "  {}\n    desktop: {expected:?}\n    rust:    {actual:?}",
+                case.id
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "web/hex-to-lab: {} of {} cases differ from the desktop:\n{}",
+        failures.len(),
+        cases.len(),
+        failures.join("\n")
+    );
+}
+
+// ── web/color-filter ─────────────────────────────────────────────────────
+
+fn color_filter_library() -> Connection {
+    let conn = web_library();
+    // `days_ago` matches `scripts/golden/web-sites.ts`'s `COLOR_SITES`: a
+    // distinct capture time per site, so the "no filter" case's recency
+    // order is unambiguous on both sides (never a real SQL tie).
+    web_site(
+        &conn,
+        "web_near_black",
+        "near-black.test",
+        "Near Black",
+        Some(json!(["#010101"])),
+        None,
+        0,
+    );
+    web_site(
+        &conn,
+        "web_mid_grey",
+        "mid-grey.test",
+        "Mid Grey",
+        Some(json!([{"hex": "#808080", "role": "surface"}])),
+        None,
+        1,
+    );
+    web_site(
+        &conn,
+        "web_white",
+        "white.test",
+        "White",
+        Some(json!([{"hex": "#ffffff", "role": "background"}])),
+        None,
+        2,
+    );
+    web_site(
+        &conn,
+        "web_decoy_text",
+        "decoy-text.test",
+        "Decoy Text",
+        Some(json!([{"hex": "#fefefe", "role": "text"}, {"hex": "#303030", "role": "surface"}])),
+        None,
+        3,
+    );
+    web_site(
+        &conn,
+        "web_no_palette",
+        "no-palette.test",
+        "No Palette",
+        None,
+        None,
+        4,
+    );
+    web_site(
+        &conn,
+        "web_empty_palette",
+        "empty-palette.test",
+        "Empty Palette",
+        Some(json!([])),
+        None,
+        5,
+    );
+    conn
+}
+
+#[derive(Deserialize)]
+struct ColorFilterArgs {
+    color: String,
+    #[serde(default)]
+    sort: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ColorFilterOutput {
+    ids: Vec<String>,
+    total: i64,
+}
+
+#[test]
+fn color_filter_matches_the_desktop() {
+    check("web/color-filter", |(args,): (ColorFilterArgs,)| {
+        let conn = color_filter_library();
+        // The desktop's `!query.sort` branch ALSO resorts by distance when a
+        // `color` parses (`filterWebPosts`); the port's `sort` has no such
+        // third "absent" state distinct from `recent` (its HTTP default).
+        // None of this fixture's cases turn on the distinction (each color
+        // matches at most one site), so mapping an absent `sort` to the
+        // port's own default (`recent`) is a safe, documented simplification.
+        let sort = match args.sort.as_deref() {
+            Some("name") => SiteSort::Name,
+            Some("color") => SiteSort::Color,
+            Some("recent") | None => SiteSort::Recent,
+            Some(other) => panic!("unknown sort {other}"),
+        };
+        let query = SiteQuery {
+            color: Some(args.color),
+            sort,
+            ..Default::default()
+        };
+        let page = sites::list(
+            &conn,
+            &query,
+            &PageRequest {
+                limit: 10,
+                cursor: None,
+            },
+        )
+        .unwrap();
+        ColorFilterOutput {
+            ids: page.items.iter().map(|s| s.key.clone()).collect(),
+            total: i64::try_from(page.items.len()).unwrap(),
+        }
+    });
+}
+
+// ── web/facets ────────────────────────────────────────────────────────────
+//
+// JSON object key order is not part of the contract here (facets are a
+// dynamically-keyed map; the desktop's own key order is an incidental
+// artefact of a stable sort by count, not a documented property), so this
+// check does not use `check()`'s literal byte comparison: it normalizes both
+// sides to a `facet -> {value -> count}` map before comparing.
+
+fn facets_library() -> Connection {
+    let conn = web_library();
+    web_site(
+        &conn,
+        "web_a",
+        "a.test",
+        "A",
+        None,
+        Some(json!({"style": ["Minimal", "Bold"], "siteType": ["portfolio"]})),
+        0,
+    );
+    web_site(
+        &conn,
+        "web_b",
+        "b.test",
+        "B",
+        None,
+        Some(json!({"style": ["minimal"]})),
+        0,
+    );
+    web_site(
+        &conn,
+        "web_c",
+        "c.test",
+        "C",
+        None,
+        Some(json!({"style": ["bold"], "siteType": ["blog"]})),
+        0,
+    );
+    web_site(&conn, "web_d", "d.test", "D", None, Some(json!({})), 0);
+    web_site(&conn, "web_e", "e.test", "E", None, None, 0);
+    conn
+}
+
+#[derive(Deserialize)]
+struct FacetsArgs {
+    facets: Option<HashMap<String, Vec<String>>>,
+}
+
+/// `facet -> (value -> count)`, dropping the array/key order that is not
+/// part of the contract (see above), keeping the exact display `value`
+/// casing (which is).
+fn facet_counts_by_value(
+    counts: &serde_json::Map<String, Value>,
+) -> HashMap<String, HashMap<String, i64>> {
+    counts
+        .iter()
+        .map(|(facet, values)| {
+            let by_value = values
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| {
+                    let v = v.as_object().unwrap();
+                    (
+                        v["value"].as_str().unwrap().to_owned(),
+                        v["count"].as_i64().unwrap(),
+                    )
+                })
+                .collect();
+            (facet.clone(), by_value)
+        })
+        .collect()
+}
+
+#[test]
+fn facets_match_the_desktop() {
+    let text = read("web/facets");
+    let cases = parse("web/facets", &text);
+    assert!(!cases.is_empty(), "web/facets: no cases");
+    let mut failures = Vec::new();
+    for case in &cases {
+        let (args,): (Option<FacetsArgs>,) = serde_json::from_str(case.args.get()).unwrap();
+        let conn = facets_library();
+        let facets: BTreeMap<String, Vec<String>> = args
+            .and_then(|a| a.facets)
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let query = SiteQuery {
+            facets,
+            ..Default::default()
+        };
+        let actual = sites::facet_counts(&conn, &query).unwrap();
+        let actual_json = serde_json::to_value(&actual).unwrap();
+        let expected_json: Value = serde_json::from_str(case.output.get()).unwrap();
+        let actual_norm = facet_counts_by_value(actual_json.as_object().unwrap());
+        let expected_norm = facet_counts_by_value(expected_json.as_object().unwrap());
+        if actual_norm != expected_norm {
+            failures.push(format!(
+                "  {}\n    desktop: {:?}\n    rust:    {:?}",
+                case.id, expected_norm, actual_norm
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "web/facets: {} of {} cases differ from the desktop:\n{}",
+        failures.len(),
+        cases.len(),
+        failures.join("\n")
+    );
+}
+
+// ── web/similar ───────────────────────────────────────────────────────────
+
+fn similar_library() -> Connection {
+    let conn = web_library();
+    web_site(
+        &conn,
+        "web_target",
+        "target.test",
+        "Target",
+        Some(json!([{"hex": "#000000", "role": "background"}])),
+        Some(
+            json!({"style": ["minimal", "bold"], "siteType": ["portfolio"], "colorMood": ["dark"]}),
+        ),
+        0,
+    );
+    web_site(
+        &conn,
+        "web_close",
+        "close.test",
+        "Close",
+        Some(json!([{"hex": "#050505", "role": "background"}])),
+        Some(json!({"style": ["minimal"]})),
+        0,
+    );
+    web_site(
+        &conn,
+        "web_closer",
+        "closer.test",
+        "Closer",
+        None,
+        Some(json!({"siteType": ["Portfolio"]})),
+        0,
+    );
+    web_site(
+        &conn,
+        "web_tie_near",
+        "tie-near.test",
+        "Tie Near",
+        Some(json!([{"hex": "#000000", "role": "background"}])),
+        Some(json!({"style": ["bold"]})),
+        0,
+    );
+    web_site(
+        &conn,
+        "web_tie_far",
+        "tie-far.test",
+        "Tie Far",
+        Some(json!([{"hex": "#ffffff", "role": "background"}])),
+        Some(json!({"style": ["bold"]})),
+        0,
+    );
+    web_site(
+        &conn,
+        "web_unrelated",
+        "unrelated.test",
+        "Unrelated",
+        None,
+        Some(json!({"tech": ["wordpress"]})),
+        0,
+    );
+    web_site(
+        &conn,
+        "web_no_facets",
+        "no-facets.test",
+        "No Facets",
+        Some(json!([{"hex": "#000000", "role": "background"}])),
+        None,
+        0,
+    );
+    conn
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct SharedFacetRecord {
+    facet: String,
+    value: String,
+}
+
+#[derive(Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct SimilarRecord {
+    id: String,
+    score: f64,
+    shared: Vec<String>,
+    shared_facets: Vec<SharedFacetRecord>,
+}
+
+#[test]
+fn similar_matches_the_desktop() {
+    check_numeric("web/similar", |(key, limit): (String, u32)| {
+        let conn = similar_library();
+        similar::for_site(&conn, &key, limit)
+            .unwrap()
+            .into_iter()
+            .map(|s| SimilarRecord {
+                id: s.key,
+                score: s.score,
+                shared: s.shared,
+                shared_facets: s
+                    .shared_facets
+                    .into_iter()
+                    .map(|f| SharedFacetRecord {
+                        facet: f.facet,
+                        value: f.value,
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>()
     });
 }

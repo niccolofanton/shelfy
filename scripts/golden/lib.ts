@@ -118,8 +118,14 @@ export function withDesktopClock<T>(sql: BetterSqlite3.Database, nowMs: number, 
 
 type ModuleLoad = (request: string, parent: unknown, isMain: boolean) => unknown;
 
-/** Routes `electron`, and `better-sqlite3` as electron/db.ts requires it, to stand-ins. */
-function installDesktopShims(): void {
+/**
+ * Routes `electron`, and `better-sqlite3` as electron/db.ts requires it, to
+ * stand-ins. `openDesktopDb()` calls this already; exported so a generator
+ * that only needs a pure desktop module (no database), such as
+ * `electron/webcap/metadata.ts`, can shim `electron` before importing it
+ * without opening a database it does not need.
+ */
+export function installDesktopShims(): void {
   if (desktopShimsInstalled) return;
   desktopShimsInstalled = true;
   const RealDatabase = requireHere('better-sqlite3') as typeof BetterSqlite3;

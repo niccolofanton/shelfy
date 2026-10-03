@@ -1,0 +1,8 @@
+{"golden":"web/color-filter","source":"electron/db.ts#queryWebReferences","generator":"scripts/golden/web-sites.ts","format":1}
+{"id":"black-sort-color","args":[{"color":"#000000","sort":"color"}],"output":{"ids":["web_near_black"],"total":1}}
+{"id":"black-sort-recent","args":[{"color":"#000000","sort":"recent"}],"output":{"ids":["web_near_black"],"total":1}}
+{"id":"black-sort-name","args":[{"color":"#000000","sort":"name"}],"output":{"ids":["web_near_black"],"total":1}}
+{"id":"black-no-sort","args":[{"color":"#000000"}],"output":{"ids":["web_near_black"],"total":1}}
+{"id":"white-sort-color","args":[{"color":"#ffffff","sort":"color"}],"output":{"ids":["web_white"],"total":1}}
+{"id":"far-color-matches-none","args":[{"color":"#00ff00","sort":"color"}],"output":{"ids":[],"total":0}}
+{"id":"invalid-hex-is-no-filter","args":[{"color":"not-a-colour","sort":"color"}],"output":{"ids":["web_near_black","web_mid_grey","web_white","web_decoy_text","web_no_palette","web_empty_palette"],"total":6}}

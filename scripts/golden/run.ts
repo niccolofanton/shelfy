@@ -13,9 +13,10 @@ import extractContentTerms from './extract-content-terms';
 import hosts from './hosts';
 import mergeSets from './merge';
 import sanitize from './sanitize';
+import webSiteSets from './web-sites';
 import { render, type GoldenSet } from './lib';
 
-const SETS: GoldenSet[] = [extractContentTerms, edits, ...mergeSets, sanitize, hosts];
+const SETS: GoldenSet[] = [extractContentTerms, edits, ...mergeSets, sanitize, hosts, ...webSiteSets];
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT_DIR = path.join(ROOT, 'shared/golden');

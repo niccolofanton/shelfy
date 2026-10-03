@@ -1,0 +1,5 @@
+{"golden":"web/facets","source":"electron/db.ts#getWebFacetCounts","generator":"scripts/golden/web-sites.ts","format":1}
+{"id":"unfiltered","args":[null],"output":{"style":[{"value":"bold","count":2},{"value":"minimal","count":2}],"siteType":[{"value":"blog","count":1},{"value":"portfolio","count":1}]}}
+{"id":"style-bold-ignores-its-own-selection","args":[{"facets":{"style":["bold"]}}],"output":{"style":[{"value":"bold","count":2},{"value":"minimal","count":2}],"siteType":[{"value":"blog","count":1},{"value":"portfolio","count":1}]}}
+{"id":"style-minimal-or-bold","args":[{"facets":{"style":["minimal","bold"]}}],"output":{"style":[{"value":"bold","count":2},{"value":"minimal","count":2}],"siteType":[{"value":"blog","count":1},{"value":"portfolio","count":1}]}}
+{"id":"and-across-facets","args":[{"facets":{"style":["bold"],"siteType":["portfolio"]}}],"output":{"style":[{"value":"Bold","count":1},{"value":"Minimal","count":1}],"siteType":[{"value":"blog","count":1},{"value":"portfolio","count":1}]}}

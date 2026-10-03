@@ -1,0 +1,14 @@
+{"golden":"web/hex-to-lab","source":"electron/webcap/metadata.ts#hexToLab","generator":"scripts/golden/web-sites.ts","format":1}
+{"id":"case-0-\"#533afd\"","args":["#533afd"],"output":[0.5211038486685221,0.03464379816886054,-0.26560972399596716]}
+{"id":"case-1-\"533AFD\"","args":["533AFD"],"output":[0.5211038486685221,0.03464379816886054,-0.26560972399596716]}
+{"id":"case-2-\"  #0a0a0a  \"","args":["  #0a0a0a  "],"output":[0.14478795444392764,1.1720943660087357e-11,5.396812871594214e-9]}
+{"id":"case-3-\"#000000\"","args":["#000000"],"output":[0,0,0]}
+{"id":"case-4-\"#ffffff\"","args":["#ffffff"],"output":[0.9999999934735462,8.095285553011422e-11,3.727390762708893e-8]}
+{"id":"case-5-\"#ff0000\"","args":["#ff0000"],"output":[0.6279553606145516,0.22486306106597398,0.1258462985307351]}
+{"id":"case-6-\"#00ff00\"","args":["#00ff00"],"output":[0.8664396115356694,-0.23388757418790818,0.17949847989672985]}
+{"id":"case-7-\"#0000ff\"","args":["#0000ff"],"output":[0.4520137183853429,-0.03245698416876397,-0.3115281476783751]}
+{"id":"case-8-\"#53afd\"","args":["#53afd"],"output":null}
+{"id":"case-9-\"#533afd12\"","args":["#533afd12"],"output":null}
+{"id":"case-10-\"#533afg\"","args":["#533afg"],"output":null}
+{"id":"case-11-\"\"","args":[""],"output":null}
+{"id":"case-12-\"not a colour\"","args":["not a colour"],"output":null}
