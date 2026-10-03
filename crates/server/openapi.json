@@ -3763,6 +3763,63 @@
         ]
       }
     },
+    "/api/v1/search/chat": {
+      "post": {
+        "tags": ["library"],
+        "summary": "The reply stream is ephemeral: no event ids, replay or automatic POST\nresubmission. A new request cancels the prior run. Closing cancels the call.",
+        "operationId": "searchChat",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "SSE run, token, result or error; heartbeat every 15 seconds. No replay: closing cancels this run.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/search/chat/{runId}/cancel": {
+      "post": {
+        "tags": ["library"],
+        "operationId": "cancelSearchChat",
+        "parameters": [
+          {
+            "name": "runId",
+            "in": "path",
+            "description": "Run id from this user's response.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Cancelled."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/stats": {
       "get": {
         "tags": ["library"],
@@ -5985,6 +6042,62 @@
         "description": "What changed posts (plan §2.10).",
         "enum": ["ingest", "archive", "ai", "edit", "delete", "capture", "import"]
       },
+      "ChatBody": {
+        "type": "object",
+        "required": ["messages"],
+        "properties": {
+          "activeTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            }
+          },
+          "providerId": {
+            "type": ["string", "null"]
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SearchScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ChatEvents": {
+        "type": "object",
+        "required": ["run", "token", "result", "error"],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorEvent"
+          },
+          "result": {
+            "$ref": "#/components/schemas/ResultEvent"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunEvent"
+          },
+          "token": {
+            "$ref": "#/components/schemas/TokenEvent"
+          }
+        }
+      },
+      "ChatMessage": {
+        "type": "object",
+        "required": ["role", "content"],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/Role"
+          }
+        },
+        "additionalProperties": false
+      },
       "CheckStatus": {
         "type": "string",
         "description": "Result of one check.",
@@ -6555,6 +6668,15 @@
           "unavailable",
           "timeout"
         ]
+      },
+      "ErrorEvent": {
+        "type": "object",
+        "required": ["code"],
+        "properties": {
+          "code": {
+            "type": "string"
+          }
+        }
       },
       "EventTopic": {
         "type": "string",
@@ -10111,6 +10233,33 @@
         },
         "additionalProperties": false
       },
+      "ResultEvent": {
+        "type": "object",
+        "required": ["tags", "keywords", "remove", "modelUsed"],
+        "properties": {
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "modelUsed": {
+            "type": "boolean"
+          },
+          "remove": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "replyCode": {
+            "type": ["string", "null"]
+          },
+          "tags": {
+            "$ref": "#/components/schemas/Tags"
+          }
+        }
+      },
       "ResyncEvent": {
         "type": "object",
         "description": "`resync`: events were lost. Reload every view (posts, stats, jobs,\nnotifications), then carry on with the stream.",
@@ -10130,6 +10279,19 @@
       "ReviewStatus": {
         "type": "string",
         "enum": ["proposed", "accepted"]
+      },
+      "Role": {
+        "type": "string",
+        "enum": ["user", "assistant"]
+      },
+      "RunEvent": {
+        "type": "object",
+        "required": ["runId"],
+        "properties": {
+          "runId": {
+            "type": "string"
+          }
+        }
       },
       "RunState": {
         "type": "string",
@@ -11142,6 +11304,24 @@
         "type": "string",
         "enum": ["general", "specific", "manual", "all"]
       },
+      "Tags": {
+        "type": "object",
+        "required": ["general", "specific"],
+        "properties": {
+          "general": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "specific": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "TagsMerged": {
         "type": "object",
         "required": ["updated"],
@@ -11230,6 +11410,15 @@
         "type": "string",
         "description": "How the extension ended a task (C6).",
         "enum": ["uploaded", "refreshed", "gone", "failed", "skipped"]
+      },
+      "TokenEvent": {
+        "type": "object",
+        "required": ["text"],
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        }
       },
       "TokenKind": {
         "type": "string",

@@ -1622,6 +1622,42 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/search/chat': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * The reply stream is ephemeral: no event ids, replay or automatic POST
+     *     resubmission. A new request cancels the prior run. Closing cancels the call.
+     */
+    post: operations['searchChat'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/search/chat/{runId}/cancel': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['cancelSearchChat'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/stats': {
     parameters: {
       query?: never;
@@ -2558,6 +2594,22 @@ export interface components {
      * @enum {string}
      */
     ChangeReason: 'ingest' | 'archive' | 'ai' | 'edit' | 'delete' | 'capture' | 'import';
+    ChatBody: {
+      activeTags?: string[];
+      messages: components['schemas']['ChatMessage'][];
+      providerId?: string | null;
+      scope?: components['schemas']['SearchScope'];
+    };
+    ChatEvents: {
+      error: components['schemas']['ErrorEvent'];
+      result: components['schemas']['ResultEvent'];
+      run: components['schemas']['RunEvent'];
+      token: components['schemas']['TokenEvent'];
+    };
+    ChatMessage: {
+      content: string;
+      role: components['schemas']['Role'];
+    };
     /**
      * @description Result of one check.
      * @enum {string}
@@ -2896,6 +2948,9 @@ export interface components {
       | 'storage_full'
       | 'unavailable'
       | 'timeout';
+    ErrorEvent: {
+      code: string;
+    };
     /**
      * @description The name of a published event; the `topics` filter selects by it.
      *
@@ -5010,6 +5065,13 @@ export interface components {
        */
       selector?: components['schemas']['PostSelector'];
     };
+    ResultEvent: {
+      keywords: string[];
+      modelUsed: boolean;
+      remove: string[];
+      replyCode?: string | null;
+      tags: components['schemas']['Tags'];
+    };
     /**
      * @description `resync`: events were lost. Reload every view (posts, stats, jobs,
      *     notifications), then carry on with the stream.
@@ -5025,6 +5087,11 @@ export interface components {
     ResyncReason: 'expired' | 'unknown' | 'lagged';
     /** @enum {string} */
     ReviewStatus: 'proposed' | 'accepted';
+    /** @enum {string} */
+    Role: 'user' | 'assistant';
+    RunEvent: {
+      runId: string;
+    };
     /**
      * @description The state of a run.
      * @enum {string}
@@ -5542,6 +5609,10 @@ export interface components {
     };
     /** @enum {string} */
     TagTier: 'general' | 'specific' | 'manual' | 'all';
+    Tags: {
+      general: string[];
+      specific: string[];
+    };
     TagsMerged: {
       updated: number;
     };
@@ -5583,6 +5654,9 @@ export interface components {
      * @enum {string}
      */
     TaskOutcome: 'uploaded' | 'refreshed' | 'gone' | 'failed' | 'skipped';
+    TokenEvent: {
+      text: string;
+    };
     /**
      * @description Who holds a token.
      * @enum {string}
@@ -8247,6 +8321,53 @@ export interface operations {
         headers: {
           /** @description The same ETag. */
           ETag?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  searchChat: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ChatBody'];
+      };
+    };
+    responses: {
+      /** @description SSE run, token, result or error; heartbeat every 15 seconds. No replay: closing cancels this run. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'text/event-stream': string;
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  cancelSearchChat: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Run id from this user's response. */
+        runId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Cancelled. */
+      204: {
+        headers: {
           [name: string]: unknown;
         };
         content?: never;
