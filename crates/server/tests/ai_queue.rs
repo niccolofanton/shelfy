@@ -650,3 +650,48 @@ async fn drain_uses_both_operator_slots_and_never_exceeds_them() {
     assert_eq!(counts(&t, &user).await.done, 4);
     scheduler.abort().await;
 }
+
+#[tokio::test]
+async fn admin_status_reports_orphans_and_offline_waiting_as_aggregates_only() {
+    let (_stub, t, user) = fixture(StubConfig::default()).await;
+    let keys = posts(&t, &user, 3).await;
+    let now = t.state.jobs().clock().now_ms();
+    t.write(&user, |tx| {
+        queue::mark_pending(tx, &Selector::Keys(keys), Mode::Missing, now)?;
+        let claim = queue::claim_due(tx, now)?.unwrap();
+        queue::fail(
+            tx,
+            claim.post_id,
+            claim.attempt,
+            &claim.token,
+            "refused",
+            now,
+        )?;
+        queue::claim_due(tx, now)?.unwrap();
+        queue::set_provider_status(tx, "offline", now)
+    })
+    .await;
+    let data = t.state.config().data_dir.clone();
+    let output = tokio::task::spawn_blocking(move || {
+        let mut output = Vec::new();
+        shelfy_server::admin::ai_status::run(
+            &data,
+            &shelfy_server::admin::ai_status::AiStatusArgs { user },
+            &mut output,
+        )
+        .unwrap();
+        String::from_utf8(output).unwrap()
+    })
+    .await
+    .unwrap();
+    for expected in [
+        "unanalyzed=0 pending=1 analyzing=1 done=0 errors=1",
+        "due_pending=1 orphaned_analyzing=1",
+        "provider_last_observed=offline waiting_for_offline=1",
+        "error.refused=1",
+    ] {
+        assert!(output.contains(expected), "{output}");
+    }
+    assert!(!output.contains("x_1000"));
+    assert!(!output.contains("Synthetic brass lamp"));
+}
