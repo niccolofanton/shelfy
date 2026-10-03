@@ -56,6 +56,8 @@ export default {
     'code.validation_failed': 'Alcuni valori non sono validi.',
     'code.provider_key_invalid': 'Il provider AI ha rifiutato la chiave.',
     'code.ai_not_configured': 'Nessun provider AI è configurato per questa operazione.',
+    'code.ai_vault_disabled':
+      'Il server non è ancora configurato per salvare le chiavi dei provider AI.',
     'code.ai_consent_required': 'Serve il tuo consenso per inviare i contenuti a questo provider.',
     'code.provider_offline': 'Il provider AI non è raggiungibile ora. Riprova più tardi.',
     'code.provider_unavailable': 'Il provider AI non è disponibile al momento. Riprova tra poco.',
@@ -112,6 +114,7 @@ export default {
     'code.validation_failed': 'Some values are not valid.',
     'code.provider_key_invalid': 'The AI provider refused the key.',
     'code.ai_not_configured': 'No AI provider is set up for this task.',
+    'code.ai_vault_disabled': 'The server is not yet configured to store AI provider keys.',
     'code.ai_consent_required': 'Sending your content to this provider needs your consent first.',
     'code.provider_offline': 'The AI provider cannot be reached right now. Try again later.',
     'code.provider_unavailable': 'The AI provider is unavailable right now. Try again shortly.',
