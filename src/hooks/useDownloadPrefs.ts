@@ -42,14 +42,23 @@ export function useDownloadPrefs(): UseDownloadPrefs {
     };
   }, []);
 
-  const setType = useCallback((type: string, value: boolean): void => {
-    setPrefs((prev) => {
-      const next = { ...prev, [type]: value };
+  const setType = useCallback(
+    (type: string, value: boolean): void => {
+      // The write happens here, synchronously, BEFORE the event below —
+      // not inside the setPrefs updater. React may defer invoking a
+      // functional updater until its next render pass (it only runs it
+      // eagerly, as an internal bail-out optimization, when there is no
+      // already-queued update for this state — not guaranteed); dispatching
+      // first would let every 'download-prefs-changed' listener's read()
+      // (including this hook's own, below) race the write and reapply the
+      // pre-toggle value right back over it.
+      const next = { ...prefs, [type]: value };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      return next;
-    });
-    window.dispatchEvent(new Event('download-prefs-changed'));
-  }, []);
+      setPrefs(next);
+      window.dispatchEvent(new Event('download-prefs-changed'));
+    },
+    [prefs],
+  );
 
   const selectedTypes = useCallback((): string[] => ALL_TYPES.filter((t) => prefs[t]), [prefs]);
 
