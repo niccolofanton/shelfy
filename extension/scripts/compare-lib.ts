@@ -20,24 +20,24 @@
 //                                 and external_id '<u>/<b>'; without one, every pinterest post
 //                                 (and then every Pinterest item on the extension side too)
 //
-// Matching uses canonical keys plus aliases (src/identity.ts), so `<pk>_<owner>`, `<pk>` and
+// Matching uses canonical keys plus aliases (src/shared/identity.ts), so `<pk>_<owner>`, `<pk>` and
 // shortcode ids of one IG post match each other. Desktop rows sharing an alias count as one post.
 // Parity = matched desktop posts / desktop posts; pass when parity >= threshold (default 99 %).
 
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { parseArgs } from 'node:util';
-import { parseExportFile, type ExportFile, type ExportItem } from '../src/export-format';
-import { canonicalIdentity } from '../src/identity';
-import { listingKey, parseListingKey, type ListingKind } from '../src/listing';
+import { parseExportFile, type ExportFile, type ExportItem } from './export-format';
+import { canonicalIdentity } from '../src/shared/identity';
+import { listingKey, parseListingKey, type ListingKind } from '../src/shared/listing';
 import {
-  SOURCES,
+  CAPTURE_SOURCES as SOURCES,
+  isCaptureSource as isSource,
   isPlatform,
   isRecord,
-  isSource,
   type CaptureSource,
   type Platform,
-} from '../src/protocol';
+} from '../src/shared/protocol';
 
 export const DEFAULT_THRESHOLD = 0.99;
 export const DEFAULT_SHOW = 20;

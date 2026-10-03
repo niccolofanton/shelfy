@@ -1,10 +1,10 @@
-// Minimal ambient declarations for the chrome.* extension APIs the SPIKE-3 extension uses.
-// Deliberately partial (no @types/chrome dependency): every member declared here is called
-// somewhere in extension/src. Add members when new APIs are used, never speculatively.
+// Minimal ambient declarations for the chrome.* extension APIs the extension uses. Deliberately
+// partial (no @types/chrome dependency): every member declared here is called somewhere in
+// extension/src. Add members when new APIs are used, never speculatively.
 
 declare namespace chrome {
   namespace runtime {
-    const id: string | undefined;
+    const id: string;
 
     interface MessageSender {
       id?: string;
@@ -15,41 +15,42 @@ declare namespace chrome {
       tab?: chrome.tabs.Tab;
     }
 
-    interface Manifest {
-      name: string;
-      version: string;
-      version_name?: string;
-    }
-
-    function getManifest(): Manifest;
+    type MessageListener = (
+      message: unknown,
+      sender: MessageSender,
+      sendResponse: (response?: unknown) => void,
+    ) => boolean | void;
 
     // MV3 promise form. Rejects when no listener exists (e.g. no side panel is open) and
     // throws "Extension context invalidated" in orphaned content scripts.
     function sendMessage<T = unknown>(message: unknown): Promise<T>;
 
-    const onMessage: {
-      addListener(
-        callback: (
-          message: unknown,
-          sender: MessageSender,
-          sendResponse: (response?: unknown) => void,
-        ) => boolean | void,
-      ): void;
-    };
+    const onMessage: { addListener(callback: MessageListener): void };
+    /** Messages from web pages listed in externally_connectable (the Shelfy SPA). */
+    const onMessageExternal: { addListener(callback: MessageListener): void };
 
     const onInstalled: {
       addListener(callback: (details: { reason: string }) => void): void;
     };
+
+    /** Fires when a browser profile starts; registering it wakes the worker at start-up. */
+    const onStartup: { addListener(callback: () => void): void };
   }
 
   namespace storage {
+    type AccessLevel = 'TRUSTED_CONTEXTS' | 'TRUSTED_AND_UNTRUSTED_CONTEXTS';
+
     interface StorageArea {
       get(keys?: string | string[] | null): Promise<Record<string, unknown>>;
       set(items: Record<string, unknown>): Promise<void>;
-      clear(): Promise<void>;
+      remove(keys: string | string[]): Promise<void>;
+      /** Chrome 102+: who may use this area (content scripts are untrusted contexts). */
+      setAccessLevel(options: { accessLevel: AccessLevel }): Promise<void>;
     }
 
     const local: StorageArea;
+    /** In memory for the browser session; trusted contexts only by default. */
+    const session: StorageArea;
   }
 
   namespace tabs {
@@ -62,6 +63,9 @@ declare namespace chrome {
     }
 
     function query(queryInfo: { active?: boolean; currentWindow?: boolean }): Promise<Tab[]>;
+
+    /** Rejects when no tab has this id (closed, or from before a browser restart). */
+    function get(tabId: number): Promise<Tab>;
 
     // Delivers to the content scripts of the tab; rejects when none of this extension's
     // instance is listening (e.g. the tab was loaded before the extension was reloaded).
@@ -76,23 +80,28 @@ declare namespace chrome {
         callback: (tabId: number, changeInfo: { url?: string; status?: string }, tab: Tab) => void,
       ): void;
     };
+
+    const onRemoved: {
+      addListener(callback: (tabId: number, removeInfo: { windowId: number }) => void): void;
+    };
   }
 
-  namespace scripting {
-    interface InjectionResult<T> {
-      frameId: number;
-      documentId?: string;
-      result?: T;
+  namespace alarms {
+    interface Alarm {
+      name: string;
+      scheduledTime: number;
+      periodInMinutes?: number;
     }
 
-    // `func` is serialized with Function.prototype.toString() and evaluated in the target
-    // world, so it must be self-contained. An async func resolves to its settled value.
-    function executeScript<Args extends unknown[], Result>(injection: {
-      target: { tabId: number; allFrames?: boolean; frameIds?: number[] };
-      world?: 'ISOLATED' | 'MAIN';
-      func: (...args: Args) => Result;
-      args?: Args;
-    }): Promise<Array<InjectionResult<Awaited<Result>>>>;
+    // Chrome 120+: `when` and delays shorter than 30 s fire after 30 s.
+    function create(
+      name: string,
+      info: { when?: number; delayInMinutes?: number; periodInMinutes?: number },
+    ): Promise<void>;
+
+    function get(name: string): Promise<Alarm | undefined>;
+
+    const onAlarm: { addListener(callback: (alarm: Alarm) => void): void };
   }
 
   namespace sidePanel {

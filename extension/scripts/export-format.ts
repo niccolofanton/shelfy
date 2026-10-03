@@ -1,18 +1,19 @@
-// "Export JSON" format of the side panel. Read by extension/scripts/compare.ts (SPIKE-3) and by
-// the SPIKE-2 CDN fetch test, which needs the fresh media URLs with their capture time and expiry.
-// All timestamps are unix milliseconds. Captions and author fields are never captured.
+// The SPIKE-3 capture export (`shelfy-spike3-capture`, version 1): what the spike build's side
+// panel exported with "Export JSON" (T5, on `web/t5-extension-spike`), read by compare.ts and by
+// SPIKE-2's CDN fetch test. The product extension (P2-06) has no local item store, so it writes
+// no such file; P2-19 adds the run report next to this format. All timestamps are unix ms.
+// The spike export never held captions or author fields.
 
-import type { ListingKind } from './listing';
-import type { MediaUrlKind } from './media';
+import type { ListingKind } from '../src/shared/listing';
+import type { MediaUrlKind } from '../src/shared/media';
 import {
+  CAPTURE_SOURCES,
   PLATFORMS,
-  SOURCES,
   isPlatform,
   isRecord,
   type CaptureSource,
   type Platform,
-} from './protocol';
-import type { Meta, PlatformStats, StoredItem } from './store';
+} from '../src/shared/protocol';
 
 export const EXPORT_FORMAT = 'shelfy-spike3-capture';
 export const EXPORT_VERSION = 1;
@@ -72,79 +73,57 @@ export interface ExportListing {
   lastHasNextPage: boolean | null;
 }
 
+export interface ExportCensusEntry {
+  requests: number;
+  /** Requests made while the page was an in-scope listing. */
+  inScope: number;
+}
+
+export interface ExportPlatformStats {
+  uniqueItems: number;
+  batches: number;
+  itemsReceived: number;
+  discardedBatches: number;
+  discardedItems: number;
+  rejectedItems: number;
+  lastCaptureAt: number | null;
+  census: Record<string, ExportCensusEntry>;
+}
+
+export interface ExportDiagnostics {
+  /** IG items whose public shortcode does not decode to the pk of their id (§2.8 check). */
+  igShortcodeMismatch: number;
+  /** Batches refused by the spike's service worker, by reason. */
+  refusedBatches: Record<string, number>;
+}
+
 export interface ExportFile {
   format: typeof EXPORT_FORMAT;
   version: typeof EXPORT_VERSION;
   exportedAt: string;
   extension: { version: string; userAgent: string };
   storeCreatedAt: number;
-  platforms: Record<Platform, PlatformStats>;
-  diagnostics: Meta['diagnostics'];
+  platforms: Record<Platform, ExportPlatformStats>;
+  diagnostics: ExportDiagnostics;
   listings: ExportListing[];
   items: ExportItem[];
 }
 
-export interface ExportEnvironment {
-  extensionVersion: string;
-  userAgent: string;
-  now: number;
-}
-
-export function buildExport(
-  meta: Meta,
-  items: readonly StoredItem[],
-  env: ExportEnvironment,
-): ExportFile {
-  const sorted = [...items].sort(
-    (a, b) => a.firstCapturedAt - b.firstCapturedAt || a.key.localeCompare(b.key),
-  );
+export function emptyPlatformStats(): ExportPlatformStats {
   return {
-    format: EXPORT_FORMAT,
-    version: EXPORT_VERSION,
-    exportedAt: new Date(env.now).toISOString(),
-    extension: { version: env.extensionVersion, userAgent: env.userAgent },
-    storeCreatedAt: meta.createdAt,
-    platforms: meta.platforms,
-    diagnostics: meta.diagnostics,
-    listings: Object.values(meta.listings).sort((a, b) => a.key.localeCompare(b.key)),
-    items: sorted.map((item) => ({
-      key: item.key,
-      platform: item.platform,
-      nativeId: item.nativeId,
-      rawIds: item.rawIds,
-      shortcode: item.shortcode,
-      postUrl: item.postUrl,
-      mediaType: item.mediaType,
-      mediaCount: item.mediaCount,
-      postedAt: item.postedAt,
-      firstCapturedAt: item.firstCapturedAt,
-      lastCapturedAt: item.lastCapturedAt,
-      captureCount: item.captureCount,
-      listings: Object.entries(item.listings)
-        .map(([key, membership]) => ({
-          key,
-          sources: membership.sources,
-          firstCapturedAt: membership.firstAt,
-          lastCapturedAt: membership.lastAt,
-        }))
-        .sort((a, b) => a.key.localeCompare(b.key)),
-      media: item.media.map((m) => ({
-        slot: m.slot,
-        position: m.position,
-        type: m.type,
-        urlKind: m.urlKind,
-        url: m.url,
-        host: m.host,
-        capturedAt: m.capturedAt,
-        expiresAt: m.expiresAt,
-      })),
-    })),
+    uniqueItems: 0,
+    batches: 0,
+    itemsReceived: 0,
+    discardedBatches: 0,
+    discardedItems: 0,
+    rejectedItems: 0,
+    lastCaptureAt: null,
+    census: {},
   };
 }
 
-export function exportFileName(now: Date): string {
-  const stamp = now.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
-  return `shelfy-spike3-capture-${stamp}.json`;
+export function emptyDiagnostics(): ExportDiagnostics {
+  return { igShortcodeMismatch: 0, refusedBatches: {} };
 }
 
 function isExportItem(value: unknown): value is ExportItem {
@@ -161,7 +140,7 @@ function isExportItem(value: unknown): value is ExportItem {
         isRecord(l) &&
         typeof l.key === 'string' &&
         Array.isArray(l.sources) &&
-        l.sources.every((s) => (SOURCES as readonly unknown[]).includes(s)),
+        l.sources.every((s) => (CAPTURE_SOURCES as readonly unknown[]).includes(s)),
     )
   );
 }
@@ -179,8 +158,9 @@ export function parseExportFile(json: unknown): ExportFile {
   json.items.forEach((item, index) => {
     if (!isExportItem(item)) throw new Error(`export item #${index} is malformed`);
   });
+  const platforms = json.platforms;
   for (const platform of PLATFORMS)
-    if (!isRecord(json.platforms[platform]))
+    if (!isRecord(platforms[platform]))
       throw new Error(`export has no counters for platform ${platform}`);
   return json as unknown as ExportFile;
 }

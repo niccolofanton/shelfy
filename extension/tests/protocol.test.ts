@@ -1,22 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
-import { MAX_BATCH_ITEMS } from '../../src/lib/browserSanitize';
+import { createRelay } from '../src/content/relay';
+import { ScopeTracker } from '../src/content/scoping';
 import {
   CENSUS_MESSAGE,
+  EXTERNAL,
   INTERCEPT_MESSAGE,
-  RUNTIME,
+  MAX_RELAY_ITEMS,
+  MSG,
   SCOPE_MESSAGE,
-  ScopeTracker,
-  parseBatchMessage,
+  parseCaptureMessage,
   parseCensusMessage,
   parseCensusRuntimeMessage,
+  parseExternalMessage,
   parseInterceptMessage,
-  parseMarkerMessage,
   parseScopeMessage,
-  projectItem,
-  toBatchMessage,
-  toMarkerMessage,
-} from '../src/protocol';
-import { createRelay } from '../src/relay';
+  parseSettingsPatch,
+  toCaptureMessage,
+} from '../src/shared/protocol';
 
 const PAGE = 'https://www.instagram.com/someone/saved/all-posts/';
 
@@ -65,28 +65,10 @@ describe('parseInterceptMessage (hook → bridge)', () => {
     expect(parseInterceptMessage(null)).toBeNull();
   });
 
-  it('caps a batch at the desktop sanitizer limit', () => {
-    const items = Array.from({ length: MAX_BATCH_ITEMS + 50 }, (_, i) => ({ id: String(i) }));
+  it('caps a message at the desktop sanitizer limit', () => {
+    const items = Array.from({ length: MAX_RELAY_ITEMS + 50 }, (_, i) => ({ id: String(i) }));
     const parsed = parseInterceptMessage({ type: INTERCEPT_MESSAGE, items, platform: 'twitter' });
-    expect(parsed?.items).toHaveLength(MAX_BATCH_ITEMS);
-  });
-});
-
-describe('projectItem', () => {
-  it('drops captions and author fields at the first hop', () => {
-    const projected = projectItem(hookItem);
-    expect(projected).toEqual({
-      id: hookItem.id,
-      shortcode: hookItem.shortcode,
-      postUrl: hookItem.postUrl,
-      mediaType: 'image',
-      timestamp: hookItem.timestamp,
-      thumbnailUrl: hookItem.thumbnailUrl,
-      media: hookItem.media,
-    });
-    expect(projected).not.toHaveProperty('text');
-    expect(projected).not.toHaveProperty('authorUsername');
-    expect(projectItem('not an item')).toBeNull();
+    expect(parsed?.items).toHaveLength(MAX_RELAY_ITEMS);
   });
 });
 
@@ -151,54 +133,15 @@ describe('census messages', () => {
       }),
     ).toEqual({ 'instagram|graphql PolarisSavedQuery': 3 });
     expect(parseCensusMessage({ type: CENSUS_MESSAGE, counts: { 'web|x': 1 } })).toBeNull();
-  });
-});
-
-describe('runtime messages (bridge → service worker)', () => {
-  it('round-trips a batch, projecting items and keeping the relay context', () => {
-    const message = toBatchMessage(
-      { platform: 'instagram', items: [hookItem, 'junk'], hasNextPage: true },
-      { pageUrl: PAGE, source: 'passive', sentAt: 1_760_000_000_000 },
-    );
-    expect(message.kind).toBe(RUNTIME.batch);
-    expect(message.items).toHaveLength(1);
-    expect(message.items[0]).not.toHaveProperty('text');
-    expect(parseBatchMessage(message)).toEqual(message);
-  });
-
-  it('refuses malformed batches', () => {
-    const good = toBatchMessage(
-      { platform: 'twitter', items: [], hasNextPage: null },
-      { pageUrl: 'https://x.com/i/bookmarks', source: 'dom', sentAt: 1 },
-    );
-    expect(parseBatchMessage({ ...good, kind: 'other' })).toBeNull();
-    expect(parseBatchMessage({ ...good, platform: 'web' })).toBeNull();
-    expect(parseBatchMessage({ ...good, source: 'magic' })).toBeNull();
-    expect(parseBatchMessage({ ...good, pageUrl: '' })).toBeNull();
-    expect(parseBatchMessage({ ...good, sentAt: -1 })).toBeNull();
-  });
-
-  it('round-trips markers and census messages', () => {
-    const marker = toMarkerMessage(
-      {
-        phase: 'start',
-        source: 'replay',
-        id: 'r1',
-        detail: { endpoint: '/api/v1/feed/saved/posts/' },
-      },
-      PAGE,
-      5,
-    );
-    expect(parseMarkerMessage(marker)).toEqual(marker);
     expect(
       parseCensusRuntimeMessage({
-        kind: RUNTIME.census,
+        kind: MSG.census,
         counts: { 'instagram|rest /api/v1/feed/saved/posts/': 2 },
         pageUrl: PAGE,
         sentAt: 5,
       }),
     ).toEqual({
-      kind: RUNTIME.census,
+      kind: MSG.census,
       counts: { 'instagram|rest /api/v1/feed/saved/posts/': 2 },
       pageUrl: PAGE,
       sentAt: 5,
@@ -206,9 +149,136 @@ describe('runtime messages (bridge → service worker)', () => {
   });
 });
 
+describe('capture messages (bridge → worker)', () => {
+  const context = {
+    pageUrl: PAGE,
+    docId: 'a1b2c3',
+    seq: 4,
+    capture: 'passive' as const,
+    viewer: null,
+    sentAt: 1_760_000_000_000,
+  };
+
+  it('round-trip with every field, captions and authors included (P2-G15)', () => {
+    const message = toCaptureMessage(
+      { platform: 'instagram', items: [hookItem, 'junk'], hasNextPage: true },
+      context,
+    );
+    expect(message).toEqual({
+      kind: MSG.capture,
+      platform: 'instagram',
+      items: [hookItem],
+      hasNextPage: true,
+      ...context,
+    });
+    expect(message.items[0]).toHaveProperty('text', 'Synthetic caption A');
+    expect(message.items[0]).toHaveProperty('authorUsername', 'synthetic_author_a');
+    expect(parseCaptureMessage(message)).toEqual(message);
+  });
+
+  it('refuses malformed messages', () => {
+    const good = toCaptureMessage(
+      { platform: 'pinterest', items: [], hasNextPage: null },
+      { ...context, pageUrl: 'https://www.pinterest.com/someone/recipes/', viewer: 'someone' },
+    );
+    expect(parseCaptureMessage(good)).toEqual(good);
+    for (const bad of [
+      { ...good, kind: 'other' },
+      { ...good, platform: 'web' },
+      { ...good, capture: 'magic' },
+      { ...good, pageUrl: '' },
+      { ...good, docId: '' },
+      { ...good, docId: 'x'.repeat(65) },
+      { ...good, seq: -1 },
+      { ...good, seq: 1.5 },
+      { ...good, sentAt: -1 },
+      { ...good, viewer: '' },
+      { ...good, viewer: 3 },
+      { ...good, items: 'nope' },
+    ])
+      expect(parseCaptureMessage(bad)).toBeNull();
+  });
+});
+
+describe('external messages (SPA → worker, C9)', () => {
+  it('parses the five C9 messages', () => {
+    const code = 'A'.repeat(43);
+    expect(parseExternalMessage({ type: 'shelfy.ping' })).toEqual({ type: EXTERNAL.ping });
+    expect(parseExternalMessage({ type: 'shelfy.pair', code })).toEqual({
+      type: EXTERNAL.pair,
+      code,
+    });
+    expect(
+      parseExternalMessage({ type: 'shelfy.sync.start', target: { platform: 'instagram' } }),
+    ).toEqual({ type: EXTERNAL.syncStart, target: { platform: 'instagram' } });
+    expect(
+      parseExternalMessage({
+        type: 'shelfy.sync.start',
+        target: { platform: 'pinterest', collectionId: 12 },
+      }),
+    ).toEqual({ type: EXTERNAL.syncStart, target: { platform: 'pinterest', collectionId: 12 } });
+    expect(parseExternalMessage({ type: 'shelfy.sync.stop', platform: 'twitter' })).toEqual({
+      type: EXTERNAL.syncStop,
+      platform: 'twitter',
+    });
+    expect(parseExternalMessage({ type: 'shelfy.tasks.poll' })).toEqual({
+      type: EXTERNAL.tasksPoll,
+    });
+  });
+
+  it('refuses unknown types and malformed fields', () => {
+    for (const bad of [
+      null,
+      'shelfy.ping',
+      { type: 'shelfy.unknown' },
+      { type: 'shelfy.pair' },
+      { type: 'shelfy.pair', code: 'short' },
+      { type: 'shelfy.pair', code: 'has spaces in it, sixteen+' },
+      { type: 'shelfy.pair', code: 'A'.repeat(129) },
+      { type: 'shelfy.sync.start', target: { platform: 'web' } },
+      { type: 'shelfy.sync.start', target: { platform: 'instagram', collectionId: 0 } },
+      { type: 'shelfy.sync.start', target: { platform: 'instagram', collectionId: '12' } },
+      { type: 'shelfy.sync.stop', platform: 'tiktok' },
+    ])
+      expect(parseExternalMessage(bad)).toBeNull();
+  });
+});
+
+describe('settings patches (panel → worker)', () => {
+  it('accepts toggles, folder mapping and Access headers, and clears headers with null', () => {
+    expect(
+      parseSettingsPatch({
+        passive: { instagram: false },
+        passiveFolders: false,
+        access: { clientId: 'id.access', clientSecret: 'secret-value' },
+      }),
+    ).toEqual({
+      passive: { instagram: false },
+      passiveFolders: false,
+      access: { clientId: 'id.access', clientSecret: 'secret-value' },
+    });
+    expect(parseSettingsPatch({ access: null })).toEqual({ access: null });
+    expect(parseSettingsPatch({})).toEqual({});
+  });
+
+  it('refuses unknown platforms, non-booleans and malformed headers', () => {
+    for (const bad of [
+      null,
+      { passive: { web: true } },
+      { passive: { instagram: 'yes' } },
+      { passiveFolders: 1 },
+      { access: { clientId: 'has space', clientSecret: 'x' } },
+      { access: { clientId: 'id', clientSecret: '' } },
+      { access: { clientId: 'id' } },
+      { access: 'id:secret' },
+    ])
+      expect(parseSettingsPatch(bad)).toBeNull();
+  });
+});
+
 describe('createRelay (bridge core)', () => {
   type Send = (message: unknown) => Promise<unknown>;
-  function setup(impl: Send = async () => ({ ok: true })) {
+  function setup(impl: Send = async () => ({ ok: true }), viewer: string | null = null) {
     const send = vi.fn(impl);
     const win = {} as Window;
     const warn = vi.fn();
@@ -218,6 +288,8 @@ describe('createRelay (bridge core)', () => {
       pageUrl: () => PAGE,
       now: () => 42,
       warn,
+      docId: 'doc-1',
+      viewer: (platform) => (platform === 'pinterest' ? viewer : null),
       schedule: (callback) => void scheduled.push(callback),
     });
     const post = (data: unknown, source: unknown = win): void =>
@@ -238,48 +310,53 @@ describe('createRelay (bridge core)', () => {
     expect(send).not.toHaveBeenCalled();
     post(intercept);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send.mock.calls[0][0]).toMatchObject({
-      kind: RUNTIME.batch,
+    expect(send.mock.calls[0][0]).toEqual({
+      kind: MSG.capture,
       platform: 'instagram',
+      items: [hookItem],
+      hasNextPage: true,
       pageUrl: PAGE,
-      source: 'passive',
+      docId: 'doc-1',
+      seq: 0,
+      capture: 'passive',
+      viewer: null,
       sentAt: 42,
     });
   });
 
-  it('tags batches posted inside a scope and forwards only replay markers', () => {
+  it('numbers messages per document and tags those posted inside a scope', () => {
     const { send, post } = setup();
-    post({ type: SCOPE_MESSAGE, phase: 'start', source: 'replay', id: 'r1', detail: {} });
-    post(intercept);
-    post({ type: SCOPE_MESSAGE, phase: 'end', source: 'replay', id: 'r1', detail: { pages: 1 } });
     post({ type: SCOPE_MESSAGE, phase: 'start', source: 'ssr', id: 's1', detail: {} });
     post(intercept);
     post({ type: SCOPE_MESSAGE, phase: 'end', source: 'ssr', id: 's1', detail: {} });
     post(intercept);
-    const messages = send.mock.calls.map(
-      ([m]) => m as { kind: string; source?: string; phase?: string },
-    );
-    expect(messages.map((m) => [m.kind, m.source, m.phase ?? null])).toEqual([
-      [RUNTIME.marker, 'replay', 'start'],
-      [RUNTIME.batch, 'replay', null],
-      [RUNTIME.marker, 'replay', 'end'],
-      [RUNTIME.batch, 'ssr', null],
-      [RUNTIME.batch, 'passive', null],
+    const messages = send.mock.calls.map(([m]) => m as { seq: number; capture: string });
+    expect(messages.map((m) => [m.seq, m.capture])).toEqual([
+      [0, 'ssr'],
+      [1, 'passive'],
     ]);
+  });
+
+  it('attaches the Pinterest viewer to Pinterest messages only', () => {
+    const { send, post } = setup(undefined, 'someone');
+    post({ ...intercept, platform: 'pinterest' });
+    post(intercept);
+    const viewers = send.mock.calls.map(([m]) => (m as { viewer: string | null }).viewer);
+    expect(viewers).toEqual(['someone', null]);
   });
 
   it('forwards census counts with the page URL', () => {
     const { send, post } = setup();
     post({ type: CENSUS_MESSAGE, counts: { 'instagram|graphql X': 2 } });
     expect(send).toHaveBeenCalledWith({
-      kind: RUNTIME.census,
+      kind: MSG.census,
       counts: { 'instagram|graphql X': 2 },
       pageUrl: PAGE,
       sentAt: 42,
     });
   });
 
-  it('retries a failed delivery, then gives up with a warning', async () => {
+  it('retries a failed delivery under the same sequence number, then gives up', async () => {
     const { send, warn, scheduled, post } = setup(async () => {
       throw new Error('Could not establish connection. Receiving end does not exist.');
     });
@@ -290,6 +367,7 @@ describe('createRelay (bridge core)', () => {
     scheduled.shift()?.();
     await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
     expect(send).toHaveBeenCalledTimes(3);
+    expect(new Set(send.mock.calls.map(([m]) => (m as { seq: number }).seq))).toEqual(new Set([0]));
     expect(warn.mock.calls[0][0]).toMatch(/dropped a message after 3 attempts/);
   });
 

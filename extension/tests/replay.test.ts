@@ -14,7 +14,8 @@ import {
   stopIgFeedReplay,
   type ReplayOptions,
   type ReplayResult,
-} from '../src/replay';
+} from '../src/main/replay';
+import { SCOPE_MESSAGE } from '../src/shared/protocol';
 
 declare const jsdom: { reconfigure(options: { url: string }): void };
 
@@ -85,9 +86,10 @@ describe('igFeedReplay', () => {
       '/api/v1/feed/collection/17890000000000001/posts/?max_id=CUR_1',
       '/api/v1/feed/collection/17890000000000001/posts/?max_id=CUR%2F2',
     ]);
+    // The scope type is inlined in the replay (it must be self-contained): pin it to protocol.
     expect(posted.map((m) => [m.type, m.phase])).toEqual([
-      ['SHELFY_SPIKE_SCOPE', 'start'],
-      ['SHELFY_SPIKE_SCOPE', 'end'],
+      [SCOPE_MESSAGE, 'start'],
+      [SCOPE_MESSAGE, 'end'],
     ]);
   });
 

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { isAllowedUrl } from '../../src/lib/browserUrls';
-import { PINTEREST_HOSTS, SOCIAL_MATCHES, platformForUrl } from '../src/hosts';
+import * as legacyHosts from '../src/hosts';
+import {
+  CDN_MATCHES,
+  PINTEREST_HOSTS,
+  SOCIAL_MATCHES,
+  originMatch,
+  parseShelfyOrigin,
+  platformForUrl,
+} from '../src/shared/hosts';
 import {
   canonicalIdentity,
   igPkFromId,
@@ -9,9 +17,9 @@ import {
   igShortcodeToPk,
   pinIdFromUrl,
   tweetIdFromUrl,
-} from '../src/identity';
-import { classifyListing, listingKey, listingLabel, parseListingKey } from '../src/listing';
-import { classifyMediaUrl, parseCdnExpiry } from '../src/media';
+} from '../src/shared/identity';
+import { classifyListing, listingKey, listingLabel, parseListingKey } from '../src/shared/listing';
+import { classifyMediaUrl, parseCdnExpiry } from '../src/shared/media';
 
 const PK = '3400000000000000001';
 const SHORTCODE = 'C8vOfxsVAAB';
@@ -151,6 +159,50 @@ describe('hosts', () => {
     expect(SOCIAL_MATCHES).toContain('https://www.instagram.com/*');
     expect(SOCIAL_MATCHES).toContain('https://*.pinterest.co.uk/*');
     expect(new Set(SOCIAL_MATCHES).size).toBe(SOCIAL_MATCHES.length);
+  });
+
+  it('lists the plan §2.16 CDN hosts, which are never social hosts', () => {
+    expect(CDN_MATCHES).toEqual([
+      'https://*.cdninstagram.com/*',
+      'https://*.fbcdn.net/*',
+      'https://pbs.twimg.com/*',
+      'https://video.twimg.com/*',
+      'https://*.pinimg.com/*',
+    ]);
+    for (const pattern of CDN_MATCHES) expect(SOCIAL_MATCHES).not.toContain(pattern);
+  });
+
+  it('keeps PINTEREST_HOSTS at its old path, which P2-02 mirrors', () => {
+    expect(legacyHosts.PINTEREST_HOSTS).toBe(PINTEREST_HOSTS);
+  });
+});
+
+describe('parseShelfyOrigin (build.ts --origin)', () => {
+  it('accepts an https origin and local http origins, normalized', () => {
+    expect(parseShelfyOrigin('https://refs.niccolofanton.dev')).toBe(
+      'https://refs.niccolofanton.dev',
+    );
+    expect(parseShelfyOrigin('https://refs.niccolofanton.dev/')).toBe(
+      'https://refs.niccolofanton.dev',
+    );
+    expect(parseShelfyOrigin('http://localhost:18286')).toBe('http://localhost:18286');
+    expect(parseShelfyOrigin('http://127.0.0.1:18286/')).toBe('http://127.0.0.1:18286');
+    expect(originMatch('http://localhost:18286')).toBe('http://localhost:18286/*');
+  });
+
+  it('refuses paths, credentials, queries, plain http elsewhere and other schemes', () => {
+    for (const value of [
+      'https://refs.niccolofanton.dev/app',
+      'https://user:pass@refs.niccolofanton.dev',
+      'https://refs.niccolofanton.dev/?x=1',
+      'http://refs.niccolofanton.dev',
+      'http://192.168.1.10:8080',
+      'https://localhost',
+      'ftp://example.com',
+      'refs.niccolofanton.dev',
+      '',
+    ])
+      expect(parseShelfyOrigin(value), value).toBeNull();
   });
 });
 

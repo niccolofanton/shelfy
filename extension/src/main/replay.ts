@@ -1,7 +1,8 @@
-// Owner-triggered Instagram REST replay: a port of IG_FEED_REPLAY (src/lib/browserScripts.ts)
-// for chrome.scripting.executeScript({ world: 'MAIN', func }). It answers the SPIKE-3 question
-// "does IG replay run from the extension" and recovers the first page of a saved listing, which
-// Instagram server-renders inline so that no hook can see it.
+// Instagram REST replay: a port of IG_FEED_REPLAY (src/lib/browserScripts.ts) for
+// chrome.scripting.executeScript({ world: 'MAIN', func }), kept from the SPIKE-3 build (T5), where
+// it ran 123/123 items of an IG folder. It recovers the first page of a saved listing, which
+// Instagram server-renders inline so that no hook can see it. The sync controller (P2-13)
+// productizes it; P2-06 bundles it nowhere.
 //
 // MV3 accepts only functions (no code strings), and Chrome serializes `func` with
 // Function.prototype.toString(): the body must not reference anything outside itself, which is
@@ -9,7 +10,7 @@
 //
 // The replayed responses travel through the page's patched fetch, so the hook parses and relays
 // them like any other response. Start/end scope messages make the bridge tag those batches
-// `replay` and put the outcome in the side-panel log.
+// `replay` (SCOPE_MESSAGE in shared/protocol.ts; inlined below, a unit test pins the two).
 
 export const IG_REPLAY_MAX_PAGES = 100; // = the desktop's page cap
 export const IG_REPLAY_GAP_MS = 700; // = the desktop's gap between pages
@@ -31,7 +32,7 @@ export interface ReplayResult {
 }
 
 export async function igFeedReplay(options: ReplayOptions): Promise<ReplayResult> {
-  const scopeType = 'SHELFY_SPIKE_SCOPE';
+  const scopeType = 'SHELFY_SCOPE';
   const w = window as Window & { __syncStop?: boolean };
   const post = (phase: 'start' | 'end', detail: Record<string, string | number | null>): void => {
     window.postMessage(

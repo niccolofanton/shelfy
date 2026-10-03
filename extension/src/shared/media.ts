@@ -1,4 +1,5 @@
-// Media URL helpers for the export (the URLs SPIKE-2 fetches from a datacenter IP).
+// Media URL helpers: the signed-CDN expiry of IG/FB URLs and what a media URL points at (used
+// by compare.ts's export format and, later, by the extension's upload tasks, P2-17).
 
 /** Instagram/Facebook CDN hosts sign URLs with an `oe` expiry (plan §2.13: archive by expiry). */
 const SIGNED_CDN_HOST = /(?:^|\.)(?:cdninstagram\.com|fbcdn\.net)$/;

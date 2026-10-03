@@ -21,12 +21,13 @@ import {
 import {
   EXPORT_FORMAT,
   EXPORT_VERSION,
+  emptyDiagnostics,
+  emptyPlatformStats,
   type ExportFile,
   type ExportItem,
-} from '../src/export-format';
-import { parseListingKey } from '../src/listing';
-import type { CaptureSource } from '../src/protocol';
-import { emptyMeta } from '../src/store';
+} from '../scripts/export-format';
+import { parseListingKey } from '../src/shared/listing';
+import type { CaptureSource } from '../src/shared/protocol';
 
 const FOLDER = 'instagram:ig_collection:17890000000000001';
 const BOARD = 'pinterest:pin_board:someone/recipes';
@@ -192,15 +193,18 @@ function item(
 
 function extensionExport(items: ExportItem[]): ExportFile {
   const keys = new Set(items.flatMap((i) => i.listings.map((l) => l.key)));
-  const meta = emptyMeta(T0);
   return {
     format: EXPORT_FORMAT,
     version: EXPORT_VERSION,
     exportedAt: new Date(T0).toISOString(),
     extension: { version: '0.1.0', userAgent: 'test' },
     storeCreatedAt: T0,
-    platforms: meta.platforms,
-    diagnostics: meta.diagnostics,
+    platforms: {
+      instagram: emptyPlatformStats(),
+      twitter: emptyPlatformStats(),
+      pinterest: emptyPlatformStats(),
+    },
+    diagnostics: emptyDiagnostics(),
     listings: [...keys].map((key) => {
       const parsed = parseListingKey(key);
       if (!parsed) throw new Error(key);

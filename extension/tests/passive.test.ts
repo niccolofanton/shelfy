@@ -5,7 +5,7 @@
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import pinterestBoardFeed from './fixtures/pinterest-board-feed.json';
-import { CENSUS_MESSAGE, INTERCEPT_MESSAGE, SCOPE_MESSAGE } from '../src/protocol';
+import { CENSUS_MESSAGE, INTERCEPT_MESSAGE, SCOPE_MESSAGE } from '../src/shared/protocol';
 import { censusLabel, friendlyNameFrom, installCensus } from '../src/main/census';
 import { createThrottle, installPassiveHelpers, type HookWindow } from '../src/main/passive';
 

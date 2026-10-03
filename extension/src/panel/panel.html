@@ -3,68 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Shelfy capture spike</title>
+    <title>Shelfy</title>
     <link rel="stylesheet" href="panel.css" />
   </head>
   <body>
-    <header>
-      <h1>Shelfy capture spike</h1>
-      <p class="muted" id="version"></p>
-      <p class="muted">
-        Records the saved items Instagram, X and Pinterest load in this browser. Nothing leaves the
-        browser until you export it.
-      </p>
-      <div class="actions">
-        <button id="export" type="button">Export JSON</button>
-        <button id="clear" type="button" class="danger">Clear data</button>
-      </div>
-      <p class="status" id="action-status" role="status"></p>
+    <header class="header">
+      <h1 id="title">Shelfy</h1>
+      <p class="muted" id="subtitle"></p>
     </header>
-
-    <section>
-      <h2>Active tab</h2>
-      <div id="active-tab" class="card"></div>
-      <div id="replay" class="card" hidden>
-        <p>
-          <strong>Instagram replay</strong>: re-fetches this listing's REST feed from the top
-          through the capture hook, with the desktop's pacing (700 ms between pages). Do not scroll
-          while it runs.
-        </p>
-        <div class="actions">
-          <label for="replay-pages">Pages</label>
-          <input id="replay-pages" type="number" min="1" max="100" value="100" />
-          <button id="replay-run" type="button">Run IG replay</button>
-          <button id="replay-stop" type="button" class="danger">Stop</button>
-        </div>
-        <p class="status" id="replay-status" role="status"></p>
-      </div>
-    </section>
-
-    <section>
-      <h2>Platforms</h2>
-      <div id="platforms"></div>
-      <p class="muted" id="diagnostics"></p>
-    </section>
-
-    <section>
-      <h2>Listings</h2>
-      <div id="listings"></div>
-    </section>
-
-    <section>
-      <h2>Hooked requests (census)</h2>
-      <p class="muted">
-        Requests whose responses the hook tries to parse. Many requests but no new items means the
-        page returned saved items in a shape the parsers do not read.
-      </p>
-      <div id="census"></div>
-    </section>
-
-    <section>
-      <h2>Log</h2>
-      <ol id="log" class="log"></ol>
-    </section>
-
+    <main id="sections"></main>
     <script src="panel.js"></script>
   </body>
 </html>

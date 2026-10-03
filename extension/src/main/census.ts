@@ -1,10 +1,11 @@
-// MAIN-world request census: counts the page requests whose responses the hook tries to parse,
+// MAIN-world request census (debug builds only, content/hook.debug.ts): counts the page requests
+// whose responses the hook tries to parse,
 // labelled by endpoint (IG GraphQL by friendly name). Comparing these counts with the batches
 // that reach the side panel shows when the page fetched saved items in a shape the parsers do
 // not recognise. Reads URLs and the IG friendly-name header/param only: no bodies are read and
 // no request is changed or added.
 
-import { CENSUS_MESSAGE, type Platform } from '../protocol';
+import { CENSUS_MESSAGE, type Platform } from '../shared/protocol';
 
 const IG_PATHS = ['/graphql/query', '/api/v1/feed/saved/', '/api/v1/feed/collection/'];
 const PIN_RESOURCE =

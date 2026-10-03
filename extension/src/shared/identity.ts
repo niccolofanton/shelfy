@@ -1,4 +1,5 @@
-// Canonical post identity (plan §2.8), shared by the service worker and compare.ts.
+// Canonical post identity (plan §2.8), shared by compare.ts and the extension (the server
+// canonicalizes keys again at ingest, P2-02).
 //
 // | Platform  | native id                  | key          | derived from                          |
 // |-----------|----------------------------|--------------|---------------------------------------|

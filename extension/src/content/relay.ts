@@ -1,17 +1,19 @@
 // Window-message relay used by bridge.ts (ISOLATED world). Desktop counterpart:
 // electron/webview-preload.ts, which accepts the hook's postMessage fallback only when
 // `event.source === window` and forwards it with ipcRenderer.sendToHost. Here the destination is
-// the service worker over chrome.runtime, and each batch is tagged with its capture source.
+// the service worker over chrome.runtime. Each hook message travels whole, captions and authors
+// included (they are library data, P2-G15), with the context only the content script knows:
+// the page URL, the document id and sequence number, the capture scope and the Pinterest viewer.
 
 import {
-  RUNTIME,
-  ScopeTracker,
+  MSG,
   parseCensusMessage,
   parseInterceptMessage,
   parseScopeMessage,
-  toBatchMessage,
-  toMarkerMessage,
-} from './protocol';
+  toCaptureMessage,
+  type Platform,
+} from '../shared/protocol';
+import { ScopeTracker } from './scoping';
 
 export interface RelayDeps {
   /** Delivers a message to the service worker; rejects when it cannot. */
@@ -19,6 +21,10 @@ export interface RelayDeps {
   pageUrl(): string;
   now(): number;
   warn(message: string): void;
+  /** Random id of this document (bridge.ts makes one per page load). */
+  docId: string;
+  /** The signed-in user of the page, for Pinterest; null when unknown or not read. */
+  viewer(platform: Platform): string | null;
   schedule?(callback: () => void, ms: number): void;
   maxAttempts?: number;
   retryDelayMs?: number;
@@ -26,8 +32,9 @@ export interface RelayDeps {
 
 /**
  * Builds the `message` event listener. One-shot runtime messages (rather than a long-lived
- * port) are used on purpose: each delivery is acknowledged, wakes a suspended service worker,
- * and is retried when the worker was being torn down at the time.
+ * port) are used on purpose: each delivery is acknowledged once the worker has queued it, wakes
+ * a suspended worker, and is retried when the worker was being torn down at the time. A retried
+ * delivery keeps its sequence number, so the worker can drop a copy it already queued.
  */
 export function createRelay(win: Window, deps: RelayDeps): (event: MessageEvent) => void {
   const scopes = new ScopeTracker();
@@ -35,6 +42,7 @@ export function createRelay(win: Window, deps: RelayDeps): (event: MessageEvent)
   const maxAttempts = deps.maxAttempts ?? 3;
   const retryDelayMs = deps.retryDelayMs ?? 400;
   let disabled = false;
+  let seq = 0;
 
   const forward = (message: unknown, attempt = 1): void => {
     deps.send(message).catch((err: unknown) => {
@@ -58,28 +66,24 @@ export function createRelay(win: Window, deps: RelayDeps): (event: MessageEvent)
     const scope = parseScopeMessage(data);
     if (scope) {
       scopes.apply(scope);
-      // Replay start/end go to the log; SSR reads and DOM scans are too chatty to log.
-      if (scope.source === 'replay') forward(toMarkerMessage(scope, deps.pageUrl(), deps.now()));
       return;
     }
 
     const census = parseCensusMessage(data);
     if (census) {
-      forward({
-        kind: RUNTIME.census,
-        counts: census,
-        pageUrl: deps.pageUrl(),
-        sentAt: deps.now(),
-      });
+      forward({ kind: MSG.census, counts: census, pageUrl: deps.pageUrl(), sentAt: deps.now() });
       return;
     }
 
     const intercept = parseInterceptMessage(data);
     if (intercept)
       forward(
-        toBatchMessage(intercept, {
+        toCaptureMessage(intercept, {
           pageUrl: deps.pageUrl(),
-          source: scopes.current(),
+          docId: deps.docId,
+          seq: seq++,
+          capture: scopes.current(),
+          viewer: deps.viewer(intercept.platform),
           sentAt: deps.now(),
         }),
       );

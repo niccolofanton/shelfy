@@ -10,9 +10,9 @@
 // Each call is wrapped in a scope message so the bridge tags the resulting batch (ssr / dom).
 
 import { SAVED_PATTERNS } from '../../../src/lib/browserUrls';
-import { platformForUrl } from '../hosts';
-import { classifyListing } from '../listing';
-import { SCOPE_MESSAGE, type CaptureSource } from '../protocol';
+import { platformForUrl } from '../shared/hosts';
+import { classifyListing } from '../shared/listing';
+import { SCOPE_MESSAGE, type CaptureSource } from '../shared/protocol';
 
 /** Same settle time as the X scroll loop (SCROLL_SCRIPTS.twitter in browserScripts.ts). */
 export const X_DOM_SCAN_INTERVAL_MS = 750;
