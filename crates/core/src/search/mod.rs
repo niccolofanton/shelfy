@@ -12,3 +12,5 @@
 pub mod index;
 pub mod query;
 pub mod terms;
+
+pub mod vocab;

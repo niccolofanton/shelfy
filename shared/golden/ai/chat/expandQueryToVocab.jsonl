@@ -1,0 +1,10 @@
+{"golden":"ai/chat/expandQueryToVocab","source":"electron/analyzer.ts#expandQueryToVocab","generator":"scripts/golden/ai-chat.ts","format":1}
+{"id":"expand-0","args":["",60],"output":[]}
+{"id":"expand-1","args":["lamp",60],"output":["desk lamp","glass","lamp shade","walnut","design"]}
+{"id":"expand-2","args":["desk lamp",60],"output":["desk lamp","glass","walnut","design"]}
+{"id":"expand-3","args":["walnut",60],"output":["walnut","desk lamp","design"]}
+{"id":"expand-4","args":["garden",60],"output":["chair","garden","design"]}
+{"id":"expand-5","args":["città",60],"output":["architecture","città"]}
+{"id":"expand-6","args":["missing",60],"output":[]}
+{"id":"expand-7","args":["\" OR *",60],"output":[]}
+{"id":"expand-8","args":["architecture",60],"output":["architecture","città"]}

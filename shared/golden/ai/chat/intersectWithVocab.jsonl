@@ -1,0 +1,5 @@
+{"golden":"ai/chat/intersectWithVocab","source":"electron/analyzer.ts#intersectWithVocab","generator":"scripts/golden/ai-chat.ts","format":1}
+{"id":"intersect-0","args":[[" LAMPS ","desk lamp","lamps","seats","chair"]],"output":["Desk Lamp","chair"]}
+{"id":"intersect-1","args":[["desk","walnut","missing"]],"output":["desk lamp","walnut"]}
+{"id":"intersect-2","args":[["CITTÀ","glass","shade"]],"output":["città","glass","lamp shade"]}
+{"id":"intersect-3","args":[[]],"output":[]}

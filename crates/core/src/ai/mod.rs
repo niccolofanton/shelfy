@@ -26,3 +26,5 @@ pub mod normalize;
 pub mod prompts;
 pub mod queue;
 pub mod template;
+
+pub mod chat;

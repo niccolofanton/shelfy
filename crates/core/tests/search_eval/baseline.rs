@@ -19,6 +19,7 @@ pub struct BaselineCase {
     pub hybrid: Option<Metrics>,
     /// Tag-only probe (top-5 gold tags or the case override).
     pub tags: Option<Metrics>,
+    pub pools: Option<[f64; 3]>,
 }
 
 /// A desktop report.
@@ -57,6 +58,10 @@ impl Baseline {
                     Metrics::from_values(NAMES.map(|name| m[format!("hy_{name}")].as_f64()))
                 });
                 let case = BaselineCase {
+                    pools: m.get("poolRelevance").map(|_| {
+                        ["poolRelevance", "poolNoise", "keywordRelevance"]
+                            .map(|name| m[name].as_f64().expect("pool metric"))
+                    }),
                     gold_posts: r["goldPostCount"].as_u64().expect("goldPostCount"),
                     total: r["sample"]["searchTotal"].as_u64(),
                     text,

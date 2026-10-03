@@ -24,6 +24,7 @@ what the desktop returns.
 | `ai/catalog/user-prompt` | `electron/analyzer.ts#buildUserPrompt` (social and web) | `shelfy_core::ai::catalog::user_prompt` |
 | `ai/catalog/request` | `shared/ai/catalog.ts#catalogRequest` | `shelfy_core::ai::catalog::request` |
 | `ai/catalog/normalize` | `electron/analyzer.ts#normalizeCatalogOutput` | `shelfy_core::ai::normalize::catalog` |
+| `ai/chat/*` | `electron/analyzer.ts` offline vocabulary intersection, query expansion, block parsers, deterministic keywords/tag matches | `search::vocab::Vocabulary` and `ai::chat` |
 | `ai/catalog/apply` | `electron/analyzer.ts#catalogAnalysisFields` into `updateAiAnalysis` | `Catalog::into_patch` into `update_ai` |
 
 The catalog functions of `electron/analyzer.ts` are re-exports of
@@ -40,6 +41,11 @@ The `edits` cases each start from a bare post on a fresh desktop library
 record the post's layers: columns, tag rows and entity rows. Each case carries
 the alias table it ran with. The header of `scripts/golden/edits.ts` lists the
 desktop behaviors the web changes on purpose, which the cases stay clear of.
+
+The chat raw tag parser preserves the desktop's unbounded helper. Its composed
+`parse_tags` protocol applies 15 per tier and 30 total, honors the desktop
+GENERAL/SPECIFIC and legacy TAGS markers, and excludes active tags. The six chat
+sets run on a private in-memory desktop library; no provider is started.
 
 ### Stateful sets: `merge/`
 

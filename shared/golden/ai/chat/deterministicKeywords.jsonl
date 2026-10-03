@@ -1,0 +1,13 @@
+{"golden":"ai/chat/deterministicKeywords","source":"electron/analyzer.ts#deterministicKeywords","generator":"scripts/golden/ai-chat.ts","format":1}
+{"id":"terms-0","args":[""],"output":[]}
+{"id":"terms-1","args":["lamp"],"output":["lamp"]}
+{"id":"terms-2","args":["desk lamp"],"output":["desk","lamp"]}
+{"id":"terms-3","args":["walnut"],"output":["walnut"]}
+{"id":"terms-4","args":["garden"],"output":["garden"]}
+{"id":"terms-5","args":["città"],"output":["città"]}
+{"id":"terms-6","args":["missing"],"output":["missing"]}
+{"id":"terms-7","args":["\" OR *"],"output":[]}
+{"id":"terms-8","args":["architecture"],"output":["architecture"]}
+{"id":"terms-9","args":["cerco una lampada in legno e vetro"],"output":["lampada","legno","vetro"]}
+{"id":"terms-10","args":["3D AI UX design café brass walnut glass chair garden"],"output":["3d","ux","design","café","brass","walnut"]}
+{"id":"terms-11","args":["İstanbul città 日本語"],"output":["stanbul","città","日本語"]}

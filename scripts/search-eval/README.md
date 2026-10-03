@@ -86,3 +86,23 @@ Generate `synthetic.sqlite` with the Rust `write_the_synthetic_library` test.
 The runner requires every path, reads the source database read-only, and calls
 the real desktop `searchPostsByTags` in an isolated in-memory database. It
 refuses a baseline with different gold-set counts and writes aggregates only.
+
+### Chat pools (P3-07)
+
+The Rust gate compares `poolRelevance`, `poolNoise` and `keywordRelevance`
+against the paired desktop baseline (0.02 tolerance; noise is lower-better).
+The probe uses the production chat broad pool: top 150 general-tier tags,
+falling back to all tiers. The older harness's all-tier broad pool can exclude
+the entire vocabulary of small libraries; these pool metrics measure the
+actual chat retrieval instead. Text, hybrid and tag-only metrics stay intact.
+
+```sh
+pnpm exec tsx scripts/search-eval/pool-probe.ts --db=/tmp/synthetic.sqlite --baseline=crates/core/tests/search_eval/synthetic-report.json --out=/tmp/paired-report.json
+CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test -p shelfy-core --release --test chat_retrieval specific_pool_budget -- --nocapture
+```
+
+Every path is explicit; the probe copies only search fields into a private
+in-memory desktop connection and calls the real offline analyzer helpers.
+It starts no provider and writes aggregates only. The budget test builds
+20,000 posts with AI tiers and keywords, warms each query, then checks the
+specific pool's p95 against 30 ms across 96 measured retrievals.

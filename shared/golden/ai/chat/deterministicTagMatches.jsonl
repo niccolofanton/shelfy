@@ -1,0 +1,28 @@
+{"golden":"ai/chat/deterministicTagMatches","source":"electron/analyzer.ts#deterministicTagMatches","generator":"scripts/golden/ai-chat.ts","format":1}
+{"id":"matches-0-0","args":["",[],["design","architecture"]],"output":{"broad":[],"specific":[]}}
+{"id":"matches-0-1","args":["",["design"],["design","architecture"]],"output":{"broad":["desk lamp","walnut","glass","garden","chair"],"specific":[]}}
+{"id":"matches-0-2","args":["",["desk lamp","garden"],["design","architecture"]],"output":{"broad":["design","walnut","glass","chair"],"specific":[]}}
+{"id":"matches-1-0","args":["lamp",[],["design","architecture"]],"output":{"broad":[],"specific":["desk lamp","lamp shade"]}}
+{"id":"matches-1-1","args":["lamp",["design"],["design","architecture"]],"output":{"broad":["desk lamp","walnut","glass","garden","chair"],"specific":["lamp shade"]}}
+{"id":"matches-1-2","args":["lamp",["desk lamp","garden"],["design","architecture"]],"output":{"broad":["design","walnut","glass","chair"],"specific":["lamp shade"]}}
+{"id":"matches-2-0","args":["desk lamp",[],["design","architecture"]],"output":{"broad":[],"specific":["desk lamp","lamp shade"]}}
+{"id":"matches-2-1","args":["desk lamp",["design"],["design","architecture"]],"output":{"broad":["desk lamp","walnut","glass","garden","chair"],"specific":["lamp shade"]}}
+{"id":"matches-2-2","args":["desk lamp",["desk lamp","garden"],["design","architecture"]],"output":{"broad":["design","walnut","glass","chair"],"specific":["lamp shade"]}}
+{"id":"matches-3-0","args":["walnut",[],["design","architecture"]],"output":{"broad":[],"specific":["walnut"]}}
+{"id":"matches-3-1","args":["walnut",["design"],["design","architecture"]],"output":{"broad":["desk lamp","walnut","glass","garden","chair"],"specific":[]}}
+{"id":"matches-3-2","args":["walnut",["desk lamp","garden"],["design","architecture"]],"output":{"broad":["design","walnut","glass","chair"],"specific":[]}}
+{"id":"matches-4-0","args":["garden",[],["design","architecture"]],"output":{"broad":[],"specific":["garden"]}}
+{"id":"matches-4-1","args":["garden",["design"],["design","architecture"]],"output":{"broad":["desk lamp","walnut","glass","garden","chair"],"specific":[]}}
+{"id":"matches-4-2","args":["garden",["desk lamp","garden"],["design","architecture"]],"output":{"broad":["design","walnut","glass","chair"],"specific":[]}}
+{"id":"matches-5-0","args":["città",[],["design","architecture"]],"output":{"broad":[],"specific":["città"]}}
+{"id":"matches-5-1","args":["città",["design"],["design","architecture"]],"output":{"broad":["desk lamp","walnut","glass","garden","chair"],"specific":["città"]}}
+{"id":"matches-5-2","args":["città",["desk lamp","garden"],["design","architecture"]],"output":{"broad":["design","walnut","glass","chair"],"specific":["città"]}}
+{"id":"matches-6-0","args":["missing",[],["design","architecture"]],"output":{"broad":[],"specific":[]}}
+{"id":"matches-6-1","args":["missing",["design"],["design","architecture"]],"output":{"broad":["desk lamp","walnut","glass","garden","chair"],"specific":[]}}
+{"id":"matches-6-2","args":["missing",["desk lamp","garden"],["design","architecture"]],"output":{"broad":["design","walnut","glass","chair"],"specific":[]}}
+{"id":"matches-7-0","args":["\" OR *",[],["design","architecture"]],"output":{"broad":[],"specific":[]}}
+{"id":"matches-7-1","args":["\" OR *",["design"],["design","architecture"]],"output":{"broad":["desk lamp","walnut","glass","garden","chair"],"specific":[]}}
+{"id":"matches-7-2","args":["\" OR *",["desk lamp","garden"],["design","architecture"]],"output":{"broad":["design","walnut","glass","chair"],"specific":[]}}
+{"id":"matches-8-0","args":["architecture",[],["design","architecture"]],"output":{"broad":["architecture"],"specific":[]}}
+{"id":"matches-8-1","args":["architecture",["design"],["design","architecture"]],"output":{"broad":["architecture","desk lamp","walnut","glass","garden","chair"],"specific":[]}}
+{"id":"matches-8-2","args":["architecture",["desk lamp","garden"],["design","architecture"]],"output":{"broad":["architecture","design","walnut","glass","chair"],"specific":[]}}

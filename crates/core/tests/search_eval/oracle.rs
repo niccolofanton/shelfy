@@ -64,6 +64,55 @@ impl Oracle {
             .collect()
     }
 
+    /// Pool quality from the independent desktop oracle (noise is lower-better).
+    pub fn pool_metrics(
+        &self,
+        gold: &HashSet<String>,
+        terms: &[&str],
+        tags: &[String],
+        keywords: &[String],
+    ) -> rusqlite::Result<[f64; 3]> {
+        let ids = serde_json::to_string(gold).expect("ids serialize");
+        let counts: HashMap<String,i64>=self.conn.prepare("SELECT tag_norm,COUNT(*) FROM post_tags WHERE post_id IN (SELECT value FROM json_each(?1)) GROUP BY tag_norm")?.query_map([ids],|r| Ok((r.get(0)?,r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        let fraction = |n: usize, total: usize| {
+            if total == 0 {
+                0.0
+            } else {
+                n as f64 / total as f64
+            }
+        };
+        let on_topic = tags
+            .iter()
+            .filter(|t| {
+                let n = counts.get(&t.to_lowercase()).copied().unwrap_or(0);
+                n >= 1
+                    && n as f64
+                        / self
+                            .global_tag_count
+                            .get(&t.to_lowercase())
+                            .copied()
+                            .unwrap_or(1) as f64
+                        >= 0.15
+            })
+            .count();
+        let noise = tags
+            .iter()
+            .filter(|t| !counts.contains_key(&t.to_lowercase()))
+            .count();
+        let kw = keywords
+            .iter()
+            .filter(|kw| {
+                let kw = kw.to_lowercase();
+                terms.iter().any(|t| kw.contains(t) || t.contains(&kw))
+            })
+            .count();
+        Ok([
+            fraction(on_topic, tags.len()),
+            fraction(noise, tags.len()),
+            fraction(kw, keywords.len()),
+        ])
+    }
+
     /// The tags a query ideally maps to (`goldTags`): tags carried by the gold
     /// posts, ranked by prevalence × distinctiveness (`in_set × lift`). Tags
     /// with real mass (`in_set ≥ 2`, `lift ≥ 0.03`) first; only when none

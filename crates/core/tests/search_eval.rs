@@ -28,7 +28,8 @@
 //! the same rows. The server's `search_ranking` test checks that both routes
 //! return this ranking. The desktop's AI tag retrieval metrics
 //! (`poolRelevance`, `poolNoise`, `keywordRelevance`), its composite
-//! pass/fail score measure the AI views and are not ported. P3-05 also ports
+//! pass/fail score measure the AI views. P3-07 checks the three pool metrics.
+//! P3-05 also ports
 //! the tag-only probe (top-5 gold tags or the case override).
 //!
 //! Nothing from a real library is printed or written: only counts and
@@ -137,6 +138,7 @@ struct CaseRun {
     /// The hybrid probe (top-2 gold tags + the query); `None` without gold tags.
     hybrid: Option<Metrics>,
     tags: Option<Metrics>,
+    pools: [f64; 3],
     /// First page plus the count of matches, per timed run.
     times: Vec<Duration>,
 }
@@ -235,6 +237,7 @@ fn record_the_synthetic_report() {
                         .or_else(|| name.strip_prefix("tag_"))
                         .unwrap_or(name);
                     NAMES.contains(&name)
+                        || ["poolRelevance", "poolNoise", "keywordRelevance"].contains(&name)
                 })
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect();
@@ -341,6 +344,32 @@ fn gate(library: &Path, baseline_path: &Path) {
         );
     }
 
+    for (index, name) in ["poolRelevance", "poolNoise", "keywordRelevance"]
+        .into_iter()
+        .enumerate()
+    {
+        let ours = runs.iter().map(|r| r.pools[index]).sum::<f64>() / runs.len() as f64;
+        let theirs = runs
+            .iter()
+            .map(|r| {
+                baseline_of(&baseline, r)
+                    .and_then(|b| b.pools)
+                    .expect("refresh the desktop pool metrics")[index]
+            })
+            .sum::<f64>()
+            / runs.len() as f64;
+        println!("{name} Rust {ours:.3} desktop {theirs:.3}");
+        // Noise measures irrelevant tags, so its quality inequality is reversed.
+        assert!(
+            if index == 1 {
+                ours <= theirs + TOLERANCE
+            } else {
+                ours >= theirs - TOLERANCE
+            },
+            "{name} outside desktop tolerance"
+        );
+    }
+
     let p95 = percentile(all_times(&runs), 0.95);
     if cfg!(debug_assertions) {
         println!("latency: debug build, the budget is checked with --release only");
@@ -402,6 +431,20 @@ fn run_case(case: &'static EvalCase, oracle: &Oracle, corpus: &Corpus) -> CaseRu
         Metrics::of(&ranked, &gold, PAGE as usize)
     });
 
+    let pools = corpus
+        .db
+        .read(|conn| {
+            let vocab = shelfy_core::search::vocab::Vocabulary::load(conn)?;
+            let exclude = vocab
+                .broad()
+                .into_iter()
+                .map(|t| t.to_lowercase())
+                .collect();
+            let specific = vocab.specific(conn, case.query, &exclude)?;
+            let keywords = vocab.keywords(conn, case.query, 12)?;
+            Ok::<_, RepoError>(oracle.pool_metrics(&gold, case.gold_terms, &specific, &keywords)?)
+        })
+        .expect("pool metrics");
     let times = (0..=TIMED_RUNS)
         .map(|_| time_search(corpus, &text_filter))
         .skip(1)
@@ -413,6 +456,7 @@ fn run_case(case: &'static EvalCase, oracle: &Oracle, corpus: &Corpus) -> CaseRu
         text,
         hybrid,
         tags,
+        pools,
         times,
     }
 }
@@ -616,6 +660,10 @@ fn render(runs: &[CaseRun], baseline: &Baseline, corpus: &Corpus) -> String {
 }
 
 /// The run as JSON: corpus counts, per-case and per-group metrics, latency.
+fn pool_json(values: [f64; 3]) -> Value {
+    json!({"poolRelevance":values[0],"poolNoise":values[1],"keywordRelevance":values[2]})
+}
+
 fn json_report(runs: &[CaseRun], baseline: &Baseline, corpus: &Corpus) -> Value {
     let metrics_json = |m: Metrics| -> Value {
         NAMES
@@ -637,6 +685,8 @@ fn json_report(runs: &[CaseRun], baseline: &Baseline, corpus: &Corpus) -> Value 
                 "fts": metrics_json(r.text),
                 "ftsHybrid": r.hybrid.map(metrics_json),
                 "tags": r.tags.map(metrics_json),
+                "pools": pool_json(r.pools),
+                "desktopPools": b.and_then(|b| b.pools).map(pool_json),
                 "desktopTotal": b.and_then(|b| b.total),
                 "desktop": b.map(|b| metrics_json(b.text)),
                 "desktopHybrid": b.and_then(|b| b.hybrid).map(metrics_json),

@@ -7,6 +7,7 @@
 //! function: `scripts/golden/README.md`.
 
 mod golden_ai;
+mod golden_chat;
 mod golden_merge;
 mod golden_tag_search;
 mod golden_taxonomy;
@@ -36,6 +37,7 @@ const CHECKED: &[&str] = &[
     "ai/catalog/",
     "ai/clusters/",
     "ai/aliases/",
+    "ai/chat/",
     "edits",
     "extract-content-terms",
     "hosts",

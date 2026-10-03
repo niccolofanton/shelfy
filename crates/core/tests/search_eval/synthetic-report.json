@@ -26,7 +26,10 @@
         "tag_r@5": 0.4,
         "tag_r@10": 0.2,
         "tag_mrr": 1,
-        "tag_ndcg@10": 0.3589542101716347
+        "tag_ndcg@10": 0.3589542101716347,
+        "poolRelevance": 0.5,
+        "poolNoise": 0.5,
+        "keywordRelevance": 0.2
       },
       "sample": {
         "searchTotal": 127
@@ -56,7 +59,10 @@
         "tag_r@5": 1,
         "tag_r@10": 1,
         "tag_mrr": 1,
-        "tag_ndcg@10": 1
+        "tag_ndcg@10": 1,
+        "poolRelevance": 0.4,
+        "poolNoise": 0.6,
+        "keywordRelevance": 0.3333333333333333
       },
       "sample": {
         "searchTotal": 419
@@ -86,7 +92,10 @@
         "tag_r@5": 1,
         "tag_r@10": 1,
         "tag_mrr": 1,
-        "tag_ndcg@10": 1
+        "tag_ndcg@10": 1,
+        "poolRelevance": 0,
+        "poolNoise": 0,
+        "keywordRelevance": 0.6666666666666666
       },
       "sample": {
         "searchTotal": 53
@@ -116,7 +125,10 @@
         "tag_r@5": 1,
         "tag_r@10": 0.5,
         "tag_mrr": 1,
-        "tag_ndcg@10": 0.6489315753318465
+        "tag_ndcg@10": 0.6489315753318465,
+        "poolRelevance": 1,
+        "poolNoise": 0,
+        "keywordRelevance": 1
       },
       "sample": {
         "searchTotal": 71
@@ -146,7 +158,10 @@
         "tag_r@5": 0.2,
         "tag_r@10": 0.1,
         "tag_mrr": 1,
-        "tag_ndcg@10": 0.22009176629808017
+        "tag_ndcg@10": 0.22009176629808017,
+        "poolRelevance": 1,
+        "poolNoise": 0,
+        "keywordRelevance": 0
       },
       "sample": {
         "searchTotal": 29
@@ -176,7 +191,10 @@
         "tag_r@5": 0.4,
         "tag_r@10": 0.2,
         "tag_mrr": 1,
-        "tag_ndcg@10": 0.3589542101716347
+        "tag_ndcg@10": 0.3589542101716347,
+        "poolRelevance": 1,
+        "poolNoise": 0,
+        "keywordRelevance": 0.25
       },
       "sample": {
         "searchTotal": 91

@@ -1,0 +1,9 @@
+{"golden":"ai/chat/parseKeywordBlock","source":"electron/analyzer.ts#parseKeywordBlock","generator":"scripts/golden/ai-chat.ts","format":1}
+{"id":"kw-0","args":[null,"[[X]]","[[/X]]"],"output":[]}
+{"id":"kw-1","args":["","[[X]]","[[/X]]"],"output":[]}
+{"id":"kw-2","args":["no marker","[[X]]","[[/X]]"],"output":[]}
+{"id":"kw-3","args":["[[X]]#Desk   lamp, glass, x, café, desk lamp\nwood floor[[/X]]","[[X]]","[[/X]]"],"output":["desk lamp","glass","café","wood floor"]}
+{"id":"kw-4","args":["[[X]]one two three four five, ok, ai, brass, lamp, desk, chair, ninth[[/X]]","[[X]]","[[/X]]"],"output":["ok","ai","brass","lamp","desk","chair"]}
+{"id":"kw-5","args":["[[X]]🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧🎧, café, città","[[X]]","[[/X]]"],"output":["café","città"]}
+{"id":"kw-6","args":["[[X]]a\nbb\ncc[[/X]]tail","[[X]]","[[/X]]"],"output":["bb","cc"]}
+{"id":"kw-7","args":["[[X]]caféglass, café﻿glass[[/X]]","[[X]]","[[/X]]"],"output":["caféglass","café glass"]}
