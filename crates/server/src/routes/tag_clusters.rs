@@ -137,3 +137,15 @@ pub async fn remove_cluster_tag(
         removed: result.value,
     }))
 }
+
+#[utoipa::path(post,path="/api/v1/tag-clusters/regenerate",tag="ai",operation_id="regenerateTagClusters",
+    params(crate::jobs::idempotency::IdempotencyHeader),
+    responses((status=ACCEPTED,description="Taxonomy run queued, or its active duplicate.",body=super::jobs::Job))) ]
+pub async fn regenerate_clusters(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<(axum::http::StatusCode, Json<super::jobs::Job>), ApiError> {
+    let enqueued =
+        crate::ai::runs::enqueue(&state, user.id(), crate::ai::runs::RunKind::Clusters).await?;
+    Ok((axum::http::StatusCode::ACCEPTED, Json(enqueued.job.into())))
+}

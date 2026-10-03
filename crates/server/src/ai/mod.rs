@@ -21,6 +21,7 @@
 
 pub mod operator;
 pub mod queue;
+pub mod runs;
 pub mod service;
 pub mod vault;
 

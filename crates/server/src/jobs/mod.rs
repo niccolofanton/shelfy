@@ -66,6 +66,7 @@
 //! [`crate::control::idempotency`]; the routes in [`crate::routes::jobs`].
 
 pub mod ai_drain;
+pub mod ai_run;
 pub mod archive;
 pub mod bulk;
 mod clock;

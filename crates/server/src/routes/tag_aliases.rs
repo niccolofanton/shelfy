@@ -152,3 +152,15 @@ pub async fn dismiss_alias(
     .await?;
     Ok(Json(AliasDismissed { ok: true }))
 }
+
+#[utoipa::path(post,path="/api/v1/tag-aliases/propose",tag="ai",operation_id="proposeTagAliases",
+    params(crate::jobs::idempotency::IdempotencyHeader),
+    responses((status=ACCEPTED,description="Taxonomy run queued, or its active duplicate.",body=super::jobs::Job))) ]
+pub async fn propose_aliases(
+    State(state): State<AppState>,
+    user: CurrentUser,
+) -> Result<(axum::http::StatusCode, Json<super::jobs::Job>), ApiError> {
+    let enqueued =
+        crate::ai::runs::enqueue(&state, user.id(), crate::ai::runs::RunKind::Aliases).await?;
+    Ok((axum::http::StatusCode::ACCEPTED, Json(enqueued.job.into())))
+}

@@ -2,6 +2,7 @@
 //! computation on a blocking thread and persist proposals in a library write.
 pub mod aliases;
 pub mod clusters;
+pub mod embeddings;
 pub mod graph;
 
 use crate::repo::Result;

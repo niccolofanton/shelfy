@@ -11,6 +11,7 @@ mod golden_chat;
 mod golden_merge;
 mod golden_tag_search;
 mod golden_taxonomy;
+mod golden_taxonomy_prompt;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -38,6 +39,7 @@ const CHECKED: &[&str] = &[
     "ai/clusters/",
     "ai/aliases/",
     "ai/chat/",
+    "ai/taxonomy-prompts/",
     "edits",
     "extract-content-terms",
     "hosts",

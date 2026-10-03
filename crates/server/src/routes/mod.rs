@@ -451,6 +451,16 @@ pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
 pub const IDEMPOTENT_ROUTES: &[IdempotentRoute] = &[
     IdempotentRoute {
         method: Method::POST,
+        path: "/api/v1/tag-clusters/regenerate",
+        body_bytes: RouteLimits::STANDARD.body_bytes,
+    },
+    IdempotentRoute {
+        method: Method::POST,
+        path: "/api/v1/tag-aliases/propose",
+        body_bytes: RouteLimits::STANDARD.body_bytes,
+    },
+    IdempotentRoute {
+        method: Method::POST,
         path: "/api/v1/ai/analyze",
         body_bytes: RouteLimits::STANDARD.body_bytes,
     },
@@ -530,12 +540,14 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(posts::get_post, post_edit::update_post))
         .routes(routes!(search::search))
         .routes(routes!(tag_clusters::list_clusters))
+        .routes(routes!(tag_clusters::regenerate_clusters))
         .routes(routes!(
             tag_clusters::update_cluster,
             tag_clusters::dismiss_cluster
         ))
         .routes(routes!(tag_clusters::remove_cluster_tag))
         .routes(routes!(tag_aliases::list_aliases))
+        .routes(routes!(tag_aliases::propose_aliases))
         .routes(routes!(tag_aliases::accept_alias))
         .routes(routes!(tag_aliases::dismiss_alias))
         .routes(routes!(tag_aliases::accept_all_aliases))

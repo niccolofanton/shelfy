@@ -104,6 +104,26 @@ pub fn save_run(
     run_id: i64,
     now: i64,
 ) -> Result<SavedRun> {
+    clear_proposals(tx, now)?;
+    append_proposals(tx, groups, run_id, now)
+}
+
+/// Starts a new proposal generation without disturbing accepted memberships.
+pub fn clear_proposals(tx: &Transaction<'_>, now: i64) -> Result<()> {
+    // Remember legacy/manual proposal IDs before deleting them, even when this
+    // is the first run to initialize the private sequence.
+    let next = next_id(tx)?;
+    tx.execute(
+        "INSERT INTO settings (key,value_json,updated_at) VALUES ('taxonomy.cluster.next-id',?1,?2)
+        ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at
+        WHERE settings.value_json<>excluded.value_json",
+        params![next.to_string(), now],
+    )?;
+    tx.execute("DELETE FROM tag_cluster WHERE status='proposed'", [])?;
+    Ok(())
+}
+
+fn next_id(tx: &Transaction<'_>) -> Result<i64> {
     let max: i64 = tx.query_row("SELECT COALESCE(MAX(id),0) FROM tag_cluster", [], |r| {
         r.get(0)
     })?;
@@ -114,16 +134,24 @@ pub fn save_run(
             |r| r.get(0),
         )
         .optional()?;
-    let mut next = counter
+    let next = counter
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(1)
         .max(max.saturating_add(1));
-    tx.execute("DELETE FROM tag_cluster WHERE status='proposed'", [])?;
+    Ok(next)
+}
+
+/// Appends one completed chunk. Existing memberships, including proposals from
+/// earlier chunks, are protected; the ID sequence never recycles after cancel.
+pub fn append_proposals(
+    tx: &Transaction<'_>,
+    groups: &[RefinedGroup],
+    run_id: i64,
+    now: i64,
+) -> Result<SavedRun> {
+    let mut next = next_id(tx)?;
     let mut assigned: HashSet<String> = tx
-        .prepare_cached(
-            "SELECT m.tag_norm FROM tag_cluster_membership m
-        JOIN tag_cluster c ON c.id=m.cluster_id WHERE c.status='accepted'",
-        )?
+        .prepare_cached("SELECT tag_norm FROM tag_cluster_membership")?
         .query_map([], |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     let mut count = 0;

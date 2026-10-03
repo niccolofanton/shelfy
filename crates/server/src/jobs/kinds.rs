@@ -33,13 +33,14 @@
 //! ))
 //! ```
 
-use super::{Registry, ai_drain, archive, bulk, hydrate, migrate, purge, usage};
+use super::{Registry, ai_drain, ai_run, archive, bulk, hydrate, migrate, purge, usage};
 
 /// Every kind this server runs.
 #[must_use]
 pub fn registry() -> Registry {
     Registry::new()
         .register(ai_drain::kind())
+        .register(ai_run::kind())
         .register(usage::kind())
         .register(migrate::kind())
         .register(super::export::kind())

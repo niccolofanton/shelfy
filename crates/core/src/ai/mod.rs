@@ -25,6 +25,7 @@ pub mod inputs;
 pub mod normalize;
 pub mod prompts;
 pub mod queue;
+pub mod taxonomy_prompt;
 pub mod template;
 
 pub mod chat;
