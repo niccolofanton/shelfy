@@ -583,6 +583,7 @@ pub fn fixture_control(conn: &Connection) {
          INSERT INTO api_tokens (id, user_id, kind, token_hash, label, scopes, created_at)
          VALUES ('01J9Z3B8K4QW6TFX0V7G2N5RCB', '{user}', 'extension', X'ff01', 'Chrome',
                  'ingest tasks uploads lookup', {NOW});
+         UPDATE api_tokens SET install_hash = X'fe01' WHERE id = '01J9Z3B8K4QW6TFX0V7G2N5RCB';
          INSERT INTO api_tokens (id, user_id, kind, token_hash, label, scopes, created_at,
                                  expires_at)
          VALUES ('01J9Z3B8K4QW6TFX0V7G2N5RCD', '{user}', 'migrate', X'ff02', 'migration',

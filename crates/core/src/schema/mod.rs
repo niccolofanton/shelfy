@@ -114,6 +114,10 @@ const CONTROL_MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/control/0003_account.sql"),
         comment: "control schema v3: consent and usage parts; passkey ids never reused",
     },
+    Migration {
+        sql: include_str!("../../migrations/control/0004_extension_installs.sql"),
+        comment: "control schema v4: api_tokens.install_hash",
+    },
 ];
 
 /// Which database a connection belongs to.
