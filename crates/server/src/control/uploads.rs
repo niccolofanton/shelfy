@@ -19,8 +19,9 @@
 //! ([`crate::migrations::housekeeping`]) read everything from it, so a new
 //! purpose is one line in the `purposes!` table below and nothing else. The
 //! migration (T9, P1-19) uses `migration-object` and `migration-db`; the web
-//! app (P4-08) `bookmark-original`, `bookmark-preview` and `import`; P2-14
-//! adds the extension's `archive-object`.
+//! app (P4-08) `bookmark-original`, `bookmark-preview` and `import`; the
+//! browser extension (P2-14) `archive-object`, consumed by
+//! `POST /ingest/tasks/{id}/complete` ([`crate::extension::tasks`]).
 //!
 //! **Consumers.** Migration uploads are consumed by the install, which reads
 //! them in place and deletes them ([`crate::migrations::install`]). Every
@@ -101,6 +102,11 @@ impl Uploaders {
 const MIGRATE: Uploaders = Uploaders::tokens(ScopeSet::one(Scope::Migrate));
 /// The web app: a session, or an `uploads` token.
 const WEB: Uploaders = Uploaders::session_or(ScopeSet::one(Scope::Uploads));
+/// The browser extension (P2-14): an `uploads` token, no session.
+const EXTENSION: Uploaders = Uploaders::tokens(ScopeSet::one(Scope::Uploads));
+/// Largest archive object the extension uploads: what the server would
+/// fetch from a CDN (§2.13: 15 MB).
+pub const MAX_ARCHIVE_OBJECT_BYTES: u64 = IngestLimits::ARCHIVE_IMAGE.max_bytes;
 
 /// The largest upload of a purpose: its `Upload-Length` at creation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -283,8 +289,8 @@ mod registry {
     use super::HashRule::{Optional, Required};
     use super::MaxBytes::{Fixed, ImportSetting};
     use super::{
-        DAY, KindSet, MAX_BOOKMARK_BYTES, MAX_DATABASE_BYTES, MAX_OBJECT_BYTES, MAX_PREVIEW_BYTES,
-        MIGRATE, PREVIEW_KINDS, UploadPurpose, WEB, WEEK,
+        DAY, EXTENSION, KindSet, MAX_ARCHIVE_OBJECT_BYTES, MAX_BOOKMARK_BYTES, MAX_DATABASE_BYTES,
+        MAX_OBJECT_BYTES, MAX_PREVIEW_BYTES, MIGRATE, PREVIEW_KINDS, UploadPurpose, WEB, WEEK,
     };
 
     purposes! {
@@ -298,6 +304,8 @@ mod registry {
         BOOKMARK_PREVIEW { name: "bookmark-preview", uploaders: WEB, max_bytes: Fixed(MAX_PREVIEW_BYTES), sha256: Optional, content: Media(PREVIEW_KINDS), keep_complete: DAY, quota: true, staged: true }
         /// A file to import (P4-10, P4-19): a JSON export or a zip bundle.
         IMPORT { name: "import", uploaders: WEB, max_bytes: ImportSetting, sha256: Optional, content: JsonOrZip, keep_complete: DAY, quota: false, staged: true }
+        /// An image the extension fetched for the archive (P2-14, `upload_media`): an `uploads` token, the hash and the type declared.
+        ARCHIVE_OBJECT { name: "archive-object", uploaders: EXTENSION, max_bytes: Fixed(MAX_ARCHIVE_OBJECT_BYTES), sha256: Required, content: DeclaredMedia(KindSet::IMAGES), keep_complete: DAY, quota: true, staged: true }
     }
 }
 
@@ -1024,6 +1032,7 @@ mod tests {
         // and imports a session or `uploads`, and no declared hash (PG19).
         let migrate = Uploaders::tokens(ScopeSet::one(Scope::Migrate));
         let web = Uploaders::session_or(ScopeSet::one(Scope::Uploads));
+        let extension = Uploaders::tokens(ScopeSet::one(Scope::Uploads));
         let gib = 1024 * MIB;
         let import_setting = 10 * gib;
         let (required, optional) = (HashRule::Required, HashRule::Optional);
@@ -1071,6 +1080,15 @@ mod tests {
                 optional,
                 DAY,
                 false,
+                true,
+            ),
+            (
+                UploadPurpose::ARCHIVE_OBJECT,
+                extension,
+                15 * MIB,
+                required,
+                DAY,
+                true,
                 true,
             ),
         ];
