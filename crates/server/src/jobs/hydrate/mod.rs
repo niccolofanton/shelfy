@@ -112,12 +112,12 @@ pub async fn enqueue(jobs: &Jobs, user_id: &str, post_key: &str) -> Result<Enque
     .await
 }
 
-/// The archive modes the state rule uses. P2-10 owns
-/// `SHELFY_ARCHIVE_MODE_<PLATFORM>` (L17: `server` everywhere, today's
-/// default): it replaces this with the configured modes.
+/// The archive modes the state rule uses: the archive's current ones
+/// (`SHELFY_ARCHIVE_MODE_<PLATFORM>`, with a platform whose CDN breaker is
+/// open handed to the extension; P2-10).
 #[must_use]
-pub fn archive_modes(_state: &AppState) -> ArchiveModes {
-    ArchiveModes::default()
+pub fn archive_modes(state: &AppState) -> ArchiveModes {
+    super::archive::modes(state)
 }
 
 /// The post a hydration works on.
@@ -351,16 +351,13 @@ async fn merge(ctx: &JobContext, target: &Target, found: Found) -> Result<(), Jo
     Ok(())
 }
 
-/// After a merge: the archive drain fetches what the post now has (P2-10
-/// adds `archive::enqueue` here once it lands; the drain's 10-minute sweep
-/// re-arms users with pending items meanwhile).
+/// After a merge: the archive drain fetches what the post now has (P2-10;
+/// should the enqueue fail, the drain's 10-minute sweep re-arms the user).
 async fn after_merge(ctx: &JobContext, counts: StateCounts) {
-    if counts.server_work() > 0 {
-        tracing::debug!(
-            job_id = ctx.id(),
-            pending = counts.server_work(),
-            "hydrated: media left for the archive drain"
-        );
+    if counts.server_work() > 0
+        && let Err(err) = super::archive::enqueue(ctx.jobs(), ctx.user_id()).await
+    {
+        tracing::warn!(job_id = ctx.id(), error = %err, "cannot enqueue the archive drain");
     }
 }
 

@@ -54,6 +54,7 @@
 //! | `queues` | the in-memory queues: turn order, limits, pauses |
 //! | [`kinds`] | the job-kind registry of the server |
 //! | [`usage`] | `usage.recompute`: a user's storage (P1-17) |
+//! | [`archive`] | `archive.drain`: the covers and image slides from the platform CDNs (P2-10) |
 //! | [`migrate`] | `migrate`: the install of a migrated desktop library (P1-19) |
 //! | [`bulk`] | `bulk`: a bulk action over more than 500 posts (P1-11) |
 //! | [`purge`] | `purge`: emptying the trash, and the nightly 30-day retention (P1-11) |
@@ -64,6 +65,7 @@
 //! The control-database queries are in [`crate::control::jobs`] and
 //! [`crate::control::idempotency`]; the routes in [`crate::routes::jobs`].
 
+pub mod archive;
 pub mod bulk;
 mod clock;
 mod context;

@@ -12,7 +12,7 @@ use futures_util::future::join_all;
 use rusqlite::{Connection, OptionalExtension as _, params};
 use serde_json::json;
 use shelfy_core::db::{LIBRARY_FILE_NAME, UserDb, UserDbConfig};
-use shelfy_core::ingest::archive::{self, ArchiveModes, ArchivePolicy, Scope};
+use shelfy_core::ingest::archive::{self, ArchivePolicy, Scope};
 use shelfy_core::repo::RepoError;
 use shelfy_core::repo::notifications::{self, NewNotification, Notification};
 use shelfy_core::repo::settings;
@@ -539,6 +539,17 @@ async fn follow_up(ctx: &JobContext, report: &MigrationReport) -> Result<(), Job
     if let Err(err) = usage::enqueue(ctx.jobs(), &user_id).await {
         tracing::warn!(job_id = ctx.id(), error = %err, "cannot enqueue the usage count");
     }
+    // The archive fetches what the library still lacks while the URLs are
+    // valid (SPIKE-1: the still-valid Instagram covers expire within days).
+    let server_work = ["pending", "partial"]
+        .iter()
+        .filter_map(|state| report.archive.by_state.get(*state))
+        .sum::<u64>();
+    if server_work > 0
+        && let Err(err) = crate::jobs::archive::enqueue(ctx.jobs(), &user_id).await
+    {
+        tracing::warn!(job_id = ctx.id(), error = %err, "cannot enqueue the archive drain");
+    }
     // The uploads are consumed: every complete migration upload of the user
     // is now in the store, or belongs to no install.
     let control = Arc::clone(state.control());
@@ -877,7 +888,9 @@ pub(super) fn grid_objects(conn: &Connection) -> Result<HashMap<i64, bool>, Repo
 
 /// The archive policy the installed library's states are derived with (the
 /// core's rule, `shelfy_core::ingest::archive`, as in the bundle builder):
-/// the default platform modes, and the asset types the library ends with.
+/// the archive's current platform modes (`SHELFY_ARCHIVE_MODE_*`, an open
+/// breaker hands its platform to the extension), and the asset types the
+/// library ends with.
 /// The web library's own setting wins, as its settings win at the swap and
 /// at the merge; else the desktop's, from the bundle; else the default.
 pub(super) async fn archive_policy(
@@ -903,7 +916,7 @@ pub(super) async fn archive_policy(
         }
     };
     Ok(ArchivePolicy {
-        modes: ArchiveModes::default(),
+        modes: crate::jobs::archive::modes(ctx.state()),
         assets,
     })
 }

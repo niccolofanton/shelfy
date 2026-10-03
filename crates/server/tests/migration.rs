@@ -1190,6 +1190,89 @@ async fn archive_states_follow_the_asset_types_the_library_keeps() {
     assert_eq!(kept.archive_asset_types, keeps_images);
 }
 
+/// The install enqueues the archive drain, which stores what the library
+/// still lacks from the CDN: the X post's five remote slides (P2-10).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_installed_library_drains_its_pending_media() {
+    use shelfy_server::outbound::HostGroup;
+    use support::cdn::{Answer, FixtureCdn};
+
+    let fixture = FixtureCdn::start().await;
+    fixture.route(
+        "pbs.twimg.com",
+        "/b.jpg",
+        [Answer::new(200, "image/jpeg", jpeg(640, 480, 99))],
+    );
+    let t = TestState::with_config(|config| {
+        let mut outbound = fixture.config(&["pbs.twimg.com"], &[], &[]);
+        for group in HostGroup::ALL {
+            let limits = outbound.limits.get_mut(group);
+            limits.rate = 100.0;
+            limits.jitter = None;
+        }
+        config.outbound = outbound;
+    });
+    let origin = serve(&t).await;
+    let token = migrate_token(&t);
+    let owner_id = owner(&t);
+    let work = t.dir.path().join("work").join("migrate-cli");
+    let outcome = run(Desktop::second().options(&origin, &token, &work))
+        .await
+        .unwrap();
+    assert!(outcome.matches, "{:#?}", outcome.reconciliation);
+    assert_eq!(
+        outcome.report.archive.by_state,
+        [
+            ("done".to_owned(), 2),
+            ("partial".to_owned(), 1),
+            ("pending".to_owned(), 1)
+        ]
+        .into()
+    );
+
+    let library = Connection::open(t.data_dir().library_db(&owner_id)).unwrap();
+    let states = || -> Vec<String> {
+        library
+            .prepare("SELECT key || '=' || archive_state FROM posts ORDER BY key")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while !states().contains(&"x_1800000000000000009=done".to_owned()) {
+        assert!(tokio::time::Instant::now() < deadline, "{:?}", states());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // Five fetches of one URL, one object; the Instagram row without media
+    // waits for its hydration, not for the archive.
+    assert_eq!(fixture.hits_of("pbs.twimg.com", "/b.jpg").len(), 5);
+    let slides: Vec<i64> = library
+        .prepare(
+            "SELECT object_id FROM post_media WHERE post_id =
+               (SELECT id FROM posts WHERE key = 'x_1800000000000000009') AND position < 5",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(slides.len(), 5);
+    assert!(slides.windows(2).all(|w| w[0] == w[1]), "{slides:?}");
+    let mut counts = std::collections::BTreeMap::new();
+    for state in states() {
+        *counts
+            .entry(state.split_once('=').unwrap().1.to_owned())
+            .or_insert(0) += 1;
+    }
+    assert_eq!(
+        counts,
+        [("done".to_owned(), 3), ("pending".to_owned(), 1)].into()
+    );
+    assert!(states().contains(&format!("ig_{PK}=pending")));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_second_library_merges_into_one_that_is_not_empty() {
     let t = TestState::new();
@@ -1300,8 +1383,17 @@ async fn a_second_library_merges_into_one_that_is_not_empty() {
     assert_eq!(notes, 3, "one per install");
 
     // Each install held its bytes until they were counted: nothing is left
-    // reserved, and a count finds exactly what the merges committed.
-    assert_eq!(t.state.quota().reserved_total(), 0);
+    // reserved, and a count finds exactly what the merges committed. (The
+    // archive drain the installs queued reserves while it fetches: its
+    // fetches fail here, as no host resolves, and release it.)
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while t.state.quota().reserved_total() != 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "a reservation is left"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let counted = shelfy_server::jobs::usage::recount(&t.state, &owner_id)
         .await
         .unwrap();

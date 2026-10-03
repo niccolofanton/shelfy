@@ -25,6 +25,7 @@
 //! | `SHELFY_EGRESS_ALLOW_ORIGINS` | none | exact origins of the operator's AI node, reachable at a private address (L15) |
 //! | `SHELFY_CAPTURE_URL` | none | the capture service, the only origin of the internal client |
 //! | `SHELFY_ARCHIVE_RATE_INSTAGRAM`, `…_X`, `…_PINTEREST` | `2` | CDN requests per second per host group |
+//! | `SHELFY_ARCHIVE_MODE_INSTAGRAM`, `…_X`, `…_PINTEREST` | `server` | who archives the platform's media: `server` or `auto` (the server; its breaker hands over to the extension while open) or `client` (the extension) |
 //! | `SHELFY_DEV_EGRESS_HOSTS`, `SHELFY_DEV_EGRESS_CA` | none | dev and tests: fixture hosts on loopback ports, and their CA; loopback public URL only |
 //! | `SHELFY_IMPORT_MAX_GB` | `10` | largest file to import (a JSON export or a bundle), in GiB: the cap of an `import` upload |
 //! | `SHELFY_YTDLP_BIN` | `/opt/yt-dlp/yt-dlp` | yt-dlp, for on-demand videos (the image's pinned build, L6) |
@@ -48,6 +49,7 @@ use url::Url;
 use crate::auth::AuthConfig;
 use crate::extension::ExtensionSettings;
 use crate::jobs::JobsConfig;
+use crate::jobs::archive::{ArchiveArgs, ArchiveConfig};
 use crate::mail::{MailArgs, MailConfig};
 use crate::net::TrustedProxies;
 use crate::outbound::{OutboundArgs, OutboundConfig};
@@ -190,6 +192,9 @@ pub struct ServeArgs {
     #[command(flatten)]
     pub video_tools: VideoToolArgs,
 
+    #[command(flatten)]
+    pub archive: ArchiveArgs,
+
     /// The media budget of every user library together, in GiB (2^30
     /// bytes): a store that would take the `users` area of the data
     /// directory past it is refused with `storage_full`, for every user.
@@ -321,6 +326,8 @@ pub struct Config {
     /// The browser extension's flag refresh, presence timeout and clock
     /// (P2-03).
     pub extension: ExtensionSettings,
+    /// Who archives each platform's media (P2-10).
+    pub archive: ArchiveConfig,
 }
 
 impl Config {
@@ -346,6 +353,7 @@ impl Config {
             .transpose()
             .map_err(ConfigError::WebDir)?;
         let video_tools = args.video_tools.paths()?;
+        let archive = ArchiveConfig::from_args(&args.archive);
         let quota = QuotaConfig::from_gib(args.media_budget_gb)
             .ok_or(ConfigError::MediaBudget(args.media_budget_gb))?;
         Ok(Self {
@@ -360,6 +368,7 @@ impl Config {
             import_max_bytes: args.import_max_gb.saturating_mul(GIB),
             video_tools,
             quota,
+            archive,
             ..Self::with_data_dir(data_dir)
         })
     }
@@ -388,6 +397,7 @@ impl Config {
             video_tools: ToolPaths::default(),
             quota: QuotaConfig::default(),
             extension: ExtensionSettings::default(),
+            archive: ArchiveConfig::default(),
         }
     }
 }

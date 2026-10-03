@@ -16,6 +16,7 @@ use axum::http::{HeaderValue, Request, Response, StatusCode, header};
 use http_body_util::BodyExt as _;
 use shelfy_server::config::{Config, DEFAULT_PUBLIC_URL, DataDir};
 use shelfy_server::error::{PROBLEM_JSON, Problem};
+use shelfy_server::outbound::Lookup;
 use shelfy_server::rate_limit::RateLimitConfig;
 use shelfy_server::state::AppState;
 use tempfile::TempDir;
@@ -37,11 +38,14 @@ impl TestState {
     ///
     /// The user rate limits are off: tests send their requests in bursts.
     /// `tests/rate_limits.rs` turns them on; the sign-in limit per client
-    /// stays on.
+    /// stays on. No host name resolves, so no test reaches the network (a
+    /// queued archive drain, for one): tests that fetch configure the
+    /// fixture CDN's outbound settings.
     pub fn with_config(edit: impl FnOnce(&mut Config)) -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let mut config = Config::with_data_dir(DataDir::new(dir.path()).expect("data dir"));
         config.rate_limits = RateLimitConfig::disabled();
+        config.outbound.lookup = Lookup::fixed::<_, &str>([]);
         edit(&mut config);
         let state = AppState::open(config).expect("open state");
         Self { dir, state }

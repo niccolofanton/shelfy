@@ -16,6 +16,7 @@ use crate::error::ApiError;
 use crate::events::EventBus;
 use crate::extension::ExtensionState;
 use crate::jobs::Jobs;
+use crate::jobs::archive::Archive;
 use crate::library::LibraryCaches;
 use crate::mail::Mailer;
 use crate::outbound::Outbound;
@@ -41,6 +42,7 @@ struct Inner {
     outbound: Outbound,
     quota: Quotas,
     extension: ExtensionState,
+    archive: Archive,
     shutdown: CancellationToken,
 }
 
@@ -107,6 +109,13 @@ impl AppState {
             data.root().to_path_buf(),
         );
         let extension = ExtensionState::new(&config.extension);
+        let archive = Archive::new(config.archive);
+        tracing::info!(
+            instagram = config.archive.modes.instagram.as_str(),
+            x = config.archive.modes.twitter.as_str(),
+            pinterest = config.archive.modes.pinterest.as_str(),
+            "archive modes"
+        );
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
@@ -121,6 +130,7 @@ impl AppState {
                 outbound,
                 quota,
                 extension,
+                archive,
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -186,6 +196,13 @@ impl AppState {
     #[must_use]
     pub fn library_caches(&self) -> &LibraryCaches {
         &self.inner.library_caches
+    }
+
+    /// The archive's modes, limits and breaker handoff
+    /// ([`crate::jobs::archive`]).
+    #[must_use]
+    pub fn archive(&self) -> &Archive {
+        &self.inner.archive
     }
 
     /// The quota reservations and the media budget ([`crate::quota`]).

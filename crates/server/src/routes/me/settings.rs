@@ -7,6 +7,8 @@
 use axum::extract::State;
 use axum::response::{IntoResponse as _, Response};
 use serde::{Deserialize, Serialize};
+use shelfy_core::ingest::archive::{ArchivePolicy, Scope, refresh_states};
+use shelfy_core::repo::RepoError;
 use shelfy_core::repo::settings::{self, SettingsChange};
 use utoipa::ToSchema;
 use utoipa_axum::router::OpenApiRouter;
@@ -14,8 +16,11 @@ use utoipa_axum::routes;
 
 use crate::current_user::CurrentUser;
 use crate::error::ApiError;
+use crate::events::model::ChangeReason;
 use crate::extract::Json;
 use crate::ids::now_ms;
+use crate::jobs::archive;
+use crate::library;
 use crate::routes::auth::no_store;
 use crate::state::{AppState, blocking};
 
@@ -167,7 +172,38 @@ pub async fn put_settings(
     let stored = if change == SettingsChange::default() {
         blocking(move || db.read(settings::read)).await?
     } else {
-        blocking(move || db.write(|tx| settings::update(tx, &change, now))).await?
+        // Other asset types change what the archive wants of every post
+        // (P2-10): the states are derived again in the same transaction.
+        let modes = archive::modes(&state);
+        let (stored, refreshed) = blocking(move || {
+            db.write(|tx| -> Result<_, RepoError> {
+                let before = settings::read(tx)?.archive_asset_types;
+                let stored = settings::update(tx, &change, now)?;
+                let refreshed = if stored.archive_asset_types == before {
+                    None
+                } else {
+                    let policy = ArchivePolicy {
+                        modes,
+                        assets: stored.archive_asset_types,
+                    };
+                    Some(refresh_states(tx, Scope::All, &policy, now)?)
+                };
+                Ok((stored, refreshed))
+            })
+        })
+        .await?;
+        if let Some(refreshed) = refreshed {
+            if refreshed.changed > 0 {
+                library::announce(state.events(), user.id(), ChangeReason::Archive, None);
+            }
+            // The sweeper re-arms it within 10 minutes should this fail.
+            if refreshed.counts.server_work() > 0
+                && let Err(err) = archive::enqueue(state.jobs(), user.id()).await
+            {
+                tracing::warn!(error = %err, "cannot enqueue the archive drain");
+            }
+        }
+        stored
     };
     Ok(no_store(Json(Settings::from(stored)).into_response()))
 }

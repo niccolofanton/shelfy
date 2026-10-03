@@ -231,6 +231,8 @@ impl Server {
             SWEEP_PAUSE,
         ));
         let scheduler = state.jobs().start(state.clone(), token.child_token());
+        // The archive's breaker handoff (P2-10).
+        let archive = crate::jobs::archive::spawn_watcher(state.clone(), token.child_token());
         // When the shutdown began; the job workers stop within the same
         // drain budget as the requests.
         let mut stopping = None;
@@ -274,6 +276,9 @@ impl Server {
         }
         if let Err(err) = sweep.await {
             tracing::warn!(error = %err, "library upgrade sweep failed");
+        }
+        if let Err(err) = archive.await {
+            tracing::warn!(error = %err, "archive breaker watcher failed");
         }
         // The job workers stop before the databases close; interrupted jobs
         // are queued again, and any still running at the deadline are

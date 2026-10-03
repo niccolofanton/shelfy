@@ -22,6 +22,8 @@
 //! | `shelfy_egress_requests_total` | counter | `purpose` ([`crate::outbound::Purpose`]), `outcome` ([`egress_outcome`]) | outbound HTTP requests, once each, redirects included |
 //! | `shelfy_media_fetch_total` | counter | `host_group` (`instagram`, `x`, `pinterest`, [`fetch_outcome::NO_GROUP`]), `outcome` ([`fetch_outcome`]) | CDN fetches of the archive |
 //! | `shelfy_breaker_open` | gauge, 0 or 1 | `host_group` ([`crate::outbound::HostGroup`]: the three CDNs and `instagram_web`, `x_web`, `pinterest_web`) | whether a host group's breaker is open (or half-open); 0 from the start |
+//! | `shelfy_archive_cover_latency_seconds` | histogram, [`COVER_LATENCY_BUCKETS`] | `platform` (`instagram`, `twitter`, `pinterest`) | from a post's insert to its cover stored by the archive, for posts inserted in the last 7 days ([`crate::jobs::archive`]) |
+//! | `shelfy_archive_backlog` | gauge | `platform` | items left to the server's archive, as the drains last counted them |
 //! | `shelfy_build_info` | gauge, always 1 | `version` | the build |
 //!
 //! `route` is a route template (`/api/v1/posts/{key}`), [`super::http::SPA_ROUTE`]
@@ -50,6 +52,11 @@ use crate::control::jobs as job_rows;
 use crate::jobs::Kind;
 use crate::state::{AppState, blocking};
 
+/// Histogram of the time from a post's insert to its cover stored, by
+/// platform (§5 P2 exit: 98 % within 15 minutes).
+pub const ARCHIVE_COVER_LATENCY_SECONDS: &str = "shelfy_archive_cover_latency_seconds";
+/// Gauge of the items left to the archive, by platform.
+pub const ARCHIVE_BACKLOG: &str = "shelfy_archive_backlog";
 /// Counter of HTTP requests by route template, method and status.
 pub const HTTP_REQUESTS_TOTAL: &str = "shelfy_http_requests_total";
 /// Histogram of request handling time by route template, in seconds.
@@ -104,6 +111,13 @@ pub const JOB_DURATION_BUCKETS: &[f64] = &[
 pub const RENDITION_BUCKETS: &[f64] = &[
     2_500.0, 5_000.0, 10_000.0, 15_000.0, 20_000.0, 25_000.0, 30_000.0, 35_000.0, 40_000.0,
     50_000.0, 60_000.0, 80_000.0, 100_000.0, 150_000.0, 250_000.0, 500_000.0,
+];
+
+/// Histogram buckets of the cover latency, in seconds, with a bound at the
+/// P2 exit's 15 minutes (900 s).
+pub const COVER_LATENCY_BUCKETS: &[f64] = &[
+    5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1_800.0, 3_600.0, 7_200.0, 21_600.0,
+    86_400.0, 604_800.0,
 ];
 
 /// The `state` values of [`JOBS`].
@@ -211,6 +225,7 @@ pub fn install() -> PrometheusHandle {
                 (HTTP_REQUEST_DURATION_SECONDS, DURATION_BUCKETS),
                 (JOB_DURATION_SECONDS, JOB_DURATION_BUCKETS),
                 (RENDITION_BYTES, RENDITION_BUCKETS),
+                (ARCHIVE_COVER_LATENCY_SECONDS, COVER_LATENCY_BUCKETS),
             ];
             let recorder = buckets
                 .into_iter()
@@ -282,6 +297,15 @@ fn describe() {
     metrics::describe_gauge!(
         BREAKER_OPEN,
         "1 while a host group's breaker is open or half-open, else 0."
+    );
+    metrics::describe_histogram!(
+        ARCHIVE_COVER_LATENCY_SECONDS,
+        metrics::Unit::Seconds,
+        "Time from a post's insert to its cover stored by the archive, by platform."
+    );
+    metrics::describe_gauge!(
+        ARCHIVE_BACKLOG,
+        "Items left to the server's archive, by platform, as the drains last counted them."
     );
     metrics::describe_gauge!(BUILD_INFO, "Always 1; the label carries the version.");
 }

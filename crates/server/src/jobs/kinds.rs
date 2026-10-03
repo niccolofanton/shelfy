@@ -13,7 +13,7 @@
 //! | `purge` | P1-11 | 1 | 1 | 3 | 60 min | `nightly` (30-day retention), and `POST /trash/empty`; waits for the user's earlier `bulk` jobs ([`super::purge`]) |
 //! | `usage.recompute` | P1-17 | 2 | 1 | 3 | 5 min | new kind, `nightly` and after an install or a purge ([`super::usage`]) |
 //! | `migrate` | P1-19 | 1 | 1 | 2 | 60 min | the install of a migration bundle ([`super::migrate`]) |
-//! | `archive.drain` | P2 | 4 fetches, 2 encodes | 2 | 5 per item | 5 min | a drain: dedupe key = the kind, plus a [`Sweep`](super::Sweep) check |
+//! | `archive.drain` | P2-10 | 4 fetches, 2 encodes | 2 fetches | 5 per item | 5 min | a drain: dedupe key = the kind, plus a [`Sweep`](super::Sweep) check ([`super::archive`]) |
 //! | `link.hydrate` | P2-11 | 2 | 1 | 5 | 2 min | a shared link's post, from the platforms' public endpoints ([`super::hydrate`]) |
 //! | `ai.drain` | P3 | 32 in flight | 4 | 3 per item | 10 min | a drain |
 //! | `ai.run` | P3 | 4 | 1 | 1 | 30 min | |
@@ -33,7 +33,7 @@
 //! ))
 //! ```
 
-use super::{Registry, bulk, hydrate, migrate, purge, usage};
+use super::{Registry, archive, bulk, hydrate, migrate, purge, usage};
 
 /// Every kind this server runs.
 #[must_use]
@@ -44,4 +44,5 @@ pub fn registry() -> Registry {
         .register(bulk::kind())
         .register(purge::kind())
         .register(hydrate::kind())
+        .register(archive::kind())
 }
