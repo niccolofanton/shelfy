@@ -5623,7 +5623,10 @@ export interface operations {
   streamEvents: {
     parameters: {
       query?: {
-        /** @description Only these events. Repeatable. Default: every topic. */
+        /**
+         * @description Only these events. Repeatable. Default: every replayable topic;
+         *     `ai.stream` requires an explicit opt-in.
+         */
         topics?: components['schemas']['EventTopic'][];
         /**
          * @description Resume after this event id, like `Last-Event-ID`; for clients that

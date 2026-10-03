@@ -797,7 +797,7 @@
           {
             "name": "topics",
             "in": "query",
-            "description": "Only these events. Repeatable. Default: every topic.",
+            "description": "Only these events. Repeatable. Default: every replayable topic;\n`ai.stream` requires an explicit opt-in.",
             "required": false,
             "schema": {
               "type": "array",

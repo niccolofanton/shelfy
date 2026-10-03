@@ -503,7 +503,10 @@ async fn frames(
                 {
                     images.push(image);
                 }
-                if (deep || poster.is_none())
+                // A poster deduplicated against the cover is still present
+                // in the post's image inputs; it must not opt a shallow run
+                // into video extraction.
+                if (deep || !input.has_frames())
                     && let Some(video) = video
                 {
                     let path = object_path(&store, video, false)?;

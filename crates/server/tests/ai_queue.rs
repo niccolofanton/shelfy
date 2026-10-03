@@ -451,18 +451,26 @@ async fn quota_and_invalid_key_pause_without_failing_the_items() {
     }
 }
 
+#[cfg(unix)]
 #[tokio::test(start_paused = true)]
-async fn stored_images_are_inline_jpeg_and_cover_duplicates_are_sent_once() {
+async fn stored_images_are_inline_jpeg_and_shallow_videos_do_not_extract_frames() {
     use shelfy_core::repo::{
         media::{self, NewMediaObject},
         posts::NewMedia,
     };
     use shelfy_media::store::{IngestLimits, MediaStore};
-    let (stub, t, user) = fixture(StubConfig {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (stub, base, user) = fixture(StubConfig {
         webp_images: false,
         ..StubConfig::default()
     })
     .await;
+    let ffmpeg = base.data_dir().root().join("count-ffmpeg");
+    std::fs::write(&ffmpeg, "#!/bin/sh\ntouch \"$0.called\"\nexit 1\n").unwrap();
+    std::fs::set_permissions(&ffmpeg, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut config = base.state.config().clone();
+    config.video_tools.ffmpeg = ffmpeg.clone();
+    let t = TestState::with_config(|c| *c = config);
     let mut jpeg = std::io::Cursor::new(Vec::new());
     image::DynamicImage::new_rgb8(32, 32)
         .write_to(&mut jpeg, image::ImageFormat::Jpeg)
@@ -474,6 +482,14 @@ async fn stored_images_are_inline_jpeg_and_cover_duplicates_are_sent_once() {
         .ingest(
             std::io::Cursor::new(jpeg.into_inner()),
             IngestLimits::ARCHIVE_IMAGE,
+        )
+        .unwrap()
+        .publish()
+        .unwrap();
+    let video = store
+        .ingest(
+            std::io::Cursor::new(b"\0\0\0\x18ftypisom\0\0\0\0isommp42"),
+            IngestLimits::VIDEO,
         )
         .unwrap()
         .publish()
@@ -502,6 +518,31 @@ async fn stored_images_are_inline_jpeg_and_cover_duplicates_are_sent_once() {
             object_id: Some(obj),
             ..NewMedia::default()
         }];
+        posts::insert(tx, &post, 1)?;
+        let video_id = media::upsert_object(
+            tx,
+            &NewMediaObject {
+                sha256: *video.digest.as_bytes(),
+                ext: "mp4".into(),
+                mime: "video/mp4".into(),
+                bytes: video.size as i64,
+                width: Some(32),
+                height: Some(32),
+                duration_ms: Some(1000),
+                role: "video".into(),
+                variants: 0,
+                origin: "server".into(),
+            },
+            1,
+        )?;
+        let mut post = NewPost::new("ig_10001", Platform::Instagram, "10001", "video", 1);
+        post.cover_object = Some(obj);
+        post.media = vec![NewMedia {
+            kind: "video".into(),
+            object_id: Some(obj),
+            video_object_id: Some(video_id),
+            ..NewMedia::default()
+        }];
         posts::insert(tx, &post, 1)
     })
     .await;
@@ -509,6 +550,16 @@ async fn stored_images_are_inline_jpeg_and_cover_duplicates_are_sent_once() {
         &t.state,
         &user,
         Selector::Keys(vec!["ig_10000".into()]),
+        Mode::Missing,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    ai::queue::analyze(
+        &t.state,
+        &user,
+        Selector::Keys(vec!["ig_10001".into()]),
         Mode::Missing,
         None,
         false,
@@ -533,27 +584,32 @@ async fn stored_images_are_inline_jpeg_and_cover_duplicates_are_sent_once() {
     });
     t.wait_job(&user, job, |j| j.state == JobState::Succeeded)
         .await;
-    assert_eq!(counts(&t, &user).await.done, 1);
-    let requests = stub.requests();
-    let body = requests
-        .iter()
-        .find(|r| r.endpoint == Endpoint::Chat)
-        .unwrap()
-        .body
-        .as_ref()
-        .unwrap();
-    let parts = body["messages"][1]["content"].as_array().unwrap();
-    let images = parts
-        .iter()
-        .filter(|p| p["type"] == "image_url")
-        .collect::<Vec<_>>();
-    assert_eq!(images.len(), 1);
+    assert_eq!(counts(&t, &user).await.done, 2);
     assert!(
-        images[0]["image_url"]["url"]
-            .as_str()
-            .unwrap()
-            .starts_with("data:image/jpeg;base64,")
+        !ffmpeg.with_extension("called").exists(),
+        "a deduplicated cover poster must not enable shallow video keyframes"
     );
+    let requests = stub.requests();
+    let requests: Vec<_> = requests
+        .iter()
+        .filter(|r| r.endpoint == Endpoint::Chat)
+        .collect();
+    assert_eq!(requests.len(), 2);
+    for request in requests {
+        let body = request.body.as_ref().unwrap();
+        let parts = body["messages"][1]["content"].as_array().unwrap();
+        let images = parts
+            .iter()
+            .filter(|p| p["type"] == "image_url")
+            .collect::<Vec<_>>();
+        assert_eq!(images.len(), 1);
+        assert!(
+            images[0]["image_url"]["url"]
+                .as_str()
+                .unwrap()
+                .starts_with("data:image/jpeg;base64,")
+        );
+    }
     driver.abort();
     scheduler.abort().await;
 }

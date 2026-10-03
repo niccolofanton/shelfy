@@ -128,7 +128,7 @@ async fn topics_select_the_events_of_a_stream() {
     assert_event_schema(&filtered.expect("notification").await);
     assert!(filtered.next().await.is_heartbeat(), "nothing else came");
     assert_eq!(started.elapsed(), HEARTBEAT);
-    // Without `topics`, everything comes.
+    // Without `topics`, every replayable topic comes.
     for name in [
         "posts.changed",
         "job.updated",
@@ -141,7 +141,7 @@ async fn topics_select_the_events_of_a_stream() {
     // Unknown topics are refused, as are absurd lists.
     for (uri, status, code) in [
         (
-            format!("{EVENTS}?topics=ai.stream"),
+            format!("{EVENTS}?topics=ai.unknown"),
             StatusCode::BAD_REQUEST,
             ErrorCode::BadRequest,
         ),

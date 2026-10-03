@@ -2,8 +2,9 @@
 //! by the signed-in user's bus ([`crate::events`]).
 //!
 //! **Frames.** `hello` first; then, for a resuming client, the events it
-//! missed (or `resync`); then live events as they are published, each with an
-//! `id:`; and a comment heartbeat after 20 s without a frame. The stream ends
+//! missed (or `resync`); then replayable events, each with an `id:`, and
+//! explicitly requested `ai.stream` frames without an id. A comment heartbeat
+//! comes after 20 s without a frame. The stream ends
 //! when the server shuts down: reconnect with backoff.
 //!
 //! **Session.** A stream lives no longer than the session that opened it.
@@ -30,8 +31,8 @@
 //! received therefore always holds the right resume point.
 //!
 //! **Topics.** `?topics=job.updated&topics=notification` keeps only those
-//! events; without `topics`, every topic comes. `hello` and `resync` always
-//! come. A filtered stream that resumes gets `resync` when the ring no longer
+//! events; without `topics`, every replayable topic comes. `ai.stream` needs
+//! an explicit opt-in. `hello` and `resync` always come. A filtered stream that resumes gets `resync` when the ring no longer
 //! covers its gap, even if the lost events were of other topics.
 //!
 //! Headers: `Content-Type: text/event-stream`, `Cache-Control: no-store`, and
@@ -82,7 +83,8 @@ pub const RESYNC: &str = "resync";
 #[serde(default, rename_all = "camelCase")]
 #[into_params(parameter_in = Query)]
 pub struct EventsQuery {
-    /// Only these events. Repeatable. Default: every topic.
+    /// Only these events. Repeatable. Default: every replayable topic;
+    /// `ai.stream` requires an explicit opt-in.
     #[param(style = Form, explode)]
     pub topics: Vec<EventTopic>,
     /// Resume after this event id, like `Last-Event-ID`; for clients that
