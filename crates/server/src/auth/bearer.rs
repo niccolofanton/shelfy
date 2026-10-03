@@ -10,7 +10,8 @@
 //! of that whole value must match an unrevoked, unexpired token of an active
 //! user (`api_tokens.expires_at`, control schema v2). A
 //! route accepts tokens only when the access policy says so
-//! ([`crate::routes::TOKEN_ROUTES`], with the scope it needs): the gate
+//! ([`crate::routes::TOKEN_ROUTES`], with the scopes it takes, a
+//! [`ScopeSet`]: one of them is enough): the gate
 //! ([`super::access::gate`]) then verifies the token, checks the scope,
 //! records the use ([`record_use`]: `last_used_at`, at most once per
 //! [`super::AuthConfig::token_touch_every`]) and inserts [`TokenPrincipal`]
@@ -120,6 +121,99 @@ impl Scope {
             Self::Migrate => "migrate",
         }
     }
+
+    const fn bit(self) -> u16 {
+        1 << self as u16
+    }
+}
+
+/// A set of scopes. A route that takes tokens names the scopes it accepts,
+/// and a token holding any one of them gets in
+/// ([`crate::routes::TOKEN_ROUTES`]): the tus upload routes take the
+/// web app's `uploads` and the migration CLI's `migrate`, and the handler
+/// matches the scope to what is uploaded (P4-08).
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ScopeSet(u16);
+
+impl ScopeSet {
+    /// No scope.
+    pub const NONE: Self = Self(0);
+
+    /// The set of `scopes`.
+    #[must_use]
+    pub const fn of(scopes: &[Scope]) -> Self {
+        let mut bits = 0;
+        let mut i = 0;
+        while i < scopes.len() {
+            bits |= scopes[i].bit();
+            i += 1;
+        }
+        Self(bits)
+    }
+
+    /// The set of one scope.
+    #[must_use]
+    pub const fn one(scope: Scope) -> Self {
+        Self(scope.bit())
+    }
+
+    /// This set plus every scope of `other`.
+    #[must_use]
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Whether `scope` is in the set.
+    #[must_use]
+    pub const fn contains(self, scope: Scope) -> bool {
+        self.0 & scope.bit() != 0
+    }
+
+    /// Whether the set is empty.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// The scopes, in the order of [`Scope::ALL`].
+    pub fn iter(self) -> impl Iterator<Item = Scope> {
+        Scope::ALL
+            .into_iter()
+            .filter(move |scope| self.contains(*scope))
+    }
+}
+
+impl From<Scope> for ScopeSet {
+    fn from(scope: Scope) -> Self {
+        Self::one(scope)
+    }
+}
+
+impl From<&[Scope]> for ScopeSet {
+    fn from(scopes: &[Scope]) -> Self {
+        Self::of(scopes)
+    }
+}
+
+impl fmt::Debug for ScopeSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_set()
+            .entries(self.iter().map(Scope::as_str))
+            .finish()
+    }
+}
+
+impl fmt::Display for ScopeSet {
+    /// The names, separated by `, `.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, scope) in self.iter().enumerate() {
+            if i > 0 {
+                f.write_str(", ")?;
+            }
+            f.write_str(scope.as_str())?;
+        }
+        Ok(())
+    }
 }
 
 /// A scope required at the type level, by [`TokenUser`].
@@ -173,6 +267,23 @@ impl TokenPrincipal {
     #[must_use]
     pub fn has(&self, scope: Scope) -> bool {
         self.scopes.contains(&scope)
+    }
+
+    /// Whether the token has at least one scope of `scopes`.
+    #[must_use]
+    pub fn has_any(&self, scopes: ScopeSet) -> bool {
+        self.scopes.iter().any(|scope| scopes.contains(*scope))
+    }
+
+    /// A verified token of `user_id` with `scopes`, for unit tests.
+    #[cfg(test)]
+    pub(crate) fn for_tests(user_id: &str, scopes: &[Scope]) -> Self {
+        Self {
+            user_id: user_id.into(),
+            token_id: "T".to_owned(),
+            scopes: scopes.to_vec(),
+            last_used_at: None,
+        }
     }
 
     /// Puts the token into the request: [`TokenPrincipal`] and
@@ -295,13 +406,15 @@ impl BearerRejection {
         Self(ApiError::new(ErrorCode::Unauthorized))
     }
 
-    /// 403: the token lacks `scope`.
+    /// 403: the token lacks `scopes` (one scope, or every scope of a set).
     #[must_use]
-    pub fn missing_scope(scope: Scope) -> Self {
-        Self(
-            ApiError::new(ErrorCode::Forbidden)
-                .with_detail(format!("the token lacks the {} scope", scope.as_str())),
-        )
+    pub fn missing_scope(scopes: impl Into<ScopeSet>) -> Self {
+        let scopes = scopes.into();
+        let detail = match scopes.iter().count() {
+            1 => format!("the token lacks the {scopes} scope"),
+            _ => format!("the token lacks every scope this route takes: {scopes}"),
+        };
+        Self(ApiError::new(ErrorCode::Forbidden).with_detail(detail))
     }
 }
 
@@ -354,6 +467,45 @@ mod tests {
         }
         assert_eq!(Scope::parse("admin"), None);
         assert_eq!(Scope::parse("Ingest"), None, "names are exact");
+    }
+
+    #[test]
+    fn scope_sets_hold_each_scope_once() {
+        let uploads = ScopeSet::of(&[Scope::Migrate, Scope::Uploads, Scope::Migrate]);
+        assert!(uploads.contains(Scope::Uploads) && uploads.contains(Scope::Migrate));
+        assert!(!uploads.contains(Scope::Ingest));
+        assert_eq!(
+            uploads.iter().collect::<Vec<_>>(),
+            [Scope::Uploads, Scope::Migrate]
+        );
+        assert_eq!(uploads.to_string(), "uploads, migrate");
+        assert_eq!(format!("{uploads:?}"), r#"{"uploads", "migrate"}"#);
+        assert_eq!(ScopeSet::from(Scope::Lookup), ScopeSet::one(Scope::Lookup));
+        assert_eq!(
+            ScopeSet::one(Scope::Uploads).union(Scope::Migrate.into()),
+            uploads
+        );
+        assert!(ScopeSet::NONE.is_empty() && !uploads.is_empty());
+        assert_eq!(ScopeSet::of(&Scope::ALL).iter().count(), Scope::ALL.len());
+
+        let token = TokenPrincipal::for_tests("U", &[Scope::Ingest, Scope::Uploads]);
+        assert!(token.has_any(uploads));
+        assert!(!token.has_any(ScopeSet::one(Scope::Migrate)));
+        assert!(!token.has_any(ScopeSet::NONE));
+
+        let one = BearerRejection::missing_scope(Scope::Lookup).0;
+        assert_eq!(
+            one.problem().detail.as_deref(),
+            Some("the token lacks the lookup scope")
+        );
+        let several = BearerRejection::missing_scope(uploads).0;
+        assert!(
+            several
+                .problem()
+                .detail
+                .unwrap()
+                .ends_with("uploads, migrate")
+        );
     }
 
     #[test]

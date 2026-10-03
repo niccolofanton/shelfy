@@ -1140,18 +1140,23 @@ impl Operation {
         })
     }
 
-    /// The scopes of the `bearer` requirement, if the operation takes tokens.
+    /// The scopes of the `bearer` requirements, sorted, if the operation
+    /// takes tokens. Each requirement names one scope: the scopes of one
+    /// requirement must all be held, and a route takes a token with any one
+    /// of its scopes, so each is a requirement of its own.
     fn bearer_scopes(&self) -> Option<Vec<String>> {
-        self.security.iter().find_map(|requirement| {
-            requirement.get("bearer").map(|scopes| {
-                scopes
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|s| s.as_str().unwrap().to_owned())
-                    .collect()
+        let mut scopes: Vec<String> = self
+            .security
+            .iter()
+            .filter_map(|requirement| requirement.get("bearer"))
+            .map(|scopes| {
+                let scopes = scopes.as_array().unwrap();
+                assert_eq!(scopes.len(), 1, "one scope per bearer requirement");
+                scopes[0].as_str().unwrap().to_owned()
             })
-        })
+            .collect();
+        scopes.sort();
+        (!scopes.is_empty()).then_some(scopes)
     }
 
     fn accepts_session(&self) -> bool {
@@ -1253,12 +1258,11 @@ async fn the_access_policy_matches_the_document() {
         .rules()
         .iter()
         .filter_map(|rule| match rule.access {
-            Access::Token { scope, session } => Some((
-                lower(&rule.method),
-                rule.path.clone(),
-                vec![scope.as_str().to_owned()],
-                session,
-            )),
+            Access::Token { scopes, session } => {
+                let mut names: Vec<String> = scopes.iter().map(|s| s.as_str().to_owned()).collect();
+                names.sort();
+                Some((lower(&rule.method), rule.path.clone(), names, session))
+            }
             _ => None,
         })
         .collect();
@@ -1470,7 +1474,7 @@ fn the_policy_api_is_what_routes_use() {
     assert_eq!(
         policy.access(&Method::POST, "/api/v1/migrations"),
         Access::Token {
-            scope: Scope::Migrate,
+            scopes: Scope::Migrate.into(),
             session: false
         }
     );

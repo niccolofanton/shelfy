@@ -26,8 +26,10 @@
 //! [`bearer::TokenPrincipal`]) and names it in the request span, or answers
 //! 401 itself. Handlers take the user as an extractor: [`CurrentUser`]
 //! (the user's data), [`SessionUser`] (role and session), [`RecentAuth`]
-//! (sensitive actions) or [`bearer::TokenUser`]. Unsafe requests without an
-//! `Authorization` header also pass the [`csrf`] guard, which runs first.
+//! (sensitive actions), [`bearer::TokenUser`], or [`caller::Caller`] (which
+//! credential came, on a route that takes a session and tokens). Unsafe
+//! requests without an `Authorization` header also pass the [`csrf`] guard,
+//! which runs first.
 //!
 //! | Module | Contents |
 //! |---|---|
@@ -41,6 +43,7 @@
 //! | [`csrf`] | the Origin / `Sec-Fetch-Site` / `X-Shelfy-Client` guard |
 //! | [`rate_limit`] | limits on sign-in requests and on device approvals |
 //! | [`bearer`] | API tokens: verification, scopes, last use, and [`bearer::TokenUser`] |
+//! | [`caller`] | the credential of a request on a route that takes a session and tokens |
 //! | [`api_tokens`] | API tokens: minting, the scopes of each kind |
 //! | [`device`] | the device flow of the migration CLI (RFC 8628) |
 //! | [`openapi`] | the security schemes of the OpenAPI document |
@@ -64,6 +67,7 @@
 pub mod access;
 pub mod api_tokens;
 pub mod bearer;
+pub mod caller;
 pub mod cookie;
 pub mod csrf;
 pub mod device;

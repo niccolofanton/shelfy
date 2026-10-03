@@ -8,7 +8,14 @@
 //! |---|---|---|
 //! | [`Access::Session`] | a signed-in session: the default of every route | nothing to declare |
 //! | [`Access::Public`] | anyone | [`crate::routes::PUBLIC_ROUTES`], plus `security(())` in the route's `#[utoipa::path]` |
-//! | [`Access::Token`] | an API token with the scope, and a session too when `session` is set | [`crate::routes::TOKEN_ROUTES`], plus `security(("bearer" = ["<scope>"]))`, and `("session" = [])` when sessions work too |
+//! | [`Access::Token`] | an API token with one of the route's scopes, and a session too when `session` is set | [`crate::routes::TOKEN_ROUTES`], plus one `("bearer" = ["<scope>"])` per scope in `security(…)`, and `("session" = [])` when sessions work too |
+//!
+//! A route may take several scopes (P4-08): the tus upload routes take the
+//! web app's session, `uploads` tokens and the migration CLI's `migrate`
+//! tokens, and the handler decides per upload purpose who may do what
+//! ([`super::caller::Caller`], [`crate::control::uploads::UploadPurpose`]).
+//! In the document each scope is a requirement of its own, because the
+//! scopes of one requirement must all be held.
 //!
 //! The gate ([`gate`]) is a route layer: it runs for every route of the
 //! router, after routing and before the handler and the route's limits,
@@ -25,7 +32,9 @@
 //! it verifies the token and its scope, records the token's use
 //! ([`bearer::record_use`]) and inserts
 //! [`TokenPrincipal`](super::bearer::TokenPrincipal) and [`CurrentUser`]. It
-//! answers 401 (403 for a token without the scope) before the handler runs.
+//! answers 401 (403 for a token without the scope) before the handler runs;
+//! on a route that takes tokens the 401 carries `WWW-Authenticate: Bearer`,
+//! sessions or not.
 //! Once it knows the user, it answers 423 `user_locked` while the user's
 //! library is locked for maintenance (`admin user lock`, plan §3.5), so a
 //! restore never races the user's own requests.
@@ -39,8 +48,8 @@
 //! **Adding a route.** A route that needs a session declares nothing. A public
 //! route adds `(method, template)` to [`crate::routes::PUBLIC_ROUTES`] and
 //! `security(())` to its `#[utoipa::path]`. A route that takes API tokens adds
-//! `(method, template, scope, sessions too)` to
-//! [`crate::routes::TOKEN_ROUTES`] and its `bearer` requirement to the
+//! `(method, template, scopes, sessions too)` to
+//! [`crate::routes::TOKEN_ROUTES`] and its `bearer` requirements to the
 //! document. The authz test in `tests/auth.rs` fails until the policy and the
 //! document agree. Test-only routes get their access through
 //! [`crate::app::build_with_access`].
@@ -52,7 +61,7 @@ use axum::http::{Method, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 
-use super::bearer::{self, BearerRejection, Scope};
+use super::bearer::{self, BearerRejection, ScopeSet};
 use super::session;
 use crate::current_user::CurrentUser;
 use crate::error::{ApiError, ErrorCode};
@@ -66,10 +75,11 @@ pub enum Access {
     Public,
     /// A signed-in session (the default).
     Session,
-    /// An API token with `scope`; with `session`, a signed-in session too.
+    /// An API token with one of `scopes`; with `session`, a signed-in
+    /// session too.
     Token {
-        /// The scope the token needs.
-        scope: Scope,
+        /// The scopes the route takes: the token needs one of them.
+        scopes: ScopeSet,
         /// Whether a signed-in session works too.
         session: bool,
     },
@@ -105,17 +115,19 @@ impl AccessPolicy {
         self.with(method, path.into(), Access::Public)
     }
 
-    /// Opens `method path` to API tokens with `scope`, and to sessions too
-    /// when `session` is set.
+    /// Opens `method path` to API tokens with one of `scopes` (a
+    /// [`Scope`](super::bearer::Scope) or a [`ScopeSet`]), and to sessions
+    /// too when `session` is set.
     #[must_use]
     pub fn token(
         self,
         method: Method,
         path: impl Into<String>,
-        scope: Scope,
+        scopes: impl Into<ScopeSet>,
         session: bool,
     ) -> Self {
-        self.with(method, path.into(), Access::Token { scope, session })
+        let scopes = scopes.into();
+        self.with(method, path.into(), Access::Token { scopes, session })
     }
 
     /// Sets the access of one route; a later rule for it replaces an earlier
@@ -241,20 +253,29 @@ async fn admit(state: &AppState, access: Access, request: &mut Request) -> Resul
     match access {
         Access::Public => Ok(()),
         Access::Session => signed_in(state, request).await,
-        Access::Token { scope, session } => {
+        Access::Token { scopes, session } => {
             if request.headers().contains_key(header::AUTHORIZATION) {
                 match bearer::verify(state, request.headers()).await {
-                    Ok(Some(token)) if token.has(scope) => {
+                    Ok(Some(token)) if token.has_any(scopes) => {
                         bearer::record_use(state, &token).await;
                         token.attach(request.extensions_mut());
                         Ok(())
                     }
-                    Ok(Some(_)) => Err(Refused::Token(BearerRejection::missing_scope(scope))),
+                    Ok(Some(_)) => Err(Refused::Token(BearerRejection::missing_scope(scopes))),
                     Ok(None) => Err(Refused::Token(BearerRejection::unauthorized())),
                     Err(err) => Err(Refused::Problem(err)),
                 }
             } else if session {
-                signed_in(state, request).await
+                // No session either: the 401 names the scheme a program
+                // would use, as on a token-only route.
+                signed_in(state, request)
+                    .await
+                    .map_err(|refused| match refused {
+                        Refused::Problem(err) if err.code() == ErrorCode::Unauthorized => {
+                            Refused::Token(BearerRejection::unauthorized())
+                        }
+                        other => other,
+                    })
             } else {
                 Err(Refused::Token(BearerRejection::unauthorized()))
             }
@@ -281,14 +302,17 @@ async fn signed_in(state: &AppState, request: &mut Request) -> Result<(), Refuse
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::bearer::Scope;
 
     #[test]
     fn routes_need_a_session_unless_the_policy_says_otherwise() {
+        let uploads = [Scope::Uploads, Scope::Migrate];
         let policy = AccessPolicy::new()
             .public(Method::GET, "/health")
             .public(Method::POST, "/api/v1/auth/logout")
             .token(Method::POST, "/api/v1/migrations", Scope::Migrate, false)
-            .token(Method::POST, "/api/v1/posts/lookup", Scope::Lookup, true);
+            .token(Method::POST, "/api/v1/posts/lookup", Scope::Lookup, true)
+            .token(Method::POST, "/api/v1/uploads", &uploads[..], true);
         assert_eq!(policy.access(&Method::GET, "/health"), Access::Public);
         assert_eq!(policy.access(&Method::HEAD, "/health"), Access::Public);
         assert_eq!(policy.access(&Method::DELETE, "/health"), Access::Session);
@@ -299,16 +323,24 @@ mod tests {
         assert_eq!(
             policy.access(&Method::POST, "/api/v1/migrations"),
             Access::Token {
-                scope: Scope::Migrate,
+                scopes: ScopeSet::one(Scope::Migrate),
                 session: false
             }
         );
         assert_eq!(
             policy.access(&Method::POST, "/api/v1/posts/lookup"),
             Access::Token {
-                scope: Scope::Lookup,
+                scopes: ScopeSet::one(Scope::Lookup),
                 session: true
             }
+        );
+        assert_eq!(
+            policy.access(&Method::POST, "/api/v1/uploads"),
+            Access::Token {
+                scopes: ScopeSet::of(&uploads),
+                session: true
+            },
+            "a route may take several scopes and the session"
         );
         assert_eq!(
             policy.access(&Method::GET, "/media/{file}"),
@@ -322,7 +354,7 @@ mod tests {
 
         // A later rule replaces an earlier one for the same route.
         let policy = policy.token(Method::GET, "/health", Scope::Tasks, false);
-        assert_eq!(policy.rules().len(), 4);
+        assert_eq!(policy.rules().len(), 5);
         assert!(matches!(
             policy.access(&Method::GET, "/health"),
             Access::Token { .. }
@@ -332,7 +364,7 @@ mod tests {
     #[test]
     fn an_explicit_head_rule_wins_over_the_get_one() {
         let migrate = Access::Token {
-            scope: Scope::Migrate,
+            scopes: ScopeSet::one(Scope::Migrate),
             session: false,
         };
         let policy = AccessPolicy::new()
