@@ -3726,7 +3726,7 @@
           "deletedAt": {
             "type": ["integer", "null"],
             "format": "int64",
-            "description": "`delete` only: the `deletedAt` of every post it moves to the trash.\n`POST /trash/restore {deletedAt}` brings them back (undo)."
+            "description": "`delete` only: the `deletedAt` of every post it moves to the trash,\nunique to this delete. `POST /trash/restore {deletedAt}` brings them\nback (undo). `null` when the delete ran in the request and moved\nnothing."
           },
           "job": {
             "oneOf": [

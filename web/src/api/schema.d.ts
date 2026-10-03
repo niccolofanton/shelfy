@@ -1680,8 +1680,10 @@ export interface components {
       changed: number | null;
       /**
        * Format: int64
-       * @description `delete` only: the `deletedAt` of every post it moves to the trash.
-       *     `POST /trash/restore {deletedAt}` brings them back (undo).
+       * @description `delete` only: the `deletedAt` of every post it moves to the trash,
+       *     unique to this delete. `POST /trash/restore {deletedAt}` brings them
+       *     back (undo). `null` when the delete ran in the request and moved
+       *     nothing.
        */
       deletedAt: number | null;
       job: components['schemas']['Job'] | null;

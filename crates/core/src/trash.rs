@@ -10,10 +10,16 @@
 //! (`GET /posts/{key}`, `{keys}` selections) and is listed by [`page`], most
 //! recently trashed first.
 //!
-//! **One stamp per operation.** Every post that one delete moves gets the
-//! same `deleted_at`, the stamp of the delete, so the stamp names the
-//! operation: [`Selector::TrashedAt`] selects its posts again, which is the
-//! undo of that delete. Posts already in the trash keep their stamp.
+//! **One stamp per operation, never reused.** Every post that one delete
+//! moves gets the same `deleted_at`, the stamp of the delete, so the stamp
+//! names the operation: [`Selector::TrashedAt`] selects its posts again,
+//! which is the undo of that delete. Posts already in the trash keep their
+//! stamp. A stamp is the delete's time in unix ms, made unique in the
+//! library by [`new_stamp`]: later than every stamp a delete used or
+//! reserved ([`reserve_stamp`], for a delete that a job runs later). So two
+//! deletes in one millisecond, or a delete right after the undo of another,
+//! never share one, and an undo never takes the posts of another delete
+//! (P1-11 review L1).
 //!
 //! **When a post entered the trash.** The stamp is the undo key only: a job
 //! may move a post long after the request that stamped it. A trashed post's
@@ -40,8 +46,9 @@
 //! idempotent: a purged post is gone, so purging it again changes nothing.
 //! A purge job works through [`purgeable`] chunks, oldest trash first.
 //!
-//! The library's `meta` table keeps the cut of the last emptying
-//! ([`EMPTIED_THROUGH_KEY`]).
+//! The library's `meta` table keeps the two values that make this exact:
+//! the newest stamp used or reserved ([`LAST_STAMP_KEY`]) and the cut of the
+//! last emptying ([`EMPTIED_THROUGH_KEY`]).
 //!
 //! [`Selector::TrashedAt`]: crate::selector::Selector::TrashedAt
 
@@ -60,6 +67,8 @@ pub const RETENTION_DAYS: u32 = 30;
 pub const RETENTION_MS: i64 = RETENTION_DAYS as i64 * 86_400_000;
 /// `meta` key of the cut of the last emptying of the trash ([`emptying`]).
 pub const EMPTIED_THROUGH_KEY: &str = "trash.emptiedThrough";
+/// `meta` key of the newest stamp a delete used or reserved ([`new_stamp`]).
+pub const LAST_STAMP_KEY: &str = "trash.lastStamp";
 
 /// The posts with these internal ids, as a condition for [`put`] and
 /// [`restore`].
@@ -93,11 +102,45 @@ fn raise_meta(conn: &Connection, key: &str, value: i64) -> Result<()> {
     Ok(())
 }
 
+/// The stamp of a delete at `now`: `now`, or later when a delete already
+/// used or reserved that time or a later one (module docs). Reads only: the
+/// stamp is recorded once [`put`] moves posts with it, or by
+/// [`reserve_stamp`]. Call it in the delete's write transaction.
+///
+/// # Errors
+///
+/// Database errors.
+pub fn new_stamp(conn: &Connection, now: i64) -> Result<i64> {
+    let last = meta_i64(conn, LAST_STAMP_KEY)?;
+    let newest: Option<i64> = conn
+        .prepare_cached("SELECT max(deleted_at) FROM posts WHERE deleted_at IS NOT NULL")?
+        .query_row([], |r| r.get(0))?;
+    Ok([last, newest]
+        .into_iter()
+        .flatten()
+        .fold(now, |stamp, used| stamp.max(used.saturating_add(1))))
+}
+
+/// The stamp of a delete that a job runs later ([`new_stamp`]), recorded now
+/// so that no other delete takes it meanwhile. Call it in a write
+/// transaction.
+///
+/// # Errors
+///
+/// Database errors.
+pub fn reserve_stamp(conn: &Connection, now: i64) -> Result<i64> {
+    let stamp = new_stamp(conn, now)?;
+    raise_meta(conn, LAST_STAMP_KEY, stamp)?;
+    Ok(stamp)
+}
+
 /// Moves the posts `which` selects to the trash, stamped `at`, and drops
-/// their index rows. `now` is the time of the move: the posts' `updated_at`,
-/// past the cut of every emptying requested so far (module docs). Posts
-/// already in the trash keep their stamp and their `updated_at`. Returns the
-/// ids of the posts moved, ascending.
+/// their index rows. `at` is the delete's stamp ([`new_stamp`], or the one
+/// its job reserved), recorded as used once posts move with it. `now` is the
+/// time of the move: the posts' `updated_at`, past the cut of every emptying
+/// requested so far (module docs). Posts already in the trash keep their
+/// stamp and their `updated_at`. Returns the ids of the posts moved,
+/// ascending.
 ///
 /// # Errors
 ///
@@ -118,10 +161,14 @@ pub fn put(conn: &Connection, which: &SelectorSql, at: i64, now: i64) -> Result<
             r.get(0)
         })?
         .collect::<rusqlite::Result<_>>()?;
+    if moved.is_empty() {
+        return Ok(moved);
+    }
     moved.sort_unstable();
     for &id in &moved {
         index::remove_post(conn, id)?;
     }
+    raise_meta(conn, LAST_STAMP_KEY, at)?;
     Ok(moved)
 }
 

@@ -144,6 +144,41 @@ fn times(conn: &Connection, ids: &[i64]) -> Vec<(Option<i64>, i64)> {
         .collect()
 }
 
+/// Review L1: a stamp is unique in the library, for two deletes in one
+/// millisecond, a delete right after the undo of another, and a delete
+/// that a job runs later alike.
+#[test]
+fn stamps_are_never_reused() {
+    let conn = library();
+    let ids = insert_all(&conn, &synthetic_posts(20, 13));
+    let first = trash::new_stamp(&conn, NOW).unwrap();
+    assert_eq!(first, NOW);
+    trash::put(&conn, &trash::by_ids(&ids[..3]), first, NOW).unwrap();
+    let second = trash::new_stamp(&conn, NOW).unwrap();
+    assert_eq!(second, NOW + 1, "another delete in the same millisecond");
+    trash::put(&conn, &trash::by_ids(&ids[3..5]), second, NOW).unwrap();
+    let undo = shelfy_core::selector::Selector::TrashedAt(first)
+        .sql()
+        .unwrap();
+    assert_eq!(trash::restore(&conn, &undo, NOW).unwrap(), ids[..3]);
+    assert_eq!(
+        trash::new_stamp(&conn, NOW).unwrap(),
+        NOW + 2,
+        "the undone stamp is not reused"
+    );
+    // A stamp reserved for a job counts as used before it moves anything.
+    let reserved = trash::reserve_stamp(&conn, NOW).unwrap();
+    assert_eq!(reserved, NOW + 2);
+    assert_eq!(trash::new_stamp(&conn, NOW).unwrap(), NOW + 3);
+    // A delete that moves nothing records nothing.
+    trash::put(&conn, &trash::by_ids(&ids[3..5]), NOW + 50, NOW).unwrap();
+    assert_eq!(trash::new_stamp(&conn, NOW).unwrap(), NOW + 3);
+    // A later time is its own stamp; one used later still counts.
+    assert_eq!(trash::new_stamp(&conn, NOW + 10).unwrap(), NOW + 10);
+    posts::trash(&conn, &ids[10..11], NOW + 100).unwrap();
+    assert_eq!(trash::new_stamp(&conn, NOW + 10).unwrap(), NOW + 101);
+}
+
 /// A delete that a job runs late keeps its stamp, the undo key, but dates
 /// its posts by the move: they stay their full 30 days from it (P1-11
 /// review M4).

@@ -265,6 +265,22 @@ impl HeldWriter {
     }
 }
 
+/// Sends `request`, which starts a bulk job (202), and holds the library's
+/// writer before the job starts: its first chunk waits for the returned
+/// [`HeldWriter`]. Returns the answer, the job's id and the held writer.
+async fn start_held(
+    t: &TestState,
+    app: &Router,
+    request: Request<Body>,
+) -> (Value, i64, HeldWriter) {
+    ok(app, post_empty("/api/v1/queues/bulk/pause")).await;
+    let started = call(app, request, StatusCode::ACCEPTED).await;
+    let id = started["job"]["id"].as_i64().unwrap();
+    let held = HeldWriter::take(t, ALICE);
+    ok(app, post_empty("/api/v1/queues/bulk/resume")).await;
+    (started, id, held)
+}
+
 /// Polls job `id` of `user` until `done` holds; returns it.
 async fn poll_job(
     state: &shelfy_server::state::AppState,
@@ -581,6 +597,68 @@ async fn announced(stream: &mut Stream) -> (String, Option<Vec<String>>) {
         keys
     });
     (event["reason"].as_str().unwrap().to_owned(), keys)
+}
+
+/// Review L1 and L2: every delete gets a stamp of its own, so an undo
+/// restores its own posts and no other delete's: ten deletes at once (most
+/// in the same millisecond), a job's stamp reserved at its request beside an
+/// inline delete, a delete after an undo. An inline delete that moves
+/// nothing answers no stamp.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn every_delete_gets_a_stamp_of_its_own() {
+    let (t, _) = two_libraries().await;
+    let keys = t.write(ALICE, |tx| synthetic_library(tx, 700, 56)).await;
+    let app = t.app_as(ALICE);
+    let delete = |keys: &[String]| bulk(json!({ "keys": keys }), "delete", Value::Null);
+
+    let at_once: Vec<_> = keys[..10]
+        .iter()
+        .map(|key| {
+            let (app, request) = (app.clone(), delete(std::slice::from_ref(key)));
+            tokio::spawn(async move { ok(&app, request).await["deletedAt"].as_i64().unwrap() })
+        })
+        .collect();
+    let mut stamps = Vec::new();
+    for task in at_once {
+        stamps.push(task.await.unwrap());
+    }
+    let distinct: BTreeSet<i64> = stamps.iter().copied().collect();
+    assert_eq!(distinct.len(), 10, "{stamps:?}");
+    let undone = ok(&app, restore(json!({ "deletedAt": stamps[3] }))).await;
+    assert_eq!(undone["changed"], 1);
+    let back = ok(&app, get(&format!("/api/v1/posts/{}", keys[3]))).await;
+    assert_eq!(back["deletedAt"], Value::Null);
+    assert_eq!(trash_stamps(&t, ALICE).len(), 1 + 9);
+
+    // A delete right after that undo: a stamp no delete had.
+    let next = ok(&app, delete(&keys[3..4])).await["deletedAt"]
+        .as_i64()
+        .unwrap();
+    assert!(next > *distinct.last().unwrap(), "{next} {stamps:?}");
+
+    // A job's stamp is reserved at its request (no scheduler runs here, so
+    // the job waits); an inline delete right after gets another one.
+    let job = call(
+        &app,
+        bulk(json!({ "filter": {} }), "delete", Value::Null),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    let reserved = job["deletedAt"].as_i64().unwrap();
+    assert!(reserved > next);
+    let inline = ok(&app, delete(&keys[690..692])).await["deletedAt"]
+        .as_i64()
+        .unwrap();
+    assert!(inline > reserved);
+    let undone = ok(&app, restore(json!({ "deletedAt": inline }))).await;
+    assert_eq!(undone["changed"], 2);
+
+    // Nothing moved, no stamp.
+    let none = ok(&app, delete(&[FIXTURE_TRASHED.to_owned(), keys[0].clone()])).await;
+    assert_eq!(
+        (none["changed"].clone(), none["deletedAt"].clone()),
+        (json!(0), Value::Null)
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -1460,14 +1538,8 @@ async fn a_stopped_bulk_job_goes_on_where_it_stopped(interruption: Interruption)
     let jobs = scheduler(&t);
 
     // The job's first chunk waits for the test's write transaction.
-    let held = HeldWriter::take(&t, ALICE);
-    let started = call(
-        &app,
-        bulk(json!({ "filter": {} }), "delete", Value::Null),
-        StatusCode::ACCEPTED,
-    )
-    .await;
-    let id = started["job"]["id"].as_i64().unwrap();
+    let request = bulk(json!({ "filter": {} }), "delete", Value::Null);
+    let (_, id, held) = start_held(&t, &app, request).await;
     wait_in_first_chunk(&t, ALICE, id, "delete").await;
     let users = t.data_dir().users_dir();
     let jobs = match interruption {
@@ -1664,14 +1736,8 @@ async fn the_undo_of_a_running_delete_job_leaves_nothing_behind() {
     t.write(ALICE, |tx| synthetic_library(tx, 800, 52)).await;
     let app = t.app_as(ALICE);
     let _jobs = scheduler(&t);
-    let held = HeldWriter::take(&t, ALICE);
-    let started = call(
-        &app,
-        bulk(json!({ "filter": {} }), "delete", Value::Null),
-        StatusCode::ACCEPTED,
-    )
-    .await;
-    let id = started["job"]["id"].as_i64().unwrap();
+    let request = bulk(json!({ "filter": {} }), "delete", Value::Null);
+    let (started, id, held) = start_held(&t, &app, request).await;
     let stamp = started["deletedAt"].as_i64().unwrap();
     wait_in_first_chunk(&t, ALICE, id, "delete").await;
 
@@ -1706,14 +1772,8 @@ async fn the_undo_of_a_partly_done_delete_job_restores_all_it_moved() {
     let before = snapshot(&t, ALICE);
 
     // Two chunks, each held until the queue is paused.
-    let held = HeldWriter::take(&t, ALICE);
-    let started = call(
-        &app,
-        bulk(json!({ "filter": {} }), "delete", Value::Null),
-        StatusCode::ACCEPTED,
-    )
-    .await;
-    let id = started["job"]["id"].as_i64().unwrap();
+    let request = bulk(json!({ "filter": {} }), "delete", Value::Null);
+    let (started, id, held) = start_held(&t, &app, request).await;
     let stamp = started["deletedAt"].as_i64().unwrap();
     wait_in_first_chunk(&t, ALICE, id, "delete").await;
     ok(&app, post_empty("/api/v1/queues/bulk/pause")).await;

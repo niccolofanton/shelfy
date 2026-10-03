@@ -9,7 +9,7 @@
 //!
 //! | `action` | `params` | Effect ([`shelfy_core::bulk`]) | Event reason |
 //! |---|---|---|---|
-//! | `delete` | — | to the trash, every post stamped with the request's time, `deletedAt` | `delete` |
+//! | `delete` | — | to the trash, every post stamped with the delete's own `deletedAt` | `delete` |
 //! | `restore` | — | back from the trash, with their folders and search text | `delete` |
 //! | `addToCollections` | `collectionIds` (1–50) | posts outside the trash join each collection | `edit` |
 //! | `removeFromCollection` | `collectionId` | members leave the collection | `edit` |
@@ -25,9 +25,11 @@
 //! whose chunks are announced as they commit. Send an `Idempotency-Key`: a
 //! repeat gets the first answer back instead of acting twice.
 //!
-//! **Undo.** A delete answers `deletedAt`, the stamp of every post it moved;
-//! `POST /trash/restore {deletedAt}` ([`super::trash`]) brings exactly those
-//! posts back.
+//! **Undo.** A delete answers `deletedAt`, the stamp of every post it moves
+//! (`null` when an inline delete moved nothing). The stamp is the delete's
+//! time, made unique in the library ([`shelfy_core::trash::new_stamp`]; a
+//! job's is reserved at the request), so `POST /trash/restore {deletedAt}`
+//! ([`super::trash`]) brings back exactly those posts and no other delete's.
 //!
 //! Another user's keys are unknown keys (skipped), and another user's
 //! collection is a 404, like a missing one.
@@ -40,6 +42,7 @@ use serde::{Deserialize, Serialize};
 use shelfy_core::bulk::{self, Action, MAX_INLINE};
 use shelfy_core::repo::{RepoError, posts};
 use shelfy_core::selector::Selector;
+use shelfy_core::trash;
 use utoipa::ToSchema;
 
 use super::jobs::Job;
@@ -217,8 +220,10 @@ pub struct BulkResult {
     /// job runs it.
     #[schema(required = true)]
     pub changed: Option<u64>,
-    /// `delete` only: the `deletedAt` of every post it moves to the trash.
-    /// `POST /trash/restore {deletedAt}` brings them back (undo).
+    /// `delete` only: the `deletedAt` of every post it moves to the trash,
+    /// unique to this delete. `POST /trash/restore {deletedAt}` brings them
+    /// back (undo). `null` when the delete ran in the request and moved
+    /// nothing.
     #[schema(required = true)]
     pub deleted_at: Option<i64>,
     /// The `bulk` job that runs the action (202): its progress arrives as
@@ -310,8 +315,8 @@ pub(crate) async fn start(
         selector,
     } = plan;
     // The job system's clock, which the jobs' chunks read too.
-    let at = state.jobs().clock().now_ms();
-    let deleted_at = (action == BulkAction::Delete).then_some(at);
+    let now = state.jobs().clock().now_ms();
+    let delete = action == BulkAction::Delete;
     // A selection by key fits the inline limit by construction. Otherwise
     // count it, and check the action can run, before anything is enqueued;
     // the largest post id of the same snapshot bounds a job's selection.
@@ -332,24 +337,38 @@ pub(crate) async fn start(
     let selected = counted.map(|(n, _)| n);
     if selected.is_none_or(|n| n <= MAX_INLINE) {
         let written = library::write(state, user_id, action.reason(), move |tx| {
-            let applied = bulk::apply(tx, &selector, &core, at)?;
+            // A delete's stamp is unique in the library (P1-11 review L1).
+            let at = if delete {
+                trash::new_stamp(tx, now)?
+            } else {
+                now
+            };
+            let applied = bulk::apply_stamped(tx, &selector, &core, at, now)?;
             let keys = changed_keys(tx, &applied.changed)?;
             Ok(Change {
-                value: applied,
+                value: (applied, at),
                 keys,
             })
         })
         .await?;
-        let applied = written.value;
+        let (applied, at) = written.value;
         let body = BulkResult {
             action,
             selected: applied.selected,
             changed: Some(applied.changed.len() as u64),
-            deleted_at,
+            // Only when posts moved (P1-11 review L2).
+            deleted_at: (delete && !applied.changed.is_empty()).then_some(at),
             job: None,
         };
         return Ok(Json(body).into_response());
     }
+    // A delete's job reserves its stamp now, so that no other delete takes
+    // it before the job moves its posts.
+    let at = if delete {
+        reserve_stamp(state, user_id, now).await?
+    } else {
+        now
+    };
     let max_id = counted.map_or(i64::MAX, |(_, newest)| newest);
     let payload = Payload::new(action, params, selection, at, max_id);
     let enqueued = job::enqueue(state.jobs(), user_id, &payload).await?;
@@ -357,10 +376,22 @@ pub(crate) async fn start(
         action,
         selected: selected.unwrap_or_default(),
         changed: None,
-        deleted_at,
+        deleted_at: delete.then_some(at),
         job: Some(enqueued.job.into()),
     };
     Ok((StatusCode::ACCEPTED, Json(body)).into_response())
+}
+
+/// Reserves the stamp of a delete that a job runs later
+/// ([`trash::reserve_stamp`]). The write changes no post, so it is not
+/// announced.
+pub(crate) async fn reserve_stamp(
+    state: &AppState,
+    user_id: &str,
+    now: i64,
+) -> Result<i64, ApiError> {
+    let db = state.user_db(user_id).await?;
+    blocking(move || db.write(|tx| trash::reserve_stamp(tx, now))).await
 }
 
 /// The `keys` of the `posts.changed` of a change to the posts `ids`: their

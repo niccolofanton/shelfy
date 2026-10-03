@@ -26,6 +26,7 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use shelfy_core::repo::collections::{self, CollectionPatch, DeleteMode, NewCollection};
 use shelfy_core::repo::{RepoError, posts};
+use shelfy_core::trash;
 use utoipa::{IntoParams, ToSchema};
 
 use super::model::{Collection, CollectionList};
@@ -263,21 +264,28 @@ pub async fn delete_collection(
         CollectionDeleteMode::Label => ChangeReason::Edit,
         CollectionDeleteMode::WithPosts => ChangeReason::Delete,
     };
-    // One stamp for every post this delete moves to the trash.
-    let now = now_ms();
+    // The job system's clock, as for the other trash stamps.
+    let now = state.jobs().clock().now_ms();
     let written = library::write(&state, user.id(), reason, move |tx| {
         let members = collections::member_keys(tx, id, MAX_EVENT_KEYS + 1)?;
-        let trashed = collections::delete(tx, id, mode.into(), now)?;
+        // One stamp, unique in the library, for every post this delete
+        // moves to the trash (P1-11 review L1).
+        let at = match mode {
+            CollectionDeleteMode::WithPosts => trash::new_stamp(tx, now)?,
+            CollectionDeleteMode::Label => now,
+        };
+        let trashed = collections::delete(tx, id, mode.into(), at)?;
         Ok(Change {
-            value: trashed,
+            value: (trashed, at),
             keys: event_keys(members),
         })
     })
     .await?;
-    let trashed = u64::try_from(written.value).unwrap_or(u64::MAX);
+    let (trashed, at) = written.value;
+    let trashed = u64::try_from(trashed).unwrap_or(u64::MAX);
     Ok(Json(CollectionDeleted {
         trashed,
-        deleted_at: (trashed > 0).then_some(now),
+        deleted_at: (trashed > 0).then_some(at),
     }))
 }
 
