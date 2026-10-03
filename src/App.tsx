@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Construction, FileQuestion } from 'lucide-react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense, lazy } from 'react';
+import { Construction, FileQuestion, Loader2 } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import BottomNav, { type BottomNavTarget } from './components/BottomNav';
 import WindowControls from './components/WindowControls';
@@ -9,12 +9,6 @@ import AddBookmarkModal from './components/AddBookmarkModal';
 import Browser from './views/Browser';
 import Downloads from './views/Downloads';
 import CollectionModal from './components/CollectionModal';
-import SettingsView from './views/Settings';
-import AiTags from './views/AiTags';
-import AiTagsQueue from './views/AiTagsQueue';
-import AiWebsites from './views/AiWebsites';
-import AiSearch from './views/AiSearch';
-import AiOnboarding from './views/AiOnboarding';
 import RemoteAiBanner from './components/RemoteAiBanner';
 import { useAiSetupStatus } from './hooks/useAiSetup';
 import PostModal from './components/PostModal';
@@ -35,6 +29,34 @@ import {
   type CurrentRoute,
 } from './api/navigation';
 import { buildTime } from 'virtual:build-time';
+
+// AI, Websites, Settings (plan §2.19 "code-split AI, Websites, Settings and
+// Admin"; Admin has no view of its own — out of scope, E4): on the web these
+// are capability-gated off until P3/P1-20 (see `caps.ai` / `caps.websites` /
+// `caps.settings` below), but a static import still ships their JS in the
+// initial bundle for every visitor. `views/websites/model.ts` alone (the
+// biggest of these view trees) is ~25 KB uncompressed, and AiWebsites also
+// pulls in the rest of `views/websites/**`. React.lazy defers all of it to
+// its own chunk, fetched only the first time `mountedViews` (below) adds that
+// view — which capability-gated navigation on the web never does.
+const SettingsView = lazy(() => import('./views/Settings'));
+const AiTags = lazy(() => import('./views/AiTags'));
+const AiTagsQueue = lazy(() => import('./views/AiTagsQueue'));
+const AiWebsites = lazy(() => import('./views/AiWebsites'));
+const AiSearch = lazy(() => import('./views/AiSearch'));
+const AiOnboarding = lazy(() => import('./views/AiOnboarding'));
+
+// Suspense fallback for the lazy views above: a view only ever takes a beat
+// to fetch its chunk the first time it's visited (or never, on the web while
+// its capability is off), so a small centered spinner is enough — it never
+// has layout/content to mirror the way PostGridSkeleton does for the gallery.
+function ViewLoading(): React.JSX.Element {
+  return (
+    <div className="flex items-center justify-center w-full h-full">
+      <Loader2 size={20} className="text-[#555] animate-spin" strokeWidth={1.5} />
+    </div>
+  );
+}
 
 // The non-browser view identifiers, in render order. `trash` exists only as
 // a web route so far.
@@ -962,31 +984,43 @@ function AppInner(): React.JSX.Element {
                     )}
                     {v === 'downloads' && <Downloads downloads={downloads} />}
                     {v === 'aitags' && (
-                      <AiTagsMemo
-                        active={view === 'aitags'}
-                        initialTag={aiTagsInitial.tag}
-                        initialTagNonce={aiTagsInitial.nonce}
-                        onOpenInWebsites={goOpenInWebsites}
-                        onReanalyzeWeb={goReanalyzeWeb}
-                      />
+                      <Suspense fallback={<ViewLoading />}>
+                        <AiTagsMemo
+                          active={view === 'aitags'}
+                          initialTag={aiTagsInitial.tag}
+                          initialTagNonce={aiTagsInitial.nonce}
+                          onOpenInWebsites={goOpenInWebsites}
+                          onReanalyzeWeb={goReanalyzeWeb}
+                        />
+                      </Suspense>
                     )}
-                    {v === 'aiqueue' && <AiTagsQueueMemo onOpenPost={openAiPost} />}
+                    {v === 'aiqueue' && (
+                      <Suspense fallback={<ViewLoading />}>
+                        <AiTagsQueueMemo onOpenPost={openAiPost} />
+                      </Suspense>
+                    )}
                     {v === 'aiweb' && (
-                      <AiWebsitesMemo
-                        webJobs={webJobs as React.ComponentProps<typeof AiWebsites>['webJobs']}
-                        onAddSite={openAddSite}
-                        onOpenPost={openAiPost}
-                      />
+                      <Suspense fallback={<ViewLoading />}>
+                        <AiWebsitesMemo
+                          webJobs={webJobs as React.ComponentProps<typeof AiWebsites>['webJobs']}
+                          onAddSite={openAddSite}
+                          onOpenPost={openAiPost}
+                        />
+                      </Suspense>
                     )}
                     {v === 'aisearch' && (
-                      <AiSearchMemo
-                        onOpenInWebsites={goOpenInWebsites}
-                        onReanalyzeWeb={goReanalyzeWeb}
-                      />
+                      <Suspense fallback={<ViewLoading />}>
+                        <AiSearchMemo
+                          onOpenInWebsites={goOpenInWebsites}
+                          onReanalyzeWeb={goReanalyzeWeb}
+                        />
+                      </Suspense>
                     )}
                     {v === 'settings' &&
                       (caps.settings ? (
-                        <SettingsMemo onDataCleared={handleDataCleared} />
+                        <Suspense fallback={<ViewLoading />}>
+                          <SettingsMemo onDataCleared={handleDataCleared} />
+                        </Suspense>
                       ) : (
                         unavailablePanel
                       ))}
@@ -1014,11 +1048,13 @@ function AppInner(): React.JSX.Element {
                   transition: 'opacity var(--dur-3) var(--ease-out)',
                 }}
               >
-                <AiOnboarding
-                  onDone={() => dismissAiGate(false)}
-                  onSkip={() => dismissAiGate(true)}
-                  onOpenSettings={() => setView('settings')}
-                />
+                <Suspense fallback={<ViewLoading />}>
+                  <AiOnboarding
+                    onDone={() => dismissAiGate(false)}
+                    onSkip={() => dismissAiGate(true)}
+                    onOpenSettings={() => setView('settings')}
+                  />
+                </Suspense>
               </div>
             )}
 
