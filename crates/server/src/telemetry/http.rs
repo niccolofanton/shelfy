@@ -101,6 +101,8 @@ pub async fn observe(State(observe): State<Observe>, mut request: Request, next:
     }
     .to_owned();
     let method = request.method().clone();
+    let media_path =
+        (route == super::metrics::MEDIA_ROUTE).then(|| request.uri().path().to_owned());
     let span = tracing::info_span!(
         "request",
         request_id = %id,
@@ -116,6 +118,9 @@ pub async fn observe(State(observe): State<Observe>, mut request: Request, next:
     let status = response.status();
     let elapsed = started.elapsed();
     super::metrics::record_http_request(&route, &method, status, elapsed);
+    if let Some(path) = media_path {
+        super::metrics::record_media_request(&path, elapsed);
+    }
 
     let latency_ms = elapsed.as_secs_f64() * 1000.0;
     let status = status.as_u16();

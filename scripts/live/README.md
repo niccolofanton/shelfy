@@ -214,7 +214,8 @@ rm -f access.headers
     that does **not** reach the real ≥ 5 min / > 100 s budget; the report says so and that one
     sub-check is left out of the pass/fail verdict (everything else is scored normally).
 - **`budgets.mjs`** — the §6.2 server budgets from VictoriaMetrics: route p95/p99 from
-  `shelfy_http_request_duration_seconds` and the `g480` rendition size from
+  `shelfy_http_request_duration_seconds`, the `g480` rendition p95 from
+  `shelfy_media_request_duration_seconds{variant="g480"}` and the `g480` rendition size from
   `shelfy_rendition_bytes{variant="g480"}`, as a markdown table, plus the budgets these tools
   cannot measure and the command to run each (`admin bench`, a k6 TTFB run, Lighthouse). `--fixture
   <file>` replaces the live VictoriaMetrics query with a canned response, for a dry run or
@@ -243,12 +244,6 @@ rm -f access.headers
   because this tool is the sole writer on the account for the run's duration (P1 lane rule 8 keeps
   it that way: no concurrent owner session). A request id on `posts.changed`, or the collection id
   it is about, would make this robust to concurrent activity too.
-- **`GET /media/{file}`'s route histogram doesn't separate by rendition variant.** The §6.2 "media
-  rendition p95 ≤ 5 ms" budget is measured through this route's `shelfy_http_request_duration_seconds`,
-  which has no `variant` label (only `shelfy_rendition_bytes`, a *write-time* size histogram, has
-  one) — so the measured p95 covers every object this route serves (originals, posters, `g480`
-  alike), not the `g480` reads the budget is really about. `budgets.mjs` surfaces this as a note on
-  that row rather than silently reporting a number that doesn't mean what the budget says.
 - **`POST /me/tokens` mints a token with no expiry** (`ttl: None` is hardcoded in
   `crates/server/src/routes/me/tokens.rs`'s `create_token`; only the device flow's `migrate` token
   and `admin migrate-token` pass a TTL). `session.mjs token`'s "short-lived" is enforced by this
