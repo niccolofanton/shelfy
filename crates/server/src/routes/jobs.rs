@@ -323,7 +323,10 @@ pub async fn cancel_job(
     user: CurrentUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Job>, ApiError> {
-    let job = state.jobs().cancel(user.id(), id).await?;
+    let (job, changed) = state.jobs().cancel_changed(user.id(), id).await?;
+    if changed {
+        run_cancel_hook(&state, user.id(), &job.kind).await?;
+    }
     Ok(Json(job.into()))
 }
 
@@ -407,7 +410,7 @@ pub async fn resume_queue(
     operation_id = "cancelQueue",
     params(("kind" = String, Path, description = "The kind of job.")),
     responses(
-        (status = OK, description = "The queue; `affected` counts the jobs cancelled.", body = QueueResult),
+        (status = OK, description = "The queue; `affected` counts cancelled jobs and reset items.", body = QueueResult),
     )
 )]
 pub async fn cancel_queue(
@@ -423,12 +426,12 @@ pub async fn cancel_queue(
 /// Runs a kind's cancel hook, if it has one (G3-6): the `ai.drain` resets its
 /// `pending` posts. Returns how many items it changed, folded into
 /// `affected`.
-pub async fn run_cancel_hook(
-    state: &AppState,
-    user_id: &str,
-    kind: &str,
-) -> Result<u64, ApiError> {
-    let Some(hook) = state.jobs().registry().get(kind).and_then(crate::jobs::Kind::cancel_hook)
+pub async fn run_cancel_hook(state: &AppState, user_id: &str, kind: &str) -> Result<u64, ApiError> {
+    let Some(hook) = state
+        .jobs()
+        .registry()
+        .get(kind)
+        .and_then(crate::jobs::Kind::cancel_hook)
     else {
         return Ok(0);
     };

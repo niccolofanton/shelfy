@@ -7,6 +7,70 @@
 // Regenerate with `pnpm exec tsx scripts/api-client/generate.ts`.
 
 export interface paths {
+  '/api/v1/ai/analyze': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['analyzePosts'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/ai/queue': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['getAiQueue'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/ai/queue/cancel': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['cancelAiQueue'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/ai/queue/retry': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['retryAiQueue'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/auth/device/approve': {
     parameters: {
       query?: never;
@@ -1625,6 +1689,18 @@ export interface components {
       /** @description Which posts. */
       selector: components['schemas']['PostSelector'];
     };
+    /**
+     * @description `ai.stream`: the model's partial catalog text for one post while it is
+     *     analyzed (P3-13, G3-7). Live only: never stored, never replayed, and sent
+     *     at most 4 times a second per post. The web app shows it as a live preview;
+     *     the saved result arrives as `posts.changed`.
+     */
+    AiStreamEvent: {
+      /** @description The post being analyzed. */
+      postKey: string;
+      /** @description The answer text so far (the model's running JSON or prose). */
+      text: string;
+    };
     /** @description The account's AI usage. */
     AiUsage: {
       /** @description The daily rows, newest day first. */
@@ -1654,6 +1730,81 @@ export interface components {
        * @description Answer tokens providers reported.
        */
       outputTokens: number;
+    };
+    /** @description The counts an analyze request reports. */
+    AnalyzeCounts: {
+      /**
+       * Format: int64
+       * @description Posts already queued.
+       */
+      alreadyQueued: number;
+      /**
+       * Format: int64
+       * @description Posts that will be enqueued.
+       */
+      analyzable: number;
+      /**
+       * Format: int64
+       * @description Posts that need media before they can be analyzed (G3-9).
+       */
+      waitingForMedia: number;
+    };
+    /** @description The token estimate of an analyze request. */
+    AnalyzeEstimate: {
+      /**
+       * Format: double
+       * @description The estimated price in US dollars for a priced BYOK route; `null` for
+       *     the operator node.
+       */
+      costUsd: number | null;
+      /**
+       * Format: int64
+       * @description Estimated wall-clock time for the operator node, ms; `null` for a
+       *     priced cloud route or when no pace is known.
+       */
+      etaMs: number | null;
+      /**
+       * Format: int64
+       * @description Estimated prompt tokens.
+       */
+      inputTokens: number;
+      /**
+       * Format: int64
+       * @description Estimated answer tokens.
+       */
+      outputTokens: number;
+    };
+    /**
+     * @description Analyze mode, distinct from selection itself.
+     * @enum {string}
+     */
+    AnalyzeMode: 'missing' | 'selected' | 'all';
+    /** @description An estimate, or its confirmed enqueue. */
+    AnalyzeRequest: {
+      confirmToken?: string | null;
+      deep?: boolean;
+      mode: components['schemas']['AnalyzeMode'];
+      selector: components['schemas']['PostSelector'];
+    };
+    /** @description The answer of `POST /ai/analyze`. */
+    AnalyzeResult: {
+      /**
+       * @description A confirmation token, valid for 10 minutes, to send with the second
+       *     call; `null` when the work was enqueued already or there is nothing to
+       *     do.
+       */
+      confirmToken: string | null;
+      /** @description What the request would do. */
+      counts: components['schemas']['AnalyzeCounts'];
+      /**
+       * Format: int64
+       * @description How many posts were enqueued (when `queued`).
+       */
+      enqueued: number;
+      /** @description The estimate. */
+      estimate: components['schemas']['AnalyzeEstimate'];
+      /** @description Whether the work was enqueued (a single post, or the confirm call). */
+      queued: boolean;
     };
     /** @description An API token of the account. Its value is never shown again. */
     ApiToken: {
@@ -2246,6 +2397,7 @@ export interface components {
       | 'provider_offline'
       | 'provider_unavailable'
       | 'provider_quota_exhausted'
+      | 'confirm_token_invalid'
       | 'capture_blocked'
       | 'unsupported_link'
       | 'not_available'
@@ -2269,7 +2421,8 @@ export interface components {
       | 'notification'
       | 'extension.status'
       | 'provider.status'
-      | 'sync.progress';
+      | 'sync.progress'
+      | 'ai.stream';
     /**
      * @description What `GET /api/v1/extension/config` answers: the extension's minimum
      *     version, kill switches, pacing and stop thresholds (contract C3). Data
@@ -3980,6 +4133,63 @@ export interface components {
       /** @description The account's email, shown in the authenticator's account picker. */
       name: string;
     };
+    /** @description Number of items changed by a queue action. */
+    QueueChanged: {
+      /** Format: int64 */
+      changed: number;
+    };
+    /** @description The counts of the AI queue. */
+    QueueCounts: {
+      /**
+       * Format: int64
+       * @description Being analyzed.
+       */
+      analyzing: number;
+      /**
+       * Format: int64
+       * @description Done.
+       */
+      done: number;
+      /**
+       * Format: int64
+       * @description Failed.
+       */
+      error: number;
+      /**
+       * Format: int64
+       * @description Queued.
+       */
+      pending: number;
+      /**
+       * Format: int64
+       * @description Never analyzed.
+       */
+      unanalyzed: number;
+    };
+    /** @description One item of the queue view. */
+    QueueItem: {
+      /**
+       * Format: int64
+       * @description Tries spent.
+       */
+      attempts: number;
+      /** @description The last error code (an `error` item). */
+      error: string | null;
+      /**
+       * Format: int64
+       * @description Next attempt time (a backed-off `pending` item), unix ms.
+       */
+      nextAt: number | null;
+      /** @description The post's key. */
+      postKey: string;
+      /** @description Its AI state. */
+      status: string;
+    };
+    /** @description Exactly one of explicit post keys or all queued items. */
+    QueueRequest: {
+      all?: boolean;
+      keys?: string[] | null;
+    };
     /** @description The outcome of an action on a queue. */
     QueueResult: {
       /**
@@ -4022,6 +4232,24 @@ export interface components {
        * @description Jobs finished.
        */
       succeeded: number;
+    };
+    /** @description `GET /ai/queue`. */
+    QueueView: {
+      /** @description The counts per state. */
+      counts: components['schemas']['QueueCounts'];
+      /** @description The cursor for the next page; `null` at the end. */
+      cursor: string | null;
+      /**
+       * Format: int64
+       * @description An ETA for the queued and in-flight work, ms, from recent durations;
+       *     `null` when nothing is queued.
+       */
+      etaMs: number | null;
+      /** @description The items of the requested state, newest first. */
+      items: components['schemas']['QueueItem'][];
+      /** @description Whether the queue is paused (an invalid key, or a manual pause). */
+      paused: boolean;
+      providerState: components['schemas']['ProviderState'] | null;
     };
     /** @description Body of `POST /api/v1/auth/reauth/finish`: the proof. */
     ReauthFinish:
@@ -4241,6 +4469,12 @@ export interface components {
           data: components['schemas']['SyncProgressEvent'];
           /** @enum {string} */
           event: 'sync.progress';
+        }
+      | {
+          /** @description The model's partial catalog text for a post (live only). */
+          data: components['schemas']['AiStreamEvent'];
+          /** @enum {string} */
+          event: 'ai.stream';
         };
     /** @description A signed-in session of the account. */
     Session: {
@@ -4772,6 +5006,125 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  analyzePosts: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AnalyzeRequest'];
+      };
+    };
+    responses: {
+      /** @description Estimate and confirmation, or enqueued work. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AnalyzeResult'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getAiQueue: {
+    parameters: {
+      query?: {
+        state?: string;
+        cursor?: string;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Items, counts and provider availability. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['QueueView'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  cancelAiQueue: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['QueueRequest'];
+      };
+    };
+    responses: {
+      /** @description Queued analyses cancelled. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['QueueChanged'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  retryAiQueue: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['QueueRequest'];
+      };
+    };
+    responses: {
+      /** @description Failed analyses queued again. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['QueueChanged'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   approveDeviceSignIn: {
     parameters: {
       query?: never;
@@ -6645,7 +6998,7 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
-      /** @description The queue; `affected` counts the jobs cancelled. */
+      /** @description The queue; `affected` counts cancelled jobs and reset items. */
       200: {
         headers: {
           [name: string]: unknown;

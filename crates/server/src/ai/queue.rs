@@ -15,11 +15,12 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, MutexGuard, PoisonError};
 
+use rusqlite::OptionalExtension as _;
 use serde::Serialize;
 use shelfy_core::ai::estimate::{Estimate, Pace};
 use shelfy_core::ai::queue::{self as core_queue, Item, Mode, Reach, ScopeCounts, StateCounts};
 use shelfy_core::selector::Selector;
-use tokio::time::{Duration, Instant};
+use tokio::time::Duration;
 use utoipa::ToSchema;
 
 use crate::events::model::ProviderState;
@@ -37,7 +38,11 @@ struct Confirm {
     user_id: String,
     selector: Selector,
     mode: Mode,
-    expires: Instant,
+    expires: i64,
+    deep: bool,
+    ids: Vec<i64>,
+    provider: String,
+    model: String,
 }
 
 /// The process's live confirmation tokens, keyed by the token string. Owner
@@ -113,11 +118,15 @@ pub struct AnalyzeEstimate {
 }
 
 impl AnalyzeEstimate {
-    fn of(estimate: Estimate) -> Self {
+    fn of(estimate: Estimate, route: &super::Route) -> Self {
         Self {
             input_tokens: estimate.input_tokens,
             output_tokens: estimate.output_tokens,
-            eta_ms: estimate.eta_ms,
+            eta_ms: route
+                .provider
+                .is_operator()
+                .then_some(estimate.eta_ms)
+                .flatten(),
             // The operator node is the owner's own; cloud pricing is P3-19.
             cost_usd: None,
         }
@@ -157,30 +166,47 @@ pub async fn analyze(
     selector: Selector,
     mode: Mode,
     confirm_token: Option<String>,
+    deep: bool,
 ) -> Result<AnalyzeResult, ApiError> {
     let now = state.jobs().clock().now_ms();
+    let owner = crate::jobs::ai_drain::is_owner(state, user_id).await?;
+    let route = state
+        .ai()
+        .route(
+            state,
+            super::Caller::new(user_id, owner),
+            super::Task::Catalog,
+        )
+        .await?;
     if let Some(token) = confirm_token {
-        let confirm = take_confirm(&token, user_id).ok_or_else(|| {
-            ApiError::new(crate::error::ErrorCode::ConfirmTokenInvalid)
-        })?;
-        let enqueued = enqueue_now(state, user_id, &confirm.selector, confirm.mode, now).await?;
+        let confirm = take_confirm(&token, user_id, &selector, mode, deep, now)
+            .ok_or_else(|| ApiError::new(crate::error::ErrorCode::ConfirmTokenInvalid))?;
+        if confirm.provider != route.provider.id() || confirm.model != route.model {
+            return Err(ApiError::new(crate::error::ErrorCode::ConfirmTokenInvalid));
+        }
+        let enqueued =
+            enqueue_ids(state, user_id, confirm.ids, confirm.mode, confirm.deep, now).await?;
         return Ok(AnalyzeResult {
             counts: AnalyzeCounts {
                 analyzable: enqueued,
                 waiting_for_media: 0,
                 already_queued: 0,
             },
-            estimate: AnalyzeEstimate::of(Estimate::of(enqueued, measured_ms_per_post())),
+            estimate: AnalyzeEstimate::of(Estimate::of(enqueued, measured_ms_per_post()), &route),
             queued: true,
             enqueued,
             confirm_token: None,
         });
     }
 
-    let counts = {
+    let (counts, ids) = {
         let selector = selector.clone();
         read(state, user_id, move |conn| {
-            core_queue::scope_counts(conn, &selector, mode, now).map_err(ApiError::from)
+            // The displayed estimate and confirmed population come from the
+            // same snapshot, even while another import changes the library.
+            let counts = core_queue::scope_counts(conn, &selector, mode, now)?;
+            let ids = core_queue::eligible_ids(conn, &selector, mode)?;
+            Ok((counts, ids))
         })
         .await?
     };
@@ -190,27 +216,27 @@ pub async fn analyze(
     if counts.analyzable == 0 {
         return Ok(AnalyzeResult {
             counts: counts.into(),
-            estimate: AnalyzeEstimate::of(estimate),
+            estimate: AnalyzeEstimate::of(estimate, &route),
             queued: false,
             enqueued: 0,
             confirm_token: None,
         });
     }
-    if counts.analyzable == 1 {
-        let enqueued = enqueue_now(state, user_id, &selector, mode, now).await?;
+    if matches!(&selector, Selector::Keys(keys) if keys.len() == 1) {
+        let enqueued = enqueue_now(state, user_id, &selector, mode, deep, now).await?;
         return Ok(AnalyzeResult {
             counts: counts.into(),
-            estimate: AnalyzeEstimate::of(estimate),
+            estimate: AnalyzeEstimate::of(estimate, &route),
             queued: true,
             enqueued,
             confirm_token: None,
         });
     }
 
-    let token = store_confirm(user_id, selector, mode, now);
+    let token = store_confirm(user_id, selector, mode, deep, ids, now, &route);
     Ok(AnalyzeResult {
         counts: counts.into(),
-        estimate: AnalyzeEstimate::of(estimate),
+        estimate: AnalyzeEstimate::of(estimate, &route),
         queued: false,
         enqueued: 0,
         confirm_token: Some(token),
@@ -224,13 +250,19 @@ async fn enqueue_now(
     user_id: &str,
     selector: &Selector,
     mode: Mode,
+    deep: bool,
     now: i64,
 ) -> Result<u64, ApiError> {
     let selector = selector.clone();
     let written = library::write(state, user_id, ChangeReason::Ai, move |tx| {
+        let ids = core_queue::eligible_ids(tx, &selector, mode)?;
         let n = core_queue::mark_pending(tx, &selector, mode, now)?;
+        core_queue::set_deep(tx, &ids, deep, now)?;
         // Many posts change their AI status: the client reloads the view.
-        Ok(Change { value: n, keys: None })
+        Ok(Change {
+            value: n,
+            keys: None,
+        })
     })
     .await?;
     if written.value > 0 {
@@ -278,7 +310,10 @@ pub async fn cancel(state: &AppState, user_id: &str, reach: Reach) -> Result<u64
     let now = state.jobs().clock().now_ms();
     if matches!(reach, Reach::All) {
         // Stop the running drain so it does not keep claiming.
-        let _ = state.jobs().cancel_all(user_id, super::AI_DRAIN_KIND).await;
+        state
+            .jobs()
+            .cancel_all(user_id, super::AI_DRAIN_KIND)
+            .await?;
     }
     let written = library::write(state, user_id, ChangeReason::Ai, move |tx| {
         let n = core_queue::cancel(tx, &reach, now)?;
@@ -415,58 +450,126 @@ pub async fn queue_view(
     .await?;
     let outstanding = counts.pending + counts.analyzing;
     let eta_ms = Estimate::of(outstanding, measured_ms_per_post()).eta_ms;
+    let owner = crate::jobs::ai_drain::is_owner(state, user_id).await?;
+    let caller = super::Caller::new(user_id, owner);
+    let provider_state =
+        if let Ok(route) = state.ai().route(state, caller, super::Task::Catalog).await {
+            state
+                .ai()
+                .list_providers(state, caller)
+                .await?
+                .into_iter()
+                .find(|provider| provider.id == route.provider.id())
+                .map(|provider| provider.status)
+        } else {
+            None
+        };
     Ok(QueueView {
         counts: counts.into(),
         items: items.into_iter().map(QueueItem::from).collect(),
         cursor: next.map(|id| id.to_string()),
         eta_ms,
-        provider_state: state.ai().operator_state(),
+        provider_state,
         paused: state.jobs().is_paused(user_id, super::AI_DRAIN_KIND),
     })
 }
 
 // ── Confirmation tokens ────────────────────────────────────────────────────────
 
-fn store_confirm(user_id: &str, selector: Selector, mode: Mode, _now: i64) -> String {
+fn store_confirm(
+    user_id: &str,
+    selector: Selector,
+    mode: Mode,
+    deep: bool,
+    ids: Vec<i64>,
+    now: i64,
+    route: &super::Route,
+) -> String {
     let token = new_token();
     let mut map = confirms();
-    let cutoff = Instant::now();
-    map.retain(|_, c| c.expires > cutoff);
+    map.retain(|_, c| c.expires > now);
+    // Bound outstanding estimates; old estimates can simply be requested again.
+    if map.len() >= 256 {
+        map.clear();
+    }
     map.insert(
         token.clone(),
         Confirm {
             user_id: user_id.to_owned(),
             selector,
             mode,
-            expires: Instant::now() + CONFIRM_TTL,
+            deep,
+            ids,
+            provider: route.provider.id().to_owned(),
+            model: route.model.clone(),
+            expires: now + CONFIRM_TTL.as_millis() as i64,
         },
     );
     token
 }
 
-fn take_confirm(token: &str, user_id: &str) -> Option<Confirm> {
+fn take_confirm(
+    token: &str,
+    user_id: &str,
+    selector: &Selector,
+    mode: Mode,
+    deep: bool,
+    now: i64,
+) -> Option<Confirm> {
     let mut map = confirms();
-    let confirm = map.get(token)?;
-    if confirm.user_id != user_id || confirm.expires <= Instant::now() {
+    let c = map.get(token)?;
+    if c.user_id != user_id
+        || c.expires <= now
+        || &c.selector != selector
+        || c.mode != mode
+        || c.deep != deep
+    {
         return None;
     }
     map.remove(token)
 }
 
-fn new_token() -> String {
-    let (a, b) = (
-        getrandom::u64().unwrap_or_else(|_| fallback_rand()),
-        getrandom::u64().unwrap_or_else(|_| fallback_rand().rotate_left(17)),
-    );
-    format!("{a:016x}{b:016x}")
+async fn enqueue_ids(
+    state: &AppState,
+    user_id: &str,
+    ids: Vec<i64>,
+    mode: Mode,
+    deep: bool,
+    now: i64,
+) -> Result<u64, ApiError> {
+    let written = library::write(state, user_id, ChangeReason::Ai, move |tx| {
+        let mut n = 0;
+        // Recheck eligibility without widening the population the user confirmed.
+        for id in ids {
+            let key: Option<String> = tx
+                .query_row("SELECT key FROM posts WHERE id=?1", [id], |r| r.get(0))
+                .optional()?;
+            if let Some(key) = key {
+                let selector = Selector::Keys(vec![key]);
+                if core_queue::mark_pending(tx, &selector, mode, now)? > 0 {
+                    core_queue::set_deep(tx, &[id], deep, now)?;
+                    n += 1;
+                }
+            }
+        }
+        Ok(Change {
+            value: n,
+            keys: None,
+        })
+    })
+    .await?;
+    if written.value > 0 {
+        crate::jobs::ai_drain::enqueue(state.jobs(), user_id).await?;
+    }
+    Ok(written.value)
 }
 
-fn fallback_rand() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    (nanos as u64) ^ 0x9E37_79B9_7F4A_7C15
+fn new_token() -> String {
+    let (a, b) = (
+        getrandom::u64().expect("system entropy unavailable"),
+        getrandom::u64().expect("system entropy unavailable"),
+    );
+    format!("{a:016x}{b:016x}")
 }
 
 /// Runs a read on `user_id`'s library off the async workers.

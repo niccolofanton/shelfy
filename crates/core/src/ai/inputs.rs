@@ -161,14 +161,21 @@ pub fn select(conn: &Connection, post_id: i64) -> Result<Option<PostInputs>> {
 
     let mut frames = Vec::new();
     let mut seen: Vec<Vec<u8>> = Vec::new();
-    let push_image = |frames: &mut Vec<Frame>, seen: &mut Vec<Vec<u8>>, obj: Option<FrameObject>| {
-        if let Some(obj) = obj
-            && !seen.contains(&obj.sha256)
-        {
-            seen.push(obj.sha256.clone());
-            frames.push(Frame::Image(obj));
-        }
-    };
+    let push_image =
+        |frames: &mut Vec<Frame>, seen: &mut Vec<Vec<u8>>, obj: Option<FrameObject>| {
+            if let Some(obj) = obj
+                && !seen.contains(&obj.sha256)
+            {
+                seen.push(obj.sha256.clone());
+                frames.push(Frame::Image(obj));
+            }
+        };
+
+    // A separate title-card cover is useful evidence. Carousel covers that
+    // equal slide one are deduplicated by the same digest below.
+    if let Some(id) = cover_object {
+        push_image(&mut frames, &mut seen, object_by_id(conn, id)?);
+    }
 
     // The slides, in order: image slides are a still; video slides carry their
     // stored file (keyframes) and their poster still.
@@ -180,13 +187,16 @@ pub fn select(conn: &Connection, post_id: i64) -> Result<Option<PostInputs>> {
          LEFT JOIN media_objects vo ON vo.id = m.video_object_id \
          WHERE m.post_id = ?1 ORDER BY m.position ASC LIMIT ?2",
     )?;
-    let rows = stmt.query_map(params![post_id, i64::try_from(MAX_SLIDES).unwrap_or(i64::MAX)], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            frame_object(r, 1)?,
-            frame_object(r, 5)?,
-        ))
-    })?;
+    let rows = stmt.query_map(
+        params![post_id, i64::try_from(MAX_SLIDES).unwrap_or(i64::MAX)],
+        |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                frame_object(r, 1)?,
+                frame_object(r, 5)?,
+            ))
+        },
+    )?;
     for row in rows {
         if frames.len() >= MAX_FRAMES {
             break;

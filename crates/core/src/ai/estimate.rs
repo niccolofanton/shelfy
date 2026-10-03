@@ -57,10 +57,17 @@ impl Estimate {
     /// input and output token prices; `None` for the operator node (its node
     /// is the owner's own, so there is no per-token price).
     #[must_use]
-    pub fn cost_usd(&self, input_per_mtok: Option<f64>, output_per_mtok: Option<f64>) -> Option<f64> {
+    pub fn cost_usd(
+        &self,
+        input_per_mtok: Option<f64>,
+        output_per_mtok: Option<f64>,
+    ) -> Option<f64> {
         let (input, output) = (input_per_mtok?, output_per_mtok?);
         let million = 1_000_000.0;
-        Some((self.input_tokens as f64 / million) * input + (self.output_tokens as f64 / million) * output)
+        Some(
+            (self.input_tokens as f64 / million) * input
+                + (self.output_tokens as f64 / million) * output,
+        )
     }
 }
 
@@ -114,7 +121,10 @@ mod tests {
         assert_eq!(zero.output_tokens, 0);
         assert_eq!(zero.eta_ms, None);
         let one = Estimate::of(1, None);
-        assert_eq!(one.output_tokens, u64::from(prompts::max_tokens(Task::Catalog, 0)));
+        assert_eq!(
+            one.output_tokens,
+            u64::from(prompts::max_tokens(Task::Catalog, 0))
+        );
         assert_eq!(one.eta_ms, Some(DEFAULT_MS_PER_POST));
         let hundred = Estimate::of(100, Some(120_000));
         assert_eq!(hundred.eta_ms, Some(12_000_000));

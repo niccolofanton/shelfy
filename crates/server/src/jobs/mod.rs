@@ -65,6 +65,7 @@
 //! The control-database queries are in [`crate::control::jobs`] and
 //! [`crate::control::idempotency`]; the routes in [`crate::routes::jobs`].
 
+pub mod ai_drain;
 pub mod archive;
 pub mod bulk;
 mod clock;
@@ -294,6 +295,16 @@ impl Jobs {
     ///
     /// 404 when `user_id` has no such job; 409 when it already finished.
     pub async fn cancel(&self, user_id: &str, id: i64) -> Result<JobRow, ApiError> {
+        self.shared.cancel(user_id, id).await.map(|(row, _)| row)
+    }
+
+    /// Cancels a job and reports whether this call changed it. A repeated
+    /// cancel must not rerun a kind hook against newly enqueued work.
+    pub(crate) async fn cancel_changed(
+        &self,
+        user_id: &str,
+        id: i64,
+    ) -> Result<(JobRow, bool), ApiError> {
         self.shared.cancel(user_id, id).await
     }
 

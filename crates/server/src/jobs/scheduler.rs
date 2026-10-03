@@ -364,7 +364,7 @@ impl Shared {
         }
     }
 
-    pub(super) async fn cancel(&self, user_id: &str, id: i64) -> Result<JobRow, ApiError> {
+    pub(super) async fn cancel(&self, user_id: &str, id: i64) -> Result<(JobRow, bool), ApiError> {
         let control = Arc::clone(&self.control);
         let user = user_id.to_owned();
         let now = self.clock.now_ms();
@@ -378,11 +378,11 @@ impl Shared {
         if let Some(row) = cancelled {
             self.forget([row.id]);
             self.publish(&row);
-            return Ok(row);
+            return Ok((row, true));
         }
         match current {
             None => Err(ApiError::not_found()),
-            Some(row) if row.state == JobState::Cancelled => Ok(row),
+            Some(row) if row.state == JobState::Cancelled => Ok((row, false)),
             Some(_) => {
                 Err(ApiError::new(ErrorCode::Conflict).with_detail("the job already finished"))
             }

@@ -51,6 +51,8 @@ export default {
     'code.upload_consumed': 'Questo file caricato è già stato usato. Caricalo di nuovo.',
     'code.payload_too_large': 'È troppo grande per essere inviato.',
     'code.unsupported_media_type': 'Questo tipo di file non è supportato.',
+    'code.confirm_token_invalid':
+      'La conferma è scaduta o non corrisponde. Richiedi una nuova stima.',
     'code.validation_failed': 'Alcuni valori non sono validi.',
     'code.provider_key_invalid': 'Il provider AI ha rifiutato la chiave.',
     'code.ai_not_configured': 'Nessun provider AI è configurato per questa operazione.',
@@ -105,6 +107,8 @@ export default {
     'code.upload_consumed': 'This uploaded file was already used. Upload it again.',
     'code.payload_too_large': 'This is too large to send.',
     'code.unsupported_media_type': 'This file type is not supported.',
+    'code.confirm_token_invalid':
+      'The confirmation expired or does not match. Request a new estimate.',
     'code.validation_failed': 'Some values are not valid.',
     'code.provider_key_invalid': 'The AI provider refused the key.',
     'code.ai_not_configured': 'No AI provider is set up for this task.',

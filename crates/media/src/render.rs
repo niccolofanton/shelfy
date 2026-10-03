@@ -444,7 +444,12 @@ fn encode_jpeg(image: &DynamicImage, quality: u8) -> Result<Vec<u8>, RenderError
     };
     let mut out = Cursor::new(Vec::new());
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100))
-        .write_image(rgb.as_raw(), rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
+        .write_image(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            ExtendedColorType::Rgb8,
+        )
         .map_err(|e| RenderError::Output(format!("jpeg: {e}")))?;
     Ok(out.into_inner())
 }

@@ -972,5 +972,5 @@ fn held_error(kind: ErrorKind) -> AiError {
         ErrorKind::InvalidKey => "the operator node refused the key",
         _ => "the provider is cooling down after repeated failures",
     };
-    AiError::new(kind, message)
+    AiError::new(kind, message).with_code("provider_held")
 }

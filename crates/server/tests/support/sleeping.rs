@@ -4,7 +4,7 @@
 //! a client sees neither an answer nor a refusal, only its connect timeout.
 
 use std::net::{SocketAddr, TcpStream};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::net::{TcpListener, TcpSocket};
 
@@ -27,8 +27,15 @@ impl SleepingNode {
         let listener = socket.listen(0).unwrap();
         let addr = listener.local_addr().unwrap();
         let mut queued = Vec::new();
-        for _ in 0..16 {
-            match TcpStream::connect_timeout(&addr, Duration::from_millis(200)) {
+        // macOS maps backlog 0 to its default queue rather than Linux's
+        // minimal queue. Bound the fill above both defaults.
+        let deadline = Instant::now() + Duration::from_secs(3);
+        for _ in 0..4096 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match TcpStream::connect_timeout(&addr, remaining.min(Duration::from_millis(200))) {
                 Ok(stream) => queued.push(stream),
                 Err(_) => {
                     return Self {

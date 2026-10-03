@@ -80,6 +80,7 @@
 //! client with `pnpm exec tsx scripts/api-client/generate.ts`; both checks
 //! fail while a committed copy is stale.
 
+pub mod ai;
 pub mod auth;
 pub mod bulk;
 pub mod client_errors;
@@ -339,6 +340,16 @@ pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
 pub const IDEMPOTENT_ROUTES: &[IdempotentRoute] = &[
     IdempotentRoute {
         method: Method::POST,
+        path: "/api/v1/ai/analyze",
+        body_bytes: RouteLimits::STANDARD.body_bytes,
+    },
+    IdempotentRoute {
+        method: Method::POST,
+        path: "/api/v1/ai/queue/retry",
+        body_bytes: RouteLimits::STANDARD.body_bytes,
+    },
+    IdempotentRoute {
+        method: Method::POST,
         path: "/api/v1/ingest/batches",
         body_bytes: RouteLimits::INGEST.body_bytes,
     },
@@ -390,6 +401,10 @@ pub fn access() -> AccessPolicy {
 pub fn router() -> OpenApiRouter<AppState> {
     let standard = OpenApiRouter::default()
         .routes(routes!(health::health))
+        .routes(routes!(ai::analyze))
+        .routes(routes!(ai::get_queue))
+        .routes(routes!(ai::cancel_queue))
+        .routes(routes!(ai::retry_queue))
         .routes(routes!(docs::openapi_json))
         .routes(routes!(posts::list_posts))
         .routes(routes!(posts::count_posts))

@@ -325,6 +325,7 @@ mod tests {
                 assert_eq!(id, sub.head_id());
             }
             Delivery::Event(event) => panic!("unexpected event {event:?}"),
+            Delivery::Live(_) => panic!("unexpected live event"),
         }
     }
 

@@ -1048,6 +1048,7 @@ async fn next_status(subscription: &mut Subscription) -> Value {
             }
             Delivery::Event(_) => {}
             Delivery::Resync { reason, .. } => panic!("unexpected resync: {reason:?}"),
+            Delivery::Live(_) => {}
         }
     }
 }

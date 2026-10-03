@@ -295,7 +295,7 @@ impl TestState {
             }
             let next = tokio::time::timeout(Duration::from_secs(24 * 3600), events.next()).await;
             match next {
-                Ok(Delivery::Event(_) | Delivery::Resync { .. }) => {}
+                Ok(Delivery::Event(_) | Delivery::Live(_) | Delivery::Resync { .. }) => {}
                 Err(_) => panic!("job {id} never got there; it is {job:?}"),
             }
         }

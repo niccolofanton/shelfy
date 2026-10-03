@@ -25,6 +25,7 @@ use tracing_subscriber::layer::SubscriberExt as _;
 
 /// A distinctive operator key that must appear nowhere but the wire.
 const PLANTED_KEY: &str = "ig_PlantedOperatorKey_4242_zzz";
+const PLANTED_CAPTION: &str = "Planted catalog caption 7331 never log this lamp";
 
 /// Collects everything the log layer writes.
 #[derive(Clone, Default)]
@@ -82,8 +83,6 @@ async fn the_operator_key_never_leaks() {
     let caller = Caller::new(&owner_id, true);
     let request = ChatRequest::new("stub-text", vec![Message::user_text("hello")]);
 
-    let mut events = t.state.events().subscribe(&owner_id, None);
-
     // A successful call: its answer must not carry the key.
     let answer = svc
         .chat(&t.state, caller, Task::Chat, &request, CallHints::new())
@@ -91,6 +90,46 @@ async fn the_operator_key_never_leaks() {
         .unwrap();
     assert!(!format!("{answer:?}").contains(PLANTED_KEY));
     assert!(!answer.text.contains(PLANTED_KEY));
+
+    // The real drain: its caption and rendered prompt are library content.
+    t.write(&owner_id, |tx| {
+        let mut post = shelfy_core::repo::posts::NewPost::new(
+            "x_7331",
+            shelfy_core::repo::Platform::Twitter,
+            "7331",
+            "text",
+            1,
+        );
+        post.caption = Some(PLANTED_CAPTION.into());
+        shelfy_core::repo::posts::insert(tx, &post, 1)
+    })
+    .await;
+    shelfy_server::ai::queue::analyze(
+        &t.state,
+        &owner_id,
+        shelfy_core::selector::Selector::Keys(vec!["x_7331".into()]),
+        shelfy_core::ai::queue::Mode::Missing,
+        None,
+        false,
+    )
+    .await
+    .unwrap();
+    let job = shelfy_server::jobs::ai_drain::enqueue(t.state.jobs(), &owner_id)
+        .await
+        .unwrap()
+        .job
+        .id;
+    let scheduler = t
+        .state
+        .jobs()
+        .start(t.state.clone(), tokio_util::sync::CancellationToken::new());
+    t.wait_job(&owner_id, job, |j| {
+        j.state == shelfy_server::events::model::JobState::Succeeded
+    })
+    .await;
+    scheduler.abort().await;
+
+    let mut events = t.state.events().subscribe(&owner_id, None);
 
     // A refused key: its error, as the problem a route would send.
     stub.inject(FaultRule::new(Fault::Unauthorized).always());
@@ -133,4 +172,12 @@ async fn the_operator_key_never_leaks() {
     let logs = String::from_utf8_lossy(&capture.0.lock().unwrap()).into_owned();
     assert!(!logs.is_empty(), "no logs were captured");
     assert!(!logs.contains(PLANTED_KEY), "the logs leaked the key");
+    assert!(
+        !logs.contains(PLANTED_CAPTION),
+        "the logs leaked library content"
+    );
+    assert!(
+        !logs.contains("You are an assistant that catalogs"),
+        "the logs leaked the prompt"
+    );
 }

@@ -10,6 +10,160 @@
     "version": "1"
   },
   "paths": {
+    "/api/v1/ai/analyze": {
+      "post": {
+        "tags": ["jobs"],
+        "operationId": "analyzePosts",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalyzeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Estimate and confirmation, or enqueued work.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyzeResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/ai/queue": {
+      "get": {
+        "tags": ["jobs"],
+        "operationId": "getAiQueue",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Items, counts and provider availability.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueView"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/ai/queue/cancel": {
+      "post": {
+        "tags": ["jobs"],
+        "operationId": "cancelAiQueue",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Queued analyses cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueChanged"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/ai/queue/retry": {
+      "post": {
+        "tags": ["jobs"],
+        "operationId": "retryAiQueue",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Failed analyses queued again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueChanged"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/auth/device/approve": {
       "post": {
         "tags": ["auth"],
@@ -2790,7 +2944,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The queue; `affected` counts the jobs cancelled.",
+            "description": "The queue; `affected` counts cancelled jobs and reset items.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3828,6 +3982,21 @@
         },
         "additionalProperties": false
       },
+      "AiStreamEvent": {
+        "type": "object",
+        "description": "`ai.stream`: the model's partial catalog text for one post while it is\nanalyzed (P3-13, G3-7). Live only: never stored, never replayed, and sent\nat most 4 times a second per post. The web app shows it as a live preview;\nthe saved result arrives as `posts.changed`.",
+        "required": ["postKey", "text"],
+        "properties": {
+          "postKey": {
+            "type": "string",
+            "description": "The post being analyzed."
+          },
+          "text": {
+            "type": "string",
+            "description": "The answer text so far (the model's running JSON or prose)."
+          }
+        }
+      },
       "AiUsage": {
         "type": "object",
         "description": "The account's AI usage.",
@@ -3870,6 +4039,115 @@
             "type": "integer",
             "format": "int64",
             "description": "Answer tokens providers reported."
+          }
+        }
+      },
+      "AnalyzeCounts": {
+        "type": "object",
+        "description": "The counts an analyze request reports.",
+        "required": ["analyzable", "waitingForMedia", "alreadyQueued"],
+        "properties": {
+          "alreadyQueued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts already queued.",
+            "minimum": 0
+          },
+          "analyzable": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts that will be enqueued.",
+            "minimum": 0
+          },
+          "waitingForMedia": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Posts that need media before they can be analyzed (G3-9).",
+            "minimum": 0
+          }
+        }
+      },
+      "AnalyzeEstimate": {
+        "type": "object",
+        "description": "The token estimate of an analyze request.",
+        "required": ["inputTokens", "outputTokens", "etaMs", "costUsd"],
+        "properties": {
+          "costUsd": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "The estimated price in US dollars for a priced BYOK route; `null` for\nthe operator node."
+          },
+          "etaMs": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Estimated wall-clock time for the operator node, ms; `null` for a\npriced cloud route or when no pace is known.",
+            "minimum": 0
+          },
+          "inputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Estimated prompt tokens.",
+            "minimum": 0
+          },
+          "outputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Estimated answer tokens.",
+            "minimum": 0
+          }
+        }
+      },
+      "AnalyzeMode": {
+        "type": "string",
+        "description": "Analyze mode, distinct from selection itself.",
+        "enum": ["missing", "selected", "all"]
+      },
+      "AnalyzeRequest": {
+        "type": "object",
+        "description": "An estimate, or its confirmed enqueue.",
+        "required": ["selector", "mode"],
+        "properties": {
+          "confirmToken": {
+            "type": ["string", "null"]
+          },
+          "deep": {
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/AnalyzeMode"
+          },
+          "selector": {
+            "$ref": "#/components/schemas/PostSelector"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AnalyzeResult": {
+        "type": "object",
+        "description": "The answer of `POST /ai/analyze`.",
+        "required": ["counts", "estimate", "queued", "enqueued", "confirmToken"],
+        "properties": {
+          "confirmToken": {
+            "type": ["string", "null"],
+            "description": "A confirmation token, valid for 10 minutes, to send with the second\ncall; `null` when the work was enqueued already or there is nothing to\ndo."
+          },
+          "counts": {
+            "$ref": "#/components/schemas/AnalyzeCounts",
+            "description": "What the request would do."
+          },
+          "enqueued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "How many posts were enqueued (when `queued`).",
+            "minimum": 0
+          },
+          "estimate": {
+            "$ref": "#/components/schemas/AnalyzeEstimate",
+            "description": "The estimate."
+          },
+          "queued": {
+            "type": "boolean",
+            "description": "Whether the work was enqueued (a single post, or the confirm call)."
           }
         }
       },
@@ -4809,6 +5087,7 @@
           "provider_offline",
           "provider_unavailable",
           "provider_quota_exhausted",
+          "confirm_token_invalid",
           "capture_blocked",
           "unsupported_link",
           "not_available",
@@ -4831,7 +5110,8 @@
           "notification",
           "extension.status",
           "provider.status",
-          "sync.progress"
+          "sync.progress",
+          "ai.stream"
         ]
       },
       "ExtensionConfig": {
@@ -7568,6 +7848,100 @@
           }
         }
       },
+      "QueueChanged": {
+        "type": "object",
+        "description": "Number of items changed by a queue action.",
+        "required": ["changed"],
+        "properties": {
+          "changed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "QueueCounts": {
+        "type": "object",
+        "description": "The counts of the AI queue.",
+        "required": ["unanalyzed", "pending", "analyzing", "done", "error"],
+        "properties": {
+          "analyzing": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Being analyzed.",
+            "minimum": 0
+          },
+          "done": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Done.",
+            "minimum": 0
+          },
+          "error": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failed.",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Queued.",
+            "minimum": 0
+          },
+          "unanalyzed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Never analyzed.",
+            "minimum": 0
+          }
+        }
+      },
+      "QueueItem": {
+        "type": "object",
+        "description": "One item of the queue view.",
+        "required": ["postKey", "status", "attempts", "nextAt", "error"],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tries spent."
+          },
+          "error": {
+            "type": ["string", "null"],
+            "description": "The last error code (an `error` item)."
+          },
+          "nextAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Next attempt time (a backed-off `pending` item), unix ms."
+          },
+          "postKey": {
+            "type": "string",
+            "description": "The post's key."
+          },
+          "status": {
+            "type": "string",
+            "description": "Its AI state."
+          }
+        }
+      },
+      "QueueRequest": {
+        "type": "object",
+        "description": "Exactly one of explicit post keys or all queued items.",
+        "properties": {
+          "all": {
+            "type": "boolean"
+          },
+          "keys": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "QueueResult": {
         "type": "object",
         "description": "The outcome of an action on a queue.",
@@ -7627,6 +8001,49 @@
             "format": "int64",
             "description": "Jobs finished.",
             "minimum": 0
+          }
+        }
+      },
+      "QueueView": {
+        "type": "object",
+        "description": "`GET /ai/queue`.",
+        "required": ["counts", "items", "cursor", "etaMs", "providerState", "paused"],
+        "properties": {
+          "counts": {
+            "$ref": "#/components/schemas/QueueCounts",
+            "description": "The counts per state."
+          },
+          "cursor": {
+            "type": ["string", "null"],
+            "description": "The cursor for the next page; `null` at the end."
+          },
+          "etaMs": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "An ETA for the queued and in-flight work, ms, from recent durations;\n`null` when nothing is queued.",
+            "minimum": 0
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueueItem"
+            },
+            "description": "The items of the requested state, newest first."
+          },
+          "paused": {
+            "type": "boolean",
+            "description": "Whether the queue is paused (an invalid key, or a manual pause)."
+          },
+          "providerState": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProviderState",
+                "description": "The provider's state (`ok`, `offline`, …); an offline node means the\nqueue is waiting, not stuck."
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -8000,6 +8417,21 @@
               "event": {
                 "type": "string",
                 "enum": ["sync.progress"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The model's partial catalog text for a post (live only).",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/AiStreamEvent",
+                "description": "The model's partial catalog text for a post (live only)."
+              },
+              "event": {
+                "type": "string",
+                "enum": ["ai.stream"]
               }
             }
           }

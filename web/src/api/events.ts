@@ -42,6 +42,7 @@ const EVENT_NAMES = Object.keys({
   'extension.status': true,
   'provider.status': true,
   'sync.progress': true,
+  'ai.stream': true,
 } satisfies Record<ServerEventName, true>) as ServerEventName[];
 
 // The part of EventSource the stream uses; tests pass a fake.
