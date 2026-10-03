@@ -7,6 +7,7 @@
 //! | its configuration: minimum version, kill switches, pacing, stop thresholds | [`flags`] (typed `feature_flags` keys and their defaults), `GET /extension/config` |
 //! | presence and the version gate of every extension-token request | [`seen`] and [`admit`], called by the access gate ([`crate::auth::access`]) |
 //! | presence: connected or not, version, last request; the `extension.status` event | [`presence`], `GET /extension/status` |
+//! | tasks: uploads, refreshes and hydrations for the archive, their leases and the long poll (P2-14) | [`tasks`], `GET /ingest/tasks`, `POST /ingest/tasks/{id}/complete` |
 //!
 //! **Requests (C1).** The extension sends `Authorization: Bearer shx_…` (a
 //! token of kind `extension`) and `X-Shelfy-Extension: <version>`, its
@@ -27,6 +28,7 @@
 pub mod flags;
 pub mod pairing;
 pub mod presence;
+pub mod tasks;
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -42,6 +44,7 @@ use crate::state::AppState;
 
 pub use flags::{ExtensionConfig, FlagCache};
 pub use presence::Presence;
+pub use tasks::TaskBoard;
 
 /// `X-Shelfy-Extension`: the extension's version, on every request it makes
 /// (C1).
@@ -96,6 +99,7 @@ impl Default for ExtensionSettings {
 pub struct ExtensionState {
     flags: FlagCache,
     presence: Presence,
+    tasks: TaskBoard,
     clock: Clock,
 }
 
@@ -106,6 +110,7 @@ impl ExtensionState {
         Self {
             flags: FlagCache::new(settings.flags_ttl),
             presence: Presence::new(settings.presence_timeout),
+            tasks: TaskBoard::default(),
             clock: settings.clock,
         }
     }
@@ -127,6 +132,12 @@ impl ExtensionState {
     #[must_use]
     pub fn presence(&self) -> &Presence {
         &self.presence
+    }
+
+    /// The tasks' leases and the wake-ups of waiting polls ([`tasks`]).
+    #[must_use]
+    pub fn tasks(&self) -> &TaskBoard {
+        &self.tasks
     }
 }
 
@@ -385,12 +396,13 @@ pub fn token_revoked(state: &AppState, user_id: &str, token_id: &str) {
 
 /// Part of the server's maintenance: extensions silent for
 /// [`ExtensionSettings::presence_timeout`] become disconnected, and their
-/// users hear `extension.status`.
+/// users hear `extension.status`; ended task leases are forgotten.
 pub fn sweep(state: &AppState) {
     let extension = state.extension();
     for (user_id, status) in extension.presence().sweep(extension.now_ms()) {
         state.events().extension_status(&user_id, &status);
     }
+    extension.tasks().sweep(state.jobs().clock().now_ms());
 }
 
 #[cfg(test)]

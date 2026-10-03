@@ -929,6 +929,117 @@
         ]
       }
     },
+    "/api/v1/ingest/tasks": {
+      "get": {
+        "tags": ["extension"],
+        "summary": "Leases the extension's tasks (contract C6).",
+        "description": "A `tasks` token. Answers at once when tasks are ready for this poller,\nelse waits up to `wait` seconds for some, or until the server shuts\ndown. The tasks are leased to the token for 5 minutes; a poll by the same\ntoken returns its leased tasks again, with the lease renewed.",
+        "operationId": "listExtensionTasks",
+        "parameters": [
+          {
+            "name": "wait",
+            "in": "query",
+            "description": "Seconds to wait for a task when none is ready (0–25; default 0).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Most tasks to lease (1–50; default 20).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "X-Shelfy-Extension",
+            "in": "header",
+            "description": "The extension's manifest version (`0.2.0`). An extension token's\nrequest without it, or below `minVersion`, gets 426\n`extension_outdated`, except `GET /extension/config`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The leased tasks.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtensionTasks"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "bearer": ["tasks"]
+          }
+        ]
+      }
+    },
+    "/api/v1/ingest/tasks/{id}/complete": {
+      "post": {
+        "tags": ["extension"],
+        "summary": "Ends one of the extension's tasks (contract C6).",
+        "description": "A `tasks` token. Idempotent: an outcome for a task that no longer exists\nchanges nothing. `uploaded` stores the upload `uploadId` (purpose\n`archive-object`) in the task's slot; 422 when the upload is not a\ncomplete one of the user, 409 `upload_consumed` when it was used before\nand the slot is still empty. 422 for an outcome the task's kind does not\nhave; 404 for a text that is not a task id.",
+        "operationId": "completeExtensionTask",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "The task's id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Shelfy-Extension",
+            "in": "header",
+            "description": "The extension's manifest version (`0.2.0`). An extension token's\nrequest without it, or below `minVersion`, gets 426\n`extension_outdated`, except `GET /extension/config`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCompletion"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Done."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "bearer": ["tasks"]
+          }
+        ]
+      }
+    },
     "/api/v1/jobs": {
       "get": {
         "tags": ["jobs"],
@@ -4950,6 +5061,90 @@
           }
         }
       },
+      "ExtensionTask": {
+        "type": "object",
+        "description": "One task (contract C6).",
+        "required": [
+          "id",
+          "kind",
+          "platform",
+          "postKey",
+          "nativeId",
+          "shortcode",
+          "postUrl",
+          "position",
+          "url",
+          "expiresAt",
+          "leaseUntil"
+        ],
+        "properties": {
+          "expiresAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "When `url` expires (`upload_media`), or the first expired URL\n(`refresh_media`), unix ms."
+          },
+          "id": {
+            "type": "string",
+            "description": "Its id, for the completion: stable while the work is the same."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TaskKind",
+            "description": "What to do."
+          },
+          "leaseUntil": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Until when the task is this poller's, unix ms."
+          },
+          "nativeId": {
+            "type": "string",
+            "description": "The post's native id (Instagram's media pk, for `/api/v1/media/<pk>/info/`)."
+          },
+          "platform": {
+            "$ref": "#/components/schemas/Platform",
+            "description": "The post's platform."
+          },
+          "position": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "`upload_media` of a slide: its position. `null` for the cover, and\nfor the tasks about the whole post."
+          },
+          "postKey": {
+            "type": "string",
+            "description": "The post's key."
+          },
+          "postUrl": {
+            "type": "string",
+            "description": "The link to the post."
+          },
+          "shortcode": {
+            "type": ["string", "null"],
+            "description": "Instagram's code."
+          },
+          "url": {
+            "type": ["string", "null"],
+            "description": "`upload_media`: the URL to fetch (`credentials: \"omit\"`) and upload."
+          }
+        }
+      },
+      "ExtensionTasks": {
+        "type": "object",
+        "description": "The answer of `GET /ingest/tasks` (contract C6).",
+        "required": ["tasks", "waiting"],
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExtensionTask"
+            },
+            "description": "The tasks leased to this poller."
+          },
+          "waiting": {
+            "$ref": "#/components/schemas/Waiting",
+            "description": "Every task that waits, per platform, leased ones included."
+          }
+        }
+      },
       "FieldError": {
         "type": "object",
         "description": "One field that failed validation.",
@@ -8337,6 +8532,35 @@
         "description": "Origin of a tag.",
         "enum": ["ai", "manual"]
       },
+      "TaskCompletion": {
+        "type": "object",
+        "description": "How a task ended (contract C6).",
+        "required": ["outcome"],
+        "properties": {
+          "errorCode": {
+            "type": ["string", "null"],
+            "description": "`failed`, `skipped`: why, as a short code (`http_403`,\n`no_instagram_tab`); kept with the item's tries."
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/TaskOutcome",
+            "description": "The outcome."
+          },
+          "uploadId": {
+            "type": ["string", "null"],
+            "description": "`uploaded`: the complete `archive-object` upload holding the bytes."
+          }
+        }
+      },
+      "TaskKind": {
+        "type": "string",
+        "description": "What a task asks of the extension (C6).",
+        "enum": ["upload_media", "refresh_media", "hydrate_link"]
+      },
+      "TaskOutcome": {
+        "type": "string",
+        "description": "How the extension ended a task (C6).",
+        "enum": ["uploaded", "refreshed", "gone", "failed", "skipped"]
+      },
       "TokenKind": {
         "type": "string",
         "description": "Who holds a token.",
@@ -8471,6 +8695,31 @@
           "version": {
             "type": "string",
             "description": "Version of the server build."
+          }
+        }
+      },
+      "Waiting": {
+        "type": "object",
+        "description": "Tasks per social platform.",
+        "required": ["instagram", "twitter", "pinterest"],
+        "properties": {
+          "instagram": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Instagram.",
+            "minimum": 0
+          },
+          "pinterest": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pinterest.",
+            "minimum": 0
+          },
+          "twitter": {
+            "type": "integer",
+            "format": "int64",
+            "description": "X.",
+            "minimum": 0
           }
         }
       },
@@ -8624,7 +8873,7 @@
     },
     {
       "name": "uploads",
-      "description": "Resumable uploads (tus 1.0): bookmark files and imports from the web app, migration bundles from the CLI."
+      "description": "Resumable uploads (tus 1.0): bookmark files and imports from the web app, migration bundles from the CLI, archive objects from the browser extension."
     },
     {
       "name": "migration",
