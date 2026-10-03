@@ -250,3 +250,10 @@ describe('WebNavigation', () => {
     expect(nav!.back).toBe(back);
   });
 });
+
+it('maps and preserves the signed-in Tag Explorer deep link', () => {
+  expect(parseRoute('/ai/tags')).toEqual({ name: 'aiTags' });
+  expect(pathOf({ name: 'aiTags' })).toBe('/ai/tags');
+  expect(patternOf({ name: 'aiTags' })).toBe('/ai/tags');
+  expect(safeNext('/ai/tags')).toBe('/ai/tags');
+});

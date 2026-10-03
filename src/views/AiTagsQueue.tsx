@@ -797,7 +797,7 @@ export default function AiTagsQueue({ onOpenPost }: AiTagsQueueProps): React.JSX
 
   async function handleAnalyzeMissing(): Promise<void> {
     try {
-      await ai?.queue.analyzeMissing();
+      await ai?.queue?.analyzeMissing();
     } catch {
       // Model unavailable, DB error or a main-process exception: surface a toast
       // so the click isn't a silent no-op (and the rejection isn't left floating).

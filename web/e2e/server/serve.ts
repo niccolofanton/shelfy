@@ -7,6 +7,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { E2E } from './env';
+import { seedTags } from './seedTags';
 import { startAiStub } from './aiStub';
 
 mkdirSync(E2E.dataDir, { recursive: true });
@@ -41,6 +42,8 @@ execFileSync(
   ],
   { env, stdio: ['ignore', 'ignore', 'inherit'] },
 );
+
+seedTags();
 
 const stopStub = await startAiStub();
 const server = spawn(E2E.serverBin, ['serve'], { env, stdio: 'inherit' });

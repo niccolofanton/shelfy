@@ -14,6 +14,22 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    noClustersWeb: 'Nessun cluster da rivedere.',
+    noAliasesWeb: 'Nessun alias proposto.',
+    aliasHintWeb:
+      'Rivedi le proposte AI prima di applicarle: accettare un alias aggiorna i tag dei post.',
+    close: 'Chiudi',
+    distributions: 'Distribuzioni',
+    categories: 'Categorie',
+    contentTypes: 'Tipi di contenuto',
+    languages: 'Lingue',
+    tagIndex: 'Tag',
+    tagTier: 'Livello',
+    'tier.all': 'Tutti',
+    'tier.general': 'Generali',
+    'tier.specific': 'Specifici',
+    'tier.manual': 'Manuali',
+    collectionQueued: 'Cartella “{name}”: aggiunta dei risultati in coda.',
     // ── Dashboard ──
     title: 'Tags Explorer',
     uniqueTags: 'tag unici',
@@ -142,6 +158,22 @@ export default {
     loadError: 'Impossibile caricare i dati AI',
   },
   en: {
+    noClustersWeb: 'No clusters to review.',
+    noAliasesWeb: 'No proposed aliases.',
+    aliasHintWeb:
+      'Review AI proposals before applying them: accepting an alias updates posts’ tags.',
+    close: 'Close',
+    distributions: 'Distributions',
+    categories: 'Categories',
+    contentTypes: 'Content types',
+    languages: 'Languages',
+    tagIndex: 'Tags',
+    tagTier: 'Tier',
+    'tier.all': 'All',
+    'tier.general': 'General',
+    'tier.specific': 'Specific',
+    'tier.manual': 'Manual',
+    collectionQueued: 'Folder “{name}”: adding results is queued.',
     // ── Dashboard ──
     title: 'Tags Explorer',
     uniqueTags: 'unique tags',

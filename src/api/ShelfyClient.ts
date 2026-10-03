@@ -96,6 +96,9 @@ export interface PostQuery {
   category?: string;
   contentType?: string;
   tag?: string;
+  tags?: string[];
+  tagMode?: 'and' | 'or';
+  entity?: string;
   // 'tagged' or 'untagged' (AI tags only).
   aiTagged?: string;
   // The post's exact AI status ('pending' | 'analyzing' | 'done' | 'error').

@@ -18,6 +18,7 @@ export type AppRoute =
   | { name: 'collection'; collectionId: number }
   | { name: 'post'; key: string }
   | { name: 'trash' }
+  | { name: 'aiTags' }
   // `kind`/`state` repeat the query's values verbatim (empty: no filter); the
   // Jobs view (src/views/Jobs.tsx) is the one place that knows which values
   // are valid job kinds and states.

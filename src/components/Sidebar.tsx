@@ -970,7 +970,15 @@ function Sidebar({
 
                   {open && (
                     <div className="flex flex-col gap-0.5 mb-0.5">
-                      {AI_TABS.map((tab, i) => {
+                      {AI_TABS.filter(
+                        (tab) =>
+                          ({
+                            aiqueue: caps.aiQueue,
+                            aitags: caps.aiTags,
+                            aisearch: caps.aiChat,
+                            aiweb: caps.websites,
+                          })[tab.id as 'aiqueue' | 'aitags' | 'aisearch' | 'aiweb'],
+                      ).map((tab, i) => {
                         const subActive = currentView === tab.id;
                         const showAnalysisOnTab = tab.id === 'aiqueue' && analysisActive;
                         const showWebOnTab = tab.id === 'aiweb' && webActive;

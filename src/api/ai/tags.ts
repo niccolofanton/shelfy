@@ -47,6 +47,7 @@ export interface AiTagsApi {
   proposeAliases(onProgress?: (p: AiAliasProgress) => void): Promise<ProposeAliasesResult>;
   cancelAliases(): Promise<CancelledResult>;
   acceptAlias(aliasNorm: string): Promise<AliasStatusResult>;
+  acceptAllAliases?(): Promise<{ accepted: number; rewritten: number }>;
   dismissAlias(aliasNorm: string): Promise<AliasStatusResult>;
 
   // `POST /tags/post-keys` (bulk selector by tag match, AND/OR).

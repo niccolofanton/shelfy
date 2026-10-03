@@ -22,9 +22,9 @@ export type { AiSuggestApi } from './suggest';
 export type { AiDictationApi } from './dictation';
 
 export interface AiApi {
-  queue: AiQueueApi;
-  tags: AiTagsApi;
-  search: AiSearchApi;
-  suggest: AiSuggestApi;
-  dictation: AiDictationApi;
+  queue?: AiQueueApi;
+  tags?: AiTagsApi;
+  search?: AiSearchApi;
+  suggest?: AiSuggestApi;
+  dictation?: AiDictationApi;
 }

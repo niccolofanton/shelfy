@@ -38,6 +38,7 @@ export const PATHS = {
   collection: '/c/:collectionId',
   post: '/p/:key',
   trash: '/trash',
+  aiTags: '/ai/tags',
   jobs: '/jobs',
   settings: '/settings/:section',
   device: '/device',
@@ -121,6 +122,7 @@ const APP_ROUTES: {
         : null,
   },
   { pattern: PATHS.post, route: ({ key }) => (key ? { name: 'post', key } : null) },
+  { pattern: PATHS.aiTags, route: () => ({ name: 'aiTags' }) },
   { pattern: PATHS.trash, route: () => ({ name: 'trash' }) },
   {
     pattern: PATHS.jobs,
@@ -194,6 +196,8 @@ export function pathOf(route: AppRoute | { name: 'device' } | ShareRoute): strin
       return `/c/${route.collectionId}`;
     case 'post':
       return `/p/${encodeURIComponent(route.key)}`;
+    case 'aiTags':
+      return PATHS.aiTags;
     case 'trash':
       return PATHS.trash;
     case 'jobs':
@@ -224,6 +228,7 @@ export function patternOf(route: WebRoute): string {
     case 'collection':
     case 'post':
     case 'trash':
+    case 'aiTags':
     case 'jobs':
     case 'device':
     case 'login':

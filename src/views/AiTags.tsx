@@ -1,8 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import VirtualPostGrid from '../components/VirtualPostGrid';
 import GridSizeControl from '../components/GridSizeControl';
 import PostGridSkeleton from '../components/PostGridSkeleton';
 import PostModal from '../components/PostModal';
+import { errorMessageKey } from '../api/errors';
+import { useCapabilities, useShelfy } from '../api/ShelfyProvider';
 import { useAiTags } from '../hooks/useAiTags';
 import { useAnalysis } from '../hooks/useAnalysis';
 import { useToast } from '../hooks/useToast';
@@ -112,6 +114,7 @@ interface DashboardProps {
   onCancelAnalyze: () => void;
   analyzing: boolean;
   analyzeActive?: number;
+  jobControls?: boolean;
 }
 
 function Dashboard({
@@ -120,6 +123,7 @@ function Dashboard({
   onCancelAnalyze,
   analyzing,
   analyzeActive = 0,
+  jobControls = true,
 }: DashboardProps) {
   const t = useT('aiTags');
   if (!overview) return null;
@@ -167,26 +171,27 @@ function Dashboard({
               style={{ width: `${coverage}%`, backgroundColor: ACCENT }}
             />
           </div>
-          {analyzeActive > 0 ? (
-            <button
-              data-testid="cancel-analyze-btn"
-              onClick={onCancelAnalyze}
-              title={t('cancelAnalyzeTitle')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-red-300 bg-[#1a1a1a] hover:bg-[#241619] u-press"
-            >
-              <X size={14} /> {t('cancelAnalyze', { n: analyzeActive.toLocaleString() })}
-            </button>
-          ) : unanalyzed > 0 ? (
-            <button
-              data-testid="analyze-missing-btn"
-              onClick={onAnalyzeMissing}
-              disabled={analyzing}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] disabled:opacity-50 u-press"
-            >
-              {analyzing ? <RefreshCw size={14} className="animate-spin" /> : <Wand2 size={14} />}
-              {t('analyzeMissing', { n: unanalyzed.toLocaleString() })}
-            </button>
-          ) : null}
+          {jobControls &&
+            (analyzeActive > 0 ? (
+              <button
+                data-testid="cancel-analyze-btn"
+                onClick={onCancelAnalyze}
+                title={t('cancelAnalyzeTitle')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-red-300 bg-[#1a1a1a] hover:bg-[#241619] u-press"
+              >
+                <X size={14} /> {t('cancelAnalyze', { n: analyzeActive.toLocaleString() })}
+              </button>
+            ) : unanalyzed > 0 ? (
+              <button
+                data-testid="analyze-missing-btn"
+                onClick={onAnalyzeMissing}
+                disabled={analyzing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] disabled:opacity-50 u-press"
+              >
+                {analyzing ? <RefreshCw size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                {t('analyzeMissing', { n: unanalyzed.toLocaleString() })}
+              </button>
+            ) : null)}
         </div>
       </div>
     </div>
@@ -212,6 +217,10 @@ function MergeModal({ suggestions, onClose, onMerge, onRename, busy }: MergeModa
 
   return (
     <div
+      data-testid="aitags-merge-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label={t('mergeTitle')}
       className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4 u-backdrop-in"
       onClick={onClose}
     >
@@ -223,7 +232,11 @@ function MergeModal({ suggestions, onClose, onMerge, onRename, busy }: MergeModa
           <GitMerge size={16} style={{ color: ACCENT }} />
           <h2 className="text-white text-sm font-semibold">{t('mergeTitle')}</h2>
           <div className="flex-1" />
-          <button onClick={onClose} className="text-gray-400 hover:text-white u-press">
+          <button
+            aria-label={t('close')}
+            onClick={onClose}
+            className="text-gray-400 hover:text-white u-press"
+          >
             <X size={18} />
           </button>
         </div>
@@ -241,6 +254,7 @@ function MergeModal({ suggestions, onClose, onMerge, onRename, busy }: MergeModa
               {suggestions.map((s, i) => (
                 <div
                   key={s.canonical}
+                  data-testid="tag-merge-suggestion"
                   className="flex items-center gap-2 rounded-lg border border-[#2e2e2e] bg-[#0f0f0f] p-2.5 u-fade-in-up"
                   style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}
                 >
@@ -338,8 +352,13 @@ export default function AiTags({
   onOpenInWebsites,
   onReanalyzeWeb,
 }: AiTagsProps) {
+  const client = useShelfy();
+  const caps = useCapabilities();
+  const web = !caps.localModels;
+  const [tier, setTier] = useState<Shelfy.TagTier | null>(null);
   const {
     overview,
+    tagStats,
     clusters,
     entityStats,
     health,
@@ -363,13 +382,13 @@ export default function AiTags({
     acceptAlias,
     dismissAlias,
     acceptAllAliases,
-    getPostIdsByTags,
     getTagCooccurrence,
     fetchPosts,
-  } = useAiTags({ active });
+  } = useAiTags({ active, tier });
 
   const t = useT('aiTags');
   const tc = useT('common');
+  const te = useT('errors');
 
   // Shared analysis job state — used to surface a cancel control while a global
   // auto-tag run (queued from this screen) is still in flight.
@@ -407,6 +426,7 @@ export default function AiTags({
   // ── Results ───────────────────────────────────────────────────────────────
   const [results, setResults] = useState<Shelfy.Post[]>([]);
   const [resultTotal, setResultTotal] = useState<number>(0);
+  const [resultsError, setResultsError] = useState<string | null>(null);
   const [resultsLoading, setResultsLoading] = useState<boolean>(false);
   const [resultsNonce, setResultsNonce] = useState<number>(0); // bump to force a refetch
 
@@ -436,12 +456,14 @@ export default function AiTags({
   // ── Fetch results whenever the active filter changes ──────────────────────
   const reqRef = useRef<number>(0);
   useEffect(() => {
+    const reqId = ++reqRef.current;
+    setResultsError(null);
     if (!hasFilter) {
+      setResultsLoading(false);
       setResults([]);
       setResultTotal(0);
       return;
     }
-    const reqId = ++reqRef.current;
     setResultsLoading(true);
     fetchPosts({
       tags: selectedTags,
@@ -458,13 +480,15 @@ export default function AiTags({
       .catch((err: unknown) => {
         if (reqId !== reqRef.current) return;
         console.error('[AiTags] fetchPosts error:', err);
+        const key = errorMessageKey(err);
+        setResultsError(key ? te(key) : t('loadError'));
         setResults([]);
         setResultTotal(0);
       })
       .finally(() => {
         if (reqId === reqRef.current) setResultsLoading(false);
       });
-  }, [selectedTags, tagMode, entity, hasFilter, fetchPosts, resultsNonce]);
+  }, [selectedTags, tagMode, entity, hasFilter, fetchPosts, resultsNonce, overview, t, te]);
 
   // ── Load related tags when exactly one tag is selected ────────────────────
   useEffect(() => {
@@ -739,7 +763,6 @@ export default function AiTags({
   }, [acceptAllAliases, showToast, t, tc]);
 
   // ── Export / promote ──────────────────────────────────────────────────────
-  const collectableIds = useMemo(() => results.map((p) => p.id), [results]);
 
   const handleCopyLinks = useCallback(async () => {
     const { status, n } = await copyPostLinks(results);
@@ -758,22 +781,9 @@ export default function AiTags({
   }, [results, showToast, t]);
 
   const handlePromoteCollection = useCallback(async () => {
-    let ids = collectableIds;
     setBusy(true);
     try {
-      // Prefer the full set matching the active filter when available — `results`
-      // is only the first RESULT_LIMIT page, so collecting `collectableIds` alone
-      // would silently truncate filters that match more posts than the page size.
-      if (selectedTags.length > 0) {
-        const full = await getPostIdsByTags(selectedTags, tagMode);
-        if (Array.isArray(full) && full.length) ids = full;
-      } else if (entity) {
-        // No dedicated entity helper exists; reuse the uncapped getPostIds path,
-        // which feeds the same buildPostFilter `entity` branch as the results grid.
-        const full = await window.electronAPI.getPostIds({ entity });
-        if (Array.isArray(full) && full.length) ids = full;
-      }
-      if (ids.length === 0) {
+      if (!resultTotal) {
         showToast(t('noPostsToCollect'));
         return;
       }
@@ -782,18 +792,18 @@ export default function AiTags({
         defaultCollectionName(selectedTags, entity, t('defaultCollectionName')),
       );
       if (!name) return;
-      const created = await window.electronAPI.createCollection(name, ACCENT);
-      if (!created?.id) {
-        showToast(t('collectionCreateError'));
-        return;
-      }
-      const res = await window.electronAPI.addPostsToCollections(ids, [created.id]);
-      // Trust the backend's reported count; only show the number when it's a real
-      // value (don't pretend all ids were added when `added` is missing).
+      const filter = selectedTags.length ? { tags: selectedTags, tagMode } : { entity };
+      const keys = web ? null : await client.resolveAllIds(filter);
+      const created = await client.createCollection(name, ACCENT);
+      const outcome = await client.bulkAction(
+        web ? { filter } : { keys: keys ?? [] },
+        'addToCollections',
+        { collectionIds: [created.id] },
+      );
       showToast(
-        typeof res?.added === 'number'
-          ? t('collectionCreatedWith', { name, n: res.added })
-          : t('collectionCreated', { name }),
+        outcome.job
+          ? t('collectionQueued', { name })
+          : t('collectionCreatedWith', { name, n: outcome.changed }),
       );
     } catch (err) {
       console.error('[AiTags] promote error:', err);
@@ -801,9 +811,9 @@ export default function AiTags({
     } finally {
       setBusy(false);
     }
-  }, [collectableIds, selectedTags, tagMode, entity, getPostIdsByTags, showToast, t]);
+  }, [client, web, resultTotal, selectedTags, tagMode, entity, showToast, t]);
 
-  const isEmpty = !loading && overview && overview.analyzed === 0;
+  const isEmpty = !web && !loading && overview && overview.analyzed === 0;
 
   // ── Render ────────────────────────────────────────────────────────────────
   if (loading) {
@@ -860,6 +870,7 @@ export default function AiTags({
     <div data-testid="aitags-view" className="flex flex-col h-full overflow-hidden">
       <Dashboard
         overview={overview}
+        jobControls={!web}
         analyzing={analyzing}
         analyzeActive={analyzeActive}
         onAnalyzeMissing={handleAnalyzeMissing}
@@ -867,9 +878,53 @@ export default function AiTags({
       />
 
       {/* Two-column body */}
-      <div className="flex-1 flex overflow-hidden">
+      <div
+        className={
+          web
+            ? 'flex-1 min-h-0 flex narrow:flex-col overflow-hidden'
+            : 'flex-1 flex overflow-hidden'
+        }
+      >
         {/* ── Left: navigation (clusters / cloud / entities / health) ───────── */}
-        <div className="w-[340px] min-w-[340px] border-r border-[#2e2e2e] overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] p-3 space-y-5">
+        <div
+          className={`${web ? 'narrow:w-full narrow:min-w-0 narrow:max-h-[40%] narrow:border-b' : ''} w-[340px] min-w-[340px] border-r border-[#2e2e2e] overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] p-3 space-y-5`}
+        >
+          {web && (
+            <section data-testid="aitags-tag-index">
+              <SectionTitle icon={Tags}>{t('tagIndex')}</SectionTitle>
+              <label className="text-xs text-gray-400">
+                {t('tagTier')}
+                <select
+                  data-testid="aitags-tier"
+                  value={tier ?? 'all'}
+                  onChange={(event) =>
+                    setTier(
+                      event.target.value === 'all' ? null : (event.target.value as Shelfy.TagTier),
+                    )
+                  }
+                  className="ml-2 mb-3 rounded border border-[#2e2e2e] bg-[#111] p-1"
+                >
+                  {(['all', 'general', 'specific', 'manual'] as const).map((value) => (
+                    <option key={value} value={value}>
+                      {t(`tier.${value}`)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex flex-wrap gap-1.5 px-1">
+                {tagStats.map((tag) => (
+                  <Chip
+                    key={tag.tag}
+                    label={tag.tag}
+                    count={tag.count}
+                    active={selectedTags.includes(tag.tag)}
+                    onClick={() => addTag(tag.tag)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* 1. Clusters */}
           <section>
             <SectionTitle
@@ -887,23 +942,24 @@ export default function AiTags({
                       <Check size={12} /> {t('acceptAll', { n: proposedCount })}
                     </button>
                   )}
-                  {clustering ? (
-                    <button
-                      onClick={handleCancelClusters}
-                      className="flex items-center gap-1 text-[10px] text-red-300 hover:text-red-200 u-press"
-                      title={t('stopRegenTitle')}
-                    >
-                      <X size={12} /> {t('stop')}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleRegenerate}
-                      className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-200 u-press"
-                      title={t('regenerateTitle')}
-                    >
-                      <Wand2 size={12} /> {t('regenerate')}
-                    </button>
-                  )}
+                  {!web &&
+                    (clustering ? (
+                      <button
+                        onClick={handleCancelClusters}
+                        className="flex items-center gap-1 text-[10px] text-red-300 hover:text-red-200 u-press"
+                        title={t('stopRegenTitle')}
+                      >
+                        <X size={12} /> {t('stop')}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleRegenerate}
+                        className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-200 u-press"
+                        title={t('regenerateTitle')}
+                      >
+                        <Wand2 size={12} /> {t('regenerate')}
+                      </button>
+                    ))}
                   <button
                     onClick={() => setMergeOpen(true)}
                     className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-200 u-press"
@@ -940,13 +996,17 @@ export default function AiTags({
             <div className="space-y-1.5">
               {clusters.length === 0 && !clustering && (
                 <div className="px-1 py-2">
-                  <p className="text-xs text-gray-600 mb-2">{t('noClusters')}</p>
-                  <button
-                    onClick={handleRegenerate}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] u-press"
-                  >
-                    <Wand2 size={13} /> {t('regenerateClusters')}
-                  </button>
+                  <p className="text-xs text-gray-600 mb-2">
+                    {t(web ? 'noClustersWeb' : 'noClusters')}
+                  </p>
+                  {!web && (
+                    <button
+                      onClick={handleRegenerate}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] u-press"
+                    >
+                      <Wand2 size={13} /> {t('regenerateClusters')}
+                    </button>
+                  )}
                 </div>
               )}
               {visibleClusters.map((cl) => (
@@ -982,23 +1042,24 @@ export default function AiTags({
                       <Check size={12} /> {t('acceptAll', { n: proposedAliasCount })}
                     </button>
                   )}
-                  {aliasing ? (
-                    <button
-                      onClick={handleCancelAliases}
-                      className="flex items-center gap-1 text-[10px] text-red-300 hover:text-red-200 u-press"
-                      title={t('stopAliasTitle')}
-                    >
-                      <X size={12} /> {t('stop')}
-                    </button>
-                  ) : (
-                    <button
-                      onClick={handleProposeAliases}
-                      className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-200 u-press"
-                      title={t('generateProposalsTitle')}
-                    >
-                      <Wand2 size={12} /> {t('generateProposals')}
-                    </button>
-                  )}
+                  {!web &&
+                    (aliasing ? (
+                      <button
+                        onClick={handleCancelAliases}
+                        className="flex items-center gap-1 text-[10px] text-red-300 hover:text-red-200 u-press"
+                        title={t('stopAliasTitle')}
+                      >
+                        <X size={12} /> {t('stop')}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleProposeAliases}
+                        className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-200 u-press"
+                        title={t('generateProposalsTitle')}
+                      >
+                        <Wand2 size={12} /> {t('generateProposals')}
+                      </button>
+                    ))}
                 </div>
               }
             >
@@ -1006,9 +1067,15 @@ export default function AiTags({
             </SectionTitle>
 
             <p className="px-1 mb-2 text-[10px] leading-snug text-gray-600">
-              {t('aliasHintPre')}
-              <span className="text-gray-500">{t('aliasHintEm')}</span>
-              {t('aliasHintPost')}
+              {web ? (
+                t('aliasHintWeb')
+              ) : (
+                <>
+                  {t('aliasHintPre')}
+                  <span className="text-gray-500">{t('aliasHintEm')}</span>
+                  {t('aliasHintPost')}
+                </>
+              )}
             </p>
 
             {aliasing && aliasProgress && (
@@ -1034,13 +1101,17 @@ export default function AiTags({
             <div className="space-y-1.5">
               {aliases.length === 0 && !aliasing && (
                 <div className="px-1 py-2">
-                  <p className="text-xs text-gray-600 mb-2">{t('noAliases')}</p>
-                  <button
-                    onClick={handleProposeAliases}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] u-press"
-                  >
-                    <Wand2 size={13} /> {t('generateProposals')}
-                  </button>
+                  <p className="text-xs text-gray-600 mb-2">
+                    {t(web ? 'noAliasesWeb' : 'noAliases')}
+                  </p>
+                  {!web && (
+                    <button
+                      onClick={handleProposeAliases}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] u-press"
+                    >
+                      <Wand2 size={13} /> {t('generateProposals')}
+                    </button>
+                  )}
                 </div>
               )}
               {aliases.map((a) => (
@@ -1093,10 +1164,43 @@ export default function AiTags({
               )}
             </section>
           )}
+          {web && overview && (
+            <section data-testid="aitags-distributions">
+              <SectionTitle icon={Tags}>{t('distributions')}</SectionTitle>
+              {(
+                [
+                  [
+                    'categories',
+                    overview.byCategory.map((row) => ({ label: row.category, count: row.count })),
+                  ],
+                  [
+                    'contentTypes',
+                    overview.byContentType.map((row) => ({
+                      label: row.contentType,
+                      count: row.count,
+                    })),
+                  ],
+                  [
+                    'languages',
+                    overview.languages.map((row) => ({ label: row.language, count: row.count })),
+                  ],
+                ] as [string, { label: string; count: number }[]][]
+              ).map(([key, rows]) => (
+                <div key={key} className="mb-2 px-1">
+                  <h3 className="text-xs text-gray-500 mb-1">{t(key)}</h3>
+                  <div className="flex flex-wrap gap-1.5">
+                    {rows.slice(0, 8).map((row) => (
+                      <Chip key={row.label} label={row.label} count={row.count} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </section>
+          )}
         </div>
 
         {/* ── Right: filters + results grid ─────────────────────────────────── */}
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 min-w-0 min-h-0 flex flex-col overflow-hidden">
           {/* Filter bar */}
           <div className="border-b border-[#2e2e2e] bg-[#0f0f0f] px-3 py-2.5 space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
@@ -1202,7 +1306,15 @@ export default function AiTags({
 
             {hasFilter && resultsLoading && results.length === 0 && <PostGridSkeleton />}
 
-            {hasFilter && !resultsLoading && results.length === 0 && (
+            {resultsError && (
+              <div role="alert" className="p-4 text-sm text-red-400">
+                {resultsError}
+                <button onClick={() => setResultsNonce((n) => n + 1)} className="ml-3 underline">
+                  {tc('retry')}
+                </button>
+              </div>
+            )}
+            {hasFilter && !resultsError && !resultsLoading && results.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full min-h-[40vh] gap-2 text-center px-6 u-fade-in">
                 <X size={32} className="text-[#333]" strokeWidth={1} />
                 <p className="text-[#555] text-sm">{t('noPostsForFilter')}</p>
@@ -1345,6 +1457,7 @@ function ClusterCard({
 
   return (
     <div
+      data-testid="tag-cluster-card"
       className={[
         'rounded-lg border p-2.5 transition-colors u-fade-in-up',
         proposed
@@ -1455,6 +1568,7 @@ function AliasCard({ alias, busy, onAccept, onDismiss }: AliasCardProps) {
   const proposed = alias.status === 'proposed';
   return (
     <div
+      data-testid="tag-alias-card"
       className={[
         'rounded-lg border p-2.5 transition-colors u-fade-in-up',
         proposed ? 'border-dashed border-[#3a3a5e] bg-[#13101f]' : 'border-[#2e2e2e] bg-[#111111]',

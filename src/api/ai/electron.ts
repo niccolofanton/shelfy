@@ -13,7 +13,7 @@ import type { AiDictationApi } from './dictation';
 // `bridge` is read on every call, never captured — same contract as
 // createElectronClient (electron.ts / electronClient.ts share this pattern
 // because the preload may install `window.electronAPI` after module load).
-export function createElectronAiApi(bridge: () => ElectronAPI): AiApi {
+export function createElectronAiApi(bridge: () => ElectronAPI): Required<AiApi> {
   const queue: AiQueueApi = {
     getStatus: () => bridge().getAnalyzeStatus(),
     getIsPaused: () => bridge().getAnalyzeIsPaused(),

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { errorMessageKey } from '../api/errors';
 import { useT } from '../i18n';
 import { useShelfy } from '../api/ShelfyProvider';
 import type { AiAliasProgress, AiClusterProgress, AiQueueApi, AiTagsApi } from '../api/ai';
@@ -28,6 +29,7 @@ type ClusterState = Omit<Shelfy.TagCluster, 'status'> & { status: Shelfy.Cluster
 
 export interface UseAiTagsOpts {
   active?: boolean;
+  tier?: Shelfy.TagTier | null;
 }
 
 export interface UseAiTagsResult {
@@ -61,17 +63,14 @@ export interface UseAiTagsResult {
   fetchPosts: (filters?: unknown) => Promise<PostSearchResult>;
 }
 
-// `client.ai` is only absent on a client with no AI seam yet (the web, before
-// P3-11). The AI Tags view is desktop-only reachable today (the nav gates on
-// `aiTags`, App.tsx/Sidebar.tsx, untouched by P3-08), so a throw here only
-// ever surfaces if that gate is bypassed — `load()` below catches it into
-// `error` instead of crashing the view.
+// Areas are independent: a tags-only web client need not expose queue or chat.
+// Missing data adapters surface through load()'s localized error state.
 function tagsOf(client: ShelfyClient): AiTagsApi {
-  if (!client.ai) throw new Error('useAiTags: no AI seam on this client');
+  if (!client.ai?.tags) throw new Error('useAiTags: no AI seam on this client');
   return client.ai.tags;
 }
 function queueOf(client: ShelfyClient): AiQueueApi {
-  if (!client.ai) throw new Error('useAiTags: no AI seam on this client');
+  if (!client.ai?.queue) throw new Error('useAiTags: no AI queue on this client');
   return client.ai.queue;
 }
 
@@ -90,7 +89,7 @@ function queueOf(client: ShelfyClient): AiQueueApi {
  *   auto-tag run, even while the user browses another view — competing with the
  *   analysis jobs for SQLite/the main thread.
  */
-export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResult {
+export function useAiTags({ active = true, tier = null }: UseAiTagsOpts = {}): UseAiTagsResult {
   const client = useShelfy();
   const [overview, setOverview] = useState<Shelfy.AiOverview | null>(null);
   const [tagStats, setTagStats] = useState<Shelfy.Tag[]>([]);
@@ -103,6 +102,8 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
   const [error, setError] = useState<string | null>(null);
 
   const t = useT('aiTags');
+  const te = useT('errors');
+  const loadGeneration = useRef(0);
 
   // Guards against state updates after unmount during in-flight loads.
   const mountedRef = useRef(true);
@@ -124,22 +125,25 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
   // unmount into the spinner — which would also wipe the user's active filter.
   const load = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}): Promise<void> => {
+      const generation = ++loadGeneration.current;
       if (!silent) setLoading(true);
       setError(null);
       try {
         const api = tagsOf(client);
         const [ov, ts, cl, es, hl, ms, al] = await Promise.all([
           api.getOverview(),
-          api.getTagStats({ limit: 200 }),
+          api.getTagStats({ limit: 200, ...(tier ? { tier } : {}) }),
           api.getClusters({ maxClusters: 24 }),
           api.getEntityStats({ limit: 60 }),
           api.getHealth(),
           api.getMergeSuggestions({ limit: 30 }),
-          // Tag aliases are LLM proposals awaiting accept/dismiss review; missing
-          // API or errors degrade gracefully to an empty list.
-          api.getAliases({ status: 'proposed' }).catch(() => [] as Shelfy.TagAlias[]),
+          // Older desktop bridges may omit alias review. Web failures remain
+          // visible instead of masquerading as an empty proposal list.
+          client.capabilities.localModels
+            ? api.getAliases({ status: 'proposed' }).catch(() => [] as Shelfy.TagAlias[])
+            : api.getAliases({ status: 'proposed' }),
         ]);
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || generation !== loadGeneration.current) return;
         setOverview(ov || null);
         setTagStats(Array.isArray(ts) ? ts : []);
         setClusters(Array.isArray(cl) ? cl : []);
@@ -148,14 +152,21 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
         setMergeSuggestions(Array.isArray(ms) ? ms : []);
         setAliases(Array.isArray(al) ? al : []);
       } catch (err) {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || generation !== loadGeneration.current) return;
         console.error('[useAiTags] load error:', err);
-        setError(err instanceof Error ? err.message : t('loadError'));
+        const key = errorMessageKey(err);
+        setError(
+          key
+            ? te(key)
+            : client.capabilities.localModels && err instanceof Error
+              ? err.message
+              : t('loadError'),
+        );
       } finally {
-        if (mountedRef.current && !silent) setLoading(false);
+        if (mountedRef.current && generation === loadGeneration.current) setLoading(false);
       }
     },
-    [t, client],
+    [t, te, client, tier],
   );
 
   useEffect(() => {
@@ -165,14 +176,11 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
   // The view stays mounted across the session (App keep-alive). When it becomes
   // visible again, do a silent reload to pick up anything that changed while live
   // refresh was suppressed (the initial mount's load() already ran, so skip it).
-  const didInitialActiveRef = useRef(false);
+  const previousActiveRef = useRef(active);
   useEffect(() => {
-    if (!active) return;
-    if (!didInitialActiveRef.current) {
-      didInitialActiveRef.current = true;
-      return;
-    }
-    load({ silent: true });
+    const wasActive = previousActiveRef.current;
+    previousActiveRef.current = active;
+    if (active && !wasActive) load({ silent: true });
   }, [active, load]);
 
   // ── Real-time refresh while analysis runs ──────────────────────────────────
@@ -192,9 +200,13 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
       }, 800);
     };
     const unsubscribe = client.on('post.analyzed', onProgress);
+    const offChanged = client.on('posts.changed', onProgress);
+    const offResync = client.on('resync', onProgress);
     return () => {
       if (reloadTimer.current) clearTimeout(reloadTimer.current);
       unsubscribe();
+      offChanged();
+      offResync();
     };
   }, [load, client]);
 
@@ -426,6 +438,11 @@ export function useAiTags({ active = true }: UseAiTagsOpts = {}): UseAiTagsResul
     setAliases((prev) => prev.filter((a) => a.status !== 'proposed'));
     try {
       const api = tagsOf(client);
+      if (api.acceptAllAliases) {
+        const result = await api.acceptAllAliases();
+        await load({ silent: true });
+        return { accepted: result.accepted };
+      }
       await Promise.all(proposed.map((a) => api.acceptAlias(a.aliasNorm)));
       load({ silent: true });
     } catch (err) {

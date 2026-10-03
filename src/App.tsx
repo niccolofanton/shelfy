@@ -58,7 +58,7 @@ import { buildTime } from 'virtual:build-time';
 const SettingsView = lazy(
   withMessages(() => import('./views/Settings'), 'settings', 'language', 'importModal'),
 );
-const AiTags = lazy(withMessages(() => import('./views/AiTags'), 'aiTags'));
+const AiTags = lazy(withMessages(() => import('./views/AiTags'), 'aiTags', 'errors'));
 const AiTagsQueue = lazy(withMessages(() => import('./views/AiTagsQueue'), 'aiTags', 'aiQueue'));
 const AiWebsites = lazy(
   // 'lightbox': views/websites/SiteDetail.tsx and detail/SectionsTab.tsx
@@ -257,6 +257,7 @@ const ALL_SOURCE: ActiveSource = { type: 'platform', value: 'all' };
 // The view a route shows. An address with nothing behind it keeps the gallery
 // mounted under its panel.
 function viewOfRoute(route: CurrentRoute): ViewId {
+  if (route.name === 'aiTags') return 'aitags';
   if (route.name === 'trash') return 'trash';
   if (route.name === 'jobs') return 'jobs';
   if (route.name === 'settings') return 'settings';
@@ -286,6 +287,7 @@ function routeOfSource(source: ActiveSource): AppRoute {
 // The route that shows a view, if the web has it.
 function routeOfView(view: View, source: ActiveSource): AppRoute | null {
   if (view === 'gallery') return routeOfSource(source);
+  if (view === 'aitags') return { name: 'aiTags' };
   if (view === 'trash') return { name: 'trash' };
   if (view === 'jobs') return { name: 'jobs', kind: [], state: [] };
   if (view === 'settings') return { name: 'settings', section: DEFAULT_SETTINGS_SECTION };
@@ -445,11 +447,11 @@ function AppInner(): React.JSX.Element {
         });
         focusGallerySearch();
       } else if (target === 'library') setView('gallery');
-      else if (target === 'ai') setView('aiqueue');
+      else if (target === 'ai') setView(caps.aiQueue ? 'aiqueue' : 'aitags');
       else if (target === 'jobs') setView('jobs');
       else setView('settings');
     },
-    [setView, focusGallerySearch],
+    [setView, focusGallerySearch, caps.aiQueue],
   );
   const [devBarVisible, setDevBarVisible] = useState<boolean>(false);
   const devBarMounted = useRef<boolean>(false);
@@ -480,9 +482,9 @@ function AppInner(): React.JSX.Element {
   const aiGateSkipped = useRef<boolean>(false);
   useEffect(() => {
     // A working remote AI node replaces the local setup: never show the wizard.
-    if (!caps.ai || aiSetup.status?.remoteReady) setAiGate(false);
+    if (!caps.localModels || !caps.ai || aiSetup.status?.remoteReady) setAiGate(false);
     else if (!aiGateSkipped.current && aiSetup.status && !aiSetup.complete) setAiGate(true);
-  }, [caps.ai, aiSetup.status, aiSetup.complete]);
+  }, [caps.ai, caps.localModels, aiSetup.status, aiSetup.complete]);
   const dismissAiGate = (skip: boolean): void => {
     if (skip) aiGateSkipped.current = true;
     setAiGate(false);
@@ -1232,17 +1234,20 @@ function AppInner(): React.JSX.Element {
                       ) : (
                         unavailablePanel
                       ))}
-                    {v === 'aitags' && (
-                      <Suspense fallback={<ViewLoading />}>
-                        <AiTagsMemo
-                          active={view === 'aitags'}
-                          initialTag={aiTagsInitial.tag}
-                          initialTagNonce={aiTagsInitial.nonce}
-                          onOpenInWebsites={goOpenInWebsites}
-                          onReanalyzeWeb={goReanalyzeWeb}
-                        />
-                      </Suspense>
-                    )}
+                    {v === 'aitags' &&
+                      (caps.aiTags ? (
+                        <Suspense fallback={<ViewLoading />}>
+                          <AiTagsMemo
+                            active={view === 'aitags'}
+                            initialTag={aiTagsInitial.tag}
+                            initialTagNonce={aiTagsInitial.nonce}
+                            onOpenInWebsites={caps.websites ? goOpenInWebsites : undefined}
+                            onReanalyzeWeb={caps.websites ? goReanalyzeWeb : undefined}
+                          />
+                        </Suspense>
+                      ) : (
+                        unavailablePanel
+                      ))}
                     {v === 'aiqueue' && (
                       <Suspense fallback={<ViewLoading />}>
                         <AiTagsQueueMemo onOpenPost={openAiPost} />
@@ -1260,8 +1265,8 @@ function AppInner(): React.JSX.Element {
                     {v === 'aisearch' && (
                       <Suspense fallback={<ViewLoading />}>
                         <AiSearchMemo
-                          onOpenInWebsites={goOpenInWebsites}
-                          onReanalyzeWeb={goReanalyzeWeb}
+                          onOpenInWebsites={caps.websites ? goOpenInWebsites : undefined}
+                          onReanalyzeWeb={caps.websites ? goReanalyzeWeb : undefined}
                         />
                       </Suspense>
                     )}

@@ -150,8 +150,8 @@ export function createElectronClient(
           };
         }
         case 'addToCollections': {
-          await api.addPostsToCollections(keys, params?.collectionIds ?? []);
-          return { ...none, changed: keys.length };
+          const result = await api.addPostsToCollections(keys, params?.collectionIds ?? []);
+          return { ...none, changed: result?.added ?? keys.length };
         }
         case 'removeFromCollection': {
           if (params?.collectionId != null) {

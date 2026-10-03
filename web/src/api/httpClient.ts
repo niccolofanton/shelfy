@@ -20,6 +20,7 @@ import type {
   TrashPage,
   ViewErrorReport,
 } from '@ui/api/ShelfyClient';
+import { createTagsApi } from './ai/tags';
 import { createAccountApi } from './account';
 import { createAiProvidersApi } from './aiProviders';
 import { createEventStream, type EventStream } from './events';
@@ -112,6 +113,8 @@ export function webCapabilities(me: Schemas['Me'] | null | undefined): ShelfyCap
   if (!me) return WEB_CAPABILITIES;
   return Object.freeze({
     ...WEB_CAPABILITIES,
+    ai: Boolean(me.capabilities['ai.tasks']),
+    aiTags: Boolean(me.capabilities['ai.tasks']),
     account: true,
     settings: true,
     links: true,
@@ -185,7 +188,7 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
       ? {
           account: createAccountApi(http, me, { events }),
           ...(me.capabilities['ai.tasks']
-            ? { aiProviders: createAiProvidersApi(http, events) }
+            ? { aiProviders: createAiProvidersApi(http, events), ai: { tags: createTagsApi(http) } }
             : {}),
           links: createLinksApi(http),
           jobs: createJobsApi(http, { events }),
