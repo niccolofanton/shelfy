@@ -205,6 +205,35 @@ describe('Settings → Account', () => {
     fireEvent.click(await screen.findByTestId('account-sign-out'));
     await waitFor(() => expect(account.signOut).toHaveBeenCalled());
   });
+  it('creates library tokens read-only by default and opts into write explicitly', async () => {
+    const account = renderSettings('/settings/account');
+    fireEvent.click(await screen.findByTestId('token-new'));
+    fireEvent.change(screen.getByTestId('token-kind'), { target: { value: 'library' } });
+    expect(screen.getByTestId('token-library-write')).not.toBeChecked();
+    fireEvent.click(screen.getByTestId('token-create'));
+    await waitFor(() =>
+      expect(account.createToken).toHaveBeenCalledWith('library', '', {
+        ttlDays: 90,
+        libraryWrite: false,
+      }),
+    );
+    fireEvent.click(screen.getByTestId('token-done'));
+    fireEvent.click(screen.getByTestId('token-new'));
+    fireEvent.change(screen.getByTestId('token-kind'), { target: { value: 'library' } });
+    fireEvent.click(screen.getByTestId('token-library-write'));
+    fireEvent.change(screen.getByTestId('token-kind'), { target: { value: 'shortcut' } });
+    fireEvent.change(screen.getByTestId('token-kind'), { target: { value: 'library' } });
+    expect(screen.getByTestId('token-library-write')).not.toBeChecked();
+    fireEvent.click(screen.getByTestId('token-library-write'));
+    fireEvent.change(screen.getByTestId('token-expiry'), { target: { value: '7' } });
+    fireEvent.click(screen.getByTestId('token-create'));
+    await waitFor(() =>
+      expect(account.createToken).toHaveBeenCalledWith('library', '', {
+        ttlDays: 7,
+        libraryWrite: true,
+      }),
+    );
+  });
 });
 
 describe('Settings → Storage', () => {

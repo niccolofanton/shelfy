@@ -163,6 +163,9 @@ export function createAccountApi(
     async createToken(kind, label, options) {
       const body: Schemas['ApiTokenRequest'] & { ttlDays?: number } = {
         kind,
+        ...(kind === 'library'
+          ? { scopes: options?.libraryWrite ? ['library:read', 'library:write'] : ['library:read'] }
+          : {}),
         ...(options?.ttlDays !== undefined ? { ttlDays: options.ttlDays } : {}),
         ...(label?.trim() ? { label: label.trim() } : {}),
       };

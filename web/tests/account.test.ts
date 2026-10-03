@@ -173,7 +173,14 @@ describe('account', () => {
     const token = await account.createToken('shortcut', ' iPhone ');
     expect(sent[0].body).toEqual({ kind: 'shortcut', label: 'iPhone' });
     await account.createToken('library', '', { ttlDays: 30 });
-    expect(sent[1].body).toEqual({ kind: 'library', ttlDays: 30 });
+    expect(sent[1].body).toEqual({ kind: 'library', ttlDays: 30, scopes: ['library:read'] });
+    await account.createToken('library', 'MCP', { ttlDays: 7, libraryWrite: true });
+    expect(sent[2].body).toEqual({
+      kind: 'library',
+      label: 'MCP',
+      ttlDays: 7,
+      scopes: ['library:read', 'library:write'],
+    });
     expect(token.value).toBe('shx_secret');
     expect(token.token).toMatchObject({ id: 't1', kind: 'shortcut', scopes: ['links:create'] });
   });

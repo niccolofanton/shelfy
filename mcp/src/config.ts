@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { mkdir, open, rename, rm, stat } from 'node:fs/promises';
+import { lstat, mkdir, open, rename, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -70,6 +70,8 @@ export async function privateFile(path: string): Promise<string> {
     throw new ConfigError('Configuration and token file paths must be absolute.');
   let file;
   try {
+    if ((await lstat(path)).isSymbolicLink())
+      throw new ConfigError('Credential files must not be symbolic links.');
     file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const info = await file.stat();
     if (

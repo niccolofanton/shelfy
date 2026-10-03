@@ -415,7 +415,7 @@ function SessionsCard({ account }: { account: AccountApi }): React.JSX.Element {
   );
 }
 
-const CREATABLE_KINDS: Exclude<TokenKind, 'migrate'>[] = ['shortcut', 'extension'];
+const CREATABLE_KINDS: Exclude<TokenKind, 'migrate'>[] = ['shortcut', 'extension', 'library'];
 
 function TokensCard({ account }: { account: AccountApi }): React.JSX.Element {
   const t = useT('settings');
@@ -428,6 +428,7 @@ function TokensCard({ account }: { account: AccountApi }): React.JSX.Element {
     kind: Exclude<TokenKind, 'migrate'>;
     label: string;
     ttlDays: number;
+    libraryWrite: boolean;
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<NewToken | null>(null);
@@ -440,7 +441,10 @@ function TokensCard({ account }: { account: AccountApi }): React.JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      const token = await account.createToken(form.kind, form.label, { ttlDays: form.ttlDays });
+      const token = await account.createToken(form.kind, form.label, {
+        ttlDays: form.ttlDays,
+        ...(form.kind === 'library' ? { libraryWrite: form.libraryWrite } : {}),
+      });
       setForm(null);
       setCopied(false);
       setCreated(token);
@@ -557,7 +561,12 @@ function TokensCard({ account }: { account: AccountApi }): React.JSX.Element {
           data-testid="token-new"
           onClick={() => {
             setError(null);
-            setForm({ kind: 'shortcut', label: '', ttlDays: DEFAULT_TOKEN_TTL_DAYS });
+            setForm({
+              kind: 'shortcut',
+              label: '',
+              ttlDays: DEFAULT_TOKEN_TTL_DAYS,
+              libraryWrite: false,
+            });
           }}
           className={`${BUTTON} mt-4`}
         >
@@ -578,7 +587,11 @@ function TokensCard({ account }: { account: AccountApi }): React.JSX.Element {
               data-testid="token-kind"
               value={form.kind}
               onChange={(e) =>
-                setForm({ ...form, kind: e.target.value as Exclude<TokenKind, 'migrate'> })
+                setForm({
+                  ...form,
+                  kind: e.target.value as Exclude<TokenKind, 'migrate'>,
+                  libraryWrite: false,
+                })
               }
               className={`${INPUT} sm:w-48`}
             >
@@ -589,6 +602,18 @@ function TokensCard({ account }: { account: AccountApi }): React.JSX.Element {
               ))}
             </select>
           </label>
+          {form.kind === 'library' && (
+            <label className="flex items-center gap-2 text-xs text-gray-300">
+              <input
+                type="checkbox"
+                data-testid="token-library-write"
+                checked={form.libraryWrite}
+                onChange={(e) => setForm({ ...form, libraryWrite: e.target.checked })}
+                disabled={busy}
+              />
+              {t('tokenLibraryWrite')}
+            </label>
+          )}
           <label className="flex-1 space-y-1">
             <span className="text-[11px] font-medium text-gray-400">{t('tokenLabel')}</span>
             <input

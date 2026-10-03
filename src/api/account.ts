@@ -94,6 +94,8 @@ export const TOKEN_TTL_OPTIONS = [7, 30, 90, 365] as const;
 export interface CreateTokenOptions {
   // Whole days, 1..365. Omitted: the server's 90-day default.
   ttlDays?: number;
+  // Library tokens read by default; saving/editing is an explicit opt-in.
+  libraryWrite?: boolean;
 }
 
 export interface AccountToken {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer as httpServer } from 'node:http';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, writeFile, chmod, symlink, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, chmod, symlink, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';

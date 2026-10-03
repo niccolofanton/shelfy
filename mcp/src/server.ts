@@ -62,8 +62,11 @@ function result(value: unknown) {
     value && typeof value === 'object' && !Array.isArray(value)
       ? (value as Record<string, unknown>)
       : { result: value };
+  const serialized = JSON.stringify(output);
+  if (Buffer.byteLength(serialized, 'utf8') > 2 * 1024 * 1024)
+    throw new ApiError('response_too_large');
   return {
-    content: [{ type: 'text' as const, text: JSON.stringify(output) }],
+    content: [{ type: 'text' as const, text: serialized }],
     structuredContent: output,
   };
 }
@@ -249,6 +252,7 @@ export function createServer(config: Config): McpServer {
             const row = counts.get(norm) || { tag, countInScannedPosts: 0 };
             row.countInScannedPosts++;
             counts.set(norm, row);
+            if (counts.size > 10_000) throw new ApiError('response_too_large');
           }
         }
         if (value.nextCursor === cursor && cursor !== undefined)
