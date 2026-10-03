@@ -9,9 +9,10 @@
 //! `GET /api/v1/posts?q=…` with the same filters returns the same ranking, so
 //! the search-eval gate (P1-05) covers both.
 //!
-//! With text, results are ranked by relevance. Tags alone are listed newest
-//! first: the desktop's tag-weight ranking (`searchPostsByTags`, Σ idf of the
-//! matched tags) has no core equivalent yet (P3, with the AI views).
+//! With text, results are ranked by FTS relevance. Tags alone use the desktop
+//! `searchPostsByTags` order: sum of clamp(ln(N/df), 1, 3) per matched canonical
+//! tag, newest first on ties. Both page through the cached 1,000-result window;
+//! totals count every matching post.
 
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -119,7 +120,7 @@ fn has_criteria(filter: &PostFilter) -> bool {
             .any(|t| !t.trim_matches(blank).is_empty())
 }
 
-/// Search the library: ranked by relevance when there is text, with the total.
+/// Search the library: ranked by text relevance or matched-tag IDF, with the exact total.
 /// Without text, tags or concepts the answer is empty.
 #[utoipa::path(
     get,
@@ -167,7 +168,7 @@ pub async fn serve_search(
 ) -> Result<Response, ApiError> {
     query.validate()?;
     let filter = query.filter();
-    let sort = PostSort::effective(None, filter.has_text());
+    let sort = PostSort::effective(None, filter.has_relevance());
     let limit = page_size(query.limit);
     let filters = SearchQuery {
         limit: None,

@@ -70,3 +70,19 @@ dichiara esplicitamente.
 - `cases.cjs` — casi + ground truth (incl. scaffold `humanGold`).
 - `order-metrics.cjs` — metriche d'ordine pure (P9).
 - `../lib/agg-stats.cjs` — aggregazione multi-run pura (P11), condivisa con cluster-eval.
+
+### Tag-only parity (P3-05)
+
+The Rust gate also checks the desktop's tag-only probe: top-5 gold tags or
+`tagProbeOverride`, with the same nDCG@10 and MRR tolerance of 0.02. The paired
+report must retain `tag_*` metrics along with the text and hybrid metrics.
+To refresh just those aggregates without opening the user's default library:
+
+```sh
+pnpm exec tsx scripts/search-eval/tag-probe.ts --db=/tmp/synthetic.sqlite --baseline=crates/core/tests/search_eval/synthetic-report.json --out=/tmp/paired-report.json
+```
+
+Generate `synthetic.sqlite` with the Rust `write_the_synthetic_library` test.
+The runner requires every path, reads the source database read-only, and calls
+the real desktop `searchPostsByTags` in an isolated in-memory database. It
+refuses a baseline with different gold-set counts and writes aggregates only.

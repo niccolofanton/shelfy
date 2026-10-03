@@ -1442,7 +1442,7 @@ export interface paths {
       cookie?: never;
     };
     /**
-     * Search the library: ranked by relevance when there is text, with the total.
+     * Search the library: ranked by text relevance or matched-tag IDF, with the exact total.
      *     Without text, tags or concepts the answer is empty.
      */
     get: operations['search'];

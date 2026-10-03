@@ -10,6 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import edits from './edits';
+import tagSearch from './tag-search';
 import extractContentTerms from './extract-content-terms';
 import hosts from './hosts';
 import mergeSets from './merge';
@@ -55,6 +56,7 @@ const { default: aiCatalogSets } = await import('./ai-catalog');
 const SETS: GoldenSet[] = [
   extractContentTerms,
   edits,
+  tagSearch,
   ...mergeSets,
   sanitize,
   hosts,

@@ -13,6 +13,7 @@ what the desktop returns.
 | Set | Desktop function | Rust port |
 |---|---|---|
 | `extract-content-terms` | `electron/db.ts#extractContentTerms` | `shelfy_core::search::terms::extract_content_terms` |
+| `tag-search` | `electron/db.ts#searchPostsByTags` | `shelfy_core::repo::posts::rank` (tags only) |
 | `edits` | `electron/db.ts#updateUserContent`, `#updateAiAnalysis` | `shelfy_core::repo::posts::{update_user_content, update_ai}` |
 | `merge/*` (one file per scenario) | `electron/db.ts#bulkUpsert` | `shelfy_core::ingest::merge::upsert_batch` |
 | `sanitize` | `src/lib/browserSanitize.ts#sanitizeInterceptedBatch` | `shelfy_core::ingest::sanitize::clean_item` (the shared rules of `sanitize_batch`) |

@@ -8,6 +8,7 @@
 
 mod golden_ai;
 mod golden_merge;
+mod golden_tag_search;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -37,6 +38,7 @@ const CHECKED: &[&str] = &[
     "hosts",
     "merge/",
     "sanitize",
+    "tag-search",
     "web/",
 ];
 

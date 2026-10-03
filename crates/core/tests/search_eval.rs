@@ -28,8 +28,8 @@
 //! the same rows. The server's `search_ranking` test checks that both routes
 //! return this ranking. The desktop's AI tag retrieval metrics
 //! (`poolRelevance`, `poolNoise`, `keywordRelevance`), its composite
-//! pass/fail score and its tag-only probe measure the AI views, not the FTS
-//! search, and are not ported.
+//! pass/fail score measure the AI views and are not ported. P3-05 also ports
+//! the tag-only probe (top-5 gold tags or the case override).
 //!
 //! Nothing from a real library is printed or written: only counts and
 //! metrics. How to run it: `docs/web-port/spikes/05-fts-relevance.md`.
@@ -136,6 +136,7 @@ struct CaseRun {
     text: Metrics,
     /// The hybrid probe (top-2 gold tags + the query); `None` without gold tags.
     hybrid: Option<Metrics>,
+    tags: Option<Metrics>,
     /// First page plus the count of matches, per timed run.
     times: Vec<Duration>,
 }
@@ -229,7 +230,10 @@ fn record_the_synthetic_report() {
                 .expect("metrics")
                 .iter()
                 .filter(|(name, _)| {
-                    let name = name.strip_prefix("hy_").unwrap_or(name);
+                    let name = name
+                        .strip_prefix("hy_")
+                        .or_else(|| name.strip_prefix("tag_"))
+                        .unwrap_or(name);
                     NAMES.contains(&name)
                 })
                 .map(|(name, value)| (name.clone(), value.clone()))
@@ -304,6 +308,39 @@ fn gate(library: &Path, baseline_path: &Path) {
         );
     }
 
+    let tag_pairs: Vec<_> = runs
+        .iter()
+        .filter_map(|run| {
+            run.tags.map(|ours| {
+                let theirs = baseline_of(&baseline, run)
+                    .and_then(|b| b.tags)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{}: desktop tag-only metrics missing; refresh the paired report",
+                            run.case.id
+                        )
+                    });
+                (ours, theirs)
+            })
+        })
+        .collect();
+    let ours = metrics::mean(&tag_pairs.iter().map(|(a, _)| *a).collect::<Vec<_>>());
+    let theirs = metrics::mean(&tag_pairs.iter().map(|(_, b)| *b).collect::<Vec<_>>());
+    println!(
+        "tag-only probe means nDCG@10 {} MRR {}",
+        pair(ours.ndcg10, theirs.ndcg10),
+        pair(ours.mrr, theirs.mrr)
+    );
+    for (name, ours, theirs) in [
+        ("nDCG@10", ours.ndcg10, theirs.ndcg10),
+        ("MRR", ours.mrr, theirs.mrr),
+    ] {
+        assert!(
+            ours.unwrap_or(0.0) >= theirs.unwrap_or(0.0) - TOLERANCE,
+            "tag-only mean {name} below desktop - {TOLERANCE}"
+        );
+    }
+
     let p95 = percentile(all_times(&runs), 0.95);
     if cfg!(debug_assertions) {
         println!("latency: debug build, the budget is checked with --release only");
@@ -335,6 +372,25 @@ fn run_case(case: &'static EvalCase, oracle: &Oracle, corpus: &Corpus) -> CaseRu
         .into_iter()
         .take(2)
         .collect();
+    let tag_probe: Vec<String> = case.tag_probe_override.map_or_else(
+        || {
+            oracle
+                .gold_tags(&gold, 12)
+                .expect("gold tags")
+                .into_iter()
+                .take(5)
+                .collect()
+        },
+        |tags| tags.iter().map(|t| t.to_lowercase()).collect(),
+    );
+    let tags = (!tag_probe.is_empty()).then(|| {
+        let filter = PostFilter {
+            tags: tag_probe,
+            ..PostFilter::default()
+        };
+        let (ranked, _) = search(corpus, &filter);
+        Metrics::of(&ranked, &gold, PAGE as usize)
+    });
     let hybrid = (!probe.is_empty()).then(|| {
         let filter = PostFilter {
             q: Some(case.query.to_owned()),
@@ -356,6 +412,7 @@ fn run_case(case: &'static EvalCase, oracle: &Oracle, corpus: &Corpus) -> CaseRu
         total,
         text,
         hybrid,
+        tags,
         times,
     }
 }
@@ -579,9 +636,11 @@ fn json_report(runs: &[CaseRun], baseline: &Baseline, corpus: &Corpus) -> Value 
                 "total": r.total,
                 "fts": metrics_json(r.text),
                 "ftsHybrid": r.hybrid.map(metrics_json),
+                "tags": r.tags.map(metrics_json),
                 "desktopTotal": b.and_then(|b| b.total),
                 "desktop": b.map(|b| metrics_json(b.text)),
                 "desktopHybrid": b.and_then(|b| b.hybrid).map(metrics_json),
+                "desktopTags": b.and_then(|b| b.tags).map(metrics_json),
             })
         })
         .collect();

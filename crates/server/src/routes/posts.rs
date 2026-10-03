@@ -220,7 +220,7 @@ pub async fn serve_list(
 ) -> Result<Response, ApiError> {
     query.validate()?;
     let filter = query.filter();
-    let sort = PostSort::effective(query.sort, filter.has_text());
+    let sort = PostSort::effective(query.sort, filter.has_relevance());
     let limit = page_size(query.limit);
     let include_total = query.include_total.unwrap_or(false);
     // What identifies the result set (the cursor fingerprint), and the whole

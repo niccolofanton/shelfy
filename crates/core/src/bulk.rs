@@ -151,7 +151,7 @@ pub fn count(conn: &Connection, selector: &Selector) -> Result<u64> {
 ///
 /// [`RepoError::Invalid`] for a selector over its caps; database errors.
 pub fn count_between(conn: &Connection, selector: &Selector, after: i64, upto: i64) -> Result<u64> {
-    let which = selector.sql()?;
+    let which = selector.sql(conn)?;
     let range = [Value::Integer(after), Value::Integer(upto)];
     let n: i64 = conn
         .prepare_cached(&format!(
@@ -207,7 +207,7 @@ pub fn apply_stamped(
     now: i64,
 ) -> Result<Applied> {
     action.check(conn)?;
-    let which = selector.sql()?;
+    let which = selector.sql(conn)?;
     let selected = count_of(conn, &which)?;
     let mut changed = match action {
         Action::Delete => trash::put(conn, &which, stamp, now)?,
@@ -254,7 +254,7 @@ pub fn next_chunk(
     upto: i64,
     limit: usize,
 ) -> Result<Option<Chunk>> {
-    let which = selector.sql()?;
+    let which = selector.sql(conn)?;
     let sql = format!(
         "SELECT p.id, p.key FROM posts p WHERE ({}) AND p.id > ? AND p.id <= ?
          ORDER BY p.id LIMIT ?",

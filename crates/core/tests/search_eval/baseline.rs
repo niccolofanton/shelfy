@@ -17,6 +17,8 @@ pub struct BaselineCase {
     pub text: Metrics,
     /// The hybrid probe (top-2 gold tags + the query), when the desktop ran it.
     pub hybrid: Option<Metrics>,
+    /// Tag-only probe (top-5 gold tags or the case override).
+    pub tags: Option<Metrics>,
 }
 
 /// A desktop report.
@@ -59,6 +61,9 @@ impl Baseline {
                     total: r["sample"]["searchTotal"].as_u64(),
                     text,
                     hybrid,
+                    tags: m.get("tag_ndcg@10").map(|_| {
+                        Metrics::from_values(NAMES.map(|name| m[format!("tag_{name}")].as_f64()))
+                    }),
                 };
                 (id, case)
             })

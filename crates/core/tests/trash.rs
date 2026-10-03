@@ -158,7 +158,7 @@ fn stamps_are_never_reused() {
     assert_eq!(second, NOW + 1, "another delete in the same millisecond");
     trash::put(&conn, &trash::by_ids(&ids[3..5]), second, NOW).unwrap();
     let undo = shelfy_core::selector::Selector::TrashedAt(first)
-        .sql()
+        .sql(&conn)
         .unwrap();
     assert_eq!(trash::restore(&conn, &undo, NOW).unwrap(), ids[..3]);
     assert_eq!(

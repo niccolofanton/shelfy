@@ -300,7 +300,7 @@ pub fn add_selected(conn: &Connection, id: i64, selector: &Selector, now: i64) -
     if !exists(conn, id)? {
         return Err(RepoError::NotFound);
     }
-    let selection = selector.sql()?;
+    let selection = selector.sql(conn)?;
     let sql = format!(
         "INSERT OR IGNORE INTO post_collections (post_id, collection_id, added_at)
          SELECT p.id, ?, ? FROM posts p WHERE p.deleted_at IS NULL AND ({})

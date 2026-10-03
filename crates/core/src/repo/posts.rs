@@ -30,6 +30,7 @@
 //! - the desktop's unused `missingOnly` is `stored: Some(false)`; the single
 //!   `tag` and the `tags` list keep their separate desktop semantics.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -60,7 +61,7 @@ pub enum Sort {
     Newest,
     /// Oldest first.
     Oldest,
-    /// Best search score first, then newest. Without search text it falls back
+    /// Best search score first, then newest. Without search text or tags it falls back
     /// to [`Sort::Newest`].
     Relevance,
 }
@@ -135,11 +136,17 @@ pub struct PostFilter {
 }
 
 impl PostFilter {
-    /// Whether the filter has search text, which makes [`Sort::Relevance`] apply.
+    /// Whether the filter has search text (free text or concepts).
     /// The desktop ranks by relevance whenever this is true.
     #[must_use]
     pub fn has_text(&self) -> bool {
         non_blank(self.q.as_deref()).is_some() || !clean_concepts(&self.concepts).is_empty()
+    }
+
+    /// Whether text, concepts or a nonblank tag list supply a relevance order.
+    #[must_use]
+    pub fn has_relevance(&self) -> bool {
+        self.has_text() || !clean_norms(&self.tags).is_empty()
     }
 }
 
@@ -714,9 +721,11 @@ pub fn list(
     filter: &PostFilter,
     page: &PageRequest,
 ) -> Result<Page<PostSummary>> {
+    let filter = tag_filter(conn, filter)?;
+    let filter = filter.as_ref();
     let limit = page.limit.clamp(1, MAX_PAGE_SIZE);
     let text = TextPlan::new(filter);
-    let sort = if page.sort == Sort::Relevance && !text.has_text {
+    let sort = if page.sort == Sort::Relevance && !filter.has_relevance() {
         Sort::Newest
     } else {
         page.sort
@@ -745,6 +754,8 @@ pub fn list(
 ///
 /// Database errors.
 pub fn count(conn: &Connection, filter: &PostFilter) -> Result<u64> {
+    let filter = tag_filter(conn, filter)?;
+    let filter = filter.as_ref();
     let (condition, params) = filter_condition(filter);
     let sql = format!("SELECT count(*) FROM posts p WHERE {condition}");
     let n: i64 = conn
@@ -760,6 +771,8 @@ pub fn count(conn: &Connection, filter: &PostFilter) -> Result<u64> {
 ///
 /// Database errors.
 pub fn list_ids(conn: &Connection, filter: &PostFilter) -> Result<Vec<i64>> {
+    let filter = tag_filter(conn, filter)?;
+    let filter = filter.as_ref();
     let (condition, params) = filter_condition(filter);
     let sql =
         format!("SELECT p.id FROM posts p WHERE {condition} ORDER BY p.sort_ts DESC, p.id DESC");
@@ -1507,15 +1520,17 @@ fn list_keyset(
 /// [`RELEVANCE_WINDOW`] posts, best first (ties newest first). It is the
 /// snapshot that relevance pages are cut from ([`ranked_page`]): the API
 /// computes it once per search and library state, and pages through it by
-/// offset (plan §2.14). Empty without search text.
+/// offset (plan §2.14). Empty without text, concepts or tags.
 ///
 /// # Errors
 ///
 /// Database errors.
 pub fn rank(conn: &Connection, filter: &PostFilter) -> Result<Vec<i64>> {
+    let filter = tag_filter(conn, filter)?;
+    let filter = filter.as_ref();
     let text = TextPlan::new(filter);
     if !text.has_text {
-        return Ok(Vec::new());
+        return rank_tags(conn, filter, &text);
     }
     let scoring = scoring(conn, &text)?;
     let (sql, params) = rank_query(WhereSql::new(filter, &text), &text, &scoring);
@@ -1524,6 +1539,65 @@ pub fn rank(conn: &Connection, filter: &PostFilter) -> Result<Vec<i64>> {
         .query_map(params_from_iter(params.iter()), |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?;
     Ok(ids)
+}
+
+/// Resolve tag-only queries using the same canonical rows as tag writes. Text
+/// and hybrid queries retain the SPIKE-5 scoring and matching contract.
+pub(crate) fn tag_filter<'a>(
+    conn: &Connection,
+    filter: &'a PostFilter,
+) -> Result<Cow<'a, PostFilter>> {
+    if filter.has_text() || filter.tags.is_empty() {
+        return Ok(Cow::Borrowed(filter));
+    }
+    let mut canonical = Vec::new();
+    for tag in clean_norms(&filter.tags) {
+        canonical.push(tags::resolve_alias(conn, &tag)?.norm);
+    }
+    Ok(Cow::Owned(PostFilter {
+        tags: dedupe(canonical),
+        ..filter.clone()
+    }))
+}
+
+/// Tag-only search (`searchPostsByTags`): sum one IDF per distinct matching
+/// canonical tag, independent of source/tier. Statistics cover the whole user
+/// library, before filters, exactly as the desktop does.
+fn rank_tags(conn: &Connection, filter: &PostFilter, text: &TextPlan) -> Result<Vec<i64>> {
+    if text.tags.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows: i64 = conn.query_row("SELECT count(*) FROM posts", [], |r| r.get(0))?;
+    let rows = u64::try_from(rows).unwrap_or(0);
+    let mut df =
+        conn.prepare_cached("SELECT count(DISTINCT post_id) FROM post_tags WHERE tag_norm = ?1")?;
+    let mut weights = Vec::with_capacity(text.tags.len());
+    for tag in &text.tags {
+        let n: i64 = df.query_row([tag], |r| r.get(0))?;
+        weights.push((tag, query::tag_weight(rows, u64::try_from(n).unwrap_or(0))));
+    }
+    let w = WhereSql::new(filter, text);
+    let sql = format!(
+        "WITH wanted AS MATERIALIZED (SELECT value ->> 0 AS tag, value ->> 1 AS weight
+                                      FROM json_each(?)),
+              matches AS MATERIALIZED (SELECT pt.post_id, pt.tag_norm, max(w.weight) AS weight
+                                       FROM wanted w JOIN post_tags pt ON pt.tag_norm = w.tag
+                                       GROUP BY pt.post_id, pt.tag_norm),
+              scores AS MATERIALIZED (SELECT post_id, sum(weight) AS score FROM matches
+                                      GROUP BY post_id)
+         SELECT p.id FROM scores s JOIN posts p ON p.id = s.post_id
+         WHERE {} ORDER BY s.score DESC, p.sort_ts DESC, p.id DESC LIMIT ?",
+        w.clauses.join(" AND ")
+    );
+    let mut params = vec![Value::Text(
+        serde_json::to_string(&weights).expect("weights serialize"),
+    )];
+    params.extend(w.params);
+    params.push(Value::Integer(i64::from(RELEVANCE_WINDOW)));
+    Ok(conn
+        .prepare_cached(&sql)?
+        .query_map(params_from_iter(params.iter()), |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 /// The relevance cursor's offset, if `cursor` belongs to the relevance order.

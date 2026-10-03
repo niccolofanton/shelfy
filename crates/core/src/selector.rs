@@ -121,8 +121,8 @@ impl Selector {
     ///
     /// # Errors
     ///
-    /// The selector is over its caps.
-    pub fn sql(&self) -> Result<SelectorSql> {
+    /// The selector is over its caps, or alias lookup fails.
+    pub fn sql(&self, conn: &Connection) -> Result<SelectorSql> {
         self.validate()?;
         let keys_json =
             |keys: &[String]| Value::Text(serde_json::to_string(keys).expect("strings serialize"));
@@ -135,7 +135,8 @@ impl Selector {
                 filter,
                 except_keys,
             } => {
-                let (mut condition, mut params) = posts::filter_condition(filter);
+                let filter = posts::tag_filter(conn, filter)?;
+                let (mut condition, mut params) = posts::filter_condition(&filter);
                 if !except_keys.is_empty() {
                     condition.push_str(" AND p.key NOT IN (SELECT value FROM json_each(?))");
                     params.push(keys_json(except_keys));
@@ -157,7 +158,7 @@ impl Selector {
 ///
 /// [`RepoError::Invalid`] over the caps; database errors.
 pub fn count(conn: &Connection, selector: &Selector) -> Result<u64> {
-    let sql = selector.sql()?;
+    let sql = selector.sql(conn)?;
     let n: i64 = conn
         .prepare_cached(&format!(
             "SELECT count(*) FROM posts p WHERE {}",
@@ -174,7 +175,7 @@ pub fn count(conn: &Connection, selector: &Selector) -> Result<u64> {
 ///
 /// [`RepoError::Invalid`] over the caps; database errors.
 pub fn ids(conn: &Connection, selector: &Selector) -> Result<Vec<i64>> {
-    let sql = selector.sql()?;
+    let sql = selector.sql(conn)?;
     let ids = conn
         .prepare_cached(&format!(
             "SELECT p.id FROM posts p WHERE {} ORDER BY p.sort_ts DESC, p.id DESC",
@@ -200,7 +201,7 @@ mod tests {
         let filter = |n: usize| Selector::filter_except(PostFilter::default(), keys(n));
         assert!(filter(MAX_EXCEPT_KEYS).validate().is_ok());
         assert!(matches!(
-            filter(MAX_EXCEPT_KEYS + 1).sql(),
+            filter(MAX_EXCEPT_KEYS + 1).sql(&Connection::open_in_memory().unwrap()),
             Err(RepoError::Invalid {
                 field: "exceptKeys",
                 ..

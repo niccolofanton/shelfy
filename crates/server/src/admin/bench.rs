@@ -19,7 +19,7 @@
 //! and of its common filters, and pages deep into it by cursor. Searches
 //! (`GET /search` and `GET /posts?q=`): first pages of queries made from the
 //! library's own words, common, mid and rare ones, one to three words, infix
-//! fragments, stopword-only queries and tags with text; no query repeats, so
+//! fragments, stopword-only queries, tags with text and tag-only queries; no query repeats, so
 //! no cached ranking or count makes a search look cheaper than a new one.
 //! Post details of random posts; `g480` renditions of random objects.
 //!
@@ -494,6 +494,7 @@ const KIND_GENERIC: &str = "a generic word";
 const KIND_INFIX: &str = "an infix fragment";
 const KIND_RARE_MID: &str = "rare + mid word";
 const KIND_HYBRID: &str = "text, concept, tag";
+const KIND_TAGS: &str = "tags only";
 
 impl Workload {
     fn new(sample: Sample, seed: u64) -> Self {
@@ -658,7 +659,7 @@ impl Workload {
         let common_word = self.word(0, common);
         let mid_word = self.word(common, mid);
         let rare_word = self.word(mid, words);
-        let (q, kind) = match self.search_turn % 10 {
+        let (q, kind) = match self.search_turn % 11 {
             0 => (common_word, KIND_COMMON),
             1 | 2 => (mid_word, KIND_MID),
             3 => (rare_word, KIND_RARE),
@@ -681,6 +682,22 @@ impl Workload {
                 (fragment, KIND_INFIX)
             }
             8 => (format!("{rare_word} {mid_word}"), KIND_RARE_MID),
+            10 if !self.sample.tags.is_empty() => {
+                let tags = [self.pick_tag(), self.pick_tag()]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                let query = SearchQuery {
+                    tags,
+                    tag_mode: Some(if self.below(2) == 0 {
+                        MatchMode::Or
+                    } else {
+                        MatchMode::And
+                    }),
+                    ..SearchQuery::default()
+                };
+                return (query, KIND_TAGS);
+            }
             _ => {
                 let tag = self.pick_tag();
                 let query = SearchQuery {

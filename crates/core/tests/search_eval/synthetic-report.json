@@ -20,7 +20,13 @@
         "r@10": 0.5,
         "r@5": 0.8,
         "searchPrecision": 0.13333333333333333,
-        "searchRecall": 0.4444444444444444
+        "searchRecall": 0.4444444444444444,
+        "tag_p@5": 0.6666666666666666,
+        "tag_p@10": 0.6666666666666666,
+        "tag_r@5": 0.4,
+        "tag_r@10": 0.2,
+        "tag_mrr": 1,
+        "tag_ndcg@10": 0.3589542101716347
       },
       "sample": {
         "searchTotal": 127
@@ -44,7 +50,13 @@
         "r@10": 1,
         "r@5": 1,
         "searchPrecision": 1,
-        "searchRecall": 1
+        "searchRecall": 1,
+        "tag_p@5": 1,
+        "tag_p@10": 1,
+        "tag_r@5": 1,
+        "tag_r@10": 1,
+        "tag_mrr": 1,
+        "tag_ndcg@10": 1
       },
       "sample": {
         "searchTotal": 419
@@ -68,7 +80,13 @@
         "r@10": 1,
         "r@5": 1,
         "searchPrecision": 0.5094339622641509,
-        "searchRecall": 0.45
+        "searchRecall": 0.45,
+        "tag_p@5": 1,
+        "tag_p@10": 1,
+        "tag_r@5": 1,
+        "tag_r@10": 1,
+        "tag_mrr": 1,
+        "tag_ndcg@10": 1
       },
       "sample": {
         "searchTotal": 53
@@ -92,7 +110,13 @@
         "r@10": 1,
         "r@5": 1,
         "searchPrecision": 1,
-        "searchRecall": 1
+        "searchRecall": 1,
+        "tag_p@5": 1,
+        "tag_p@10": 1,
+        "tag_r@5": 1,
+        "tag_r@10": 0.5,
+        "tag_mrr": 1,
+        "tag_ndcg@10": 0.6489315753318465
       },
       "sample": {
         "searchTotal": 71
@@ -116,7 +140,13 @@
         "r@10": 0.7,
         "r@5": 1,
         "searchPrecision": 0.5517241379310345,
-        "searchRecall": 0.64
+        "searchRecall": 0.64,
+        "tag_p@5": 0.25,
+        "tag_p@10": 0.25,
+        "tag_r@5": 0.2,
+        "tag_r@10": 0.1,
+        "tag_mrr": 1,
+        "tag_ndcg@10": 0.22009176629808017
       },
       "sample": {
         "searchTotal": 29
@@ -140,7 +170,13 @@
         "r@10": 1,
         "r@5": 1,
         "searchPrecision": 0.38333333333333336,
-        "searchRecall": 0.5476190476190477
+        "searchRecall": 0.5476190476190477,
+        "tag_p@5": 1,
+        "tag_p@10": 1,
+        "tag_r@5": 0.4,
+        "tag_r@10": 0.2,
+        "tag_mrr": 1,
+        "tag_ndcg@10": 0.3589542101716347
       },
       "sample": {
         "searchTotal": 91

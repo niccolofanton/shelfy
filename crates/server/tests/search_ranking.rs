@@ -29,7 +29,7 @@ use axum::Router;
 use axum::http::StatusCode;
 use serde_json::Value;
 use shelfy_core::repo::RepoError;
-use shelfy_core::repo::posts::{self, Mode, PageRequest, PostFilter, Sort};
+use shelfy_core::repo::posts::{self, Mode, PageRequest, PostFilter, Sort, SourceBucket};
 use support::library::ALICE;
 use support::{TestState, get, json, send};
 
@@ -169,5 +169,89 @@ async fn the_search_routes_rank_every_eval_case_like_the_gate() {
         let page = get_ok(&app, &format!("/api/v1/search?q={q}{tags}&limit={PAGE}")).await;
         assert_eq!(keys(&page), first, "{}: hybrid probe", case.id);
         assert_eq!(page["total"], total, "{}: hybrid probe, total", case.id);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn tag_only_routes_share_ranked_pages_aliases_scopes_and_totals() {
+    let t = TestState::new();
+    let dir = tempfile::tempdir().unwrap();
+    let legacy = dir.path().join("shelfy.sqlite");
+    synthetic::write(&legacy);
+    let db = t.state.user_db(ALICE).await.unwrap();
+    let (copied, path) = (Arc::clone(&db), legacy.clone());
+    tokio::task::spawn_blocking(move || corpus::fill(&path, &copied))
+        .await
+        .unwrap();
+    let oracle = oracle::Oracle::open(&legacy).unwrap();
+    let app = t.app_as(ALICE);
+    for case in cases::CASES {
+        let gold = oracle.gold_posts(case.gold_terms).unwrap();
+        let probe: Vec<String> = case.tag_probe_override.map_or_else(
+            || {
+                oracle
+                    .gold_tags(&gold, 12)
+                    .unwrap()
+                    .into_iter()
+                    .take(5)
+                    .collect()
+            },
+            |tags| tags.iter().map(|t| (*t).into()).collect(),
+        );
+        if probe.is_empty() {
+            continue;
+        }
+        db.write(|tx| {
+            tx.execute("INSERT OR REPLACE INTO tag_alias (alias_norm, canonical_norm, canonical_form, status, created_at) VALUES ('probe alias', ?1, ?1, 'accepted', 0)", [&probe[0]])?;
+            Ok::<_, RepoError>(())
+        }).unwrap();
+        let mut queried = probe.clone();
+        queried.extend([" PROBE ALIAS ".into(), probe[0].clone()]);
+        let tags: String = queried
+            .iter()
+            .map(|tag| format!("&tags={}", encode(tag)))
+            .collect();
+        for mode in [Mode::Or, Mode::And] {
+            let mode_name = if mode == Mode::And { "and" } else { "or" };
+            for (scope, source) in [
+                ("all", None),
+                ("sites", Some(SourceBucket::Web)),
+                ("social", Some(SourceBucket::Social)),
+            ] {
+                let filter = PostFilter {
+                    tags: queried.clone(),
+                    tag_mode: mode,
+                    source,
+                    ..PostFilter::default()
+                };
+                let (_, ranked, total) = core_answer(&db, &filter);
+                let search_uri =
+                    format!("/api/v1/search?scope={scope}&tagMode={mode_name}{tags}&limit=37");
+                let page = get_ok(&app, &search_uri).await;
+                assert_eq!(page["total"], total, "{} {scope} {mode_name}", case.id);
+                assert_eq!(
+                    walk(&app, &search_uri).await,
+                    ranked,
+                    "{}: search {scope} {mode_name}",
+                    case.id
+                );
+                let source = match source {
+                    Some(SourceBucket::Web) => "&source=web",
+                    Some(SourceBucket::Social) => "&source=social",
+                    None => "",
+                };
+                let posts_uri = format!(
+                    "/api/v1/posts?includeTotal=true{source}&tagMode={mode_name}{tags}&limit=113"
+                );
+                let page = get_ok(&app, &posts_uri).await;
+                assert_eq!(page["total"], total);
+                assert_eq!(
+                    walk(&app, &posts_uri).await,
+                    ranked,
+                    "{}: posts {scope} {mode_name}",
+                    case.id
+                );
+            }
+        }
     }
 }

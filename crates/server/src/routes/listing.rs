@@ -89,11 +89,11 @@ pub enum PostSort {
 
 impl PostSort {
     /// The order actually used: `requested`, else relevance when there is
-    /// search text and newest otherwise; relevance without text is newest.
+    /// search text or tags and newest otherwise; relevance without criteria is newest.
     #[must_use]
-    pub fn effective(requested: Option<Self>, has_text: bool) -> Self {
+    pub fn effective(requested: Option<Self>, has_relevance: bool) -> Self {
         match requested {
-            Some(Self::Relevance) | None if has_text => Self::Relevance,
+            Some(Self::Relevance) | None if has_relevance => Self::Relevance,
             Some(Self::Oldest) => Self::Oldest,
             _ => Self::Newest,
         }

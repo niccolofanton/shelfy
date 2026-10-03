@@ -210,6 +210,13 @@ pub fn term_weight(rows: u64, df: u64) -> f64 {
     ratio.ln().clamp(TERM_WEIGHT_MIN, TERM_WEIGHT_MAX)
 }
 
+/// Tag-only IDF (`searchPostsByTags`), counted over distinct post/tag pairs.
+/// Shares the desktop's clamp with term weights; it adds no FTS field boost.
+#[must_use]
+pub fn tag_weight(rows: u64, df: u64) -> f64 {
+    term_weight(rows, df)
+}
+
 /// The IDF FTS5's bm25 gives a phrase that `df` of `rows` rows match:
 /// `ln((rows - df + 0.5) / (df + 0.5))`, at least `1e-6` (`fts5_aux.c`).
 #[must_use]

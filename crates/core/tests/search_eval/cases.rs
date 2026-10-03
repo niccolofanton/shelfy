@@ -39,7 +39,7 @@ pub struct EvalCase {
     /// retrieval (`poolRelevance`), which is not part of this evaluation.
     pub reject_tags: &'static [&'static str],
     /// Tags of the desktop's tag-only probe (`tagProbeOverride`). The tag-only
-    /// ranking is not part of the FTS search; kept for parity with the set.
+    /// ranking runs separately from the text/hybrid probe (P3-05).
     pub tag_probe_override: Option<&'static [&'static str]>,
 }
 

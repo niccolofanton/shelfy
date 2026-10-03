@@ -3061,7 +3061,7 @@
     "/api/v1/search": {
       "get": {
         "tags": ["search"],
-        "summary": "Search the library: ranked by relevance when there is text, with the total.\nWithout text, tags or concepts the answer is empty.",
+        "summary": "Search the library: ranked by text relevance or matched-tag IDF, with the exact total.\nWithout text, tags or concepts the answer is empty.",
         "operationId": "search",
         "parameters": [
           {
