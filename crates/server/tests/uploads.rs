@@ -341,7 +341,7 @@ async fn the_purpose_decides_who_may_create_an_upload() {
     }
     // An unknown purpose is malformed metadata, whoever asks.
     for request in [
-        as_session(&purpose("archive-object")),
+        as_session(&purpose("bogus-purpose")),
         as_token(&purpose("bookmark"), &uploads_token),
         as_token(&metadata(&[("sha256", &sha256_hex(b"x"))]), &migrate_token),
     ] {

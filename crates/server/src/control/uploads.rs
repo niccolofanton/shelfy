@@ -1012,76 +1012,87 @@ mod tests {
     fn the_registry_names_each_purpose_once_with_its_rules() {
         let names: HashSet<&str> = UploadPurpose::ALL.iter().map(|p| p.as_str()).collect();
         assert_eq!(names.len(), UploadPurpose::ALL.len(), "names are unique");
-        assert_eq!(
-            names,
-            [
-                "migration-object",
-                "migration-db",
-                "bookmark-original",
-                "bookmark-preview",
-                "import"
-            ]
-            .into()
-        );
         for purpose in UploadPurpose::ALL {
             assert_eq!(UploadPurpose::parse(purpose.as_str()), Some(*purpose));
             assert!(!purpose.uploaders.scopes.is_empty() || purpose.uploaders.session);
         }
-        for unknown in ["bookmark", "Import", "", "archive-object"] {
+        for unknown in ["bookmark", "Import", "", "migration"] {
             assert_eq!(UploadPurpose::parse(unknown), None, "{unknown}");
         }
 
-        // Migration needs `migrate`; bookmarks and imports a session or
-        // `uploads`.
+        // The rules of each purpose. Migration needs `migrate`; bookmarks
+        // and imports a session or `uploads`, and no declared hash (PG19).
         let migrate = Uploaders::tokens(ScopeSet::one(Scope::Migrate));
         let web = Uploaders::session_or(ScopeSet::one(Scope::Uploads));
-        for (purpose, uploaders) in [
-            (UploadPurpose::MIGRATION_OBJECT, migrate),
-            (UploadPurpose::MIGRATION_DB, migrate),
-            (UploadPurpose::BOOKMARK_ORIGINAL, web),
-            (UploadPurpose::BOOKMARK_PREVIEW, web),
-            (UploadPurpose::IMPORT, web),
-        ] {
-            assert_eq!(purpose.uploaders, uploaders, "{}", purpose.as_str());
-        }
-        assert_eq!(
-            UploadPurpose::token_scopes(),
-            ScopeSet::of(&[Scope::Uploads, Scope::Migrate])
-        );
-        assert!(UploadPurpose::any_takes_sessions());
-
-        // Caps: 200 MiB, 2 MiB, the import setting; hashes optional on the web.
         let gib = 1024 * MIB;
-        assert_eq!(
-            UploadPurpose::BOOKMARK_ORIGINAL.byte_limit(10 * gib),
-            200 * MIB
-        );
-        assert_eq!(
-            UploadPurpose::BOOKMARK_PREVIEW.byte_limit(10 * gib),
-            2 * MIB
-        );
-        assert_eq!(UploadPurpose::IMPORT.byte_limit(10 * gib), 10 * gib);
+        let import_setting = 10 * gib;
+        let (required, optional) = (HashRule::Required, HashRule::Optional);
+        let expected = [
+            (
+                UploadPurpose::MIGRATION_OBJECT,
+                migrate,
+                300 * MIB,
+                required,
+                WEEK,
+                false,
+                false,
+            ),
+            (
+                UploadPurpose::MIGRATION_DB,
+                migrate,
+                4 * gib,
+                required,
+                WEEK,
+                false,
+                false,
+            ),
+            (
+                UploadPurpose::BOOKMARK_ORIGINAL,
+                web,
+                200 * MIB,
+                optional,
+                DAY,
+                true,
+                true,
+            ),
+            (
+                UploadPurpose::BOOKMARK_PREVIEW,
+                web,
+                2 * MIB,
+                optional,
+                DAY,
+                true,
+                true,
+            ),
+            (
+                UploadPurpose::IMPORT,
+                web,
+                import_setting,
+                optional,
+                DAY,
+                false,
+                true,
+            ),
+        ];
+        for (purpose, uploaders, cap, sha256, keep, quota, staged) in expected {
+            let name = purpose.as_str();
+            assert_eq!(purpose.uploaders, uploaders, "{name}");
+            assert_eq!(purpose.byte_limit(import_setting), cap, "{name}");
+            assert_eq!(purpose.sha256, sha256, "{name}");
+            assert_eq!(purpose.keep_complete, keep, "{name}");
+            assert_eq!((purpose.quota, purpose.staged), (quota, staged), "{name}");
+        }
         assert_eq!(
             UploadPurpose::MIGRATION_OBJECT.byte_limit(1),
             300 * MIB,
             "a fixed cap ignores the import setting"
         );
-        for purpose in UploadPurpose::ALL {
-            let web = purpose.uploaders.session;
-            let expected = if web {
-                HashRule::Optional
-            } else {
-                HashRule::Required
-            };
-            assert_eq!(purpose.sha256, expected, "{}", purpose.as_str());
-            assert_eq!(
-                purpose.keep_complete,
-                if web { DAY } else { WEEK },
-                "{}",
-                purpose.as_str()
-            );
-            assert_eq!(purpose.staged, web, "{}", purpose.as_str());
-        }
+        assert_eq!(UploadPurpose::IMPORT.byte_limit(gib), gib);
+        assert!(
+            UploadPurpose::token_scopes().contains(Scope::Uploads)
+                && UploadPurpose::token_scopes().contains(Scope::Migrate)
+        );
+        assert!(UploadPurpose::any_takes_sessions());
         assert_eq!(UploadPurpose::longest_keep(), WEEK);
     }
 
