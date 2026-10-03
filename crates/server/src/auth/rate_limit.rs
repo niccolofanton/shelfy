@@ -4,7 +4,9 @@
 //!   the layer [`crate::rate_limit::by_client`] before the route runs. The
 //!   client is the TCP peer, or `CF-Connecting-IP` when the peer is a
 //!   trusted proxy ([`crate::net`], `SHELFY_TRUSTED_PROXIES`). An IPv6
-//!   client counts by its /64, the block one subscriber usually holds;
+//!   client counts by its /64, the block one subscriber usually holds. An
+//!   answer 403 `reauth_required` is refunded ([`RateLimiter::refund`]):
+//!   the session must re-authenticate first, so it was no attempt;
 //! - per email address: 3 sign-in emails per hour, counted for every address,
 //!   known or not, so a 429 says nothing about whether an account exists.
 //!
@@ -81,6 +83,19 @@ impl RateLimiter {
         let seconds = wait_ms.div_euclid(1000) + i64::from(wait_ms.rem_euclid(1000) > 0);
         Err(u32::try_from(seconds).unwrap_or(u32::MAX).max(1))
     }
+
+    /// Takes back a hit that [`RateLimiter::hit`] counted on `key` at `at`:
+    /// for a request that turned out not to be an attempt. A hit that has
+    /// left the window is gone already.
+    pub fn refund(&self, key: &Key, at: i64) {
+        let Some(hits) = self.hits.get(key) else {
+            return;
+        };
+        let mut hits = hits.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(index) = hits.iter().rposition(|&hit| hit == at) {
+            hits.remove(index);
+        }
+    }
 }
 
 /// The key of `value` in the `kind` namespace (`ip`, `email`).
@@ -138,6 +153,26 @@ mod tests {
         );
         assert_eq!(limiter.hit(&a, t0 + 60 * MINUTE), Ok(()));
         assert_eq!(limiter.hit(&a, t0 + 61 * MINUTE), Err(9 * 60));
+    }
+
+    #[test]
+    fn a_refunded_hit_frees_its_slot() {
+        let limiter = RateLimiter::new(RateLimit {
+            max: 2,
+            window: Duration::from_secs(60),
+        });
+        let a = key("ip", "203.0.113.7");
+        let t0 = 1_790_899_200_000;
+        assert_eq!(limiter.hit(&a, t0), Ok(()));
+        assert_eq!(limiter.hit(&a, t0 + 1_000), Ok(()));
+        assert_eq!(limiter.hit(&a, t0 + 2_000), Err(58));
+        limiter.refund(&a, t0 + 1_000);
+        assert_eq!(limiter.hit(&a, t0 + 2_000), Ok(()));
+        assert_eq!(limiter.hit(&a, t0 + 3_000), Err(57), "the first hit stays");
+        // A hit that is not there, or a key never seen, refunds nothing.
+        limiter.refund(&a, t0 + 5_000);
+        limiter.refund(&key("ip", "203.0.113.8"), t0);
+        assert_eq!(limiter.hit(&a, t0 + 3_000), Err(57));
     }
 
     #[test]

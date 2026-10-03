@@ -436,7 +436,11 @@ impl IntoResponse for ApiError {
         if let Some(seconds) = self.retry_after {
             headers.insert(header::RETRY_AFTER, HeaderValue::from(seconds));
         }
-        problem_response(self.status, &self.problem(), headers)
+        let mut response = problem_response(self.status, &self.problem(), headers);
+        // Layers outside the handler read the code: the sign-in limit does
+        // not count a `reauth_required` answer (`rate_limit::by_client`).
+        response.extensions_mut().insert(self.code);
+        response
     }
 }
 
