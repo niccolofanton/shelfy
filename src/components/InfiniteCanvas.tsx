@@ -108,6 +108,9 @@ const Tile = React.memo(function Tile({
         selectable={selectable}
         selected={selected}
         onQuickSelect={onQuickSelect}
+        // Viewport-first fetchpriority (plan §2.19): mirrors the grid's own
+        // first-paint gate — only the tiles present on mount race ahead.
+        priority={firstPaint}
       />
     </div>
   );

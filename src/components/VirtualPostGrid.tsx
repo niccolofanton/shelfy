@@ -27,6 +27,23 @@ export function colsForWidth(w: number): number {
   return 2;
 }
 
+// Touch devices page the grid with real-finger flings (faster, bigger jumps
+// than a trackpad/wheel) but pay full phone-network+CPU cost per offscreen
+// mount; the plan (§2.19) halves the default overscan there (6 → 3 rows) to
+// keep a fling's pre-warm burst in check. `(pointer: coarse)` is the primary
+// pointer's kind, so a touch-first phone/tablet reports true even with a mouse
+// plugged in; checked once (a device's primary pointer doesn't change mid
+// session, so this needn't be reactive like InfiniteCanvas's reduced-motion
+// check, which can toggle live in system settings).
+function isCoarsePointer(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches
+  );
+}
+const DEFAULT_OVERSCAN = isCoarsePointer() ? 3 : 6;
+
 interface VirtualPostGridProps {
   posts: Shelfy.Post[];
   // Search-transition phase (from Gallery's useSearchTransition). 'out' dissolves
@@ -67,7 +84,7 @@ function VirtualPostGrid({
   onOpen,
   selectable = false,
   selected, // Set<id> | undefined
-  overscan = 6,
+  overscan = DEFAULT_OVERSCAN,
   testId,
   onGridMouseDownCapture,
   onGridMouseOver,
@@ -265,6 +282,10 @@ function VirtualPostGrid({
               selectable={selectable}
               selected={selected ? selected.has(post.id) : false}
               onQuickSelect={onQuickSelect}
+              // Viewport-first fetchpriority (plan §2.19): only the rows
+              // painted on the very first frame compete ahead of the rest —
+              // the same gate that already limits the entrance stagger above.
+              priority={firstPaint}
             />
           </div>
         ))}
