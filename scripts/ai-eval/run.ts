@@ -37,6 +37,11 @@ function within(root: string, filename: string): boolean {
   );
 }
 
+/** A hook's Git dirs/index/config must not override a child's explicit cwd. */
+export function independentGitEnvironment(): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
+}
+
 /** Resolve ancestors before creation, including symlinks; never reuse a run directory. */
 export function privateOutput(outputArg: string, repoRoots: string[]): string {
   const requested = path.resolve(outputArg);
@@ -49,6 +54,7 @@ export function privateOutput(outputArg: string, repoRoots: string[]): string {
     throw new Error('outputs must stay outside repo');
   const git = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
     cwd: fs.realpathSync(ancestor),
+    env: independentGitEnvironment(),
     encoding: 'utf8',
   });
   if (git.status === 0 && git.stdout.trim() === 'true')
@@ -304,6 +310,7 @@ async function main(): Promise<void> {
   );
   const commonGit = spawnSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
     cwd: repo,
+    env: independentGitEnvironment(),
     encoding: 'utf8',
   });
   if (commonGit.status !== 0) throw new Error('cannot establish repository privacy boundary');

@@ -2,11 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   benchRequest,
   imagePaths,
   candidateInputs,
+  independentGitEnvironment,
   privateOutput,
   spread,
   trimHashtags,
@@ -19,7 +20,10 @@ const directory = (): string => {
   temporary.push(dir);
   return dir;
 };
-afterEach(() => temporary.splice(0).forEach((p) => fs.rmSync(p, { recursive: true, force: true })));
+afterEach(() => {
+  vi.unstubAllEnvs();
+  temporary.splice(0).forEach((p) => fs.rmSync(p, { recursive: true, force: true }));
+});
 
 describe('operator benchmark inputs', () => {
   it('passes actual caption and media state to the shared catalog builder', () => {
@@ -186,9 +190,38 @@ describe('operator benchmark inputs', () => {
   it('refuses outputs inside a different Git checkout as well as this task repository', () => {
     const root = directory();
     const otherRepo = directory();
-    expect(spawnSync('git', ['init', '--quiet', otherRepo]).status).toBe(0);
+    expect(
+      spawnSync('git', ['init', '--quiet', otherRepo], { env: independentGitEnvironment() }).status,
+    ).toBe(0);
     expect(() => privateOutput(path.join(otherRepo, 'private-run'), [root])).toThrow(
       /every Git worktree/,
     );
+  });
+
+  it('ignores hook Git dirs, index and config while preserving external-checkout rejection', () => {
+    const hookRepo = directory();
+    const otherRepo = directory();
+    const external = directory();
+    for (const repo of [hookRepo, otherRepo])
+      expect(
+        spawnSync('git', ['init', '--quiet', repo], { env: independentGitEnvironment() }).status,
+      ).toBe(0);
+    const hookConfig = path.join(hookRepo, '.git', 'config');
+    const originalConfig = fs.readFileSync(hookConfig, 'utf8');
+    vi.stubEnv('GIT_DIR', path.join(hookRepo, '.git'));
+    vi.stubEnv('GIT_COMMON_DIR', path.join(hookRepo, '.git'));
+    vi.stubEnv('GIT_WORK_TREE', hookRepo);
+    vi.stubEnv('GIT_INDEX_FILE', path.join(hookRepo, '.git', 'hook-index'));
+    vi.stubEnv('GIT_PREFIX', 'synthetic-hook/');
+    vi.stubEnv('GIT_CONFIG_COUNT', '1');
+    vi.stubEnv('GIT_CONFIG_KEY_0', 'core.bare');
+    vi.stubEnv('GIT_CONFIG_VALUE_0', 'true');
+    expect(privateOutput(path.join(external, 'private-run'), [hookRepo])).toBe(
+      path.join(fs.realpathSync(external), 'private-run'),
+    );
+    expect(() => privateOutput(path.join(otherRepo, 'private-run'), [hookRepo])).toThrow(
+      /every Git worktree/,
+    );
+    expect(fs.readFileSync(hookConfig, 'utf8')).toBe(originalConfig);
   });
 });
