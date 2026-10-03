@@ -335,10 +335,31 @@ async fn caps_and_malformed_output_are_safe_empty_results() {
             .len(),
         8
     );
-    canned(&stub, "broken", "not JSON");
+    // A single malformed canned answer may be repaired by the SDK's second
+    // structured-output attempt. Both attempts must fail for this case.
+    stub.inject(shelfy_ai::stub::FaultRule {
+        fault: shelfy_ai::stub::Fault::NonConformingJson,
+        times: Some(2),
+        endpoint: Some(shelfy_ai::stub::Endpoint::Chat),
+    });
     let broken = suggest_json(&t, &app, &cookie, "broken", "social").await;
     assert_eq!(broken["tags"], json!([]));
     assert!(broken["reason"].is_string());
+    assert_eq!(
+        stub.requests().len(),
+        3,
+        "one valid call, then two invalid structured attempts"
+    );
+    let cached = t
+        .write(&user, |c| {
+            Ok(c.query_row(
+                "SELECT COUNT(*) FROM ai_cache WHERE kind='suggest'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )?)
+        })
+        .await;
+    assert_eq!(cached, 1, "only the preceding valid answer can be cached");
 }
 
 #[tokio::test]

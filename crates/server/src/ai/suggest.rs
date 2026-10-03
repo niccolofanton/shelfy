@@ -78,7 +78,16 @@ pub async fn suggest(
             params![key, now_ms().saturating_sub(core::TTL_MS), now_ms()], |r| r.get(0)
         ).optional()?;
         let cached = raw.and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
-            .map(|tags| core::intersect(conn, source, &tags)).transpose()?;
+            .map(|tags| {
+                let live: std::collections::HashSet<_> = core::intersect(conn, source, &tags)?
+                    .into_iter().map(|tag| tag.trim().to_lowercase()).collect();
+                // These are already canonical forms from the same vocabulary
+                // generation. Revalidate membership without reformatting an
+                // accepted alias's display form via identity resolution.
+                Ok::<_,shelfy_core::repo::RepoError>(tags.into_iter()
+                    .filter(|tag| live.contains(&tag.trim().to_lowercase()))
+                    .take(core::MAX_TAGS).collect::<Vec<_>>())
+            }).transpose()?;
         Ok::<_,shelfy_core::repo::RepoError>((key, cached))
     })).await?;
     if let Some(tags) = cached {
