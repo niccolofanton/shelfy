@@ -124,7 +124,10 @@ describe('explicit runs in the queue', () => {
   it('follows the trailing run of known items in item order, and keeps the accepted keys', async () => {
     const h = harness();
     await h.pairNow();
-    const run = await h.queue.openRun(spec(), T0);
+    const run = await h.queue.openRun(
+      spec({ accountTokenId: (await h.store.pairing())!.tokenId }),
+      T0,
+    );
     await h.queue.captureToRun(run.id, {
       source: 'replay',
       hasNextPage: true,
@@ -262,7 +265,10 @@ describe('captures of a syncing tab', () => {
     const h = harness();
     await h.pairNow();
     await h.store.patchSettings({ passive: { instagram: false } });
-    const run = await h.queue.openRun(spec(), T0);
+    const run = await h.queue.openRun(
+      spec({ accountTokenId: (await h.store.pairing())!.tokenId }),
+      T0,
+    );
     expect(await send(h, capture())).toMatchObject({ queued: 2, runId: run.id, full: true });
     expect(await send(h, capture({ seq: 1, capture: 'passive' }))).toMatchObject({
       queued: 2,

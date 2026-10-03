@@ -267,7 +267,12 @@ export class Queue {
         (run) => run.state === 'open' && run.trigger === 'passive' && run.tabId === spec.tabId,
       );
       let run =
-        open.find((r) => r.docId === spec.docId && r.listingKey === spec.listingKey) ?? null;
+        open.find(
+          (r) =>
+            r.docId === spec.docId &&
+            r.listingKey === spec.listingKey &&
+            r.accountTokenId === spec.accountTokenId,
+        ) ?? null;
       for (const other of open)
         if (other !== run) {
           other.state = 'ended';

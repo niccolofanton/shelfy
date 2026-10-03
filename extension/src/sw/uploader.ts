@@ -287,7 +287,9 @@ export class Uploader {
   }
   private async accountFor(run: Run) {
     const pairing = await this.deps.store.pairing();
-    if (pairing && run.accountTokenId && pairing.tokenId !== run.accountTokenId) {
+    // Legacy IDB records have no provable account owner. Never adopt them
+    // into the current pairing, even if a collection id happens to match.
+    if (pairing && (!run.accountTokenId || pairing.tokenId !== run.accountTokenId)) {
       await this.deps.queue.dropRun(run.id);
       return null;
     }

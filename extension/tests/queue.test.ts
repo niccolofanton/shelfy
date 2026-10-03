@@ -34,6 +34,35 @@ const input = (batch: WireItem[], at: number, messageId: string | null = null) =
 });
 
 describe('runs: one passive run per listing visit', () => {
+  it('keeps B items in a new run when pairing changes on the same tab, document and listing', async () => {
+    const { queue } = harness();
+    const first = await queue.capturePassive(
+      visit({ accountTokenId: 'account-A' }),
+      input(items(1, 1), T0, 'doc-a:0'),
+    );
+    const second = await queue.capturePassive(
+      visit({ accountTokenId: 'account-B' }),
+      input(items(2, 1), T0 + 1, 'doc-a:1'),
+    );
+    expect(second.run?.id).not.toBe(first.run?.id);
+    expect(await queue.getRun(first.run!.id)).toMatchObject({
+      accountTokenId: 'account-A',
+      state: 'ended',
+      queued: 1,
+    });
+    expect(await queue.getRun(second.run!.id)).toMatchObject({
+      accountTokenId: 'account-B',
+      state: 'open',
+      queued: 1,
+    });
+    await queue.dropRun(first.run!.id);
+    expect(await queue.getRun(second.run!.id)).toMatchObject({
+      accountTokenId: 'account-B',
+      queued: 1,
+    });
+    expect((await queue.snapshot()).counters.queuedItems).toBe(1);
+  });
+
   it('reuses the run of the same tab, document and listing', async () => {
     const { queue } = harness();
     const first = await queue.capturePassive(visit(), input(items(1, 3), T0, 'doc-a:0'));

@@ -22,13 +22,16 @@ async function capture(h: Harness, from: number, count: number, messageId?: stri
     Array.from({ length: count }, (_, i) => igItem(from + i)),
     'instagram',
   );
-  return h.queue.capturePassive(visit, {
-    source: 'passive',
-    hasNextPage: true,
-    items,
-    at: h.clock.now,
-    messageId: messageId ?? `doc-1:${from}`,
-  });
+  return h.queue.capturePassive(
+    { ...visit, accountTokenId: (await h.store.pairing())?.tokenId },
+    {
+      source: 'passive',
+      hasNextPage: true,
+      items,
+      at: h.clock.now,
+      messageId: messageId ?? `doc-1:${from}`,
+    },
+  );
 }
 
 /** Moves the clock past the batch window and flushes. */
@@ -40,6 +43,46 @@ async function flushLater(h: Harness, ms = 2_000, force = false): Promise<void> 
 const ingests = (h: Harness) => h.api.log.filter((r) => r.path === '/api/v1/ingest/batches');
 
 describe('uploader', () => {
+  it('discards unbound IDB records after upgrade instead of adopting their collection on account B', async () => {
+    const h = harness();
+    await h.pairNow();
+    const pairingA = (await h.store.pairing())!;
+    const legacy = await h.queue.capturePassive(
+      { ...visit, collection: { mode: 'existing', id: 7 } },
+      {
+        source: 'passive',
+        hasNextPage: true,
+        items: prefilterBatch([igItem(1)], 'instagram').items,
+        at: T0,
+        messageId: 'legacy-A',
+      },
+    );
+    await h.store.setPairing({ ...pairingA, token: h.api.mintToken(), tokenId: 'account-B' });
+    await flushLater(h);
+    expect(h.api.log).toEqual([]);
+    expect(await h.queue.getRun(legacy.run!.id)).toBeNull();
+    expect((await h.queue.snapshot()).counters.queuedItems).toBe(0);
+    expect((await h.store.pairing())?.tokenId).toBe('account-B');
+  });
+
+  it('uploads B captures after discarding A on the same tab and listing', async () => {
+    const h = harness();
+    await h.pairNow();
+    const first = await capture(h, 1, 1);
+    const pairingA = (await h.store.pairing())!;
+    const tokenB = h.api.mintToken();
+    await h.store.setPairing({ ...pairingA, token: tokenB, tokenId: 'account-B' });
+    const second = await capture(h, 2, 1);
+    expect(second.run!.id).not.toBe(first.run!.id);
+    await flushLater(h);
+    await h.uploader.flush();
+    expect(await h.queue.getRun(first.run!.id)).toBeNull();
+    expect(h.api.ingests).toHaveLength(1);
+    expect(ingests(h)[0].authorization).toBe(`Bearer ${tokenB}`);
+    expect([...h.api.posts.keys()]).toEqual(['ig_3400000000000000002']);
+    expect((await h.queue.snapshot()).counters.queuedItems).toBe(0);
+  });
+
   it('sends nothing while unpaired, and keeps the items', async () => {
     const h = harness();
     await capture(h, 1, 3);
