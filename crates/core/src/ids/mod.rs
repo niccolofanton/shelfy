@@ -12,9 +12,11 @@
 //! | Manual    | ULID                                | `m_<ulid>`        |
 //!
 //! The submodules also decode the identifiers the desktop app stored in its
-//! `posts.id` column, so a legacy library maps onto the same keys.
+//! `posts.id` column, so a legacy library maps onto the same keys, and
+//! [`link`] names the post a shared URL points at (P2-11).
 
 pub mod ig;
+pub mod link;
 pub mod manual;
 pub mod pinterest;
 pub mod web;
