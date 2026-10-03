@@ -78,12 +78,17 @@ async fn run(ctx: JobContext) -> JobResult {
     let kind: RunKind = serde_json::from_value(ctx.payload()["runKind"].clone())
         .map_err(|_| JobError::permanent("invalid_payload"))?;
     let id = ctx.id();
+    let incarnation = ctx.incarnation().to_owned();
     let mut plan = ctx
         .user_db(move |db| {
-            db.read(|conn| runs::load(conn, id)?.map_or_else(|| runs::snapshot(conn, kind), Ok))
-                .map_err(JobError::from)
+            db.read(|conn| {
+                runs::load_for(conn, id, &incarnation)?
+                    .map_or_else(|| runs::snapshot(conn, kind), Ok)
+            })
+            .map_err(JobError::from)
         })
         .await?;
+    plan.incarnation = Some(ctx.incarnation().to_owned());
     if plan.kind != kind {
         return Err(JobError::permanent("invalid_payload"));
     }

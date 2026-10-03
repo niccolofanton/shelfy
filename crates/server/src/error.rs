@@ -85,6 +85,8 @@ pub enum ErrorCode {
     ValidationFailed,
     /// 422: unsupported or malformed import document.
     ImportFormatUnknown,
+    /// 409: a pre-upgrade partial cursor cannot be attributed safely. Reupload.
+    ImportCheckpointUnbound,
     /// 422: the AI provider refused the key.
     ProviderKeyInvalid,
     /// 422: no AI provider can serve this task on this server. The operator
@@ -164,7 +166,8 @@ impl ErrorCode {
             Self::Conflict
             | Self::UploadConsumed
             | Self::SourceDisabled
-            | Self::AiVaultDisabled => StatusCode::CONFLICT,
+            | Self::AiVaultDisabled
+            | Self::ImportCheckpointUnbound => StatusCode::CONFLICT,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::ValidationFailed
@@ -240,6 +243,7 @@ impl ErrorCode {
             Self::UnsupportedMediaType => "unsupported_media_type",
             Self::ValidationFailed => "validation_failed",
             Self::ImportFormatUnknown => "import_format_unknown",
+            Self::ImportCheckpointUnbound => "import_checkpoint_unbound",
             Self::ProviderKeyInvalid => "provider_key_invalid",
             Self::AiNotConfigured => "ai_not_configured",
             Self::AiVaultDisabled => "ai_vault_disabled",

@@ -197,7 +197,10 @@ fn library_token_kind_upgrade_preserves_existing_credentials() {
             before,
             "hashes, scopes, expiry and install kept"
         );
-        assert_eq!(schema::version(&conn).unwrap(), 6);
+        assert_eq!(
+            schema::version(&conn).unwrap(),
+            Kind::Control.latest_version()
+        );
         if let Some(before) = exports_before {
             assert_eq!(exports(&conn), before, "export metadata kept from v5 to v6");
         }

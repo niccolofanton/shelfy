@@ -43,8 +43,8 @@
 //! ```
 //!
 //! A build whose latest version is below `min_reader_version` refuses the
-//! file with [`crate::db::DbError::SchemaTooNew`]. No migration writes the
-//! table yet.
+//! file with [`crate::db::DbError::SchemaTooNew`]. Control v7 sets this floor:
+//! older job writers cannot preserve identities.
 //!
 //! # Writes made during a rollback
 //!
@@ -133,6 +133,10 @@ const CONTROL_MIGRATIONS: &[Migration] = &[
     Migration {
         sql: include_str!("../../migrations/control/0006_library_tokens.sql"),
         comment: "control schema v6: library API token kind",
+    },
+    Migration {
+        sql: include_str!("../../migrations/control/0007_job_identity.sql"),
+        comment: "control schema v7: durable job IDs and marker incarnations",
     },
 ];
 
@@ -268,20 +272,30 @@ pub fn upgrade(conn: &mut Connection, kind: Kind) -> Result<Upgrade, DbError> {
     if found == latest {
         return Ok(Upgrade::Current);
     }
+    check_reader_version(conn, kind, found, latest)?;
+    if kind == Kind::Library {
+        record_older_build(conn, latest)?;
+    }
+    Ok(Upgrade::Ahead { found })
+}
+
+fn check_reader_version(
+    conn: &Connection,
+    kind: Kind,
+    found: usize,
+    supported: usize,
+) -> Result<(), DbError> {
     if let Some(needs) = min_reader_version(conn)?
-        && needs > latest
+        && needs > supported
     {
         return Err(DbError::SchemaTooNew {
             kind: kind.name(),
             found,
             needs,
-            supported: latest,
+            supported,
         });
     }
-    if kind == Kind::Library {
-        record_older_build(conn, latest)?;
-    }
-    Ok(Upgrade::Ahead { found })
+    Ok(())
 }
 
 /// Applies the `steps` after version `from` in `tx`, checking foreign keys
@@ -438,6 +452,26 @@ mod tests {
             .migrations()
             .validate()
             .expect("control migrations");
+    }
+
+    #[test]
+    fn control_job_identity_migration_refuses_a_v6_reader_without_writes() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrate_to(&mut conn, Kind::Control, 6).unwrap();
+        upgrade(&mut conn, Kind::Control).unwrap();
+        let changes = conn.total_changes();
+        assert!(matches!(
+            check_reader_version(&conn, Kind::Control, 7, 6),
+            Err(DbError::SchemaTooNew {
+                kind: "control",
+                found: 7,
+                needs: 7,
+                supported: 6,
+            })
+        ));
+        assert_eq!(conn.total_changes(), changes);
+        assert_eq!(version(&conn).unwrap(), 7);
+        check_reader_version(&conn, Kind::Control, 7, 7).unwrap();
     }
 
     #[test]

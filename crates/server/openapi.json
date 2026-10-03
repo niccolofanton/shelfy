@@ -6653,6 +6653,7 @@
           "unsupported_media_type",
           "validation_failed",
           "import_format_unknown",
+          "import_checkpoint_unbound",
           "provider_key_invalid",
           "ai_not_configured",
           "ai_vault_disabled",
@@ -8624,8 +8625,12 @@
       "PairedExtension": {
         "type": "object",
         "description": "A paired extension's token.",
-        "required": ["token", "tokenId", "scopes"],
+        "required": ["token", "tokenId", "accountId", "scopes"],
         "properties": {
+          "accountId": {
+            "type": "string",
+            "description": "Stable account identity for web/extension command binding; never a credential."
+          },
           "scopes": {
             "type": "array",
             "items": {

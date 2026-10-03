@@ -13,6 +13,7 @@ use shelfy_server::{
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 use support::auth::{add_member, owner, sign_in, sign_in_as, spa, with_session};
+use support::library::NOW;
 use support::{TestState, get, json as response_json, post_json, send};
 use tokio_util::sync::CancellationToken;
 
@@ -375,6 +376,14 @@ async fn cancellation_between_batches_preserves_committed_report_and_retry_resum
         .await
         .unwrap();
     t.state.jobs().cancel(&user, id).await.unwrap();
+    let incarnation = t
+        .state
+        .jobs()
+        .get(&user, id)
+        .await
+        .unwrap()
+        .unwrap()
+        .incarnation;
     {
         let (lock, cv) = &*gate;
         *lock.lock().unwrap() = true;
@@ -390,6 +399,13 @@ async fn cancellation_between_batches_preserves_committed_report_and_retry_resum
     .await
     .unwrap()
     .unwrap();
+    assert_eq!(
+        db.read(|c| shelfy_server::imports::checkpoint(c, id))
+            .unwrap()
+            .incarnation
+            .as_deref(),
+        Some(incarnation.as_str())
+    );
     let report = response_json(send(&app, get(&format!("/api/v1/imports/{id}"))).await).await;
     support::sse::assert_schema(&report, "Import");
     assert_eq!(report["job"]["state"], "cancelled");
@@ -460,5 +476,174 @@ async fn competing_requests_claim_once_and_changed_fingerprint_keeps_new_upload(
     assert_eq!(
         send(&app, request("../escape", "bad-input")).await.status(),
         StatusCode::UNPROCESSABLE_ENTITY
+    );
+}
+
+#[tokio::test]
+async fn legacy_unbound_partial_import_fails_without_writing_and_explains_reupload() {
+    let t = TestState::new();
+    let user = owner(&t);
+    let app = t.app_as(&user);
+    let bytes=br#"[{"id":"1","platform":"twitter","text":"Synthetic one"},{"id":"2","platform":"twitter","text":"Synthetic two"}]"#;
+    let source = upload(&t, &user, bytes, UploadPurpose::IMPORT, "json");
+    let accepted: Value = response_json(send(&app, request(&source, "legacy-partial")).await).await;
+    let id = accepted["job"]["id"].as_i64().unwrap();
+    t.control()
+        .execute(
+            "UPDATE jobs SET incarnation='legacy:00000000000000000000000000000000' WHERE id=?1",
+            [id],
+        )
+        .unwrap();
+    let db = t.state.user_db(&user).await.unwrap();
+    db.write(|tx| {
+        shelfy_server::imports::save(
+            tx,
+            id,
+            &shelfy_server::imports::Checkpoint {
+                next: 1,
+                definitions_done: true,
+                ..Default::default()
+            },
+        )?;
+        shelfy_core::repo::posts::insert(
+            tx,
+            &shelfy_core::repo::posts::NewPost::new(
+                "x_1",
+                shelfy_core::repo::Platform::Twitter,
+                "1",
+                "text",
+                NOW,
+            ),
+            NOW,
+        )?;
+        Ok::<_, shelfy_core::repo::RepoError>(())
+    })
+    .unwrap();
+    let before = db.generation();
+    let marker: String = db
+        .read(|c| {
+            Ok::<_, shelfy_core::repo::RepoError>(c.query_row(
+                "SELECT value FROM meta WHERE key=?1",
+                [shelfy_server::imports::report_key(id)],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    let scheduler = t
+        .state
+        .jobs()
+        .start(t.state.clone(), CancellationToken::new());
+    let row = done(&t, &user, id).await;
+    assert_eq!(row.state, JobState::Failed);
+    assert_eq!(row.error_code.as_deref(), Some("import_checkpoint_unbound"));
+    assert!(
+        row.error_detail
+            .as_deref()
+            .unwrap()
+            .contains("upload the file again")
+    );
+    assert_eq!(before, db.generation());
+    let after: String = db
+        .read(|c| {
+            Ok::<_, shelfy_core::repo::RepoError>(c.query_row(
+                "SELECT value FROM meta WHERE key=?1",
+                [shelfy_server::imports::report_key(id)],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(marker, after);
+    assert_eq!(
+        db.read(|c| Ok::<_, shelfy_core::repo::RepoError>(c.query_row(
+            "SELECT count(*) FROM posts",
+            [],
+            |r| r.get::<_, i64>(0)
+        )?))
+        .unwrap(),
+        1
+    );
+    let response = send(&app, get(&format!("/api/v1/imports/{id}"))).await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        response_json(response).await["code"],
+        "import_checkpoint_unbound"
+    );
+    // Follow the recovery action with a fresh claim/job: merge the prior partial
+    // metadata by stable post key rather than create a second copy.
+    let retry_source = upload(&t, &user, bytes, UploadPurpose::IMPORT, "json");
+    let accepted: Value =
+        response_json(send(&app, request(&retry_source, "legacy-reupload")).await).await;
+    let retry_id = accepted["job"]["id"].as_i64().unwrap();
+    assert!(retry_id > id);
+    assert_eq!(done(&t, &user, retry_id).await.state, JobState::Succeeded);
+    assert_eq!(
+        db.read(|c| Ok::<_, shelfy_core::repo::RepoError>(c.query_row(
+            "SELECT count(*) FROM posts",
+            [],
+            |r| r.get::<_, i64>(0)
+        )?))
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        db.read(|c| Ok::<_, shelfy_core::repo::RepoError>(c.query_row(
+            "SELECT count(*) FROM notifications WHERE code='import.done'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )?))
+        .unwrap(),
+        1
+    );
+    assert!(
+        scheduler
+            .stop(tokio::time::Instant::now() + Duration::from_secs(5))
+            .await
+    );
+}
+
+#[tokio::test]
+async fn a_new_import_ignores_an_old_finished_marker_instead_of_skipping_its_file() {
+    let t = TestState::new();
+    let user = owner(&t);
+    let app = t.app_as(&user);
+    let bytes = br#"[{"id":"91","platform":"twitter","text":"New synthetic input"}]"#;
+    let source = upload(&t, &user, bytes, UploadPurpose::IMPORT, "json");
+    let accepted: Value =
+        response_json(send(&app, request(&source, "fresh-after-orphan")).await).await;
+    let id = accepted["job"]["id"].as_i64().unwrap();
+    let db = t.state.user_db(&user).await.unwrap();
+    db.write(|tx| {
+        shelfy_server::imports::save(
+            tx,
+            id,
+            &shelfy_server::imports::Checkpoint {
+                complete: true,
+                next: 999,
+                ..Default::default()
+            },
+        )
+    })
+    .unwrap();
+    let scheduler = t
+        .state
+        .jobs()
+        .start(t.state.clone(), CancellationToken::new());
+    let row = done(&t, &user, id).await;
+    assert_eq!(row.state, JobState::Succeeded);
+    let marker = db
+        .read(|c| shelfy_server::imports::checkpoint(c, id))
+        .unwrap();
+    assert!(marker.complete);
+    assert_eq!(marker.report.imported, 1);
+    assert_eq!(marker.next, 1);
+    assert_eq!(
+        marker.incarnation.as_deref(),
+        Some(row.incarnation.as_str())
+    );
+    assert_eq!(marker.upload_id.as_deref(), Some(source.as_str()));
+    assert!(
+        scheduler
+            .stop(tokio::time::Instant::now() + Duration::from_secs(5))
+            .await
     );
 }

@@ -506,6 +506,7 @@ mod tests {
     fn row(state: JobState) -> JobRow {
         JobRow {
             id: 7,
+            incarnation: "job:test".into(),
             user_id: "U".into(),
             kind: "migrate".into(),
             dedupe_key: Some("migrate".into()),

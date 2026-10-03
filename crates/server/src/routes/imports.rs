@@ -7,7 +7,7 @@ use crate::control::{
 use crate::current_user::CurrentUser;
 use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json, Path};
-use crate::imports::{Import, checkpoint};
+use crate::imports::{Import, checkpoint_for};
 use crate::jobs::{
     idempotency::IDEMPOTENCY_KEY,
     import::{self, Payload},
@@ -140,9 +140,12 @@ pub async fn get_import(
         .filter(|r| r.kind == import::KIND)
         .ok_or_else(ApiError::not_found)?;
     let library = state.user_db(user.id()).await?;
-    let report = blocking(move || library.read(|c| checkpoint(c, id)))
-        .await?
-        .report;
+    let incarnation = row.incarnation.clone();
+    let payload: Payload = serde_json::from_str(&row.payload_json).map_err(ApiError::internal)?;
+    let report =
+        blocking(move || library.read(|c| checkpoint_for(c, id, &incarnation, &payload.upload_id)))
+            .await?
+            .report;
     Ok(no_store(
         Json(Import {
             job: row.into(),

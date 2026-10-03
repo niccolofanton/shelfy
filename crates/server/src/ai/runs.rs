@@ -33,6 +33,8 @@ impl RunKind {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Plan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incarnation: Option<String>,
     pub kind: RunKind,
     pub tags: Vec<VocabTag>,
     pub vocabulary: Vec<VocabTag>,
@@ -69,6 +71,7 @@ pub fn snapshot(conn: &Connection, kind: RunKind) -> Result<Plan> {
         ),
     };
     Ok(Plan {
+        incarnation: None,
         kind,
         tags,
         vocabulary,
@@ -96,6 +99,31 @@ pub fn load(conn: &Connection, id: i64) -> Result<Option<Plan>> {
             })
         })
         .transpose()
+}
+
+/// Legacy or reincarnated IDs must never load a finished marker or old cursor.
+pub fn load_for(conn: &Connection, id: i64, incarnation: &str) -> Result<Option<Plan>> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value_json FROM ai_cache WHERE kind='taxonomy.run' AND key_hash=?1",
+            [id.to_be_bytes().as_slice()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let Some(value) =
+        value.and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
+    else {
+        return Ok(None);
+    };
+    if value.get("incarnation").and_then(serde_json::Value::as_str) != Some(incarnation) {
+        return Ok(None);
+    }
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(|_| RepoError::Invalid {
+            field: "taxonomy.run",
+            reason: "invalid stored plan",
+        })
 }
 
 pub fn save(tx: &Transaction<'_>, id: i64, plan: &Plan, now: i64) -> Result<()> {

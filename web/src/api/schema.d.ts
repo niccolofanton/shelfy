@@ -2932,6 +2932,7 @@ export interface components {
       | 'unsupported_media_type'
       | 'validation_failed'
       | 'import_format_unknown'
+      | 'import_checkpoint_unbound'
       | 'provider_key_invalid'
       | 'ai_not_configured'
       | 'ai_vault_disabled'
@@ -4205,6 +4206,8 @@ export interface components {
     };
     /** @description A paired extension's token. */
     PairedExtension: {
+      /** @description Stable account identity for web/extension command binding; never a credential. */
+      accountId: string;
       /** @description What it may do: `ingest`, `tasks`, `uploads`, `lookup`. */
       scopes: components['schemas']['TokenScope'][];
       /**

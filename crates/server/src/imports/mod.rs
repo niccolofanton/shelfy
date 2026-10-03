@@ -45,6 +45,11 @@ pub struct ImportRejected {
 /// The report and cursor share the same library transaction as their posts.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Checkpoint {
+    /// The durable control job lifetime and its uniquely claimed source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incarnation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_id: Option<String>,
     /// Next source index.
     pub next: u64,
     /// Collection-only prepass was committed.
@@ -79,6 +84,41 @@ pub fn checkpoint(
         }),
     }
 }
+/// Reads only the cursor belonging to this job lifetime and claimed upload.
+/// Newly admitted jobs discard old markers; migrated jobs with unbound cursors
+/// fail before any write, so their partially imported input is not replayed.
+pub fn checkpoint_for(
+    conn: &rusqlite::Connection,
+    id: i64,
+    incarnation: &str,
+    upload_id: &str,
+) -> Result<Checkpoint, crate::error::ApiError> {
+    let exists: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM meta WHERE key=?1)",
+            [report_key(id)],
+            |r| r.get(0),
+        )
+        .map_err(crate::error::ApiError::internal)?;
+    if exists {
+        let checkpoint = checkpoint(conn, id)?;
+        if checkpoint.incarnation.as_deref() == Some(incarnation)
+            && checkpoint.upload_id.as_deref() == Some(upload_id)
+        {
+            return Ok(checkpoint);
+        }
+        if !incarnation.starts_with("job:") {
+            return Err(crate::error::ApiError::new(crate::error::ErrorCode::ImportCheckpointUnbound)
+                .with_detail("Start a new import and upload the file again; the legacy partial checkpoint was left unchanged."));
+        }
+    }
+    Ok(Checkpoint {
+        incarnation: Some(incarnation.to_owned()),
+        upload_id: Some(upload_id.to_owned()),
+        ..Checkpoint::default()
+    })
+}
+
 /// Stores a cursor after its batch in the same transaction.
 pub fn save(
     conn: &rusqlite::Connection,

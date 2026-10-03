@@ -251,6 +251,7 @@ struct Inner {
     shared: Arc<Shared>,
     state: AppState,
     id: i64,
+    incarnation: Arc<str>,
     kind: &'static str,
     user_id: Arc<str>,
     payload: serde_json::Value,
@@ -302,6 +303,7 @@ impl JobContext {
                 shared,
                 state,
                 id: row.id,
+                incarnation: row.incarnation.as_str().into(),
                 kind,
                 user_id: row.user_id.as_str().into(),
                 post_key,
@@ -330,6 +332,12 @@ impl JobContext {
     #[must_use]
     pub fn kind(&self) -> &'static str {
         self.inner.kind
+    }
+
+    /// This job's stable lifetime identity, unchanged by retries or recovery.
+    #[must_use]
+    pub fn incarnation(&self) -> &str {
+        &self.inner.incarnation
     }
 
     /// The user the job works for.

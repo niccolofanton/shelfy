@@ -643,8 +643,8 @@ pub fn dump(conn: &Connection, kind: Kind, title: &str) -> String {
         .unwrap()
         .collect::<rusqlite::Result<_>>()
         .unwrap();
-    for (_, name, sql) in &objects {
-        if !shadow.contains(name) {
+    for (object_kind, name, sql) in &objects {
+        if object_kind != "trigger" && !shadow.contains(name) {
             writeln!(out, "{sql};").unwrap();
         }
     }
@@ -690,6 +690,13 @@ pub fn dump(conn: &Connection, kind: Kind, title: &str) -> String {
                 values.join(", ")
             )
             .unwrap();
+        }
+    }
+
+    // Restore persisted highwater and its job rows before enabling write guards.
+    for (object_kind, _, sql) in &objects {
+        if object_kind == "trigger" {
+            writeln!(out, "{sql};").unwrap();
         }
     }
 

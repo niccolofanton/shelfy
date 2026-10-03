@@ -1,5 +1,5 @@
 //! Streaming parser and cancellable, resumable metadata batch writer.
-use super::{checkpoint, save};
+use super::{checkpoint_for, save};
 use crate::control::{
     uploads::{self, Found, UploadPurpose},
     users,
@@ -64,7 +64,12 @@ pub async fn run(ctx: &JobContext) -> Result<crate::jobs::Outcome, JobError> {
     let saved = ctx
         .user_db({
             let id = ctx.id();
-            move |db| db.read(|c| checkpoint(c, id)).map_err(JobError::from)
+            let incarnation = ctx.incarnation().to_owned();
+            let upload = payload.upload_id.clone();
+            move |db| {
+                db.read(|c| checkpoint_for(c, id, &incarnation, &upload))
+                    .map_err(JobError::from)
+            }
         })
         .await?;
     if saved.complete {
@@ -193,13 +198,15 @@ pub async fn run(ctx: &JobContext) -> Result<crate::jobs::Outcome, JobError> {
         let fence = ctx.attempt_fence();
         let id = ctx.id();
         let now = ctx.jobs().clock().now_ms();
+        let incarnation = ctx.incarnation().to_owned();
+        let upload = payload.upload_id.clone();
         let saved = ctx
             .user_db(move |db| {
                 let (saved, keys) = db.write(|c| -> Result<_, JobError> {
                     if !fence.is_current()? {
                         return Err(JobError::cancelled());
                     }
-                    let mut saved = checkpoint(c, id)?;
+                    let mut saved = checkpoint_for(c, id, &incarnation, &upload)?;
                     let mut keys = Vec::new();
                     if is_definitions && !saved.definitions_done {
                         for d in defs.values() {
@@ -290,10 +297,12 @@ async fn finish(ctx: &JobContext) -> Result<(), JobError> {
     let state = ctx.state().clone();
     let user = ctx.user_id().to_owned();
     let now = ctx.jobs().clock().now_ms();
+    let incarnation = ctx.incarnation().to_owned();
+    let upload = ctx.payload_as::<Payload>()?.upload_id;
     ctx.user_db(move|db|{
         let notice=db.write(|c|->Result<_,JobError>{
             if !fence.is_current()? {return Err(JobError::cancelled());}
-            let mut saved=checkpoint(c,id)?;
+            let mut saved=checkpoint_for(c,id,&incarnation,&upload)?;
             if saved.complete {return Ok(None);}
             let params=json!({"jobId":id,"imported":saved.report.imported,"updated":saved.report.updated,"skipped":saved.report.skipped,"rejected":saved.report.rejected_count});
             let n=notifications::create(c,&NewNotification{kind:"import".into(),code:"import.done".into(),params:params.as_object().cloned().unwrap_or_default(),target:Some("/library".into())},now)?;

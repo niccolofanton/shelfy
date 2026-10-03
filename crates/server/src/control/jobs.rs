@@ -30,6 +30,8 @@ use crate::events::model::JobState;
 pub struct JobRow {
     /// Job id.
     pub id: i64,
+    /// Stable lifetime identity, also across retries. Never exposed as content.
+    pub incarnation: String,
     /// The user the job works for.
     pub user_id: String,
     /// Its kind (`archive.drain`, `migrate`, …).
@@ -113,7 +115,7 @@ pub fn parse_state(value: &str) -> Option<JobState> {
 
 const COLUMNS: &str = "id, user_id, kind, dedupe_key, state, priority, payload_json, attempts, \
                        max_attempts, run_at, lease_until, progress, stage, error_code, \
-                       error_detail, created_at, updated_at, finished_at";
+                       error_detail, created_at, updated_at, finished_at, incarnation";
 
 /// The final states, as SQL.
 const FINAL: &str = "('succeeded', 'failed', 'cancelled')";
@@ -122,6 +124,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<JobRow> {
     let state: String = row.get(4)?;
     Ok(JobRow {
         id: row.get(0)?,
+        incarnation: row.get(18)?,
         user_id: row.get(1)?,
         kind: row.get(2)?,
         dedupe_key: row.get(3)?,
@@ -176,14 +179,19 @@ pub enum Inserted {
 ///
 /// # Errors
 ///
-/// The query failed (a missing user is a foreign-key error).
+/// The query failed (a missing user is a foreign-key error), or the signed
+/// 64-bit identifier space is exhausted. Allocation and its highwater update
+/// share this single INSERT statement, including for callers without a wrapper
+/// transaction. Failed insertion and dedupe never advance the counter.
 pub fn insert(conn: &Connection, new: &NewJobRow<'_>, now: i64) -> Result<Inserted> {
     let created = conn
         .query_row(
             &format!(
-                "INSERT INTO jobs (user_id, kind, dedupe_key, state, priority, payload_json, \
+                "INSERT INTO jobs (id, incarnation, user_id, kind, dedupe_key, state, priority, payload_json, \
                  max_attempts, run_at, created_at, updated_at) \
-                 VALUES (?1, ?2, ?3, 'queued', ?4, ?5, ?6, ?7, ?8, ?8) \
+                 SELECT last_id + 1, 'job:' || lower(hex(randomblob(16))), \
+                        ?1, ?2, ?3, 'queued', ?4, ?5, ?6, ?7, ?8, ?8 \
+                 FROM job_id_counter WHERE singleton = 1 AND last_id < 9223372036854775807 \
                  ON CONFLICT DO NOTHING RETURNING {COLUMNS}"
             ),
             params![
@@ -212,8 +220,19 @@ pub fn insert(conn: &Connection, new: &NewJobRow<'_>, now: i64) -> Result<Insert
             params![new.user_id, new.kind, new.dedupe_key],
             from_row,
         )
-        .optional()?
-        .ok_or(RepoError::Conflict("job"))?;
+        .optional()?;
+    let Some(existing) = existing else {
+        let last: i64 = conn.query_row(
+            "SELECT last_id FROM job_id_counter WHERE singleton=1",
+            [],
+            |row| row.get(0),
+        )?;
+        return Err(if last == i64::MAX {
+            RepoError::Conflict("job identifier space exhausted")
+        } else {
+            RepoError::Conflict("job")
+        });
+    };
     if existing.state == JobState::Queued && new.run_at < existing.run_at {
         // New work arrived before the waiting job's timer: run it sooner.
         let pulled = conn.query_row(
