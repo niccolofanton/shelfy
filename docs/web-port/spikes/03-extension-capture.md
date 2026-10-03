@@ -1,5 +1,7 @@
 # SPIKE-3 — Extension capture parity (Chrome MV3)
 
+> **Note (2026-10-03):** the spike build described here lives on branch `web/t5-extension-spike`. On `web/foundations`, `extension/` is now the P2 extension (P2-06).
+
 > **Status:** extension and comparison tooling built (lane T5, 2026-10-02); **owner run pending.**
 > **Plan refs:** [IMPLEMENTATION-PLAN.md](../IMPLEMENTATION-PLAN.md) §0 (D13, D14, D15), §2.16, §9 (SPIKE-3), §10 (T5). Feature refs: [02-social-sync-and-downloads.md](../features/02-social-sync-and-downloads.md) (SYNC-06…16).
 
