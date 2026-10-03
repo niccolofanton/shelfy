@@ -1,0 +1,315 @@
+{
+  "schema": 2,
+  "version": 1,
+  "url": "https://fixtures.shelfy.test/native-tall.html",
+  "finalUrl": "https://fixtures.shelfy.test/native-tall.html",
+  "domain": "fixtures.shelfy.test",
+  "title": "native-tall",
+  "siteName": "Fixtures.Shelfy",
+  "description": "",
+  "lang": null,
+  "languages": [],
+  "engine": "playwright",
+  "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+  "viewport": { "width": 1440, "height": 900, "scale": 2 },
+  "palette": [
+    {
+      "hex": "#29348b",
+      "name": "indigo",
+      "role": "background",
+      "coverage": 0.601,
+      "source": "both",
+      "oklch": [0.373, 0.143, 272],
+      "weight": 0.6
+    },
+    {
+      "hex": "#9a164b",
+      "name": "crimson",
+      "role": "surface",
+      "coverage": 0.129,
+      "source": "both",
+      "oklch": [0.452, 0.167, 4],
+      "weight": 0.13
+    },
+    {
+      "hex": "#913e0c",
+      "name": "brown",
+      "role": "surface",
+      "coverage": 0.128,
+      "source": "both",
+      "oklch": [0.468, 0.126, 46],
+      "weight": 0.13
+    },
+    {
+      "hex": "#045e44",
+      "name": "teal",
+      "role": "surface",
+      "coverage": 0.128,
+      "source": "both",
+      "oklch": [0.428, 0.087, 166],
+      "weight": 0.13
+    },
+    {
+      "hex": "#ffffff",
+      "name": "white",
+      "role": "text",
+      "coverage": 0,
+      "source": "dom",
+      "oklch": [1, 0, 90],
+      "weight": 0
+    },
+    {
+      "hex": "#b4636d",
+      "name": "crimson",
+      "role": "accent",
+      "coverage": 0.002,
+      "source": "pixels",
+      "oklch": [0.595, 0.104, 13],
+      "weight": 0
+    },
+    {
+      "hex": "#344c90",
+      "name": "blue",
+      "role": "accent",
+      "coverage": 0.001,
+      "source": "pixels",
+      "oklch": [0.433, 0.116, 267],
+      "weight": 0
+    },
+    {
+      "hex": "#6c4aa3",
+      "name": "indigo",
+      "role": "accent",
+      "coverage": 0.001,
+      "source": "pixels",
+      "oklch": [0.49, 0.139, 298],
+      "weight": 0
+    },
+    {
+      "hex": "#757fbb",
+      "name": "indigo",
+      "role": "image",
+      "coverage": 0.004,
+      "source": "pixels",
+      "oklch": [0.614, 0.091, 276],
+      "weight": 0
+    },
+    {
+      "hex": "#4c629e",
+      "name": "blue",
+      "role": "image",
+      "coverage": 0.002,
+      "source": "pixels",
+      "oklch": [0.507, 0.099, 267],
+      "weight": 0
+    }
+  ],
+  "scheme": "dark",
+  "contrast": { "text": "#ffffff", "background": "#29348b", "ratio": 10.7 },
+  "typography": { "fonts": [], "scale": [], "baseSize": null, "ratio": null },
+  "tech": [],
+  "traits": {
+    "fixedHeader": false,
+    "stickyElements": 0,
+    "grid": false,
+    "glass": false,
+    "blendModes": false,
+    "textGradient": false,
+    "customCursor": false,
+    "marquee": false,
+    "horizontalScroll": false,
+    "containerMaxWidth": null,
+    "cornerRadius": null,
+    "shadows": false,
+    "smoothScroll": null,
+    "scrollJacked": false,
+    "webgl": false,
+    "videoBackground": false,
+    "pageTransitions": null,
+    "heroMedia": [],
+    "pageHeights": [5000]
+  },
+  "awards": [],
+  "awardTags": [],
+  "awardEntities": [],
+  "jsonldTypes": [],
+  "organization": null,
+  "social": [],
+  "credits": [],
+  "webMeta": {
+    "schema": 2,
+    "siteName": "Fixtures.Shelfy",
+    "title": "native-tall",
+    "description": "",
+    "languages": [],
+    "ogImage": "https://fixtures.shelfy.test/native-tall.html",
+    "themeColor": null,
+    "canonical": "https://fixtures.shelfy.test/native-tall.html",
+    "rss": "https://fixtures.shelfy.test/native-tall.html",
+    "jsonldTypes": [],
+    "organization": null,
+    "social": [],
+    "credits": [],
+    "scheme": "dark",
+    "contrast": { "text": "#ffffff", "background": "#29348b", "ratio": 10.7 },
+    "typeScale": [],
+    "baseSize": null,
+    "scaleRatio": null,
+    "tech": [],
+    "traits": {
+      "fixedHeader": false,
+      "stickyElements": 0,
+      "grid": false,
+      "glass": false,
+      "blendModes": false,
+      "textGradient": false,
+      "customCursor": false,
+      "marquee": false,
+      "horizontalScroll": false,
+      "containerMaxWidth": null,
+      "cornerRadius": null,
+      "shadows": false,
+      "smoothScroll": null,
+      "scrollJacked": false,
+      "webgl": false,
+      "videoBackground": false,
+      "pageTransitions": null,
+      "heroMedia": [],
+      "pageHeights": [5000]
+    },
+    "pageCount": 1,
+    "awardTags": [],
+    "awardEntities": [],
+    "capture": {
+      "engine": "playwright",
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
+      "viewport": { "width": 1440, "height": 900, "scale": 2 },
+      "discovery": "single-page",
+      "skipped": [],
+      "consent": { "cmp": null, "result": null },
+      "timings": { "https://fixtures.shelfy.test/native-tall.html": 8013 }
+    },
+    "singlePage": true
+  },
+  "cover": { "role": "p0-hero" },
+  "og": null,
+  "favicon": null,
+  "pages": [
+    {
+      "index": 0,
+      "url": "https://fixtures.shelfy.test/native-tall.html",
+      "requestedUrl": "https://fixtures.shelfy.test/native-tall.html",
+      "pageType": "other",
+      "title": "native-tall",
+      "status": 200,
+      "heightCss": 5000,
+      "capped": false,
+      "jacked": false,
+      "qc": { "status": "ok", "reason": "" },
+      "contentText": "Section 1",
+      "digest": { "h1": "Section 1", "headings": [], "ctas": [] },
+      "sections": [
+        { "kind": "hero", "heading": "", "top": 0, "cssHeight": 1000 },
+        { "kind": "content", "heading": "", "top": 1000, "cssHeight": 1000 },
+        { "kind": "content", "heading": "", "top": 2000, "cssHeight": 1000 },
+        { "kind": "content", "heading": "", "top": 3000, "cssHeight": 1000 },
+        { "kind": "content", "heading": "", "top": 4000, "cssHeight": 1000 }
+      ],
+      "assets": [
+        { "role": "p0-hero", "file": "p0-hero.webp", "w": 1440, "h": 900 },
+        {
+          "role": "p0-band0",
+          "file": "p0-band0.webp",
+          "w": 1440,
+          "h": 2000,
+          "seq": 0,
+          "top": 0,
+          "cssHeight": 2000
+        },
+        {
+          "role": "p0-band1",
+          "file": "p0-band1.webp",
+          "w": 1440,
+          "h": 2000,
+          "seq": 1,
+          "top": 2000,
+          "cssHeight": 2000
+        },
+        {
+          "role": "p0-band2",
+          "file": "p0-band2.webp",
+          "w": 1440,
+          "h": 1000,
+          "seq": 2,
+          "top": 4000,
+          "cssHeight": 1000
+        },
+        { "role": "p0-footer", "file": "p0-footer.webp", "w": 1440, "h": 900 },
+        {
+          "role": "p0-sec0",
+          "file": "p0-sec0.webp",
+          "w": 1440,
+          "h": 1000,
+          "seq": 0,
+          "top": 0,
+          "cssHeight": 1000
+        },
+        {
+          "role": "p0-sec1",
+          "file": "p0-sec1.webp",
+          "w": 1440,
+          "h": 1000,
+          "seq": 1,
+          "top": 1000,
+          "cssHeight": 1000
+        },
+        {
+          "role": "p0-sec2",
+          "file": "p0-sec2.webp",
+          "w": 1440,
+          "h": 1000,
+          "seq": 2,
+          "top": 2000,
+          "cssHeight": 1000
+        },
+        {
+          "role": "p0-sec3",
+          "file": "p0-sec3.webp",
+          "w": 1440,
+          "h": 1000,
+          "seq": 3,
+          "top": 3000,
+          "cssHeight": 1000
+        },
+        {
+          "role": "p0-sec4",
+          "file": "p0-sec4.webp",
+          "w": 1440,
+          "h": 1000,
+          "seq": 4,
+          "top": 4000,
+          "cssHeight": 1000
+        }
+      ]
+    }
+  ],
+  "skipped": [],
+  "qc": [{ "index": 0, "status": "ok", "reason": "" }],
+  "timeline": [
+    { "kind": "info", "code": "stage", "params": { "stage": "primary", "frac": 0 } },
+    {
+      "kind": "read",
+      "code": "site.opening",
+      "params": { "url": "https://fixtures.shelfy.test/native-tall.html" }
+    },
+    {
+      "kind": "artifact",
+      "code": "page.primary_captured",
+      "params": { "hero": "1440×900", "bands": 3, "sections": 5 }
+    }
+  ],
+  "durationMs": 8420,
+  "peakRssBytes": 204341248,
+  "bytes": 83378,
+  "partial": false
+}

@@ -16,6 +16,7 @@
     "build": "tsx build/prepare-playwright.ts && tsx build/prepare-adblock.ts && tsx build/esbuild-electron.ts && vite build && cross-env NODE_OPTIONS=--import=tsx electron-builder",
     "release": "tsx build/prepare-playwright.ts && tsx build/prepare-adblock.ts && tsx build/esbuild-electron.ts && vite build && cross-env NODE_OPTIONS=--import=tsx electron-builder",
     "build:electron": "tsx build/esbuild-electron.ts",
+    "capture:build": "tsx capture/build.ts",
     "preview": "tsx build/esbuild-electron.ts && electron .",
     "web:dev": "vite --config web/vite.config.ts",
     "web:build": "vite build --config web/vite.config.ts",
@@ -23,7 +24,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc -p tsconfig.electron.json && tsc -p tsconfig.renderer.json && tsc -p tsconfig.web.json && tsc -p tsconfig.node.json && tsc -p tsconfig.tests.json && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.electron.json && tsc -p tsconfig.renderer.json && tsc -p tsconfig.web.json && tsc -p tsconfig.node.json && tsc -p tsconfig.tests.json && tsc -p tsconfig.capture.json && tsc -p tsconfig.json",
     "typecheck:electron": "tsc -p tsconfig.electron.json",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json",
     "typecheck:web": "tsc -p tsconfig.web.json",
@@ -64,7 +65,8 @@
     "thumbhash": "^0.1.1",
     "tldts-experimental": "^7.4.16",
     "wouter": "3.11.1",
-    "ws": "^8.21.0"
+    "ws": "^8.21.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@commitlint/cli": "^21.0.2",

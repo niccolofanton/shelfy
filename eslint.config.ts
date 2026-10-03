@@ -34,6 +34,7 @@ export default tseslint.config(
       'dist-electron/**',
       'extension/dist/**',
       'web/dist/**',
+      'capture/dist/**',
       'release/**',
       'out/**',
       'coverage/**',
@@ -169,6 +170,16 @@ export default tseslint.config(
     },
   },
 
+  // Capture service (P4) — ESM/TS, Node runtime (node:http, fetch, Buffer, process)
+  {
+    files: ['capture/**/*.ts'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+  },
+
   // Cloudflare Worker (feedback relay) — ESM, runtime Workers (fetch/Response…)
   {
     files: ['workers/**/*.{js,ts}'],
@@ -197,7 +208,7 @@ export default tseslint.config(
 
   // Vitest unit tests
   {
-    files: ['tests/**/*.{js,jsx,ts,tsx}', 'web/tests/**/*.{ts,tsx}'],
+    files: ['tests/**/*.{js,jsx,ts,tsx}', 'web/tests/**/*.{ts,tsx}', 'capture/tests/**/*.ts'],
     plugins: { react, 'react-hooks': reactHooks },
     languageOptions: {
       ecmaVersion: 2023,

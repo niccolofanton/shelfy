@@ -28,6 +28,7 @@ export default defineConfig({
       'tests/**/*.{test,spec}.{js,jsx,ts,tsx}',
       'extension/tests/**/*.test.ts',
       'web/tests/**/*.test.{ts,tsx}',
+      'capture/tests/**/*.test.ts',
     ],
     exclude: ['**/node_modules/**', 'dist/**', 'release/**', '.claude/**', 'e2e/**'],
     environmentMatchGlobs: [
