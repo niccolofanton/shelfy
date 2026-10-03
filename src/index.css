@@ -11,18 +11,38 @@
 }
 
 :root {
+  /* ─────────────────────────────────────────────────────────────────────────
+     COLOR TOKENS (UX audit §3.1, UX-2). The same values feed Tailwind from
+     src/components/ui/tokens.ts (class names listed there); a unit test keeps
+     the two equal and checks every text token's contrast on its surfaces.
+     ───────────────────────────────────────────────────────────────────────── */
   --bg-primary: #0f0f0f;
+  --bg-sidebar: #111111;
   --bg-secondary: #1a1a1a;
   --bg-card: #202020;
   --bg-hover: #2a2a2a;
+  /* Pills, popovers and sheets. */
+  --bg-elevated: #1c1c1e;
+  /* Decorative lines / input and control outlines. */
   --border: #2e2e2e;
+  --border-strong: #3a3a3a;
   --text-primary: #f0f0f0;
   --text-secondary: #a0a0a0;
-  --text-muted: #606060;
+  /* Was #606060 (3.05:1). Now ≥ 4.5:1 on every surface up to --bg-card. */
+  --text-muted: #8a8a8a;
+  /* Disabled controls only (exempt from the contrast minimum). */
+  --text-disabled: #5c5c5c;
+  /* The brand violet: fills, indicators, selection. */
   --accent: #7b5cff;
   --accent-hover: #5a3dde;
+  /* Behind white labels (owner decision O2): 5.05:1 instead of 4.36:1. */
+  --accent-fill: #6d4dff;
+  /* Accent text, links and icons on dark: 5.4:1 or more on every surface. */
+  --accent-text: #a48fff;
+  --focus-ring: #a48fff;
   --success: #4caf50;
   --error: #ef5350;
+  --warning: #f5a524;
 
   /* ─────────────────────────────────────────────────────────────────────────
      MOTION SYSTEM — single source of truth for the whole app.
@@ -87,7 +107,10 @@ body {
 
 #root {
   width: 100vw;
+  /* The dynamic viewport (SH-2): on iPhone Safari 100vh is the LARGE viewport,
+     so the BottomNav could sit under the toolbar. 100vh stays the fallback. */
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
 }
@@ -802,12 +825,91 @@ img {
   animation: u-fade-in var(--dur-2) var(--ease-out) both;
 }
 
-/* Focus rings intentionally suppressed app-wide (per design): no accent outline
-   on keyboard/AT focus. Note this drops the visible focus indicator — a11y
-   trade-off accepted by the product owner. `outline:none` also kills the browser
-   default so nothing shows in its place. */
+/* ─── Focus ring (owner decision O1, UX audit §3.3) ────────────────────────
+   `:focus-visible` matches keyboard and assistive-technology focus only, so
+   mouse and touch users never see it (text fields excepted: browsers treat
+   them as always focus-visible). Unlayered and after the utilities, so it
+   beats a bare `outline-none`; a component that needs another shape uses a
+   `focus-visible:`/`focus:` variant, which is more specific. */
 :focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* Containers that take focus only from script (a dialog, a menu, the main
+   region) don't draw a ring around themselves. */
+:is(
+    [role='dialog'],
+    [role='alertdialog'],
+    [role='menu'],
+    [role='listbox'],
+    main
+  )[tabindex='-1']:focus-visible {
   outline: none;
+}
+/* A text field embedded in a styled box (a transparent field inside a pill or
+   a chip input) rings the box, not the bare field inside it. */
+:is(input, textarea, select).bg-transparent:focus-visible {
+  outline: none;
+}
+:has(> :is(input, textarea, select).bg-transparent:focus-visible) {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* `.u-clip-aa` masks everything outside the border box, outlines included,
+   and positioned children paint over an inset one. Rounded cards get an inset
+   ring on an ::after above their content instead (the mask already makes the
+   card a stacking context, so the z-index stays local). */
+.u-clip-aa:focus-visible {
+  outline: none;
+}
+.u-clip-aa:focus-visible::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+  pointer-events: none;
+}
+
+/* ─── Filled accent behind a white label (owner decision O2) ───────────────
+   Migration shim: the hardcoded primary-button pair `bg-[#7B5CFF] text-white`
+   takes --accent-fill (5.05:1) app-wide until each lane moves its buttons to
+   <Button> or `bg-accent-fill`; drop it once none is left (UX-10's sweep).
+   `:where()` keeps it at one class of specificity, so `hover:`/`disabled:`
+   variants still win. */
+.text-white:where(.bg-\[\#7B5CFF\], .bg-\[\#7b5cff\], .bg-\[var\(--accent\)\]) {
+  background-color: var(--accent-fill);
+}
+
+/* ─── Touch hit area (UX audit §4) ─────────────────────────────────────────
+   Keeps a control's visual size and extends what a finger can hit to 44px
+   or more on narrow screens. The control needs `position: relative`. */
+@media (max-width: 899px) {
+  .u-hit::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+  }
+}
+
+/* ─── Bottom sheet (Popover presentation="auto" on narrow) ─────────────────
+   Slides up from the bottom edge; the scrim fades. */
+@keyframes u-sheet-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+.u-sheet-in {
+  animation: u-sheet-in var(--dur-3) var(--ease-emphasized) both;
+}
+.u-sheet [role='menuitem'],
+.u-sheet [role='menuitemcheckbox'],
+.u-sheet [role='menuitemradio'] {
+  min-height: 48px;
 }
 
 @media (prefers-reduced-motion: reduce) {
