@@ -51,6 +51,8 @@ export default {
     addToSource: 'Aggiungi a source',
     noSources: 'Nessuna source. Creane una qui sotto.',
     createNewSource: 'Crea nuova source',
+    // Remove from the current folder (only while viewing one, §1.2 #12)
+    removeFromSource: 'Rimuovi da questa cartella',
     // Cleanup + destructive (two-step)
     clearDescriptions: 'Cancella descrizioni AI',
     clearDescriptionsConfirm: 'Conferma: cancella descrizioni ({n})',
@@ -59,8 +61,12 @@ export default {
     deletePosts: 'Elimina post selezionati',
     deletePostsConfirm: 'Conferma: elimina {n} post',
     deleteHint: 'Rimuove i post dalla libreria e i file scaricati. Azione irreversibile.',
+    // P1-14: the web's delete moves posts to the trash (Cestino), undoable.
+    deleteHintTrash: 'Sposta i post nel Cestino. Puoi annullare o ripristinarli da lì.',
     // Inline feedback (toasts)
     fbAssignError: 'Errore aggiunta alla source',
+    fbRemovedFromSource: '{n} rimossi dalla cartella',
+    fbRemoveFromSourceError: 'Errore nella rimozione dalla cartella',
     fbModelFirst: 'Scarica prima un modello (Impostazioni)',
     fbQueued: '{n} in coda',
     fbQueuedPartial: '{n} in coda · {skipped} da scaricare',
@@ -80,9 +86,19 @@ export default {
     fbPostsDeleted: '{n} post eliminati',
     fbFilesNotRemoved: '{n} file non rimossi',
     fbDeleteError: 'Errore eliminazione post',
+    // P1-11/P1-14: a selection over 500 posts runs as a background job.
+    fbDeleteQueued: '{n} post in eliminazione',
     fbSelectionDone: '{n} selezionati',
     fbSelectionError: 'Errore selezione',
     fbPostDeleted: 'Post eliminato',
+    // Undo (P1-14: a delete's restore handle, while it is still offered)
+    undo: 'Annulla',
+    fbUndone: 'Eliminazione annullata',
+    fbUndoError: 'Errore nell’annullare l’eliminazione',
+    // Background-job progress banner (P1-11/P1-14, minimal — see Gallery's
+    // pendingJob doc comment)
+    jobRunning: 'Elaborazione in corso…',
+    jobProgress: 'Elaborazione in corso… {pct}%',
     // Empty state
     emptyTitle: 'Nessun post trovato.',
     emptyHint: 'Importa un file JSON o cattura post dalla scheda Browser.',
@@ -115,6 +131,8 @@ export default {
     addToSource: 'Add to source',
     noSources: 'No source yet. Create one below.',
     createNewSource: 'Create new source',
+    // Remove from the current folder (only while viewing one, §1.2 #12)
+    removeFromSource: 'Remove from this folder',
     clearDescriptions: 'Clear AI descriptions',
     clearDescriptionsConfirm: 'Confirm: clear descriptions ({n})',
     clearTags: 'Remove AI tags',
@@ -123,7 +141,11 @@ export default {
     deletePostsConfirm: 'Confirm: delete {n} posts',
     deleteHint:
       'Removes the posts from the library and the downloaded files. This action is irreversible.',
+    // P1-14: the web's delete moves posts to the trash, undoable.
+    deleteHintTrash: 'Moves the posts to the Trash. You can undo, or restore them from there.',
     fbAssignError: 'Error adding to source',
+    fbRemovedFromSource: '{n} removed from the folder',
+    fbRemoveFromSourceError: 'Error removing from the folder',
     fbModelFirst: 'Download a model first (Settings)',
     fbQueued: '{n} queued',
     fbQueuedPartial: '{n} queued · {skipped} need download',
@@ -143,9 +165,19 @@ export default {
     fbPostsDeleted: '{n} posts deleted',
     fbFilesNotRemoved: '{n} files not removed',
     fbDeleteError: 'Error deleting posts',
+    // P1-11/P1-14: a selection over 500 posts runs as a background job.
+    fbDeleteQueued: '{n} posts being deleted',
     fbSelectionDone: '{n} selected',
     fbSelectionError: 'Selection error',
     fbPostDeleted: 'Post deleted',
+    // Undo (P1-14: a delete's restore handle, while it is still offered)
+    undo: 'Undo',
+    fbUndone: 'Delete undone',
+    fbUndoError: 'Error undoing the delete',
+    // Background-job progress banner (P1-11/P1-14, minimal — see Gallery's
+    // pendingJob doc comment)
+    jobRunning: 'Processing…',
+    jobProgress: 'Processing… {pct}%',
     emptyTitle: 'No posts found.',
     emptyHint: 'Import a JSON file or capture posts via the Browser tab.',
   },

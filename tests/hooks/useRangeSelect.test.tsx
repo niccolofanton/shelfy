@@ -161,3 +161,52 @@ describe('useRangeSelect — resets', () => {
     expect(result.current.selected.size).toBe(0);
   });
 });
+
+// ─── 4. Select-all-matching (P1-14: Gallery/Trash select-all over more posts
+// than are loaded) ────────────────────────────────────────────────────────
+
+describe('useRangeSelect — selectAllMatching', () => {
+  it('off by default: isSelected reads `selected` exactly as .has() would', () => {
+    const { result } = setup();
+    expect(result.current.selectAllMatching).toBe(false);
+    act(() => result.current.toggleAt('b', 1, false));
+    expect(result.current.isSelected('b')).toBe(true);
+    expect(result.current.isSelected('a')).toBe(false);
+  });
+
+  it('once on, `selected` holds EXCLUSIONS: isSelected inverts membership', () => {
+    const { result } = setup();
+    act(() => result.current.setSelectAllMatching(true));
+    // Nothing excluded yet: every id reads as selected.
+    expect(result.current.isSelected('a')).toBe(true);
+    expect(result.current.isSelected('b')).toBe(true);
+
+    // Toggling 'b' now EXCLUDES it (the same toggleAt primitive — only the
+    // interpretation of Set membership changes, not the mechanics).
+    act(() => result.current.toggleAt('b', 1, false));
+    expect([...result.current.selected]).toEqual(['b']);
+    expect(result.current.isSelected('b')).toBe(false);
+    expect(result.current.isSelected('a')).toBe(true);
+
+    // Toggling it again re-includes it.
+    act(() => result.current.toggleAt('b', 1, false));
+    expect(result.current.selected.size).toBe(0);
+    expect(result.current.isSelected('b')).toBe(true);
+  });
+
+  it('clearSelection exits selectAllMatching too (a changed result set invalidates it)', () => {
+    const { result } = setup();
+    act(() => result.current.setSelectAllMatching(true));
+    act(() => result.current.toggleAt('b', 1, false));
+    act(() => result.current.clearSelection());
+    expect(result.current.selectAllMatching).toBe(false);
+    expect(result.current.selected.size).toBe(0);
+  });
+
+  it('resetAnchor alone does NOT exit selectAllMatching (only clearSelection does)', () => {
+    const { result } = setup();
+    act(() => result.current.setSelectAllMatching(true));
+    act(() => result.current.resetAnchor());
+    expect(result.current.selectAllMatching).toBe(true);
+  });
+});

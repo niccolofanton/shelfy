@@ -35,7 +35,9 @@ interface PostModalProps {
   hasNext?: boolean;
   onApplyAiFilter?: ApplyAiFilter;
   onLocalFilesDeleted?: (postId: string) => void;
-  onPostDeleted?: (postId: string) => void;
+  // `deletedAt` is the bulk seam's undo handle (P1-14); see ActionsMenu's doc
+  // comment.
+  onPostDeleted?: (postId: string, deletedAt: number | null) => void;
   onPostUpdated?: PostUpdated;
   onOpenInWebsites?: () => void;
   onReanalyzeWeb?: (post: Shelfy.Post) => void;

@@ -26,6 +26,7 @@ import {
   CheckSquare,
   X,
   FolderPlus,
+  FolderMinus,
   Plus,
   Check,
   Sparkles,
@@ -42,7 +43,9 @@ import {
   LayoutGrid,
   Telescope,
   FileQuestion,
+  Undo2,
 } from 'lucide-react';
+import type { BulkActionKind, BulkActionParams, BulkJob, BulkOutcome } from '../api/ShelfyClient';
 
 // The "new collection" dialog isn't on the first screen (plan §2.19 / F14):
 // same withMessages() pattern as App.tsx's lazy views, so its code and its
@@ -68,6 +71,9 @@ interface GalleryFilters {
   mediaType: string;
   downloadStatus: string;
   aiTagged: string;
+  // The post's exact AI status (§1.2 #13); web only (see FilterDrawer's
+  // showAiStatus doc comment).
+  aiStatus: string | undefined;
   search: string;
   category: string | undefined;
   contentType: string | undefined;
@@ -182,6 +188,21 @@ const FLOAT_MATERIAL =
 const FLOAT_PILL = `${FLOAT_MATERIAL} flex items-center rounded-full`;
 const FLOAT_CARD = `${FLOAT_MATERIAL} rounded-2xl`;
 
+// Splits `arr` into groups of at most `size` — a manual (non-select-all-
+// matching) bulk action never carries more than this many keys in one
+// `POST /posts/bulk` request (P1-14 acceptance), even over a large manual
+// multi-select. A chunked delete's "Undo" only covers its LAST chunk (each
+// chunk gets its own `deletedAt`); every chunk's posts stay individually
+// restorable from the Trash view regardless (a documented limitation, not a
+// correctness gap — true for selections past MAX_BULK_KEYS, a rare manual edge
+// case since select-all-matching never needs it).
+const MAX_BULK_KEYS = 200;
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 // Snapshot of an in-flight drag-select sweep (see handleGridMouseDown).
 interface DragState {
   anchorIndex: number;
@@ -222,6 +243,11 @@ export default function Gallery({
   // `/p/:key` route — a card click navigates, closing goes back, prev/next
   // replace the route — so one modal owns it (App no longer renders its own).
   const nav = useNavigation();
+  // Web-only facets/behavior: `nav` is non-null only on the web build (the
+  // desktop keeps its view-state navigation and never provides one) — the
+  // same discriminator App already uses, so this file needs no new seam flag
+  // just to gate the AI-status facet (its backend only exists on the web).
+  const isWeb = !!nav;
   const winControlsInset = caps.windowControls ? WIN_CONTROLS_W : 0;
   // View mode (shared, persisted): 'grid' is the date-ordered row grid; 'canvas'
   // is the infinite pan/zoom wall where date ordering is intentionally inactive.
@@ -241,6 +267,7 @@ export default function Gallery({
     mediaType: 'all',
     downloadStatus: 'all',
     aiTagged: 'all',
+    aiStatus: undefined,
     search: '',
     category: undefined,
     contentType: undefined,
@@ -279,10 +306,20 @@ export default function Gallery({
   // Multi-select set + Shift+click range logic, shared with the Websites view.
   // Declared right after usePosts (it tracks the loaded array) and before the
   // callbacks/effects below that reset the anchor or clear the selection.
-  const { selected, setSelected, toggleAt, resetAnchor, clearSelection } = useRangeSelect(
-    posts,
-    (p: Shelfy.Post) => p.id,
-  );
+  // `selectAllMatching`/`isSelected` back "select all matching" (P1-14): while
+  // it is on, `selected` holds the EXCLUDED ids instead of the included ones
+  // (see useRangeSelect's doc comment) — every existing read of `selected`
+  // below that needs the visual/true membership goes through `isSelected`.
+  const {
+    selected,
+    setSelected,
+    toggleAt,
+    resetAnchor,
+    clearSelection,
+    selectAllMatching,
+    setSelectAllMatching,
+    isSelected,
+  } = useRangeSelect(posts, (p: Shelfy.Post) => p.id);
 
   // Asset-type download preferences (shared with Settings / the Downloads view),
   // used to scope the bulk "Scarica" action to the file types the user wants.
@@ -400,6 +437,73 @@ export default function Gallery({
   // (exit animation unused here: the banner disappears without a motion step).
   const { toast: feedback, showToast: showFeedback } = useToast();
 
+  // Undo (bulk/single-post delete, P1-14): the handle a `delete` action
+  // returned (`deletedAt`, F11: null means nothing moved — no undo then), live
+  // only for a short window. Cleared by a click, a timeout, or a newer delete.
+  const UNDO_WINDOW_MS = 8000;
+  const [undoHandle, setUndoHandle] = useState<{ deletedAt: number; label: string } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const armUndo = useCallback((deletedAt: number | null, label: string) => {
+    if (deletedAt == null) return;
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndoHandle({ deletedAt, label });
+    undoTimerRef.current = setTimeout(() => setUndoHandle(null), UNDO_WINDOW_MS);
+  }, []);
+  useEffect(
+    () => () => {
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    },
+    [],
+  );
+  const handleUndo = useCallback(async (): Promise<void> => {
+    const handle = undoHandle;
+    if (!handle) return;
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndoHandle(null);
+    try {
+      await client.restoreFromTrash({ deletedAt: handle.deletedAt });
+      showFeedback(t('fbUndone'));
+      reload();
+      onAssigned?.();
+      onStatsChanged?.();
+    } catch (err) {
+      console.error('[Gallery] undo (restoreFromTrash) error:', err);
+      showFeedback(t('fbUndoError'));
+    }
+  }, [undoHandle, client, t, reload, onAssigned, onStatsChanged, showFeedback]);
+
+  // Background job progress (a bulk action over 500 posts, P1-11/P1-14):
+  // minimal — an indeterminate note that clears on the job's terminal state,
+  // or on the next posts.changed/stats.changed (whichever comes first). Not
+  // the full Jobs view (P4-09 owns that seam); see ShelfyEvent's doc comment.
+  const [pendingJob, setPendingJob] = useState<BulkJob | null>(null);
+  const [jobProgress, setJobProgress] = useState<number | null>(null);
+  useEffect(() => {
+    if (!pendingJob) return undefined;
+    const offJob = client.on('job.updated', (evt) => {
+      if (evt.id !== pendingJob.id) return;
+      setJobProgress(evt.progress);
+      if (evt.state === 'succeeded' || evt.state === 'failed' || evt.state === 'cancelled') {
+        setPendingJob(null);
+        setJobProgress(null);
+        reload();
+        onAssigned?.();
+        onStatsChanged?.();
+      }
+    });
+    // A fallback in case the event is missed: the next library-wide reload
+    // this job itself caused also means it is done enough to stop waiting.
+    const offChanged = client.on('posts.changed', () => {
+      setPendingJob(null);
+      setJobProgress(null);
+    });
+    return () => {
+      offJob();
+      offChanged();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingJob, client]);
+
   // PostCard's onOpen(post) doesn't forward the click event, so we capture the
   // most recent pointer event here (set on the wrapping div) to read shiftKey.
   const lastEventRef = useRef<React.MouseEvent | null>(null);
@@ -407,6 +511,35 @@ export default function Gallery({
   // Normalised filters matching usePosts (shared mapper), without limit/offset —
   // used to resolve the full id set behind the current view (select-all-matching).
   const buildApiFilters = useCallback(() => toApiFilters(filters), [filters]);
+
+  // Runs one bulk action over the current selection, in the seam's terms
+  // (P1-14): a manual (non-select-all-matching) selection chunks into calls of
+  // at most MAX_BULK_KEYS keys each; "select all matching" sends one
+  // `{filter, exceptKeys}` call. Aggregates the outcome across chunks (the
+  // LAST chunk's deletedAt/job win — see MAX_BULK_KEYS's doc comment).
+  const runBulkAction = useCallback(
+    async (action: BulkActionKind, params?: BulkActionParams): Promise<BulkOutcome> => {
+      if (selectAllMatching) {
+        return client.bulkAction(
+          { filter: buildApiFilters(), exceptKeys: [...selected] },
+          action,
+          params,
+        );
+      }
+      const keys = [...selected];
+      let changed = 0;
+      let deletedAt: number | null = null;
+      let job: BulkJob | null = null;
+      for (const keyChunk of chunk(keys, MAX_BULK_KEYS)) {
+        const res = await client.bulkAction({ keys: keyChunk }, action, params);
+        changed += res.changed ?? 0;
+        if (res.deletedAt != null) deletedAt = res.deletedAt;
+        if (res.job) job = res.job;
+      }
+      return { changed, selected: keys.length, deletedAt, job };
+    },
+    [selectAllMatching, selected, client, buildApiFilters],
+  );
 
   // Query identity (active filters WITHOUT the paging limit) — drives the
   // bloom-in search transition. Growing the limit (infinite scroll) keeps the same
@@ -725,17 +858,35 @@ export default function Gallery({
       if (selectModeRef.current) return; // in select mode the click on the card already toggles
       resetAnchor();
       setSelectMode(true);
+      setSelectAllMatching(false);
       setSelected(new Set([post.id]));
     },
-    [resetAnchor, setSelected],
+    [resetAnchor, setSelected, setSelectAllMatching],
   );
 
   // Optimistic: reflect the membership instantly (green check) and refresh the
   // sidebar counts in the background, without the blocking full-grid refetch the
-  // old flow did. Roll the overlay back if the IPC write fails.
+  // old flow did. Roll the overlay back if the IPC write fails. Routed through
+  // the bulk seam (P1-14): on the desktop this is still exactly one
+  // addPostsToCollections IPC call (electronClient's 'addToCollections' case
+  // is a thin pass-through); on the web, select-all-matching needs it to carry
+  // a filter instead of a (possibly huge) literal id list.
   const assignTo = async (cid: number): Promise<void> => {
+    if (!selectAllMatching && selected.size === 0) return;
+    if (selectAllMatching) {
+      // Too large a set to track a per-id optimistic overlay for — just run
+      // it and let the reload reflect the new membership.
+      try {
+        await runBulkAction('addToCollections', { collectionIds: [cid] });
+        onAssigned?.();
+        reload();
+      } catch (err) {
+        console.error('[Gallery] assignTo (select-all-matching) error:', err);
+        showFeedback(t('fbAssignError'));
+      }
+      return;
+    }
     const ids = [...selected];
-    if (ids.length === 0) return;
     // Snapshot which ids this call actually ADDS `cid` to (i.e. the overlay
     // didn't already carry it). The rollback must undo only those: an id whose
     // overlay already contained `cid` (a prior successful assignTo this session)
@@ -752,7 +903,7 @@ export default function Gallery({
       return next;
     });
     try {
-      await window.electronAPI.addPostsToCollections(ids, [cid]);
+      await runBulkAction('addToCollections', { collectionIds: [cid] });
       onAssigned?.(); // sidebar source counts — cheap, non-blocking for the grid
     } catch (err) {
       console.error('[Gallery] assignTo error:', err);
@@ -779,6 +930,27 @@ export default function Gallery({
   }): Promise<void> => {
     const created = await onCreateCollection?.({ name, color });
     if (created?.id) await assignTo(created.id);
+  };
+
+  // Bulk "remove from the current folder" (only shown while viewing one,
+  // i.e. `collectionId` is set) — the bulk-bar counterpart to PostModal's
+  // per-post remove (§1.2 #12).
+  const handleRemoveFromFolder = async (): Promise<void> => {
+    if (collectionId == null) return;
+    if (!selectAllMatching && selected.size === 0) return;
+    const n = selectedCount;
+    try {
+      const res = await runBulkAction('removeFromCollection', { collectionId });
+      showFeedback(t('fbRemovedFromSource', { n: res.changed ?? n }));
+      clearSelection();
+      reload();
+      onAssigned?.(); // the folder's own count, and the sidebar's
+    } catch (err) {
+      console.error('[Gallery] removeFromCollection error:', err);
+      showFeedback(t('fbRemoveFromSourceError'));
+    } finally {
+      setActionsOpen(false);
+    }
   };
 
   // ── Bulk actions: analyze, select-all-matching ───────────────────────────
@@ -872,11 +1044,17 @@ export default function Gallery({
   };
 
   const handleClearDescriptions = async (): Promise<void> => {
-    const ids = [...selected];
-    if (ids.length === 0) return;
+    if (!selectAllMatching && selected.size === 0) return;
+    const n = selectedCount;
     try {
-      const n = await window.electronAPI.clearPostDescriptions(ids);
-      showFeedback(t('fbDescriptionsCleared', { n: n ?? ids.length }));
+      const res = await runBulkAction('clearAiDescription');
+      if (res.job) {
+        setPendingJob(res.job);
+        setJobProgress(null);
+        showFeedback(t('fbQueued', { n: res.selected }));
+      } else {
+        showFeedback(t('fbDescriptionsCleared', { n: res.changed ?? n }));
+      }
       // The cleared posts may no longer match the active aiTagged filter and
       // vanish from the grid; reconcile the selection so we don't leave
       // "N selezionati" with 0 matching cards (the querySignature effect won't
@@ -884,7 +1062,7 @@ export default function Gallery({
       clearSelection();
       reload();
     } catch (err) {
-      console.error('[Gallery] clearPostDescriptions error:', err);
+      console.error('[Gallery] clearAiDescription error:', err);
       showFeedback(t('fbClearDescriptionsError'));
     } finally {
       setConfirmClearDesc(false);
@@ -893,17 +1071,23 @@ export default function Gallery({
   };
 
   const handleClearAiTags = async (): Promise<void> => {
-    const ids = [...selected];
-    if (ids.length === 0) return;
+    if (!selectAllMatching && selected.size === 0) return;
+    const n = selectedCount;
     try {
-      const n = await window.electronAPI.clearPostAiTags(ids);
-      showFeedback(t('fbTagsCleared', { n: n ?? ids.length }));
+      const res = await runBulkAction('clearAiTags');
+      if (res.job) {
+        setPendingJob(res.job);
+        setJobProgress(null);
+        showFeedback(t('fbQueued', { n: res.selected }));
+      } else {
+        showFeedback(t('fbTagsCleared', { n: res.changed ?? n }));
+      }
       // See handleClearDescriptions: cleared posts may drop out of the active
       // aiTagged filter, so reconcile the now-stale selection.
       clearSelection();
       reload();
     } catch (err) {
-      console.error('[Gallery] clearPostAiTags error:', err);
+      console.error('[Gallery] clearAiTags error:', err);
       showFeedback(t('fbClearTagsError'));
     } finally {
       setConfirmClearTags(false);
@@ -911,32 +1095,36 @@ export default function Gallery({
     }
   };
 
-  // Permanently delete the selected posts (DB rows + on-disk files), then exit
-  // selection and refresh the grid.
+  // Moves the selected posts to the trash (P1-11/P1-14: a soft, undoable
+  // delete on the web; the desktop's electronClient still runs its existing
+  // permanent deletePosts, with no undo — see MAX_BULK_KEYS/runBulkAction's
+  // doc comments), then exits selection and refreshes the grid.
   const handleDeletePosts = async (): Promise<void> => {
-    const ids = [...selected];
-    if (ids.length === 0) return;
+    if (!selectAllMatching && selected.size === 0) return;
+    const n = selectedCount;
     try {
-      const res = await window.electronAPI.deletePosts(ids);
-      // Surface the non-fatal file-unlink errors the handler returns instead of
-      // dropping them silently — but in the SAME toast as the deleted count:
-      // showFeedback replaces the toast state synchronously, so two back-to-back
-      // calls would clobber the "N eliminati" confirmation and leave only the
-      // file-error line, reading like a pure failure.
-      const deletedMsg = t('fbPostsDeleted', { n: res?.deleted ?? ids.length });
-      const fileErrors = Array.isArray(res?.errors) ? res.errors.length : 0;
-      showFeedback(
-        fileErrors ? `${deletedMsg} · ${t('fbFilesNotRemoved', { n: fileErrors })}` : deletedMsg,
-      );
+      const res = await runBulkAction('delete');
+      // F11: a null deletedAt means nothing actually moved (e.g. every
+      // selected post was already in the trash already) — no undo to offer
+      // then, so the plain toast is the only feedback for that case (and for
+      // a queued job: the undo banner would otherwise double up on it).
+      if (res.job) {
+        setPendingJob(res.job);
+        setJobProgress(null);
+        showFeedback(t('fbDeleteQueued', { n: res.selected }));
+      } else if (res.deletedAt == null) {
+        showFeedback(t('fbPostsDeleted', { n: res.changed ?? n }));
+      }
+      armUndo(res.deletedAt, t('fbPostsDeleted', { n: res.changed ?? n }));
       exitSelectMode();
     } catch (err) {
-      console.error('[Gallery] deletePosts error:', err);
+      console.error('[Gallery] bulk delete error:', err);
       showFeedback(t('fbDeleteError'));
       setConfirmDeletePosts(false);
       setActionsOpen(false);
     } finally {
-      // Always reconcile the grid with the DB: on a partial failure some rows may
-      // already be deleted, so the grid would otherwise keep showing gone rows.
+      // Always reconcile the grid with the server: on a partial failure some
+      // rows may already be gone, so the grid would otherwise keep showing them.
       reload();
       onAssigned?.(); // refresh sidebar source counts
       onStatsChanged?.(); // refresh App-level stats (sidebar total + per-platform)
@@ -946,30 +1134,50 @@ export default function Gallery({
   // Select-all toggle. When everything matching is already selected it clears the
   // selection (staying in select mode); otherwise it selects every matching post.
   // The loaded ids are applied synchronously so every visible card checks the
-  // instant you click — then, when more posts match than are loaded, the full set
-  // (across pagination) is resolved via getPostIds and merged in. Without the
-  // optimistic step the IPC round trip leaves the click feeling unresponsive on
-  // large libraries ("ci mette un po'").
+  // instant you click. Then, when more posts match than are loaded:
+  //   - the desktop's local SQLite can list every matching id cheaply
+  //     (resolveAllIds), so it merges the full literal set in, exactly as
+  //     before;
+  //   - the web never does (it would not scale, P1-11): it switches to
+  //     "select all matching" (`{filter, exceptKeys}`, useRangeSelect's
+  //     selectAllMatching) instead, with no id list ever fetched. The
+  //     authoritative count for the toast comes from countPosts.
   const handleSelectAll = async (): Promise<void> => {
     if (allSelected) {
-      setSelected(new Set());
+      clearSelection();
       return;
     }
     const loadedIds = posts.map((p) => p.id);
+    setSelectAllMatching(false);
     setSelected(new Set(loadedIds)); // instant feedback on the visible cards
     if (total > posts.length) {
       // Snapshot the query at click time. If the filters change during the await
-      // (the querySignature effect clears the selection), a late getPostIds
-      // resolution must not re-populate the selection with the OLD filter's ids.
+      // (the querySignature effect clears the selection), a late resolution
+      // must not re-populate the selection with the OLD filter's ids.
       const sigAtCall = querySigRef.current;
+      const apiFilters = buildApiFilters();
       try {
-        const ids = await window.electronAPI.getPostIds(buildApiFilters());
+        const full = await client.resolveAllIds(apiFilters);
         if (querySigRef.current !== sigAtCall) return; // stale: filters changed
-        const full = ids && ids.length ? ids : loadedIds;
-        setSelected(new Set(full));
-        showFeedback(t('fbSelectionDone', { n: full.length }));
+        if (full) {
+          // The desktop: a literal id set, exactly as before.
+          setSelected(new Set(full.length ? full : loadedIds));
+          showFeedback(t('fbSelectionDone', { n: full.length || loadedIds.length }));
+          return;
+        }
+        // The web: select by filter, no exceptions yet.
+        setSelectAllMatching(true);
+        setSelected(new Set());
+        try {
+          const n = await client.countPosts(apiFilters);
+          if (querySigRef.current !== sigAtCall) return;
+          showFeedback(t('fbSelectionDone', { n }));
+        } catch {
+          if (querySigRef.current !== sigAtCall) return;
+          showFeedback(t('fbSelectionDone', { n: total })); // fall back to the known total
+        }
       } catch (err) {
-        console.error('[Gallery] getPostIds error:', err);
+        console.error('[Gallery] resolveAllIds error:', err);
         if (querySigRef.current !== sigAtCall) return;
         showFeedback(t('fbSelectionError')); // keep the optimistic loaded selection
       }
@@ -1080,10 +1288,26 @@ export default function Gallery({
   // Gate on `displayed` (what's on screen), not raw `posts`: during a search's
   // out-phase the old results are still held up, so the empty-state must not flash.
   const isEmpty = !loading && displayed.length === 0;
-  const selectedCount = selected.size;
+  // "Select all matching" (P1-14): `selected` holds the EXCLUDED ids instead
+  // of the included ones while selectAllMatching is on (useRangeSelect's doc
+  // comment), so the effective count and the "is everything selected" check
+  // both read it the other way round.
+  const selectedCount = selectAllMatching ? Math.max(0, total - selected.size) : selected.size;
   // True once every matching post (across pagination, not just the loaded page)
   // is selected — flips the select-all toggle to "Deseleziona tutti".
-  const allSelected = total > 0 && selectedCount >= total;
+  const allSelected = selectAllMatching ? selected.size === 0 : total > 0 && selectedCount >= total;
+  // The Set VirtualPostGrid/InfiniteCanvas actually render against: a card's
+  // checkbox just does `selected.has(post.id)`, which only reads right when
+  // selectAllMatching is off. Reusing the same `selected` reference when it IS
+  // off keeps VirtualPostGrid's memoization from re-rendering spuriously.
+  const visibleSelected = useMemo(
+    () =>
+      selectAllMatching
+        ? new Set(posts.filter((p) => isSelected(p.id)).map((p) => p.id))
+        : selected,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectAllMatching, selected, posts],
+  );
 
   // ── Canvas pool ───────────────────────────────────────────────────────────
   // The infinite wall tiles a DISTINCT pool, so we still grow the window to
@@ -1116,10 +1340,14 @@ export default function Gallery({
   }, [posts]);
   const allInByCollection = useMemo(() => {
     const out: Record<number, boolean> = {};
-    // Only the open Azioni menu reads this; skip the O(collections·selected)
-    // scan while it's closed (selection changes during drag-select, etc.).
-    if (!actionsOpen || selected.size === 0) return out;
-    const ids = [...selected];
+    // Only the open Azioni menu reads this; skip the scan while it's closed
+    // (selection changes during drag-select, etc.). A select-all-matching
+    // selection can span posts never loaded, so this is necessarily only ever
+    // a cosmetic hint over the LOADED ones, resolved through `isSelected` (it
+    // reads `selected` the right way round either way — see its doc comment).
+    if (!actionsOpen || selectedCount === 0) return out;
+    const ids = posts.filter((p) => isSelected(p.id)).map((p) => p.id);
+    if (ids.length === 0) return out;
     for (const c of collections) {
       out[c.id] = ids.every(
         (id) =>
@@ -1127,7 +1355,17 @@ export default function Gallery({
       );
     }
     return out;
-  }, [actionsOpen, collections, selected, postsById, assignedOverlay]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    actionsOpen,
+    collections,
+    selectedCount,
+    selectAllMatching,
+    selected,
+    posts,
+    postsById,
+    assignedOverlay,
+  ]);
 
   return (
     <div data-testid="gallery-view" className="flex h-full overflow-hidden">
@@ -1142,6 +1380,43 @@ export default function Gallery({
           className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-[#1a1a1a] border border-[#2e2e2e] text-xs text-[#7B5CFF] tabular-nums whitespace-nowrap u-pop-in shadow-lg"
         >
           {feedback}
+        </div>
+      )}
+
+      {/* Undo (P1-14): a delete's `deletedAt` is the restore handle
+        (`client.restoreFromTrash({deletedAt})`); F11 leaves it null when
+        nothing actually moved, so there is nothing to offer then. A short
+        window, like the bulk-feedback toast above (and stacked above it, so
+        a "N eliminati" toast from a DIFFERENT action can still show at once). */}
+      {undoHandle && (
+        <div
+          key={undoHandle.deletedAt}
+          data-testid="undo-toast"
+          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2 rounded-lg bg-[#1a1a1a] border border-[#2e2e2e] text-xs text-gray-200 whitespace-nowrap u-pop-in shadow-lg"
+        >
+          {undoHandle.label}
+          <button
+            data-testid="undo-action"
+            onClick={handleUndo}
+            className="u-press flex items-center gap-1 text-[#7B5CFF] font-medium hover:text-[#9b85ff] transition-colors"
+          >
+            <Undo2 size={13} />
+            {t('undo')}
+          </button>
+        </div>
+      )}
+
+      {/* Background-job progress (P1-11/P1-14: a bulk action over 500 posts).
+        Minimal — see pendingJob's doc comment above. */}
+      {pendingJob && (
+        <div
+          data-testid="bulk-job-toast"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1a1a1a] border border-[#2e2e2e] text-xs text-gray-300 whitespace-nowrap u-pop-in shadow-lg"
+        >
+          <Loader2 size={13} className="animate-spin text-[#7B5CFF]" />
+          {jobProgress != null
+            ? t('jobProgress', { pct: Math.round(jobProgress * 100) })
+            : t('jobRunning')}
         </div>
       )}
       <div className="relative flex flex-col flex-1 min-w-0 overflow-hidden">
@@ -1168,6 +1443,7 @@ export default function Gallery({
                 total={total}
                 drawerOpen={drawerOpen}
                 onToggleDrawer={() => setDrawerOpen((o) => !o)}
+                showAiStatus={isWeb}
                 leading={
                   <>
                     {/* View toggle — flips the surface between the date-ordered grid
@@ -1380,41 +1656,52 @@ export default function Gallery({
                       data-testid="bulk-actions-menu"
                       className="w-72 bg-[#1a1a1a] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 u-fade-in-down origin-top-right"
                     >
-                      {/* ── Azioni primarie ───────────────────────────────────── */}
-                      <button
-                        data-testid="bulk-analyze"
-                        disabled={selectedCount === 0}
-                        onClick={() => {
-                          setActionsOpen(false);
-                          handleAnalyzeSelected();
-                        }}
-                        className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                      >
-                        <Sparkles size={15} className="shrink-0" />
-                        <span className="flex-1">{t('analyze')}</span>
-                      </button>
+                      {/* ── Azioni primarie ─────────────────────────────────────
+                        analyze/download need, respectively, a local model and
+                        local storage: hidden by capability (desktop only,
+                        until P2-P4 bring them to the web — carry-over P1-11). */}
+                      {(caps.ai || caps.localFiles) && (
+                        <>
+                          {caps.ai && (
+                            <button
+                              data-testid="bulk-analyze"
+                              disabled={selectedCount === 0}
+                              onClick={() => {
+                                setActionsOpen(false);
+                                handleAnalyzeSelected();
+                              }}
+                              className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                            >
+                              <Sparkles size={15} className="shrink-0" />
+                              <span className="flex-1">{t('analyze')}</span>
+                            </button>
+                          )}
 
-                      <button
-                        data-testid="bulk-download"
-                        disabled={selectedCount === 0}
-                        onClick={() => {
-                          setActionsOpen(false);
-                          handleDownloadSelected();
-                        }}
-                        className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                      >
-                        <Download size={15} className="shrink-0" />
-                        <span className="flex-1 min-w-0">
-                          <span className="block">{tc('download')}</span>
-                          {/* The backend enqueues missing assets only — say so, or a
-                        full-library selection looks like it re-downloads everything. */}
-                          <span className="block text-[11px] text-gray-500 leading-snug">
-                            {t('downloadOnlyMissingHint')}
-                          </span>
-                        </span>
-                      </button>
+                          {caps.localFiles && (
+                            <button
+                              data-testid="bulk-download"
+                              disabled={selectedCount === 0}
+                              onClick={() => {
+                                setActionsOpen(false);
+                                handleDownloadSelected();
+                              }}
+                              className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                            >
+                              <Download size={15} className="shrink-0" />
+                              <span className="flex-1 min-w-0">
+                                <span className="block">{tc('download')}</span>
+                                {/* The backend enqueues missing assets only — say so, or a
+                              full-library selection looks like it re-downloads everything. */}
+                                <span className="block text-[11px] text-gray-500 leading-snug">
+                                  {t('downloadOnlyMissingHint')}
+                                </span>
+                              </span>
+                            </button>
+                          )}
 
-                      <div className="my-1 border-t border-[#2e2e2e]" />
+                          <div className="my-1 border-t border-[#2e2e2e]" />
+                        </>
+                      )}
 
                       {/* ── Aggiungi a source ─────────────────────────────────── */}
                       <div
@@ -1464,6 +1751,24 @@ export default function Gallery({
                           <span className="flex-1 text-left">{t('createNewSource')}</span>
                         </button>
                       </div>
+
+                      {/* Remove from the current folder — only while viewing
+                        one; the bulk-bar counterpart to PostModal's per-post
+                        remove (§1.2 #12). */}
+                      {collectionId != null && (
+                        <button
+                          data-testid="bulk-remove-from-folder"
+                          disabled={selectedCount === 0}
+                          onClick={() => {
+                            setActionsOpen(false);
+                            handleRemoveFromFolder();
+                          }}
+                          className="u-press w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-left text-gray-300 hover:bg-[#2a2a2a] hover:text-white disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                        >
+                          <FolderMinus size={15} className="shrink-0" />
+                          <span className="flex-1">{t('removeFromSource')}</span>
+                        </button>
+                      )}
 
                       <div className="my-1 border-t border-[#2e2e2e]" />
 
@@ -1557,7 +1862,11 @@ export default function Gallery({
                       </button>
                       {confirmDeletePosts && (
                         <p className="px-3 pt-1 pb-1.5 text-[10.5px] leading-snug text-gray-500">
-                          {t('deleteHint')}
+                          {/* P1-14: on the web this moves posts to the trash
+                            (undoable, the Trash view); the desktop's delete
+                            stays immediate and permanent — each gets its own,
+                            accurate hint rather than overstating either. */}
+                          {isWeb ? t('deleteHintTrash') : t('deleteHint')}
                         </p>
                       )}
                     </Popover>
@@ -1702,7 +2011,7 @@ export default function Gallery({
                 transitionPhase={searchPhase}
                 onOpen={handleCardOpen}
                 selectable={selectMode}
-                selected={selected}
+                selected={visibleSelected}
                 onQuickSelect={caps.bulkActions ? handleQuickSelect : undefined}
               />
             </div>
@@ -1721,7 +2030,7 @@ export default function Gallery({
                 topInset={headerH}
                 onOpen={handleCardOpen}
                 selectable={selectMode}
-                selected={selected}
+                selected={visibleSelected}
                 onQuickSelect={caps.bulkActions ? handleQuickSelect : undefined}
                 onGridMouseDownCapture={handleGridMouseDown}
                 onGridMouseOver={handleGridMouseOver}
@@ -1778,6 +2087,7 @@ export default function Gallery({
         stats={stats}
         activeSource={activeSource}
         onSelectSource={onSelectSource}
+        showAiStatus={isWeb}
       />
 
       {activePost && !selectMode && (
@@ -1807,8 +2117,10 @@ export default function Gallery({
               setActivePost((prev) => (prev && prev.id === postId ? { ...prev, ...fields } : prev))
             }
             onAssigned={() => onAssigned?.()}
-            onPostDeleted={() => {
-              showFeedback(t('fbPostDeleted'));
+            onPostDeleted={(_postId: string, deletedAt: number | null) => {
+              // See handleDeletePosts: a null deletedAt means nothing to undo.
+              if (deletedAt == null) showFeedback(t('fbPostDeleted'));
+              armUndo(deletedAt, t('fbPostDeleted'));
               reload();
               onAssigned?.();
               onStatsChanged?.(); // keep App-level sidebar counts in sync

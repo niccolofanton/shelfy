@@ -27,7 +27,10 @@ interface ActionsMenuProps {
   primaryLocalPath: string | null;
   isManual: boolean;
   onLocalFilesDeleted?: (id: string) => void;
-  onPostDeleted?: (id: string) => void;
+  // `deletedAt` is the bulk seam's undo handle (P1-14: `null` when nothing
+  // could be undone — the desktop's permanent delete, or F11's "nothing
+  // moved"); callers that don't offer an undo affordance can ignore it.
+  onPostDeleted?: (id: string, deletedAt: number | null) => void;
   onPostUpdated?: PostUpdated;
   onClose: () => void;
 }
@@ -234,7 +237,9 @@ export default function ActionsMenu({
     }
   }
 
-  // Permanently delete the whole post (DB record + downloaded files).
+  // Deletes the whole post, through the bulk seam (P1-14): a soft, undoable
+  // move to the trash on the web; the desktop's electronClient still runs its
+  // existing permanent deletePosts (no undo — `deletedAt` then stays null).
   async function handleDeletePost(): Promise<void> {
     if (!deletePostConfirm) {
       setDeletePostConfirm(true);
@@ -244,15 +249,15 @@ export default function ActionsMenu({
     setDeletingPost(true);
     setActionError('');
     try {
-      await window.electronAPI.deletePosts([post.id]);
-      onPostDeleted?.(post.id);
+      const { deletedAt } = await client.bulkAction({ keys: [post.id] }, 'delete');
+      onPostDeleted?.(post.id, deletedAt);
       onClose();
     } catch (err) {
-      // deletePosts can reject (DB error, > MAX_BULK_ITEMS guard). Without a catch
+      // The bulk action can reject (network, a server error). Without a catch
       // this discarded onClick promise would raise an unhandled rejection and the
       // destructive action would fail silently; log it and leave the modal open so
       // the user can retry rather than assuming the post was removed.
-      console.error('[PostModal] deletePosts error:', err);
+      console.error('[PostModal] delete (bulkAction) error:', err);
       setActionError(t('actionFailed'));
     } finally {
       setDeletingPost(false);

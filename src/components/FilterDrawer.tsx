@@ -7,12 +7,13 @@ import {
   Sparkles,
   Bookmark,
   Grid3X3,
-  Instagram,
-  Twitter,
-  Globe,
+  Tag,
+  LayoutTemplate,
+  Activity,
 } from 'lucide-react';
-import PinterestIcon from './PinterestIcon';
 import { useT } from '../i18n';
+import { categoryOptions, contentTypeOptions, aiStatusOptions } from '../lib/facetOptions';
+import { PLATFORM_SOURCES } from '../lib/sourceList';
 
 // Translator returned by useT — namespaced key + optional interpolation vars.
 type Translate = (key: string, vars?: Record<string, string | number>) => string;
@@ -28,6 +29,9 @@ interface FilterDrawerFilters {
   mediaType?: string;
   downloadStatus?: string;
   aiTagged?: string;
+  category?: string;
+  contentType?: string;
+  aiStatus?: string;
 }
 
 // A library source selection routed back up to App (same path as the sidebar).
@@ -70,6 +74,53 @@ interface FilterDrawerProps<F extends FilterDrawerFilters> {
   stats?: Shelfy.Stats | Record<string, never>;
   activeSource?: ActiveSource;
   onSelectSource?: (source: SourceSelection) => void;
+  // AI status (pending/analyzing/done/error, §1.2 #13) is web-only: the
+  // desktop's query builder only has the coarser analyzed/unanalyzed split
+  // that `aiTagged` already covers. Default false (the desktop build).
+  showAiStatus?: boolean;
+}
+
+interface SelectOption {
+  value: string;
+  label: string;
+}
+
+interface FacetSelectProps {
+  value: string;
+  onChange: (value: string) => void;
+  allLabel: string;
+  options: SelectOption[];
+  testId: string;
+  ariaLabel: string;
+}
+
+// A single-value facet picker (category, content type, AI status): a native
+// <select> reads better than a Segmented grid once there are a dozen-plus
+// options, and needs no extra dependency.
+function FacetSelect({
+  value,
+  onChange,
+  allLabel,
+  options,
+  testId,
+  ariaLabel,
+}: FacetSelectProps): React.JSX.Element {
+  return (
+    <select
+      data-testid={testId}
+      aria-label={ariaLabel}
+      value={value || ''}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full bg-[#141414] border border-[#272727] rounded-lg px-2.5 py-1.5 text-[12.5px] text-gray-200 outline-none focus:border-[#7B5CFF] transition-colors"
+    >
+      <option value="">{allLabel}</option>
+      {options.map((opt) => (
+        <option key={opt.value} value={opt.value}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 function formatCount(n: number | null | undefined): string {
@@ -144,14 +195,21 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
   stats = {},
   activeSource,
   onSelectSource,
+  showAiStatus = false,
 }: FilterDrawerProps<F>): React.JSX.Element | null {
   const t: Translate = useT('filterDrawer');
 
+  // Full media-type facet (§1.2 #13): every Shelfy.MediaType, not just the
+  // four that fit a single-row Segmented control.
   const MEDIA_TYPE_OPTIONS: SegmentedOption[] = [
     { value: 'all', label: t('mediaAll') },
     { value: 'video', label: t('mediaVideo') },
     { value: 'image', label: t('mediaImage') },
+    { value: 'images', label: t('mediaImages') },
     { value: 'carousel', label: t('mediaCarousel') },
+    { value: 'text', label: t('mediaText') },
+    { value: 'website', label: t('mediaWebsite') },
+    { value: 'file', label: t('mediaFile') },
   ];
 
   const DOWNLOAD_OPTIONS: SegmentedOption[] = [
@@ -166,13 +224,33 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
     { value: 'untagged', label: t('aiUntagged') },
   ];
 
-  // Platform rows mirrored from the sidebar Bookmarks section (same order/icons).
-  const PLATFORM_ROWS: { id: string; label: string; Icon: IconComponent }[] = [
-    { id: 'instagram', label: 'Instagram', Icon: Instagram },
-    { id: 'twitter', label: 'X / Twitter', Icon: Twitter },
-    { id: 'pinterest', label: 'Pinterest', Icon: PinterestIcon },
-    { id: 'web', label: t('web'), Icon: Globe },
-  ];
+  // Category / content type / AI status (§1.2 #13): static lists (no
+  // facet-values endpoint yet, P3-04/P3-21), each behind its own function in
+  // src/lib/facetOptions.ts so swapping one for a live lookup later touches
+  // only that function.
+  const CATEGORY_OPTIONS: SelectOption[] = categoryOptions().map((o) => ({
+    value: o.value,
+    label: t(`facetCategory.${o.key}`),
+  }));
+  const CONTENT_TYPE_OPTIONS: SelectOption[] = contentTypeOptions().map((o) => ({
+    value: o.value,
+    label: t(`facetContentType.${o.key}`),
+  }));
+  const AI_STATUS_OPTIONS: SelectOption[] = aiStatusOptions().map((o) => ({
+    value: o.value,
+    label: t(`facetAiStatus.${o.key}`),
+  }));
+
+  // Platform rows: the one list shared with the sidebar (§1.2 #13, P1-06
+  // carry-over), so the drawer and the sidebar can never drift apart on
+  // order, icons or ids. The 'web' row's label is non-brand and resolved
+  // here (the drawer's own namespace), the same way Sidebar resolves it
+  // from its own.
+  const PLATFORM_ROWS = PLATFORM_SOURCES.map(({ id, label, key, Icon }) => ({
+    id,
+    label: key ? t(key) : (label ?? id),
+    Icon: Icon as IconComponent,
+  }));
 
   // `stats` is the full Shelfy.Stats once loaded, or {} before the first fetch.
   const statsValue: { total?: number; byPlatform?: Partial<Record<string, number>> } = stats;
@@ -182,10 +260,16 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
   const mediaType = filters.mediaType ?? 'all';
   const downloadStatus = filters.downloadStatus ?? 'all';
   const aiTagged = filters.aiTagged ?? 'all';
+  const category = filters.category ?? '';
+  const contentType = filters.contentType ?? '';
+  const aiStatus = filters.aiStatus ?? '';
   const activeCount =
     (mediaType !== 'all' ? 1 : 0) +
     (downloadStatus !== 'all' ? 1 : 0) +
-    (aiTagged !== 'all' ? 1 : 0);
+    (aiTagged !== 'all' ? 1 : 0) +
+    (category ? 1 : 0) +
+    (contentType ? 1 : 0) +
+    (showAiStatus && aiStatus ? 1 : 0);
 
   const isActive = (type: ActiveSource['type'], value: string | number): boolean =>
     activeSource?.type === type && activeSource?.value === value;
@@ -258,6 +342,9 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
                     mediaType: 'all',
                     downloadStatus: 'all',
                     aiTagged: 'all',
+                    category: undefined,
+                    contentType: undefined,
+                    aiStatus: undefined,
                   })
                 }
                 className="u-press flex items-center gap-1 text-[11px] text-gray-500 hover:text-gray-200 transition-colors"
@@ -347,7 +434,7 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
           <div data-testid="drawer-mediatype">
             <SectionLabel icon={Film}>{t('mediaType')}</SectionLabel>
             <Segmented
-              cols={2}
+              cols={4}
               options={MEDIA_TYPE_OPTIONS}
               value={mediaType}
               onChange={(val) => onFiltersChange({ ...filters, mediaType: val })}
@@ -373,6 +460,50 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
               onChange={(val) => onFiltersChange({ ...filters, aiTagged: val })}
             />
           </div>
+
+          {/* Category / content type (§1.2 #13): today only web references
+            carry either (electron/analyzer.ts's web catalog), so these only
+            ever narrow to websites — correct until P3 generalizes the
+            catalog schema to every platform. Static lists: see
+            src/lib/facetOptions.ts. */}
+          <div data-testid="drawer-category">
+            <SectionLabel icon={Tag}>{t('category')}</SectionLabel>
+            <FacetSelect
+              testId="drawer-category-select"
+              ariaLabel={t('category')}
+              allLabel={t('categoryAll')}
+              value={category}
+              options={CATEGORY_OPTIONS}
+              onChange={(val) => onFiltersChange({ ...filters, category: val || undefined })}
+            />
+          </div>
+
+          <div data-testid="drawer-contenttype">
+            <SectionLabel icon={LayoutTemplate}>{t('contentType')}</SectionLabel>
+            <FacetSelect
+              testId="drawer-contenttype-select"
+              ariaLabel={t('contentType')}
+              allLabel={t('contentTypeAll')}
+              value={contentType}
+              options={CONTENT_TYPE_OPTIONS}
+              onChange={(val) => onFiltersChange({ ...filters, contentType: val || undefined })}
+            />
+          </div>
+
+          {/* AI status (web only, see showAiStatus's doc comment above). */}
+          {showAiStatus && (
+            <div data-testid="drawer-aistatus">
+              <SectionLabel icon={Activity}>{t('aiStatus')}</SectionLabel>
+              <FacetSelect
+                testId="drawer-aistatus-select"
+                ariaLabel={t('aiStatus')}
+                allLabel={t('aiStatusAll')}
+                value={aiStatus}
+                options={AI_STATUS_OPTIONS}
+                onChange={(val) => onFiltersChange({ ...filters, aiStatus: val || undefined })}
+              />
+            </div>
+          )}
         </div>
       </aside>
     </div>

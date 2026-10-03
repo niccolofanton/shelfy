@@ -14,6 +14,9 @@ interface FilterBarFilters {
   mediaType?: string;
   downloadStatus?: string;
   aiTagged?: string;
+  aiStatus?: string;
+  category?: string;
+  contentType?: string;
   tag?: string;
 }
 
@@ -25,6 +28,9 @@ interface FilterBarProps<F extends FilterBarFilters> {
   drawerOpen?: boolean;
   leading?: React.ReactNode;
   trailing?: React.ReactNode;
+  // Mirrors FilterDrawer's own flag, so the "Filtri" badge counts the same
+  // active facets the drawer shows (AI status is web-only, see there).
+  showAiStatus?: boolean;
 }
 
 // The Gallery's single browse-mode toolbar: search + active-tag chip + total
@@ -42,6 +48,7 @@ export default function FilterBar<F extends FilterBarFilters>({
   drawerOpen,
   leading = null,
   trailing = null,
+  showAiStatus = false,
 }: FilterBarProps<F>): React.JSX.Element {
   const t: Translate = useT('filterBar');
   const [searchValue, setSearchValue] = useState<string>(filters.search ?? '');
@@ -76,7 +83,10 @@ export default function FilterBar<F extends FilterBarFilters>({
   const activeCount =
     (mediaType !== 'all' ? 1 : 0) +
     (downloadStatus !== 'all' ? 1 : 0) +
-    (aiTagged !== 'all' ? 1 : 0);
+    (aiTagged !== 'all' ? 1 : 0) +
+    (filters.category ? 1 : 0) +
+    (filters.contentType ? 1 : 0) +
+    (showAiStatus && filters.aiStatus ? 1 : 0);
 
   // Apple-Maps-style floating control "island": a translucent, blurred, rounded
   // capsule with a hairline ring + soft shadow. There is NO toolbar background —

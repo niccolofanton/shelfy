@@ -23,6 +23,8 @@ export default {
       one: 'Eliminata, ma 1 file non è stato rimosso dal disco.',
       other: 'Eliminata, ma {count} file non sono stati rimossi dal disco.',
     },
+    // F11: a folder over 500 posts moves them to the trash as a background job.
+    deleteQueued: 'Cartella eliminata. I post stanno per essere spostati nel Cestino.',
     deleteVerb: 'Elimina',
     deleteDesc: "Scegli cosa rimuovere. L'operazione non è reversibile.",
     whatToRemove: 'Cosa rimuovere',
@@ -62,6 +64,8 @@ export default {
       one: 'Deleted, but 1 file could not be removed from disk.',
       other: 'Deleted, but {count} files could not be removed from disk.',
     },
+    // F11: a folder over 500 posts moves them to the trash as a background job.
+    deleteQueued: 'Folder deleted. The posts are being moved to the Trash.',
     deleteVerb: 'Delete',
     deleteDesc: 'Choose what to remove. This action cannot be undone.',
     whatToRemove: 'What to remove',

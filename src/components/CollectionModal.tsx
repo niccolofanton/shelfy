@@ -60,7 +60,7 @@ interface CollectionModalProps {
   onDelete?: (
     id: number,
     opts: { deletePosts: boolean },
-  ) => Promise<{ errors?: unknown[] } | void> | void;
+  ) => Promise<{ errors?: unknown[]; job?: { id: number; kind: string } | null } | void> | void;
   collections?: Shelfy.Collection[];
 }
 
@@ -151,6 +151,14 @@ export default function CollectionModal({
       // modal open to surface a warning (the confirm button becomes "Chiudi").
       if (res?.errors?.length) {
         setWarning(t('deletePartial', { count: res.errors.length }));
+        setDeleting(false);
+        return;
+      }
+      // F11: a folder over 500 posts queues a job instead of trashing them
+      // inline — the collection itself is already gone; say so rather than
+      // implying every post already landed in the trash.
+      if (res?.job) {
+        setWarning(t('deleteQueued'));
         setDeleting(false);
         return;
       }

@@ -83,4 +83,12 @@ describe('toApiFilters', () => {
     expect('limit' in out).toBe(false);
     expect('offset' in out).toBe(false);
   });
+
+  // §1.2 #13 (P1-14): the post's exact AI status, web only (FilterDrawer's
+  // showAiStatus doc comment) — passed through verbatim, empty maps to undefined.
+  it('passes through aiStatus, empty to undefined', () => {
+    expect(toApiFilters({ aiStatus: 'error' }).aiStatus).toBe('error');
+    expect(toApiFilters({ aiStatus: '' }).aiStatus).toBeUndefined();
+    expect(toApiFilters({}).aiStatus).toBeUndefined();
+  });
 });

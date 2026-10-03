@@ -73,6 +73,10 @@ const API_DEFAULTS: Record<string, unknown> = {
   // Bulk / id helpers
   getPostIds: [],
   getPostsByIds: [],
+  // P1-14 bulk seam (electronClient.bulkAction's desktop cases)
+  deletePosts: { deleted: 0, errors: [] },
+  clearPostDescriptions: 0,
+  clearPostAiTags: 0,
   repairPreview: true,
   getSearchProviders: [{ id: 'local', name: 'Locale', selected: true }],
   selectSearchProvider: [{ id: 'local', name: 'Locale', selected: true }],

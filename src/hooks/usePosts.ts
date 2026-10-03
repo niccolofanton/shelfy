@@ -19,10 +19,16 @@ export interface PostFilters {
   contentType?: string;
   tag?: string;
   aiTagged?: string;
+  // The post's exact AI status (§1.2 #13); web only (see FilterDrawer's
+  // showAiStatus doc comment).
+  aiStatus?: string;
   concepts?: string[];
   conceptMode?: string;
   sortOrder?: string;
   limit?: number;
+  // The trash instead of the library (P1-11/P1-14). The Gallery view never
+  // sets this (Trash.tsx has its own fetch); kept here for completeness.
+  trash?: boolean;
 }
 
 export interface UsePostsOptions {
@@ -197,9 +203,11 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
     filters.contentType,
     filters.tag,
     filters.aiTagged,
+    filters.aiStatus,
     conceptsKey,
     filters.conceptMode,
     filters.sortOrder,
+    filters.trash,
   ]);
   const prevSigRef = useRef<string | null>(null);
   const prevReloadRef = useRef<number>(reloadCounter);

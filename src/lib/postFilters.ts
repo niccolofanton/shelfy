@@ -19,6 +19,10 @@ export interface UiFilters {
   contentType?: string;
   tag?: string;
   aiTagged?: string;
+  // The post's exact AI status (pending/analyzing/done/error, §1.2 #13) — web
+  // only: the desktop's query builder only has the coarser analyzed/
+  // unanalyzed distinction (aiTagged already covers it there).
+  aiStatus?: string;
   concepts?: string[];
   conceptMode?: string;
   sortOrder?: string;
@@ -37,6 +41,7 @@ export interface ApiFilters {
   contentType: string | undefined;
   tag: string | undefined;
   aiTagged: string | undefined;
+  aiStatus: string | undefined;
   concepts: string[] | undefined;
   conceptMode: string | undefined;
   sortOrder: string | undefined;
@@ -59,6 +64,7 @@ export function toApiFilters(filters: UiFilters = {}): ApiFilters {
     contentType: filters.contentType || undefined,
     tag: filters.tag || undefined,
     aiTagged: filters.aiTagged && filters.aiTagged !== 'all' ? filters.aiTagged : undefined,
+    aiStatus: filters.aiStatus || undefined,
     concepts: filters.concepts && filters.concepts.length ? filters.concepts : undefined,
     conceptMode: filters.conceptMode || undefined,
     sortOrder: filters.sortOrder || undefined,

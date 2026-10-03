@@ -24,6 +24,16 @@ export interface UseRangeSelect<Id> {
   toggleAt: (id: Id, index: number, shiftKey: boolean) => void;
   resetAnchor: () => void;
   clearSelection: () => void;
+  // "Select all matching" (Gallery, Trash — a filtered view that can hold far
+  // more posts than are loaded at once, P1-14). While true, `selected` holds
+  // the ids explicitly EXCLUDED from "every post the view matches", instead
+  // of the ids included — the toggle/range primitives above don't change at
+  // all (they only ever add/remove a Set member), only what membership MEANS
+  // does. Callers that never turn it on keep the original semantics exactly.
+  selectAllMatching: boolean;
+  setSelectAllMatching: React.Dispatch<React.SetStateAction<boolean>>;
+  // A loaded item's checked state, honouring selectAllMatching either way.
+  isSelected: (id: Id) => boolean;
 }
 
 export function useRangeSelect<T, Id>(
@@ -31,6 +41,7 @@ export function useRangeSelect<T, Id>(
   getId: (item: T) => Id | null | undefined,
 ): UseRangeSelect<Id> {
   const [selected, setSelected] = useState<Set<Id>>(() => new Set<Id>());
+  const [selectAllMatching, setSelectAllMatching] = useState<boolean>(false);
   // Index of the last plain-toggled item — the Shift+click range anchor.
   const lastIndexRef = useRef<number | null>(null);
   const itemsRef = useRef<T[]>(items);
@@ -89,11 +100,16 @@ export function useRangeSelect<T, Id>(
   }, []);
 
   // Drop both the selection and the anchor (the result set itself changed,
-  // or selection mode was exited).
+  // or selection mode was exited) — and exit "select all matching" too: a
+  // changed result set invalidates what it was matching against.
   const clearSelection = useCallback(() => {
     setSelected(new Set<Id>());
+    setSelectAllMatching(false);
     lastIndexRef.current = null;
   }, []);
+
+  const isSelected = (id: Id): boolean =>
+    selectAllMatching ? !selected.has(id) : selected.has(id);
 
   return {
     selected,
@@ -103,5 +119,8 @@ export function useRangeSelect<T, Id>(
     toggleAt,
     resetAnchor,
     clearSelection,
+    selectAllMatching,
+    setSelectAllMatching,
+    isSelected,
   };
 }

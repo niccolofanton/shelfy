@@ -2,6 +2,9 @@ import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest';
 import type { ComponentProps } from 'react';
 import ActionsMenu from '../../src/components/postmodal/ActionsMenu';
+import { ShelfyProvider } from '../../src/api/ShelfyProvider';
+import { createElectronClient } from '../../src/api/electronClient';
+import type { ShelfyClient } from '../../src/api/ShelfyClient';
 
 // A post with no local assets so the "Scarica in locale" entry is rendered.
 const basePost = {
@@ -114,5 +117,60 @@ describe('postmodal/ActionsMenu — onDownloadProgress subscription', () => {
       progressHandler()({ postId: 'p2', status: 'done' });
     });
     await waitFor(() => expect(window.electronAPI.getPostsByIds).toHaveBeenCalledWith(['p2']));
+  });
+});
+
+describe('postmodal/ActionsMenu — delete (P1-14 bulk seam)', () => {
+  it('on the desktop: a two-step confirm calls bulkAction, which still runs the permanent deletePosts', async () => {
+    vi.mocked(window.electronAPI.deletePosts).mockResolvedValue({
+      ok: true,
+      deleted: 1,
+      errors: [],
+    });
+    const { props } = renderMenu();
+    fireEvent.click(screen.getByTestId('post-modal-more'));
+    fireEvent.click(screen.getByTestId('post-modal-delete-post'));
+    expect(window.electronAPI.deletePosts).not.toHaveBeenCalled(); // first click only arms it
+    fireEvent.click(screen.getByTestId('post-modal-delete-post'));
+    await waitFor(() => expect(window.electronAPI.deletePosts).toHaveBeenCalledWith(['p1']));
+    // The desktop never soft-deletes: no undo handle.
+    await waitFor(() => expect(props.onPostDeleted).toHaveBeenCalledWith('p1', null));
+    expect(props.onClose).toHaveBeenCalled();
+  });
+
+  it('on the web: deletes through the seam and surfaces the undo handle', async () => {
+    const client: ShelfyClient = {
+      ...createElectronClient(),
+      bulkAction: vi.fn().mockResolvedValue({ changed: 1, selected: 1, deletedAt: 42, job: null }),
+    };
+    const onPostDeleted = vi.fn();
+    render(
+      <ShelfyProvider client={client}>
+        <ActionsMenu
+          post={basePost}
+          url="https://example.com/post/1"
+          primaryLocalPath={null}
+          isManual={false}
+          onPostDeleted={onPostDeleted}
+          onClose={vi.fn()}
+        />
+      </ShelfyProvider>,
+    );
+    fireEvent.click(screen.getByTestId('post-modal-more'));
+    fireEvent.click(screen.getByTestId('post-modal-delete-post'));
+    fireEvent.click(screen.getByTestId('post-modal-delete-post'));
+    await waitFor(() => expect(client.bulkAction).toHaveBeenCalledWith({ keys: ['p1'] }, 'delete'));
+    await waitFor(() => expect(onPostDeleted).toHaveBeenCalledWith('p1', 42));
+  });
+
+  it('surfaces a failure and leaves the modal open to retry', async () => {
+    vi.mocked(window.electronAPI.deletePosts).mockRejectedValue(new Error('db error'));
+    const { props } = renderMenu();
+    fireEvent.click(screen.getByTestId('post-modal-more'));
+    fireEvent.click(screen.getByTestId('post-modal-delete-post'));
+    fireEvent.click(screen.getByTestId('post-modal-delete-post'));
+    expect(await screen.findByTestId('action-error')).toBeInTheDocument();
+    expect(props.onPostDeleted).not.toHaveBeenCalled();
+    expect(props.onClose).not.toHaveBeenCalled();
   });
 });

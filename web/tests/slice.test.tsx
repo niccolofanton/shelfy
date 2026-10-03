@@ -2,6 +2,7 @@
 // against a mock ShelfyClient with the web capabilities, and no preload bridge
 // at all, as in a browser.
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import type { ComponentProps } from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import App from '@ui/App';
 import Gallery from '@ui/views/Gallery';
@@ -76,6 +77,12 @@ function webClient(): MockClient {
     getPostsByIds: vi.fn().mockResolvedValue([]),
     getStats: vi.fn().mockResolvedValue(STATS),
     listCollections: vi.fn().mockResolvedValue(FOLDERS),
+    countPosts: vi.fn().mockResolvedValue(0),
+    resolveAllIds: vi.fn().mockResolvedValue(null),
+    bulkAction: vi.fn(),
+    listTrash: vi.fn(),
+    restoreFromTrash: vi.fn(),
+    emptyTrash: vi.fn(),
     updatePost: vi.fn(),
     createCollection: vi.fn(),
     updateCollection: vi.fn(),
@@ -121,7 +128,6 @@ describe('App on the web client', () => {
       'nav-ai',
       'nav-feedback',
       'nav-settings',
-      'select-toggle',
       'gallery-sync-source',
     ]) {
       expect(screen.queryByTestId(id), id).toBeNull();
@@ -129,6 +135,9 @@ describe('App on the web client', () => {
     // libraryEdit (P1-06): folders can be created and edited.
     expect(within(sidebar).getByTestId('add-source-btn')).toBeInTheDocument();
     expect(within(sidebar).getByTestId('edit-collection-1')).toBeInTheDocument();
+    // bulkActions (P1-14): selection and the Trash nav entry are now on.
+    expect(screen.getByTestId('select-toggle')).toBeInTheDocument();
+    expect(within(sidebar).getByTestId('nav-trash')).toBeInTheDocument();
     expect(client.getStats).toHaveBeenCalled();
     expect(client.listCollections).toHaveBeenCalled();
   });
@@ -191,12 +200,13 @@ describe('Gallery on the web client', () => {
     );
   });
 
-  it('has no selection: no select button, no quick-select on hover', async () => {
+  it('has selection (P1-14 bulkActions): a select button, and quick-select on hover', async () => {
     renderGallery();
     const [card] = await screen.findAllByTestId('post-card');
+    expect(screen.getByTestId('select-toggle')).toBeInTheDocument();
     fireEvent.mouseEnter(card);
-    expect(screen.queryByTestId('select-toggle')).toBeNull();
-    expect(screen.queryByTestId('quick-select-checkbox')).toBeNull();
+    fireEvent.click(await screen.findByTestId('quick-select-checkbox'));
+    expect(screen.getByTestId('selection-count')).toHaveTextContent('1');
   });
 
   it('shows stored covers through their grid rendition', async () => {
@@ -207,16 +217,20 @@ describe('Gallery on the web client', () => {
 });
 
 describe('Post modal on the web client', () => {
-  function renderModal(post: Shelfy.Post, client = webClient()) {
+  function renderModal(
+    post: Shelfy.Post,
+    client = webClient(),
+    props: Partial<ComponentProps<typeof PostModal>> = {},
+  ) {
     render(
       <ShelfyProvider client={client}>
-        <PostModal post={post} onClose={vi.fn()} />
+        <PostModal post={post} onClose={vi.fn()} {...props} />
       </ShelfyProvider>,
     );
     return client;
   }
 
-  it('is editable (P1-06 libraryEdit): the note, the manual tags and the AI layer; not yet regenerate/bulk-clear', () => {
+  it('is editable (P1-06 libraryEdit, P1-14 bulkActions): the note, tags, AI layer and AI-clear menu; not yet regenerate', () => {
     renderModal(POSTS[0]);
     const modal = screen.getByTestId('post-modal');
     expect(within(modal).getByText('A blown-glass lamp')).toBeInTheDocument();
@@ -227,12 +241,14 @@ describe('Post modal on the web client', () => {
       'post-modal-edit',
       'post-modal-manual-tag-input',
       'post-modal-assign-toggle',
+      // The bulk AI-clear menu (`bulkActions`, the same seam as the gallery's
+      // bulk bar) is on since P1-14.
+      'post-modal-ai-more',
     ]) {
       expect(within(modal).queryByTestId(id), id).not.toBeNull();
     }
-    // Regenerating an analysis (`ai`) and the bulk AI-clear actions (`bulkActions`,
-    // the same seam as the gallery's bulk bar) each wait on their own capability.
-    for (const id of ['post-modal-ai-more', 'post-modal-regenerate', 'post-modal-analyze']) {
+    // Regenerating an analysis still waits on its own capability (`ai`).
+    for (const id of ['post-modal-regenerate', 'post-modal-analyze']) {
       expect(within(modal).queryByTestId(id), id).toBeNull();
     }
     expect(screen.getByTestId('post-modal-image')).toHaveAttribute('src', '/media/aa.jpg');
@@ -270,19 +286,40 @@ describe('Post modal on the web client', () => {
     await waitFor(() => expect(client.removePostFromCollection).toHaveBeenCalledWith('ig_1', 1));
   });
 
-  it('offers "open original" and "download original" (no local disk on the web)', () => {
+  it('offers "open original", "download original" and, since P1-14, "delete"', () => {
     const client = renderModal(POSTS[0]);
     fireEvent.click(screen.getByTestId('post-modal-more'));
     const menu = screen.getByTestId('post-modal-menu');
     expect(
       within(menu).getAllByRole('button').length + within(menu).getAllByRole('link').length,
-    ).toBe(2);
+    ).toBe(3);
     expect(within(menu).getByTestId('post-modal-download-original')).toHaveAttribute(
       'href',
       '/media/aa.jpg',
     );
+    expect(within(menu).getByTestId('post-modal-delete-post')).toBeInTheDocument();
     fireEvent.click(within(menu).getByTestId('post-modal-external'));
     expect(client.openExternal).toHaveBeenCalledWith('https://www.instagram.com/p/C0ffee/');
+  });
+
+  it('deletes the post through the bulk seam (P1-14), with its undo handle', async () => {
+    const client = webClient();
+    vi.mocked(client.bulkAction).mockResolvedValue({
+      changed: 1,
+      selected: 1,
+      deletedAt: 5_000,
+      job: null,
+    });
+    const onPostDeleted = vi.fn();
+    renderModal(POSTS[0], client, { onPostDeleted });
+    const modal = screen.getByTestId('post-modal');
+    fireEvent.click(within(modal).getByTestId('post-modal-more'));
+    fireEvent.click(within(modal).getByTestId('post-modal-delete-post'));
+    fireEvent.click(within(modal).getByTestId('post-modal-delete-post')); // two-step confirm
+    await waitFor(() =>
+      expect(client.bulkAction).toHaveBeenCalledWith({ keys: ['ig_1'] }, 'delete'),
+    );
+    await waitFor(() => expect(onPostDeleted).toHaveBeenCalledWith('ig_1', 5_000));
   });
 
   it('opens the original page where the desktop would embed it', () => {
@@ -293,7 +330,7 @@ describe('Post modal on the web client', () => {
     expect(client.openExternal).toHaveBeenCalledWith('https://x.com/i/web/status/2');
   });
 
-  it('has no menu for a post with nothing to open and nothing stored', () => {
+  it('still offers Delete (P1-14 bulkActions) for a post with nothing to open and nothing stored', () => {
     renderModal({
       ...POSTS[0],
       postUrl: null,
@@ -302,6 +339,10 @@ describe('Post modal on the web client', () => {
       imagePath: null,
       media: [],
     });
-    expect(screen.queryByTestId('post-modal-more')).toBeNull();
+    fireEvent.click(screen.getByTestId('post-modal-more'));
+    const menu = screen.getByTestId('post-modal-menu');
+    expect(within(menu).getByTestId('post-modal-delete-post')).toBeInTheDocument();
+    expect(within(menu).queryByTestId('post-modal-external')).toBeNull();
+    expect(within(menu).queryByTestId('post-modal-download-original')).toBeNull();
   });
 });
