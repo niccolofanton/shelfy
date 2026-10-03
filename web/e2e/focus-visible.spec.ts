@@ -83,9 +83,12 @@ test('menu items and post cards show the ring', async ({ page }) => {
   await page.getByTestId('post-modal-more').click();
   const menu = page.getByTestId('post-modal-menu');
   await expect(menu).toBeVisible();
-  await page.keyboard.press('Tab');
-  const item = menu.locator('button').first();
-  await expect(item).toBeFocused();
+  // The more menu is now an APG menu (role="menu"): it focuses its first item on
+  // open and the arrow keys move between items (Tab closes it). ArrowDown moves
+  // focus by keyboard, so the focused item shows the ring.
+  await page.keyboard.press('ArrowDown');
+  const item = menu.locator('[role="menuitem"]:focus');
+  await expect(item).toHaveCount(1);
   expect(await outline(item)).toEqual({ style: 'solid', width: '2px', color: RING });
   await shot(page, 'desk-menu-item-focus');
 });

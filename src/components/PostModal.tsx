@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState, Suspense, lazy } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Instagram,
@@ -11,6 +12,9 @@ import {
 } from 'lucide-react';
 import { useT, withMessages } from '../i18n';
 import { useShelfy } from '../api/ShelfyProvider';
+import { useDialog } from '../hooks/useDialog';
+import IconButton from './ui/IconButton';
+import { useMediaQuery } from './ui/useMediaQuery';
 import type { LightboxImage } from './ImageLightbox';
 import PinterestIcon from './PinterestIcon';
 import { resolveUrl, webPageLabel, buildSlides, pickSlideMedia } from './postmodal/helpers';
@@ -18,6 +22,12 @@ import MediaCarousel from './postmodal/MediaCarousel';
 import MetaColumn, { ApplyAiFilter, PostUpdated } from './postmodal/MetaColumn';
 import ActionsMenu from './postmodal/ActionsMenu';
 import CollectionsMenu from './postmodal/CollectionsMenu';
+
+// Above this width the post prev/next arrows float at the screen edges, the
+// desktop pattern ("what not to change"). Below it — tablet and narrow — they
+// sit in the header as chevrons instead, so they never land on the modal's own
+// edge (MOD-12) or overlap the carousel controls (MOD-5).
+const EDGE_ARROWS_QUERY = '(min-width: 1200px)';
 
 // Neither is on the first screen — the zoom lightbox and the "new collection"
 // dialog both open from an in-modal action — so, as in App.tsx and
@@ -145,9 +155,27 @@ export default function PostModal({
   const goSlidePrev = (): void => setSlide((s) => (s > 0 ? s - 1 : s));
   const goSlideNext = (): void => setSlide((s) => (s < slideCount - 1 ? s + 1 : s));
 
+  // One step in a direction: within a multi-slide post the arrows/swipe step
+  // through the slides first, then move between posts at the edges. Shared by
+  // the keyboard (←/→) and the media swipe on narrow (MOD-5).
+  const step = (dir: 'prev' | 'next'): void => {
+    if (dir === 'next') {
+      if (hasMultiple && clampedSlide < slideCount - 1) goSlideNext();
+      else if (hasNext) onNext?.();
+    } else if (hasMultiple && clampedSlide > 0) goSlidePrev();
+    else if (hasPrev) onPrev?.();
+  };
+
+  // ≥1200px floats the post arrows at the screen edges; below that they move
+  // into the header (MOD-5, MOD-12).
+  const edgeArrows = useMediaQuery(EDGE_ARROWS_QUERY);
+
   // Full-screen image viewer (click-to-zoom). Built from the image slides only, so
   // a full-page web screenshot can be scrolled at full width and pages navigated.
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  // Whether the media currently shown failed to load (MOD-2). Drives the more
+  // menu's download/open entries, which would fail the same way (MOD-13).
+  const [didMediaFail, setDidMediaFail] = useState<boolean>(false);
   const imageSlides = useMemo(
     () =>
       slides
@@ -170,28 +198,18 @@ export default function PostModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      // While a layer is open above the modal it owns the keyboard (Esc/arrows):
-      // the full-screen lightbox, the "Aggiungi a source" popover, or the
-      // create-source dialog. Ignore here so Escape only dismisses the topmost
-      // layer (not the whole modal) and an arrow doesn't step the background
-      // slide/post in parallel.
+      // While a layer is open above the modal it owns the keyboard: the
+      // full-screen lightbox, the folder popover, or the new-folder dialog.
+      // Ignore arrows here so the background slide/post doesn't step in
+      // parallel (Escape is useDialog's, routed to the topmost layer).
       if (lightboxIndex != null || assignOpen || showCreateCollection) return;
-      if (e.key === 'Escape') requestClose();
-      else if (e.key === 'ArrowLeft') {
-        // Within a multi-slide post, arrows step through slides first; once at an
-        // edge they move between posts.
-        if (hasMultiple && clampedSlide > 0) goSlidePrev();
-        else if (hasPrev) onPrev?.();
-      } else if (e.key === 'ArrowRight') {
-        if (hasMultiple && clampedSlide < slideCount - 1) goSlideNext();
-        else if (hasNext) onNext?.();
-      }
+      if (e.key === 'ArrowLeft') step('prev');
+      else if (e.key === 'ArrowRight') step('next');
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- preexisting: goSlideNext/requestClose are stable per render snapshot
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- preexisting: step is stable per render snapshot
   }, [
-    onClose,
     onPrev,
     onNext,
     hasPrev,
@@ -204,37 +222,17 @@ export default function PostModal({
     showCreateCollection,
   ]);
 
-  // Move focus into the dialog on open and trap Tab within it, so keyboard /
-  // screen-reader users are placed inside the dialog and can't Tab out into the
-  // obscured grid behind. The lightbox owns focus while open, so skip then.
-  useEffect(() => {
-    const panel = panelRef.current;
-    if (!panel) return;
-    panel.focus({ preventScroll: true });
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Tab' || lightboxIndex != null) return;
-      const focusables = panel.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      );
-      if (!focusables.length) {
-        e.preventDefault();
-        panel.focus({ preventScroll: true });
-        return;
-      }
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && (active === first || active === panel)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    panel.addEventListener('keydown', onKey);
-    return () => panel.removeEventListener('keydown', onKey);
-  }, [post.id, lightboxIndex]);
+  // Focus in, trap, restore to the card, Escape and `inert` on everything
+  // behind (MOD-8), shared with every other modal/sheet/drawer. The ref sits on
+  // the backdrop (not the panel) so the floating post arrows — the panel's
+  // siblings — don't turn inert; focus still lands on the panel via
+  // `initialFocus`. Escape is held back while a child layer is open so it
+  // dismisses that first, not the whole modal.
+  const dialogRef = useDialog<HTMLDivElement>({
+    onClose: requestClose,
+    initialFocus: panelRef,
+    closeOnEscape: lightboxIndex == null && !assignOpen && !showCreateCollection,
+  });
 
   const url = resolveUrl(post);
   const isWeb = post.platform === 'web';
@@ -284,6 +282,11 @@ export default function PostModal({
     post.imagePath ||
     post.thumbnailPath ||
     null;
+
+  // A social post with no media to show (a text tweet): render its words as the
+  // hero in the media pane instead of an empty globe (MOD-3). The caption is
+  // then suppressed in MetaColumn so it shows exactly once.
+  const isTextOnly = !isWeb && post.mediaType === 'text' && slideCount === 0;
 
   // Toggle this post's membership in a source: add it if it isn't a member,
   // remove it if it is (§1.2 #12 "remove from collection", finally exposed
@@ -348,170 +351,209 @@ export default function PostModal({
 
   return (
     <>
-      <div
-        data-testid="post-modal"
-        className="u-backdrop-in fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-6 narrow:p-0"
-        onClick={requestClose}
-      >
-        {/* Post navigation — outside the panel, pinned to the screen edges */}
-        {hasPrev && (
-          <button
-            data-testid="post-modal-prev"
-            onClick={(e) => {
-              e.stopPropagation();
-              onPrev?.();
-            }}
-            title={t('prevPost')}
-            className="u-press u-lift absolute left-3 top-1/2 -translate-y-1/2 z-50 flex items-center justify-center w-11 h-11 rounded-full bg-[#1a1a1a]/80 border border-[#2e2e2e] text-white/70 hover:text-white hover:bg-[#2a2a2a]"
-          >
-            <ChevronLeft size={24} />
-          </button>
-        )}
-        {hasNext && (
-          <button
-            data-testid="post-modal-next"
-            onClick={(e) => {
-              e.stopPropagation();
-              onNext?.();
-            }}
-            title={t('nextPost')}
-            className="u-press u-lift absolute right-3 top-1/2 -translate-y-1/2 z-50 flex items-center justify-center w-11 h-11 rounded-full bg-[#1a1a1a]/80 border border-[#2e2e2e] text-white/70 hover:text-white hover:bg-[#2a2a2a]"
-          >
-            <ChevronRight size={24} />
-          </button>
-        )}
-
+      {createPortal(
         <div
-          ref={panelRef}
-          role="dialog"
-          aria-modal="true"
-          aria-label={
-            isWeb
-              ? post.webDomain || post.authorName || t('website')
-              : post.authorName || post.authorUsername || t('post')
-          }
-          tabIndex={-1}
-          className="select-text u-dialog-in bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl flex flex-col w-full max-w-5xl h-[88vh] overflow-hidden focus:outline-none narrow:max-w-none narrow:h-full narrow:rounded-none narrow:border-0"
-          onClick={(e) => e.stopPropagation()}
+          ref={dialogRef}
+          data-testid="post-modal"
+          className="u-backdrop-in fixed inset-0 bg-black/70 flex items-center justify-center z-modal p-6 narrow:p-0"
+          onClick={requestClose}
         >
-          {/* Header */}
-          <div className="flex items-center gap-2 px-4 h-12 flex-shrink-0 border-b border-[#2e2e2e]">
-            <Icon size={16} style={{ color: accent }} title={platformLabel} className="shrink-0" />
-            <div className="flex items-baseline gap-1.5 min-w-0">
-              {isWeb ? (
-                <>
-                  <span className="text-white text-sm font-medium truncate">
-                    {post.webDomain || post.authorName || t('website')}
-                  </span>
-                  {post.authorName && post.authorName !== post.webDomain && (
-                    <span className="text-[#888] text-xs truncate shrink-0">{post.authorName}</span>
-                  )}
-                </>
-              ) : (
-                <>
-                  {post.authorName && (
-                    <span className="text-white text-sm font-medium truncate">
-                      {post.authorName}
-                    </span>
-                  )}
-                  <span
-                    className={
-                      post.authorName
-                        ? 'text-[#888] text-xs truncate shrink-0'
-                        : 'text-white text-sm font-medium truncate'
-                    }
-                  >
-                    @{post.authorUsername || t('unknownAuthor')}
-                  </span>
-                </>
-              )}
-            </div>
-            {isLocal && (
-              <span
-                className="u-pop-in flex items-center gap-1 text-[10px] text-green-400 bg-green-500/10 rounded px-1.5 py-0.5"
-                title={t('viewingLocal')}
-              >
-                <HardDriveDownload size={11} />
-                {t('local')}
-              </span>
-            )}
-            <div className="flex-1" />
-
-            {caps.libraryEdit && (
-              <CollectionsMenu
-                collections={collections}
-                assignedIds={assignedIds}
-                open={assignOpen}
-                onToggle={() => setAssignOpen((o) => !o)}
-                onRequestClose={() => setAssignOpen(false)}
-                onAssign={assignToCollection}
-                onCreateNew={() => {
-                  setAssignOpen(false);
-                  setShowCreateCollection(true);
-                }}
-              />
-            )}
-
-            <ActionsMenu
-              post={post}
-              url={url}
-              primaryLocalPath={primaryLocalPath}
-              isManual={isManual}
-              onLocalFilesDeleted={onLocalFilesDeleted}
-              onPostDeleted={onPostDeleted}
-              onPostUpdated={onPostUpdated}
-              onClose={onClose}
-            />
-
+          {/* Post navigation — ≥1200px only, floating at the screen edges
+              (desktop pattern). Below that the chevrons live in the header. */}
+          {edgeArrows && hasPrev && (
             <button
-              data-testid="post-modal-close"
-              onClick={requestClose}
-              title={tc('close')}
-              className="u-press flex items-center justify-center w-8 h-8 rounded-md text-[#a0a0a0] hover:text-white hover:bg-[#2a2a2a]"
+              data-testid="post-modal-prev"
+              onClick={(e) => {
+                e.stopPropagation();
+                onPrev?.();
+              }}
+              aria-label={t('prevPost')}
+              title={t('prevPost')}
+              className="u-press u-lift absolute left-3 top-1/2 -translate-y-1/2 z-raised flex items-center justify-center w-11 h-11 rounded-full bg-[#1a1a1a]/80 border border-[#2e2e2e] text-white/70 hover:text-white hover:bg-[#2a2a2a]"
             >
-              <X size={16} />
+              <ChevronLeft size={24} />
             </button>
-          </div>
+          )}
+          {edgeArrows && hasNext && (
+            <button
+              data-testid="post-modal-next"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNext?.();
+              }}
+              aria-label={t('nextPost')}
+              title={t('nextPost')}
+              className="u-press u-lift absolute right-3 top-1/2 -translate-y-1/2 z-raised flex items-center justify-center w-11 h-11 rounded-full bg-[#1a1a1a]/80 border border-[#2e2e2e] text-white/70 hover:text-white hover:bg-[#2a2a2a]"
+            >
+              <ChevronRight size={24} />
+            </button>
+          )}
 
-          {/* ── Two columns — media / web screenshot | written content ─────────
-            Under 900px this stacks instead: media on top, content scrolling
-            below. MediaCarousel and MetaColumn (postmodal/**) are P1-06's, not
-            this task's, so their narrow-width overrides are plain CSS rules in
-            index.css (`.postmodal-media-row`, and MetaColumn's own existing
-            `post-modal-meta` testid as the hook) rather than edits to those
-            files — the DOM stays exactly what it is today, and the ≥900px
-            (unprefixed) layout is untouched. */}
-          <div className="postmodal-media-row flex-1 min-h-0 flex overflow-hidden">
-            <MediaCarousel
-              post={post}
-              isWeb={isWeb}
-              media={media}
-              current={current}
-              slides={slides}
-              clampedSlide={clampedSlide}
-              slideCount={slideCount}
-              hasMultiple={hasMultiple}
-              onSlidePrev={goSlidePrev}
-              onSlideNext={goSlideNext}
-              onSelectSlide={setSlide}
-              onOpenLightbox={openLightbox}
-              onOpenLightboxKey={openLightboxOnKey}
-            />
+          <div
+            ref={panelRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={
+              isWeb
+                ? post.webDomain || post.authorName || t('website')
+                : post.authorName || post.authorUsername || t('post')
+            }
+            tabIndex={-1}
+            className="select-text u-dialog-in bg-[#1a1a1a] border border-[#2e2e2e] rounded-xl shadow-2xl flex flex-col w-full max-w-5xl h-[88vh] overflow-hidden focus:outline-none narrow:max-w-none narrow:h-full narrow:rounded-none narrow:border-0"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header. On narrow it clears the status-bar safe area (SH-3) and
+                grows to a 56px touch row; its controls are 44px (MOD-6). */}
+            <div className="flex items-center gap-1 px-4 narrow:px-3 h-12 narrow:h-auto narrow:min-h-[56px] narrow:pt-[env(safe-area-inset-top)] flex-shrink-0 border-b border-[#2e2e2e]">
+              <Icon
+                size={16}
+                style={{ color: accent }}
+                title={platformLabel}
+                className="shrink-0"
+              />
+              <div className="flex items-baseline gap-1.5 min-w-0 mr-1">
+                {isWeb ? (
+                  <>
+                    <span className="text-white text-sm font-medium truncate">
+                      {post.webDomain || post.authorName || t('website')}
+                    </span>
+                    {post.authorName && post.authorName !== post.webDomain && (
+                      <span className="text-[#888] text-xs truncate shrink-0">
+                        {post.authorName}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {post.authorName && (
+                      <span className="text-white text-sm font-medium truncate">
+                        {post.authorName}
+                      </span>
+                    )}
+                    <span
+                      className={
+                        post.authorName
+                          ? 'text-[#888] text-xs truncate shrink-0'
+                          : 'text-white text-sm font-medium truncate'
+                      }
+                    >
+                      @{post.authorUsername || t('unknownAuthor')}
+                    </span>
+                  </>
+                )}
+              </div>
+              {isLocal && (
+                <span
+                  className="u-pop-in flex items-center gap-1 text-[10px] text-green-400 bg-green-500/10 rounded px-1.5 py-0.5"
+                  title={t('viewingLocal')}
+                >
+                  <HardDriveDownload size={11} />
+                  {t('local')}
+                </span>
+              )}
+              <div className="flex-1" />
 
-            <MetaColumn
-              post={post}
-              isWeb={isWeb}
-              slideCount={slideCount}
-              hasMultiple={hasMultiple}
-              onApplyAiFilter={onApplyAiFilter}
-              onPostUpdated={onPostUpdated}
-              onOpenInWebsites={onOpenInWebsites}
-              onReanalyzeWeb={onReanalyzeWeb}
-              onAiEditingChange={handleAiEditingChange}
-            />
+              {/* Post prev/next as header chevrons below 1200px (MOD-5, MOD-12):
+                  one set of arrows only — the floating edge pair renders above
+                  that width instead. Same testids, so exactly one carries them. */}
+              {!edgeArrows && hasPrev && (
+                <IconButton
+                  data-testid="post-modal-prev"
+                  icon={ChevronLeft}
+                  label={t('prevPost')}
+                  onClick={() => onPrev?.()}
+                />
+              )}
+              {!edgeArrows && hasNext && (
+                <IconButton
+                  data-testid="post-modal-next"
+                  icon={ChevronRight}
+                  label={t('nextPost')}
+                  onClick={() => onNext?.()}
+                />
+              )}
+
+              {caps.libraryEdit && (
+                <CollectionsMenu
+                  collections={collections}
+                  assignedIds={assignedIds}
+                  open={assignOpen}
+                  onToggle={() => setAssignOpen((o) => !o)}
+                  onRequestClose={() => setAssignOpen(false)}
+                  onAssign={assignToCollection}
+                  onCreateNew={() => {
+                    setAssignOpen(false);
+                    setShowCreateCollection(true);
+                  }}
+                />
+              )}
+
+              <ActionsMenu
+                post={post}
+                url={url}
+                primaryLocalPath={primaryLocalPath}
+                mediaUnavailable={didMediaFail}
+                isManual={isManual}
+                onLocalFilesDeleted={onLocalFilesDeleted}
+                onPostDeleted={onPostDeleted}
+                onPostUpdated={onPostUpdated}
+                onClose={onClose}
+              />
+
+              <IconButton
+                data-testid="post-modal-close"
+                icon={X}
+                label={tc('close')}
+                onClick={requestClose}
+              />
+            </div>
+
+            {/* ── Two columns — media / web screenshot | written content ───────
+              Under 900px this stacks instead: media on top, content scrolling
+              below. The stacking is driven from index.css's POST MODAL block
+              (UX-5's), keyed on `.postmodal-media-row` and MediaCarousel's
+              `post-modal-media` root and MetaColumn's `post-modal-meta`; the
+              ≥900px (unprefixed) two-column layout is untouched. */}
+            <div className="postmodal-media-row flex-1 min-h-0 flex overflow-hidden">
+              <MediaCarousel
+                post={post}
+                isWeb={isWeb}
+                isTextOnly={isTextOnly}
+                media={media}
+                current={current}
+                slides={slides}
+                clampedSlide={clampedSlide}
+                slideCount={slideCount}
+                hasMultiple={hasMultiple}
+                PlatformIcon={Icon}
+                accent={accent}
+                postUrl={url}
+                onSlidePrev={goSlidePrev}
+                onSlideNext={goSlideNext}
+                onSelectSlide={setSlide}
+                onOpenLightbox={openLightbox}
+                onOpenLightboxKey={openLightboxOnKey}
+                onMediaFailedChange={setDidMediaFail}
+                onSwipeNavigate={step}
+              />
+
+              <MetaColumn
+                post={post}
+                isWeb={isWeb}
+                isTextOnly={isTextOnly}
+                slideCount={slideCount}
+                hasMultiple={hasMultiple}
+                onApplyAiFilter={onApplyAiFilter}
+                onPostUpdated={onPostUpdated}
+                onOpenInWebsites={onOpenInWebsites}
+                onReanalyzeWeb={onReanalyzeWeb}
+                onAiEditingChange={handleAiEditingChange}
+              />
+            </div>
           </div>
-        </div>
-      </div>
+        </div>,
+        document.body,
+      )}
 
       {lightboxIndex != null && imageSlides.length > 0 && (
         <Suspense fallback={null}>
@@ -551,15 +593,17 @@ export default function PostModal({
         </Suspense>
       )}
 
-      {showCreateCollection && (
-        <Suspense fallback={null}>
-          <CollectionModal
-            collections={collections}
-            onClose={() => setShowCreateCollection(false)}
-            onSave={handleCreateAndAssign}
-          />
-        </Suspense>
-      )}
+      {showCreateCollection &&
+        createPortal(
+          <Suspense fallback={null}>
+            <CollectionModal
+              collections={collections}
+              onClose={() => setShowCreateCollection(false)}
+              onSave={handleCreateAndAssign}
+            />
+          </Suspense>,
+          document.body,
+        )}
     </>
   );
 }

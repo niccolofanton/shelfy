@@ -51,6 +51,14 @@ interface UserOverride {
   tags: string[];
 }
 
+// On narrow screens, pull a just-focused field to the middle so the on-screen
+// keyboard doesn't cover it (MOD-11). Instant (not smooth): reduced-motion safe.
+function scrollIntoViewOnNarrowFocus(e: React.FocusEvent<HTMLElement>): void {
+  if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 899px)').matches) {
+    e.currentTarget.scrollIntoView({ block: 'center', behavior: 'auto' });
+  }
+}
+
 // Maps an analyze-job status to its i18n key (resolved at render with `t`).
 const ANALYZE_STATUS_KEY: Partial<Record<AnalyzeJob['status'], string>> = {
   pending: 'statusPending',
@@ -76,6 +84,22 @@ function Section({ children, action }: SectionProps) {
         <Sparkles size={12} className="text-violet-400" />
         {t('aiSection')}
         {action && <div className="ml-auto">{action}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// The user-authored layer (manual tags + personal note) in its OWN card, above
+// the AI card — not labelled as AI output (MOD-4). Emerald, matching the manual
+// tags, so it reads as the user's own, distinct from the violet AI tags.
+function UserCard({ children }: { children: React.ReactNode }) {
+  const t = useT('postModal');
+  return (
+    <div className="u-fade-in rounded-lg border border-[#2a2a2a] bg-[#121212] px-3 py-2.5 space-y-2">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-[#7a7a7a]">
+        <Tags size={12} className="text-emerald-400" />
+        {t('userSection')}
       </div>
       {children}
     </div>
@@ -170,7 +194,7 @@ function UserLayer({
   if (readOnly) {
     if (!tags.length && !note) return null;
     return (
-      <div className="space-y-3 pt-2.5 mt-0.5 border-t border-[#242424]">
+      <div className="space-y-3">
         {tags.length > 0 && (
           <div className="space-y-1.5">
             <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#6a6a6a]">
@@ -208,7 +232,7 @@ function UserLayer({
   }
 
   return (
-    <div className="space-y-3 pt-2.5 mt-0.5 border-t border-[#242424]">
+    <div className="space-y-3">
       {/* Manual tags — the user's own, distinct (emerald) from the AI tags */}
       <div className="space-y-1.5">
         <span className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[#6a6a6a]">
@@ -243,9 +267,10 @@ function UserLayer({
             onChange={(e) => setTagInput(e.target.value)}
             onKeyDown={handleTagKeyDown}
             onBlur={() => addTag(tagInput)}
+            onFocus={scrollIntoViewOnNarrowFocus}
             disabled={savingTags}
             placeholder={tags.length ? t('addTagShort') : t('addYourTag')}
-            className="min-w-[120px] flex-1 bg-transparent text-[12px] text-emerald-100 placeholder:text-[#5a5a5a] focus:outline-none"
+            className="min-w-[120px] flex-1 bg-transparent text-[12px] narrow:text-base text-emerald-100 placeholder:text-[#5a5a5a] focus:outline-none"
           />
         </div>
       </div>
@@ -261,10 +286,11 @@ function UserLayer({
               data-testid="post-modal-note-input"
               value={draftNote}
               onChange={(e) => setDraftNote(e.target.value)}
+              onFocus={scrollIntoViewOnNarrowFocus}
               rows={3}
               autoFocus
               placeholder={t('writeNote')}
-              className="w-full rounded-md bg-[#1a1a1a] border border-[#2a2a2a] px-2.5 py-2 text-[13px] leading-relaxed text-[#e0e0e0] resize-y focus:outline-none focus:border-emerald-500/50"
+              className="w-full rounded-md bg-[#1a1a1a] border border-[#2a2a2a] px-2.5 py-2 text-[13px] narrow:text-base leading-relaxed text-[#e0e0e0] resize-y focus:outline-none focus:border-emerald-500/50"
             />
             <div className="flex items-center gap-2">
               <button
@@ -642,306 +668,12 @@ export default function AiPanel({
     analyzePost(post.id);
   };
 
-  if (modelProgressTyped) {
-    return (
-      <Section>
-        <div className="flex items-center gap-2 text-xs text-[#bdbdbd]">
-          <Loader2 size={13} className="animate-spin text-violet-400" />
-          {t('downloadingModel', {
-            percent: Math.round((modelProgressTyped.progress || 0) * 100),
-          })}
-        </div>
-        <div className="h-1 rounded-full bg-[#2a2a2a] overflow-hidden">
-          <div
-            className="h-full bg-violet-500 transition-all"
-            style={{ width: `${Math.round((modelProgressTyped.progress || 0) * 100)}%` }}
-          />
-        </div>
-      </Section>
-    );
-  }
-
-  if (busy) {
-    return (
-      <Section>
-        <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-2 text-xs text-[#bdbdbd]">
-            <Loader2 size={13} className="animate-spin text-violet-400" />
-            {status && ANALYZE_STATUS_KEY[status] ? t(ANALYZE_STATUS_KEY[status]) : t('processing')}
-          </span>
-          <button
-            onClick={() => job && cancelJob(job.key)}
-            className="u-press text-[11px] text-[#9a9a9a] hover:text-white"
-          >
-            {tc('cancel')}
-          </button>
-        </div>
-      </Section>
-    );
-  }
-
-  if (description || tags?.length || editing) {
-    const entities = post.aiEntities?.filter(Boolean) || [];
-    const keywords = post.aiKeywords?.filter(Boolean) || [];
-
-    // Manual edit mode: description textarea, chip tag editor, save_reason.
-    if (editing) {
-      return (
-        <Section>
-          <div className="space-y-1.5">
-            <label className="text-[10px] uppercase tracking-wide text-[#6a6a6a]">
-              {t('description')}
-            </label>
-            <textarea
-              data-testid="post-modal-edit-description"
-              value={draftDescription}
-              onChange={(e) => setDraftDescription(e.target.value)}
-              rows={4}
-              className="w-full rounded-md bg-[#1a1a1a] border border-[#2a2a2a] px-2.5 py-2 text-[13px] text-[#e0e0e0] resize-y focus:outline-none focus:border-violet-500/60"
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] uppercase tracking-wide text-[#6a6a6a]">
-              {t('tags')}
-            </label>
-            <div className="flex flex-wrap gap-1.5 rounded-md bg-[#1a1a1a] border border-[#2a2a2a] px-2 py-2">
-              {draftTags.map((tag) => {
-                const leaving = removingTags.has(tag);
-                return (
-                  <span
-                    key={tag}
-                    onAnimationEnd={leaving ? () => finalizeRemoveTag(tag) : undefined}
-                    className={
-                      (leaving ? 'u-pop-out' : 'u-pop-in') +
-                      ' flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-200 text-[11px]'
-                    }
-                  >
-                    #{tag}
-                    <button
-                      onClick={() => removeTag(tag)}
-                      title={t('removeTag')}
-                      className="u-press text-violet-300/70 hover:text-white"
-                    >
-                      <X size={11} />
-                    </button>
-                  </span>
-                );
-              })}
-              <input
-                data-testid="post-modal-edit-tag-input"
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={handleTagKeyDown}
-                onBlur={() => addTag(tagInput)}
-                placeholder={t('addTag')}
-                className="flex-1 min-w-[100px] bg-transparent text-[12px] text-[#e0e0e0] placeholder:text-[#5a5a5a] focus:outline-none"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-[10px] uppercase tracking-wide text-[#6a6a6a]">
-              {t('whySave')}
-            </label>
-            <textarea
-              data-testid="post-modal-edit-reason"
-              value={draftSaveReason}
-              onChange={(e) => setDraftSaveReason(e.target.value)}
-              rows={2}
-              className="w-full rounded-md bg-[#1a1a1a] border border-[#2a2a2a] px-2.5 py-2 text-[12px] text-[#cfcfcf] resize-y focus:outline-none focus:border-violet-500/60"
-            />
-          </div>
-
-          <div className="flex items-center gap-2 pt-0.5">
-            <button
-              data-testid="post-modal-save"
-              onClick={handleSave}
-              disabled={saving}
-              className="u-press flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] bg-violet-500/20 text-violet-100 hover:bg-violet-500/30 disabled:opacity-50"
-            >
-              {saving && <Loader2 size={12} className="animate-spin" />}
-              {tc('save')}
-            </button>
-            <button
-              data-testid="post-modal-cancel"
-              onClick={() => setEditing(false)}
-              disabled={saving}
-              className="u-press px-3 h-7 rounded-md text-[11px] text-[#9a9a9a] hover:text-white"
-            >
-              {tc('cancel')}
-            </button>
-          </div>
-        </Section>
-      );
-    }
-
-    // Single menu item for a destructive AI action: first click arms the confirm
-    // (red), second click runs it — keeps the two-step safety inside the menu.
-    const menuItemBase =
-      'u-press flex items-center gap-2.5 px-3 py-2 text-xs text-left disabled:opacity-50 transition-colors';
-    return (
-      <Section
-        action={
-          libraryEdit && (
-            <div className="flex items-center gap-0.5">
-              <button
-                data-testid="post-modal-edit"
-                onClick={startEditing}
-                title={t('editAi')}
-                className="u-press flex items-center justify-center w-6 h-6 rounded-md text-[#8a8a8a] hover:text-white hover:bg-[#2a2a2a]"
-              >
-                <Pencil size={13} />
-              </button>
-              {/* Delete-description / clear-tags: the same seam as the gallery's
-                  bulk "clear AI description/tags" (P1-14), so gated the same way. */}
-              {bulkActions && (description || (tags?.length ?? 0) > 0) && (
-                <div ref={moreRef}>
-                  <button
-                    data-testid="post-modal-ai-more"
-                    onClick={() => (moreOpen ? closeMore() : setMoreOpen(true))}
-                    aria-haspopup="menu"
-                    aria-expanded={moreOpen}
-                    title={t('moreActions')}
-                    className="u-press flex items-center justify-center w-6 h-6 rounded-md text-[#8a8a8a] hover:text-white hover:bg-[#2a2a2a]"
-                  >
-                    <MoreHorizontal size={15} />
-                  </button>
-                  <Popover
-                    anchorRef={moreRef}
-                    open={moreOpen}
-                    onRequestClose={closeMore}
-                    align="right"
-                    placement="bottom"
-                    className="min-w-[210px] bg-[#1f1f1f] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 flex flex-col"
-                  >
-                    <div role="menu" data-testid="post-modal-ai-menu">
-                      {description && (
-                        <button
-                          data-testid="post-modal-delete-description"
-                          onClick={() =>
-                            confirmDeleteDesc
-                              ? handleDeleteDescription()
-                              : setConfirmDeleteDesc(true)
-                          }
-                          disabled={deletingDesc}
-                          className={[
-                            menuItemBase,
-                            'w-full',
-                            confirmDeleteDesc
-                              ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25'
-                              : 'text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white',
-                          ].join(' ')}
-                        >
-                          {deletingDesc ? (
-                            <Loader2 size={14} className="animate-spin shrink-0" />
-                          ) : (
-                            <Trash2 size={14} className="shrink-0" />
-                          )}
-                          {confirmDeleteDesc
-                            ? t('confirmDeleteDescription')
-                            : t('deleteDescription')}
-                        </button>
-                      )}
-                      {(tags?.length ?? 0) > 0 && (
-                        <button
-                          data-testid="post-modal-clear-tags"
-                          onClick={() =>
-                            confirmDeleteTags ? handleClearAiTags() : setConfirmDeleteTags(true)
-                          }
-                          disabled={deletingTags}
-                          className={[
-                            menuItemBase,
-                            'w-full',
-                            confirmDeleteTags
-                              ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25'
-                              : 'text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white',
-                          ].join(' ')}
-                        >
-                          {deletingTags ? (
-                            <Loader2 size={14} className="animate-spin shrink-0" />
-                          ) : (
-                            <Tags size={14} className="shrink-0" />
-                          )}
-                          {confirmDeleteTags ? t('confirmRemoveAiTags') : t('removeAiTags')}
-                        </button>
-                      )}
-                    </div>
-                  </Popover>
-                </div>
-              )}
-            </div>
-          )
-        }
-      >
-        {description && (
-          <p className="text-[14px] leading-[1.65] text-[#dcdcdc] whitespace-pre-wrap break-words">
-            {description}
-          </p>
-        )}
-
-        {/* Tags — clickable */}
-        {(tags?.length ?? 0) > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {(tags ?? []).map((tag, i) => (
-              <button
-                key={tag}
-                onClick={() => onApplyAiFilter?.({ tag: tag })}
-                title={t('filterByTag')}
-                style={{ animationDelay: i * 30 + 'ms' }}
-                className="u-pop-in u-press px-2 py-0.5 rounded-full bg-violet-500/12 text-violet-300 text-[11px] hover:bg-violet-500/25"
-              >
-                #{tag}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Entities — non-clickable chips */}
-        {entities.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] uppercase tracking-wide text-[#6a6a6a]">
-              {t('entities')}
-            </span>
-            {entities.map((e) => (
-              <span
-                key={e}
-                className="px-2 py-0.5 rounded-full bg-[#1f1f1f] text-[#aaa] text-[11px]"
-              >
-                {e}
-              </span>
-            ))}
-          </div>
-        )}
-
-        {/* Keywords — discreet text */}
-        {keywords.length > 0 && (
-          <p className="text-[12px] leading-relaxed text-[#7a7a7a] break-words">
-            <span className="text-[#6a6a6a]">{t('searchAlso')}</span>
-            {keywords.join(', ')}
-          </p>
-        )}
-
-        {/* Why save it */}
-        {saveReason && (
-          <p className="text-[12.5px] leading-relaxed text-[#9a9a9a] break-words">
-            <span className="text-[#6a6a6a]">{t('whySavePrefix')}</span>
-            {saveReason}
-          </p>
-        )}
-
-        {ai && !videoNeedsDownload && (
-          <div className="flex items-center gap-3 pt-0.5">
-            <button
-              data-testid="post-modal-regenerate"
-              onClick={handleAnalyze}
-              className="u-press flex items-center gap-1.5 px-2.5 h-7 rounded-md text-[11px] bg-violet-500/15 text-violet-200 hover:bg-violet-500/25"
-            >
-              <RotateCw size={12} /> {t('regenerate')}
-            </button>
-          </div>
-        )}
-
+  // The user's own tags & note, in their own card above the AI one (MOD-4):
+  // available whenever the library is editable, or when the post already
+  // carries some — never hidden behind, or labelled as, AI output.
+  const userCard =
+    hasUserContent || libraryEdit ? (
+      <UserCard>
         <UserLayer
           note={userNote}
           manualTags={manualTags}
@@ -950,41 +682,355 @@ export default function AiPanel({
           onChangeNote={handleChangeNote}
           onChangeManualTags={handleChangeManualTags}
         />
-      </Section>
-    );
-  }
+      </UserCard>
+    ) : null;
 
-  return (
-    <Section>
-      {ai && status === 'error' && job?.error && (
-        <p className="text-[11px] text-red-400/90 break-words">
-          {t('errorPrefix', { error: job.error })}
-        </p>
-      )}
-      {ai && (
-        <button
-          data-testid="post-modal-analyze"
-          onClick={status === 'error' ? () => job && retryJob(job.key) : handleAnalyze}
-          className="u-press flex items-center gap-1.5 px-2.5 h-8 rounded-md text-xs bg-violet-500/15 text-violet-200 hover:bg-violet-500/25"
+  // The AI card renders only with AI content (or the `ai` capability); without
+  // either it stays out (MOD-4), so a web post with no AI never shows an empty
+  // "AI categorization" box.
+  const aiCard = ((): React.JSX.Element | null => {
+    if (modelProgressTyped) {
+      return (
+        <Section>
+          <div className="flex items-center gap-2 text-xs text-[#bdbdbd]">
+            <Loader2 size={13} className="animate-spin text-violet-400" />
+            {t('downloadingModel', {
+              percent: Math.round((modelProgressTyped.progress || 0) * 100),
+            })}
+          </div>
+          <div className="h-1 rounded-full bg-[#2a2a2a] overflow-hidden">
+            <div
+              className="h-full bg-violet-500 transition-all"
+              style={{ width: `${Math.round((modelProgressTyped.progress || 0) * 100)}%` }}
+            />
+          </div>
+        </Section>
+      );
+    }
+
+    if (busy) {
+      return (
+        <Section>
+          <div className="flex items-center justify-between gap-2">
+            <span className="flex items-center gap-2 text-xs text-[#bdbdbd]">
+              <Loader2 size={13} className="animate-spin text-violet-400" />
+              {status && ANALYZE_STATUS_KEY[status]
+                ? t(ANALYZE_STATUS_KEY[status])
+                : t('processing')}
+            </span>
+            <button
+              onClick={() => job && cancelJob(job.key)}
+              className="u-press text-[11px] text-[#9a9a9a] hover:text-white"
+            >
+              {tc('cancel')}
+            </button>
+          </div>
+        </Section>
+      );
+    }
+
+    if (description || tags?.length || editing) {
+      const entities = post.aiEntities?.filter(Boolean) || [];
+      const keywords = post.aiKeywords?.filter(Boolean) || [];
+
+      // Manual edit mode: description textarea, chip tag editor, save_reason.
+      if (editing) {
+        return (
+          <Section>
+            <div className="space-y-1.5">
+              <label className="text-[10px] uppercase tracking-wide text-[#6a6a6a]">
+                {t('description')}
+              </label>
+              <textarea
+                data-testid="post-modal-edit-description"
+                value={draftDescription}
+                onChange={(e) => setDraftDescription(e.target.value)}
+                onFocus={scrollIntoViewOnNarrowFocus}
+                rows={4}
+                className="w-full rounded-md bg-[#1a1a1a] border border-[#2a2a2a] px-2.5 py-2 text-[13px] narrow:text-base text-[#e0e0e0] resize-y focus:outline-none focus:border-violet-500/60"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] uppercase tracking-wide text-[#6a6a6a]">
+                {t('tags')}
+              </label>
+              <div className="flex flex-wrap gap-1.5 rounded-md bg-[#1a1a1a] border border-[#2a2a2a] px-2 py-2">
+                {draftTags.map((tag) => {
+                  const leaving = removingTags.has(tag);
+                  return (
+                    <span
+                      key={tag}
+                      onAnimationEnd={leaving ? () => finalizeRemoveTag(tag) : undefined}
+                      className={
+                        (leaving ? 'u-pop-out' : 'u-pop-in') +
+                        ' flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-200 text-[11px]'
+                      }
+                    >
+                      #{tag}
+                      <button
+                        onClick={() => removeTag(tag)}
+                        title={t('removeTag')}
+                        className="u-press text-violet-300/70 hover:text-white"
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
+                  );
+                })}
+                <input
+                  data-testid="post-modal-edit-tag-input"
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={handleTagKeyDown}
+                  onBlur={() => addTag(tagInput)}
+                  onFocus={scrollIntoViewOnNarrowFocus}
+                  placeholder={t('addTag')}
+                  className="flex-1 min-w-[100px] bg-transparent text-[12px] narrow:text-base text-[#e0e0e0] placeholder:text-[#5a5a5a] focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-[10px] uppercase tracking-wide text-[#6a6a6a]">
+                {t('whySave')}
+              </label>
+              <textarea
+                data-testid="post-modal-edit-reason"
+                value={draftSaveReason}
+                onChange={(e) => setDraftSaveReason(e.target.value)}
+                onFocus={scrollIntoViewOnNarrowFocus}
+                rows={2}
+                className="w-full rounded-md bg-[#1a1a1a] border border-[#2a2a2a] px-2.5 py-2 text-[12px] narrow:text-base text-[#cfcfcf] resize-y focus:outline-none focus:border-violet-500/60"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 pt-0.5">
+              <button
+                data-testid="post-modal-save"
+                onClick={handleSave}
+                disabled={saving}
+                className="u-press flex items-center gap-1.5 px-3 h-7 rounded-md text-[11px] bg-violet-500/20 text-violet-100 hover:bg-violet-500/30 disabled:opacity-50"
+              >
+                {saving && <Loader2 size={12} className="animate-spin" />}
+                {tc('save')}
+              </button>
+              <button
+                data-testid="post-modal-cancel"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+                className="u-press px-3 h-7 rounded-md text-[11px] text-[#9a9a9a] hover:text-white"
+              >
+                {tc('cancel')}
+              </button>
+            </div>
+          </Section>
+        );
+      }
+
+      // Single menu item for a destructive AI action: first click arms the confirm
+      // (red), second click runs it — keeps the two-step safety inside the menu.
+      const menuItemBase =
+        'u-press flex items-center gap-2.5 px-3 py-2 text-xs text-left disabled:opacity-50 transition-colors';
+      return (
+        <Section
+          action={
+            libraryEdit && (
+              <div className="flex items-center gap-0.5">
+                <button
+                  data-testid="post-modal-edit"
+                  onClick={startEditing}
+                  title={t('editAi')}
+                  className="u-press flex items-center justify-center w-6 h-6 rounded-md text-[#8a8a8a] hover:text-white hover:bg-[#2a2a2a]"
+                >
+                  <Pencil size={13} />
+                </button>
+                {/* Delete-description / clear-tags: the same seam as the gallery's
+                  bulk "clear AI description/tags" (P1-14), so gated the same way. */}
+                {bulkActions && (description || (tags?.length ?? 0) > 0) && (
+                  <div ref={moreRef}>
+                    <button
+                      data-testid="post-modal-ai-more"
+                      onClick={() => (moreOpen ? closeMore() : setMoreOpen(true))}
+                      aria-haspopup="menu"
+                      aria-expanded={moreOpen}
+                      title={t('moreActions')}
+                      className="u-press flex items-center justify-center w-6 h-6 rounded-md text-[#8a8a8a] hover:text-white hover:bg-[#2a2a2a]"
+                    >
+                      <MoreHorizontal size={15} />
+                    </button>
+                    <Popover
+                      anchorRef={moreRef}
+                      open={moreOpen}
+                      onRequestClose={closeMore}
+                      align="right"
+                      placement="bottom"
+                      className="min-w-[210px] bg-[#1f1f1f] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 flex flex-col"
+                    >
+                      <div role="menu" data-testid="post-modal-ai-menu">
+                        {description && (
+                          <button
+                            data-testid="post-modal-delete-description"
+                            onClick={() =>
+                              confirmDeleteDesc
+                                ? handleDeleteDescription()
+                                : setConfirmDeleteDesc(true)
+                            }
+                            disabled={deletingDesc}
+                            className={[
+                              menuItemBase,
+                              'w-full',
+                              confirmDeleteDesc
+                                ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25'
+                                : 'text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white',
+                            ].join(' ')}
+                          >
+                            {deletingDesc ? (
+                              <Loader2 size={14} className="animate-spin shrink-0" />
+                            ) : (
+                              <Trash2 size={14} className="shrink-0" />
+                            )}
+                            {confirmDeleteDesc
+                              ? t('confirmDeleteDescription')
+                              : t('deleteDescription')}
+                          </button>
+                        )}
+                        {(tags?.length ?? 0) > 0 && (
+                          <button
+                            data-testid="post-modal-clear-tags"
+                            onClick={() =>
+                              confirmDeleteTags ? handleClearAiTags() : setConfirmDeleteTags(true)
+                            }
+                            disabled={deletingTags}
+                            className={[
+                              menuItemBase,
+                              'w-full',
+                              confirmDeleteTags
+                                ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25'
+                                : 'text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white',
+                            ].join(' ')}
+                          >
+                            {deletingTags ? (
+                              <Loader2 size={14} className="animate-spin shrink-0" />
+                            ) : (
+                              <Tags size={14} className="shrink-0" />
+                            )}
+                            {confirmDeleteTags ? t('confirmRemoveAiTags') : t('removeAiTags')}
+                          </button>
+                        )}
+                      </div>
+                    </Popover>
+                  </div>
+                )}
+              </div>
+            )
+          }
         >
-          {modelReady ? <Sparkles size={14} /> : <Download size={14} />}
-          {status === 'error'
-            ? tc('retry')
-            : modelReady
-              ? t('analyzePost')
-              : t('downloadModelAndAnalyze')}
-        </button>
-      )}
+          {description && (
+            <p className="text-[14px] leading-[1.65] text-[#dcdcdc] whitespace-pre-wrap break-words">
+              {description}
+            </p>
+          )}
 
-      {/* Manual tags + personal note are available even before any AI analysis. */}
-      <UserLayer
-        note={userNote}
-        manualTags={manualTags}
-        readOnly={!libraryEdit}
-        onApplyAiFilter={onApplyAiFilter}
-        onChangeNote={handleChangeNote}
-        onChangeManualTags={handleChangeManualTags}
-      />
-    </Section>
+          {/* Tags — clickable */}
+          {(tags?.length ?? 0) > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {(tags ?? []).map((tag, i) => (
+                <button
+                  key={tag}
+                  onClick={() => onApplyAiFilter?.({ tag: tag })}
+                  title={t('filterByTag')}
+                  style={{ animationDelay: i * 30 + 'ms' }}
+                  className="u-pop-in u-press px-2 py-0.5 rounded-full bg-violet-500/12 text-violet-300 text-[11px] hover:bg-violet-500/25"
+                >
+                  #{tag}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Entities — non-clickable chips */}
+          {entities.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] uppercase tracking-wide text-[#6a6a6a]">
+                {t('entities')}
+              </span>
+              {entities.map((e) => (
+                <span
+                  key={e}
+                  className="px-2 py-0.5 rounded-full bg-[#1f1f1f] text-[#aaa] text-[11px]"
+                >
+                  {e}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Keywords — discreet text */}
+          {keywords.length > 0 && (
+            <p className="text-[12px] leading-relaxed text-[#7a7a7a] break-words">
+              <span className="text-[#6a6a6a]">{t('searchAlso')}</span>
+              {keywords.join(', ')}
+            </p>
+          )}
+
+          {/* Why save it */}
+          {saveReason && (
+            <p className="text-[12.5px] leading-relaxed text-[#9a9a9a] break-words">
+              <span className="text-[#6a6a6a]">{t('whySavePrefix')}</span>
+              {saveReason}
+            </p>
+          )}
+
+          {ai && !videoNeedsDownload && (
+            <div className="flex items-center gap-3 pt-0.5">
+              <button
+                data-testid="post-modal-regenerate"
+                onClick={handleAnalyze}
+                className="u-press flex items-center gap-1.5 px-2.5 h-7 rounded-md text-[11px] bg-violet-500/15 text-violet-200 hover:bg-violet-500/25"
+              >
+                <RotateCw size={12} /> {t('regenerate')}
+              </button>
+            </div>
+          )}
+        </Section>
+      );
+    }
+
+    // No AI content yet. With the `ai` capability, offer to analyze (or retry);
+    // without it there is no AI card at all — the user card stands alone (MOD-4).
+    // The raw backend error is never printed (MOD-10): a mapped, friendly line.
+    if (ai) {
+      return (
+        <Section>
+          {status === 'error' ? (
+            <p className="text-[11px] text-red-400/90 break-words">{t('analyzeFailed')}</p>
+          ) : (
+            <p className="text-xs text-muted">{t('notAnalyzedYet')}</p>
+          )}
+          <button
+            data-testid="post-modal-analyze"
+            onClick={status === 'error' ? () => job && retryJob(job.key) : handleAnalyze}
+            className="u-press flex items-center gap-1.5 px-2.5 h-8 rounded-md text-xs bg-violet-500/15 text-violet-200 hover:bg-violet-500/25"
+          >
+            {modelReady ? <Sparkles size={14} /> : <Download size={14} />}
+            {status === 'error'
+              ? tc('retry')
+              : modelReady
+                ? t('analyzePost')
+                : t('downloadModelAndAnalyze')}
+          </button>
+        </Section>
+      );
+    }
+    return null;
+  })();
+
+  if (!userCard && !aiCard) return null;
+  return (
+    <>
+      {userCard}
+      {aiCard}
+    </>
   );
 }

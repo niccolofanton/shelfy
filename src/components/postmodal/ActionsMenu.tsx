@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { useT } from '../../i18n';
 import { useShelfy } from '../../api/ShelfyProvider';
+import Popover from '../Popover';
+import IconButton from '../ui/IconButton';
 import type { PostUpdated } from './MetaColumn';
 
 // A download:progress event for a single asset (downloader-internal runtime shape;
@@ -25,6 +27,9 @@ interface ActionsMenuProps {
   post: Shelfy.Post;
   url: string | null;
   primaryLocalPath: string | null;
+  // The media shown in the modal failed to load, so the download/open actions
+  // that target the same stored object would fail too — disable them (MOD-13).
+  mediaUnavailable?: boolean;
   isManual: boolean;
   onLocalFilesDeleted?: (id: string) => void;
   // `deletedAt` is the bulk seam's undo handle (P1-14: `null` when nothing
@@ -44,6 +49,7 @@ export default function ActionsMenu({
   post,
   url,
   primaryLocalPath,
+  mediaUnavailable = false,
   isManual,
   onLocalFilesDeleted,
   onPostDeleted,
@@ -72,25 +78,21 @@ export default function ActionsMenu({
   const downloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Debounce for "queue settled" — see the progress handler below.
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
+  // The trigger the menu anchors to (Popover reads it; outside-click, Escape and
+  // the bottom-sheet-on-narrow presentation are the Popover's now).
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   // Equivalent of "any local asset on disk" (thumbnail / image / video).
   const hasLocalFiles = Boolean(post.thumbnailPath || post.imagePath || post.videoPath);
 
-  // Close the actions menu on outside click; also reset both delete
-  // confirmations so a primed state never lingers across re-opens.
+  // Reset both delete confirmations when the menu closes, so a primed state
+  // never lingers across re-opens.
   useEffect(() => {
     if (!menuOpen) {
       setDeleteConfirm(false);
       setDeletePostConfirm(false);
       setActionError('');
-      return;
     }
-    const onDocClick = (e: MouseEvent): void => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
   }, [menuOpen]);
 
   // Reset the download state whenever a different post is opened.
@@ -268,166 +270,197 @@ export default function ActionsMenu({
   // Nothing this client can do with the post: no menu at all.
   if (!url && !localFiles && !bulkActions && !primaryLocalPath) return null;
 
-  /* Actions collapsed under a "more" menu, keeping the header uncluttered.
-     Toggles on click; closes on outside click (see effect above). */
+  // One row of the menu. On narrow the Popover renders as a bottom sheet (O8),
+  // where `.u-sheet [role=menuitem]` grows every row to 48px for the thumb.
+  const row =
+    'u-press flex w-full items-center gap-2.5 px-3 py-2 text-xs text-left transition-colors';
+
+  /* Actions collapsed under a "more" menu, keeping the header uncluttered. A
+     shared Popover: anchored on desktop, a bottom sheet on narrow, with focus,
+     arrow-key menu navigation and Escape handled for us (MOD-6, MOD-8, O8). */
   return (
-    <div ref={menuRef} className="relative">
-      <button
+    <>
+      <IconButton
+        ref={triggerRef}
         data-testid="post-modal-more"
-        onClick={() => setMenuOpen((o) => !o)}
+        icon={MoreVertical}
+        label={t('moreActions')}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
-        title={t('moreActions')}
-        className="u-press flex items-center justify-center w-8 h-8 rounded-md text-[#a0a0a0] hover:text-white hover:bg-[#2a2a2a]"
+        onClick={() => setMenuOpen((o) => !o)}
+      />
+
+      <Popover
+        anchorRef={triggerRef}
+        open={menuOpen}
+        onRequestClose={() => setMenuOpen(false)}
+        presentation="auto"
+        align="right"
+        role="menu"
+        aria-label={t('moreActions')}
+        data-testid="post-modal-menu"
+        className="u-fade-in-down origin-top min-w-[210px] bg-[#1f1f1f] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 flex flex-col"
+        sheetClassName="flex flex-col"
       >
-        <MoreVertical size={16} />
-      </button>
-
-      {menuOpen && (
-        <div className="absolute right-0 top-full pt-1 z-50">
-          <div
-            data-testid="post-modal-menu"
-            role="menu"
-            className="u-fade-in-down origin-top min-w-[190px] bg-[#1f1f1f] border border-[#2e2e2e] rounded-lg shadow-2xl py-1 flex flex-col"
+        {localFiles && primaryLocalPath && (
+          <button
+            role="menuitem"
+            data-testid="post-modal-openfile"
+            onClick={() => {
+              window.electronAPI.showItemInFolder(primaryLocalPath);
+              setMenuOpen(false);
+            }}
+            className={`${row} text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white`}
           >
-            {localFiles && primaryLocalPath && (
-              <button
-                data-testid="post-modal-openfile"
-                onClick={() => {
-                  window.electronAPI.showItemInFolder(primaryLocalPath);
-                  setMenuOpen(false);
-                }}
-                className="u-press flex items-center gap-2.5 px-3 py-2 text-xs text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white text-left"
-              >
-                <FolderOpen size={14} className="shrink-0" />
-                {t('openFile')}
-              </button>
+            <FolderOpen size={14} className="shrink-0" />
+            {t('openFile')}
+          </button>
+        )}
+        {/* The web has no local disk to open/reveal: a stored object is
+          downloaded instead, through a plain same-origin <a download> (no
+          server change needed). When that object itself is missing (the modal's
+          media failed to load), the download would 404 — disable it with a
+          reason instead of handing out a broken file (MOD-13). "Open original"
+          below still covers a post whose media isn't archived yet. */}
+        {!localFiles &&
+          primaryLocalPath &&
+          (mediaUnavailable ? (
+            <button
+              role="menuitem"
+              data-testid="post-modal-download-original"
+              disabled
+              title={t('noStoredFile')}
+              className={`${row} text-[#cfcfcf] disabled:opacity-50`}
+            >
+              <HardDriveDownload size={14} className="shrink-0" />
+              {t('downloadOriginal')}
+            </button>
+          ) : (
+            <a
+              role="menuitem"
+              data-testid="post-modal-download-original"
+              href={client.media.file(primaryLocalPath) ?? undefined}
+              download
+              onClick={() => setMenuOpen(false)}
+              className={`${row} text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white`}
+            >
+              <HardDriveDownload size={14} className="shrink-0" />
+              {t('downloadOriginal')}
+            </a>
+          ))}
+        {/* Manual bookmarks (and any post without a captured URL) have no
+          original page to open — hide the entry instead of failing silently. */}
+        {url && (
+          <button
+            role="menuitem"
+            data-testid="post-modal-external"
+            onClick={() => {
+              client.openExternal(url);
+              setMenuOpen(false);
+            }}
+            className={`${row} text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white`}
+          >
+            <ExternalLink size={14} className="shrink-0" />
+            {t('openOriginal')}
+          </button>
+        )}
+        {/* Manual bookmarks have no remote source: nothing to (re)download,
+          and "delete local files" would destroy the only copy of the
+          original (image/video) or leave a broken preview (pdf/file).
+          Only "Elimina post" (below) applies to them. */}
+        {localFiles && !hasLocalFiles && !isManual && (
+          <button
+            role="menuitem"
+            data-testid="post-modal-download"
+            onClick={handleDownload}
+            disabled={downloadQueued || downloadEmpty}
+            title={downloadEmpty ? t('noDownloadableFiles') : t('downloadFilesTitle')}
+            className={`${row} text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white disabled:opacity-50`}
+          >
+            {downloadQueued ? (
+              <Loader2 size={14} className="animate-spin shrink-0" />
+            ) : (
+              <HardDriveDownload size={14} className="shrink-0" />
             )}
-            {/* The web has no local disk to open/reveal: a stored object is
-              downloaded instead, through a plain same-origin <a download> (no
-              server change needed). "Open original" below still covers a post
-              whose media isn't archived yet. */}
-            {!localFiles && primaryLocalPath && (
-              <a
-                data-testid="post-modal-download-original"
-                href={client.media.file(primaryLocalPath) ?? undefined}
-                download
-                onClick={() => setMenuOpen(false)}
-                className="u-press flex items-center gap-2.5 px-3 py-2 text-xs text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white text-left"
-              >
-                <HardDriveDownload size={14} className="shrink-0" />
-                {t('downloadOriginal')}
-              </a>
+            <span
+              key={downloadEmpty ? 'empty' : downloadQueued ? 'queued' : 'idle'}
+              className="u-fade-in"
+            >
+              {downloadEmpty
+                ? t('nothingToDownload')
+                : downloadQueued
+                  ? t('queued')
+                  : t('downloadLocal')}
+            </span>
+          </button>
+        )}
+        {localFiles && hasLocalFiles && !isManual && (
+          <button
+            role="menuitem"
+            data-testid="post-modal-delete-local"
+            onClick={handleDeleteLocal}
+            disabled={deleting}
+            title={deleteConfirm ? t('clickAgainToConfirm') : t('deleteLocalFilesTitle')}
+            className={[
+              row,
+              'disabled:opacity-50',
+              deleteConfirm
+                ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25'
+                : 'text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-red-300',
+            ].join(' ')}
+          >
+            {deleting ? (
+              <Loader2 size={14} className="animate-spin shrink-0" />
+            ) : (
+              <Trash2 size={14} className="shrink-0" />
             )}
-            {/* Manual bookmarks (and any post without a captured URL) have no
-              original page to open — hide the entry instead of failing silently. */}
-            {url && (
-              <button
-                data-testid="post-modal-external"
-                onClick={() => {
-                  client.openExternal(url);
-                  setMenuOpen(false);
-                }}
-                className="u-press flex items-center gap-2.5 px-3 py-2 text-xs text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white text-left"
-              >
-                <ExternalLink size={14} className="shrink-0" />
-                {t('openOriginal')}
-              </button>
-            )}
-            {/* Manual bookmarks have no remote source: nothing to (re)download,
-              and "delete local files" would destroy the only copy of the
-              original (image/video) or leave a broken preview (pdf/file).
-              Only "Elimina post" (below) applies to them. */}
-            {localFiles && !hasLocalFiles && !isManual && (
-              <button
-                data-testid="post-modal-download"
-                onClick={handleDownload}
-                disabled={downloadQueued || downloadEmpty}
-                title={downloadEmpty ? t('noDownloadableFiles') : t('downloadFilesTitle')}
-                className="u-press flex items-center gap-2.5 px-3 py-2 text-xs text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-white text-left disabled:opacity-50"
-              >
-                {downloadQueued ? (
-                  <Loader2 size={14} className="animate-spin shrink-0" />
-                ) : (
-                  <HardDriveDownload size={14} className="shrink-0" />
-                )}
-                <span
-                  key={downloadEmpty ? 'empty' : downloadQueued ? 'queued' : 'idle'}
-                  className="u-fade-in"
-                >
-                  {downloadEmpty
-                    ? t('nothingToDownload')
-                    : downloadQueued
-                      ? t('queued')
-                      : t('downloadLocal')}
-                </span>
-              </button>
-            )}
-            {localFiles && hasLocalFiles && !isManual && (
-              <button
-                data-testid="post-modal-delete-local"
-                onClick={handleDeleteLocal}
-                disabled={deleting}
-                title={deleteConfirm ? t('clickAgainToConfirm') : t('deleteLocalFilesTitle')}
-                className={[
-                  'u-press flex items-center gap-2.5 px-3 py-2 text-xs text-left disabled:opacity-50 transition-colors',
-                  deleteConfirm
-                    ? 'bg-red-500/15 text-red-300 hover:bg-red-500/25'
-                    : 'text-[#cfcfcf] hover:bg-[#2a2a2a] hover:text-red-300',
-                ].join(' ')}
-              >
-                {deleting ? (
-                  <Loader2 size={14} className="animate-spin shrink-0" />
-                ) : (
-                  <Trash2 size={14} className="shrink-0" />
-                )}
-                <span key={deleteConfirm ? 'confirm' : 'idle'} className="u-fade-in">
-                  {deleteConfirm ? t('confirmDeletion') : t('deleteLocalFiles')}
-                </span>
-              </button>
-            )}
+            <span key={deleteConfirm ? 'confirm' : 'idle'} className="u-fade-in">
+              {deleteConfirm ? t('confirmDeletion') : t('deleteLocalFiles')}
+            </span>
+          </button>
+        )}
 
-            {bulkActions && (
-              <>
-                <div className="my-1 border-t border-[#2e2e2e]" />
+        {bulkActions && (
+          <>
+            <div className="my-1 border-t border-[#2e2e2e]" />
 
-                {/* Destructive: removes the post entirely (DB record + files). */}
-                <button
-                  data-testid="post-modal-delete-post"
-                  onClick={handleDeletePost}
-                  disabled={deletingPost}
-                  title={deletePostConfirm ? t('clickAgainToConfirm') : t('deletePostTitle')}
-                  className={[
-                    'u-press flex items-center gap-2.5 px-3 py-2 text-xs text-left disabled:opacity-50 transition-colors',
-                    deletePostConfirm
-                      ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
-                      : 'text-red-400/90 hover:bg-red-500/10 hover:text-red-300',
-                  ].join(' ')}
-                >
-                  {deletingPost ? (
-                    <Loader2 size={14} className="animate-spin shrink-0" />
-                  ) : (
-                    <Trash2 size={14} className="shrink-0" />
-                  )}
-                  <span key={deletePostConfirm ? 'confirm' : 'idle'} className="u-fade-in">
-                    {deletePostConfirm ? t('confirmDeletePost') : t('deletePost')}
-                  </span>
-                </button>
-              </>
-            )}
+            {/* Destructive: removes the post entirely (DB record + files). */}
+            <button
+              role="menuitem"
+              data-testid="post-modal-delete-post"
+              onClick={handleDeletePost}
+              disabled={deletingPost}
+              title={deletePostConfirm ? t('clickAgainToConfirm') : t('deletePostTitle')}
+              className={[
+                row,
+                'disabled:opacity-50',
+                deletePostConfirm
+                  ? 'bg-red-500/20 text-red-300 hover:bg-red-500/30'
+                  : 'text-red-400/90 hover:bg-red-500/10 hover:text-red-300',
+              ].join(' ')}
+            >
+              {deletingPost ? (
+                <Loader2 size={14} className="animate-spin shrink-0" />
+              ) : (
+                <Trash2 size={14} className="shrink-0" />
+              )}
+              <span key={deletePostConfirm ? 'confirm' : 'idle'} className="u-fade-in">
+                {deletePostConfirm ? t('confirmDeletePost') : t('deletePost')}
+              </span>
+            </button>
+          </>
+        )}
 
-            {actionError && (
-              <div
-                role="alert"
-                data-testid="action-error"
-                className="px-3 py-2 text-xs text-red-300 border-t border-[#2e2e2e] u-fade-in"
-              >
-                {actionError}
-              </div>
-            )}
+        {actionError && (
+          <div
+            role="alert"
+            data-testid="action-error"
+            className="px-3 py-2 text-xs text-red-300 border-t border-[#2e2e2e] u-fade-in"
+          >
+            {actionError}
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </Popover>
+    </>
   );
 }

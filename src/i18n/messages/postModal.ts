@@ -55,6 +55,9 @@ export default {
 
     // ── AI section ─────────────────────────────────────────────────────────
     aiSection: 'Categorizzazione AI',
+    userSection: 'I tuoi tag e note',
+    notAnalyzedYet: 'Non ancora analizzato',
+    analyzeFailed: 'Analisi non riuscita. Riprova.',
 
     // ── User layer (manual tags + note) ────────────────────────────────────
     yourTags: 'I tuoi tag',
@@ -105,17 +108,18 @@ export default {
     viewingLocal: 'Stai vedendo il file scaricato in locale',
     local: 'Locale',
 
-    // ── Add to source (collection) ─────────────────────────────────────────
-    addToSource: 'Aggiungi a una source',
+    // ── Add to folder (collection) ─────────────────────────────────────────
+    addToSource: 'Aggiungi a una cartella',
     addTo: 'Aggiungi a',
-    noSources: 'Nessuna source. Creane una qui sotto.',
-    createNewSource: 'Crea nuova source',
-    removeFromSource: 'Rimuovi da questa source',
+    noSources: 'Nessuna cartella. Creane una qui sotto.',
+    createNewSource: 'Nuova cartella',
+    removeFromSource: 'Rimuovi da questa cartella',
 
     // ── Actions menu ───────────────────────────────────────────────────────
     openFile: 'Apri file',
     openOriginal: 'Apri originale',
     downloadOriginal: 'Scarica originale',
+    noStoredFile: 'Nessun file salvato',
     noDownloadableFiles: 'Questo post non ha file scaricabili',
     downloadFilesTitle: 'Scarica i file di questo post in locale',
     nothingToDownload: 'Niente da scaricare',
@@ -137,6 +141,8 @@ export default {
     nextPost: 'Post successivo',
 
     // ── Media / slides ─────────────────────────────────────────────────────
+    mediaUnavailable: 'Media non disponibile',
+    retryMedia: 'Riprova a caricare',
     zoomFullscreen: 'Ingrandisci a tutto schermo',
     clickToZoomFullscreen: 'Clic per ingrandire a tutto schermo',
     zoom: 'Ingrandisci',
@@ -197,6 +203,9 @@ export default {
 
     // ── AI section ─────────────────────────────────────────────────────────
     aiSection: 'AI categorization',
+    userSection: 'Your tags & note',
+    notAnalyzedYet: 'Not analyzed yet',
+    analyzeFailed: 'Analysis failed. Try again.',
 
     // ── User layer (manual tags + note) ────────────────────────────────────
     yourTags: 'Your tags',
@@ -247,17 +256,18 @@ export default {
     viewingLocal: 'You are viewing the locally downloaded file',
     local: 'Local',
 
-    // ── Add to source (collection) ─────────────────────────────────────────
-    addToSource: 'Add to a source',
+    // ── Add to folder (collection) ─────────────────────────────────────────
+    addToSource: 'Add to folder',
     addTo: 'Add to',
-    noSources: 'No sources. Create one below.',
-    createNewSource: 'Create new source',
-    removeFromSource: 'Remove from this source',
+    noSources: 'No folders. Create one below.',
+    createNewSource: 'New folder',
+    removeFromSource: 'Remove from this folder',
 
     // ── Actions menu ───────────────────────────────────────────────────────
     openFile: 'Open file',
     openOriginal: 'Open original',
     downloadOriginal: 'Download original',
+    noStoredFile: 'No stored file',
     noDownloadableFiles: 'This post has no downloadable files',
     downloadFilesTitle: 'Download this post’s files locally',
     nothingToDownload: 'Nothing to download',
@@ -279,6 +289,8 @@ export default {
     nextPost: 'Next post',
 
     // ── Media / slides ─────────────────────────────────────────────────────
+    mediaUnavailable: 'Media not available',
+    retryMedia: 'Retry loading',
     zoomFullscreen: 'Zoom to full screen',
     clickToZoomFullscreen: 'Click to zoom to full screen',
     zoom: 'Zoom',

@@ -160,14 +160,10 @@ function defineNarrowBehaviors(name: string, viewport: { width: number; height: 
     test('the post modal stacks media above the written content', async ({ page }) => {
       await page.goto('/p/ig_1');
       await expect(page.getByTestId('post-modal')).toBeVisible();
-      // The fixture's posts have no cover, so MediaCarousel renders its
-      // "no media" fallback (a small, centered icon+button) — measure ITS
-      // PARENT (MediaCarousel's own root), the element the narrow layout
-      // actually resizes, not the small fallback centered inside it.
-      const media = (await page
-        .getByTestId('post-modal-no-media')
-        .locator('xpath=..')
-        .boundingBox())!;
+      // The fixture's posts are text-only (no cover), so MediaCarousel renders
+      // its TextCard inside the `post-modal-media` root — the element the narrow
+      // layout actually resizes.
+      const media = (await page.getByTestId('post-modal-media').boundingBox())!;
       const meta = (await page.getByTestId('post-modal-meta').boundingBox())!;
       // Stacked (not side by side): the written content starts at or below
       // where the media block ends, and both span (close to) the full width.
@@ -315,7 +311,7 @@ test.describe('desktop (>=900px) parity', () => {
 
   test('the post modal keeps its two-column layout', async ({ page }) => {
     await page.goto('/p/ig_1');
-    const media = (await page.getByTestId('post-modal-no-media').boundingBox())!;
+    const media = (await page.getByTestId('post-modal-media').boundingBox())!;
     const meta = (await page.getByTestId('post-modal-meta').boundingBox())!;
     expect(meta.x).toBeGreaterThanOrEqual(media.x + media.width - 4);
     expect(meta.width).toBeLessThan(420); // the fixed 380px column, not full width

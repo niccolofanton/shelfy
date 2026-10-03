@@ -289,10 +289,10 @@ describe('Post modal on the web client', () => {
   it('offers "open original", "download original" and, since P1-14, "delete"', () => {
     const client = renderModal(POSTS[0]);
     fireEvent.click(screen.getByTestId('post-modal-more'));
+    // The menu is a portal now (anchored on desktop, a sheet on narrow), so it
+    // is reached through `screen`, not within the modal; its rows are menuitems.
     const menu = screen.getByTestId('post-modal-menu');
-    expect(
-      within(menu).getAllByRole('button').length + within(menu).getAllByRole('link').length,
-    ).toBe(3);
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(3);
     expect(within(menu).getByTestId('post-modal-download-original')).toHaveAttribute(
       'href',
       '/media/aa.jpg',
@@ -314,20 +314,45 @@ describe('Post modal on the web client', () => {
     renderModal(POSTS[0], client, { onPostDeleted });
     const modal = screen.getByTestId('post-modal');
     fireEvent.click(within(modal).getByTestId('post-modal-more'));
-    fireEvent.click(within(modal).getByTestId('post-modal-delete-post'));
-    fireEvent.click(within(modal).getByTestId('post-modal-delete-post')); // two-step confirm
+    // The menu is portaled out of the modal: reach the item through `screen`.
+    fireEvent.click(screen.getByTestId('post-modal-delete-post'));
+    fireEvent.click(screen.getByTestId('post-modal-delete-post')); // two-step confirm
     await waitFor(() =>
       expect(client.bulkAction).toHaveBeenCalledWith({ keys: ['ig_1'] }, 'delete'),
     );
     await waitFor(() => expect(onPostDeleted).toHaveBeenCalledWith('ig_1', 5_000));
   });
 
-  it('opens the original page where the desktop would embed it', () => {
-    const tweet = POSTS[1];
-    const client = renderModal({ ...tweet, thumbnailUrl: null });
+  it('shows the media fallback with "open original" for a post whose media is not stored', () => {
+    // A non-text post with nothing downloaded: the media pane shows the fallback
+    // (platform glyph, "Media not available", Open original), not the browser's
+    // broken-image icon (MOD-2). A text post instead gets its TextCard (MOD-3).
+    const client = renderModal({ ...POSTS[1], mediaType: 'image', thumbnailUrl: null });
     expect(screen.getByTestId('post-modal-no-media')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('post-modal-open-original'));
     expect(client.openExternal).toHaveBeenCalledWith('https://x.com/i/web/status/2');
+  });
+
+  it('renders a text-only post as a TextCard in the media pane, shown once (MOD-3)', () => {
+    // A text tweet with nothing stored: its caption is the hero in the media
+    // pane (TextCard), not a globe + "open original", and not repeated in meta.
+    renderModal({
+      ...POSTS[1],
+      mediaType: 'text',
+      text: 'A thread about chairs',
+      media: [],
+      thumbnailUrl: null,
+      imagePath: null,
+      thumbnailPath: null,
+      videoPath: null,
+      previewPath: null,
+    });
+    const media = screen.getByTestId('post-modal-media');
+    expect(within(media).getByTestId('post-modal-text')).toHaveTextContent('A thread about chairs');
+    expect(screen.queryByTestId('post-modal-no-media')).toBeNull();
+    expect(screen.queryByTestId('post-modal-image')).toBeNull();
+    // The caption shows exactly once (the TextCard), not duplicated in meta.
+    expect(screen.getAllByText('A thread about chairs')).toHaveLength(1);
   });
 
   it('still offers Delete (P1-14 bulkActions) for a post with nothing to open and nothing stored', () => {

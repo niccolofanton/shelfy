@@ -1032,11 +1032,11 @@ textarea,
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   POST MODAL — stacked under 900px (P1-02). PostModal.tsx (this task) owns the
-   `.postmodal-media-row` marker; MediaCarousel and MetaColumn, its two
-   children, are src/components/postmodal/** (P1-06's, not this task's) — so
-   their own `flex-1`/fixed-380px-column classes are overridden from here
-   instead of edited in those files. `!important` only where it beats a
+   POST MODAL — stacked under 900px (P1-02, now UX-5). The modal is a full-screen
+   sheet on narrow; it pads its own bottom for the home indicator (SH-3, the
+   portaled layer is outside the shell that pads the rest). MediaCarousel's root
+   (`.postmodal-media-row > *:first-child`) and MetaColumn (`post-modal-meta`)
+   get their stacked height/width from here. `!important` only where it beats a
    same-specificity Tailwind utility generated later in the stylesheet
    (MetaColumn's `w-[380px]`); the ≥900px (unprefixed) layout is untouched.
    ───────────────────────────────────────────────────────────────────────────── */
@@ -1045,6 +1045,7 @@ textarea,
     flex-direction: column;
     overflow-y: auto;
     overflow-x: hidden;
+    padding-bottom: env(safe-area-inset-bottom);
   }
   /* MediaCarousel's root: a bounded, content-independent height instead of
      stretching to fill the row — so a long caption below can't squeeze or

@@ -14,6 +14,9 @@ export type PostUpdated = (id: string, fields: Partial<Shelfy.Post>) => void;
 interface MetaColumnProps {
   post: Shelfy.Post;
   isWeb: boolean;
+  // A text-only post renders its caption as the hero in the media pane
+  // (MediaCarousel's TextCard, MOD-3), so it's suppressed here to show once.
+  isTextOnly: boolean;
   slideCount: number;
   hasMultiple: boolean;
   onApplyAiFilter?: ApplyAiFilter;
@@ -29,6 +32,7 @@ interface MetaColumnProps {
 export default function MetaColumn({
   post,
   isWeb,
+  isTextOnly,
   slideCount,
   hasMultiple,
   onApplyAiFilter,
@@ -108,8 +112,10 @@ export default function MetaColumn({
       data-testid="post-modal-meta"
       className="w-[380px] shrink-0 overflow-y-auto border-l border-[#2e2e2e] px-4 py-3.5 space-y-3 bg-[#161616] scrollbar-thin scrollbar-thumb-[#2e2e2e]"
     >
-      {/* Caption — the saved content itself, the hero of this panel */}
-      {post.text && (
+      {/* Caption — the saved content itself, the hero of this panel. A
+          text-only post shows it in the media pane instead (MOD-3), so it is
+          not repeated here. */}
+      {post.text && !isTextOnly && (
         <p className="u-fade-in text-[#ececec] text-[15px] leading-relaxed whitespace-pre-wrap break-words">
           {post.text}
         </p>
