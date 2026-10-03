@@ -606,6 +606,29 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/links': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Saves a shared link as a post (contract C7): a new post, or the one the
+     *     link already names. Social posts are filled in in the background
+     *     (`link.hydrate`); web posts stay links until they are captured.
+     * @description A signed-in session, or an API token with the `links:create` scope (the
+     *     iOS Shortcut).
+     */
+    post: operations['createLink'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/me': {
     parameters: {
       query?: never;
@@ -2004,6 +2027,7 @@ export interface components {
       | 'validation_failed'
       | 'provider_key_invalid'
       | 'capture_blocked'
+      | 'unsupported_link'
       | 'not_available'
       | 'user_locked'
       | 'extension_outdated'
@@ -2471,6 +2495,34 @@ export interface components {
      * @enum {string}
      */
     Language: 'it' | 'en';
+    /** @description A link to save (contract C7). */
+    LinkCreate: {
+      /**
+       * @description A note for the post, at most 20,000 bytes of UTF-8. A known post
+       *     keeps its note and gets this one below it.
+       */
+      note?: string | null;
+      /**
+       * @description Manual tags, at most 100 of at most 200 bytes each, united with the
+       *     post's own.
+       */
+      tags?: string[] | null;
+      /**
+       * @description The link: http or https, at most 4,096 characters. Instagram, X and
+       *     Pinterest post links (and `pin.it` short links) name the post; any
+       *     other site becomes a web post. Tracking parameters are dropped.
+       */
+      url: string;
+    };
+    /** @description The post a link names. */
+    LinkCreated: {
+      /** @description Whether the link created the post; `false` when it was saved before. */
+      created: boolean;
+      /** @description The post's key: `/p/{key}` opens it. */
+      key: string;
+      /** @description Its platform. */
+      platform: components['schemas']['Platform'];
+    };
     /** @description A saved post found by `POST /posts/lookup`. */
     LookupMatch: {
       /** @description The id as asked for. */
@@ -4771,6 +4823,40 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['Job'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  createLink: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['LinkCreate'];
+      };
+    };
+    responses: {
+      /** @description The link names a post saved before; its note and tags were added. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LinkCreated'];
+        };
+      };
+      /** @description The link created the post. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LinkCreated'];
         };
       };
       default: components['responses']['Problem'];

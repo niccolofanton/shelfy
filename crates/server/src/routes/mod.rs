@@ -6,7 +6,7 @@
 //!
 //! | Group | Limits | Routes |
 //! |---|---|---|
-//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03); passkeys and re-authentication (P1-13); the account, its sessions and tokens, and the device flow (P1-17); bulk actions and the trash (P1-11); the extension's pairing, configuration and status (P2-03) |
+//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03); passkeys and re-authentication (P1-13); the account, its sessions and tokens, and the device flow (P1-17); bulk actions and the trash (P1-11); the extension's pairing, configuration and status (P2-03); shared links (P2-11) |
 //! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
 //! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
 //! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, P4-08, [`uploads`]) |
@@ -58,6 +58,10 @@
 //! sign-in, over [`crate::auth::device`]). `POST /posts/lookup` also takes a
 //! `lookup` token ([`TOKEN_ROUTES`]).
 //!
+//! The links route (P2-11): [`links`] (`POST /links`, a session or a
+//! `links:create` token), which saves a shared link as a post and enqueues
+//! its hydration ([`crate::jobs::hydrate`]).
+//!
 //! The extension routes (P2-03): [`extension`] (`POST /extension/pair`,
 //! public and CSRF-exempt; `GET /extension/config`, an `ingest` token;
 //! `GET /extension/status`, a session) and `POST /me/tokens/pairing-code`
@@ -81,6 +85,7 @@ pub mod events;
 pub mod extension;
 pub mod health;
 pub mod jobs;
+pub mod links;
 pub mod listing;
 pub mod me;
 pub mod media;
@@ -229,9 +234,12 @@ pub const CSRF_EXEMPT_ROUTES: &[(Method, &str)] = &[
 /// token only; `POST /posts/lookup` takes a `lookup` token or a session
 /// (P1-17); the tus uploads take a session, an `uploads` token or a
 /// `migrate` token, and the purpose of each upload decides further (P4-08);
-/// `GET /extension/config` takes the extension's `ingest` token (P2-03).
+/// `GET /extension/config` takes the extension's `ingest` token (P2-03);
+/// `POST /links` takes the iOS Shortcut's `links:create` token or a session
+/// (P2-11).
 pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
     (Method::POST, "/api/v1/posts/lookup", &[Scope::Lookup], true),
+    (Method::POST, "/api/v1/links", &[Scope::LinksCreate], true),
     (
         Method::GET,
         "/api/v1/extension/config",
@@ -357,6 +365,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(collections::add_collection_posts))
         .routes(routes!(collections::remove_collection_post))
         .routes(routes!(collections::create_collection_from_query))
+        .routes(routes!(links::create_link))
         .routes(routes!(trash::list_trash))
         .routes(routes!(trash::restore_trash))
         .routes(routes!(trash::empty_trash))

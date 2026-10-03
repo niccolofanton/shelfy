@@ -1014,6 +1014,57 @@
         }
       }
     },
+    "/api/v1/links": {
+      "post": {
+        "tags": ["library"],
+        "summary": "Saves a shared link as a post (contract C7): a new post, or the one the\nlink already names. Social posts are filled in in the background\n(`link.hydrate`); web posts stay links until they are captured.",
+        "description": "A signed-in session, or an API token with the `links:create` scope (the\niOS Shortcut).",
+        "operationId": "createLink",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The link names a post saved before; its note and tags were added.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkCreated"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The link created the post.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkCreated"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["links:create"]
+          }
+        ]
+      }
+    },
     "/api/v1/me": {
       "get": {
         "tags": ["account"],
@@ -4236,6 +4287,7 @@
           "validation_failed",
           "provider_key_invalid",
           "capture_blocked",
+          "unsupported_link",
           "not_available",
           "user_locked",
           "extension_outdated",
@@ -4929,6 +4981,48 @@
         "type": "string",
         "description": "A language of the app's interface.",
         "enum": ["it", "en"]
+      },
+      "LinkCreate": {
+        "type": "object",
+        "description": "A link to save (contract C7).",
+        "required": ["url"],
+        "properties": {
+          "note": {
+            "type": ["string", "null"],
+            "description": "A note for the post, at most 20,000 bytes of UTF-8. A known post\nkeeps its note and gets this one below it."
+          },
+          "tags": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string"
+            },
+            "description": "Manual tags, at most 100 of at most 200 bytes each, united with the\npost's own."
+          },
+          "url": {
+            "type": "string",
+            "description": "The link: http or https, at most 4,096 characters. Instagram, X and\nPinterest post links (and `pin.it` short links) name the post; any\nother site becomes a web post. Tracking parameters are dropped."
+          }
+        },
+        "additionalProperties": false
+      },
+      "LinkCreated": {
+        "type": "object",
+        "description": "The post a link names.",
+        "required": ["key", "platform", "created"],
+        "properties": {
+          "created": {
+            "type": "boolean",
+            "description": "Whether the link created the post; `false` when it was saved before."
+          },
+          "key": {
+            "type": "string",
+            "description": "The post's key: `/p/{key}` opens it."
+          },
+          "platform": {
+            "$ref": "#/components/schemas/Platform",
+            "description": "Its platform."
+          }
+        }
       },
       "LookupMatch": {
         "type": "object",

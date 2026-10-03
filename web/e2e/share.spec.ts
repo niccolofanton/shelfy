@@ -1,18 +1,15 @@
 // `/share` (plan §2.17, §2.19 Routes; contract C7; P2-07 acceptance 3, 5):
 // where Android's share target, the bookmarklet and the iOS Shortcut land.
-// `POST /links` itself is not in web/e2e/api.ts's mock yet — it lands with
-// P2-11 — so each test here adds its own route for it, registered after the
-// `api` fixture's (Playwright runs the most-recently-registered matching
-// route first), the same way a test overrides any other default.
+// Each test scripts `POST /links` (P2-11: 201 for a new post, 200 for one
+// saved before, shaped as the generated `LinkCreated`) with its own route,
+// registered after the `api` fixture's (Playwright runs the
+// most-recently-registered matching route first). The server side of the
+// same JSON is crates/server/tests/links.rs.
 import type { Route } from '@playwright/test';
+import type { components } from '../src/api/schema';
 import { test, expect } from './api';
 
-interface LinkAnswer {
-  status: number;
-  key: string;
-  platform: string;
-  created: boolean;
-}
+type LinkAnswer = components['schemas']['LinkCreated'] & { status: 200 | 201 };
 
 async function mockLinks(
   page: import('@playwright/test').Page,
@@ -65,7 +62,12 @@ test('?text= (how Android shares a page) extracts the URL out of the caption', a
 });
 
 test('no URL anywhere in the share: says so, without calling the API', async ({ page }) => {
-  const { bodies } = await mockLinks(page, { status: 201, key: 'x', platform: 'x', created: true });
+  const { bodies } = await mockLinks(page, {
+    status: 201,
+    key: 'x_1',
+    platform: 'twitter',
+    created: true,
+  });
   await page.goto('/share?text=just%20a%20caption%2C%20no%20link%20here');
   await expect(page.getByTestId('share-no-link')).toBeVisible();
   expect(bodies).toEqual([]);

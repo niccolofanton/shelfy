@@ -81,6 +81,11 @@ pub enum ErrorCode {
     ProviderKeyInvalid,
     /// 422: the egress policy or the site refused the capture.
     CaptureBlocked,
+    /// 422: the shared link is not one Shelfy saves: not http(s), with
+    /// credentials, a port other than 80 and 443, an address or a local
+    /// name, over 4,096 characters, a platform post URL without a valid id,
+    /// or a short link that does not lead to a post (`POST /links`).
+    UnsupportedLink,
     /// 422: the action exists in the API but not on this server yet: a later
     /// release brings it, and `capabilities` in `GET /me` says when it is
     /// there.
@@ -129,6 +134,7 @@ impl ErrorCode {
             Self::ValidationFailed
             | Self::ProviderKeyInvalid
             | Self::CaptureBlocked
+            | Self::UnsupportedLink
             | Self::NotAvailable => StatusCode::UNPROCESSABLE_ENTITY,
             Self::UserLocked => StatusCode::LOCKED,
             Self::ExtensionOutdated => StatusCode::UPGRADE_REQUIRED,
@@ -190,6 +196,7 @@ impl ErrorCode {
             Self::ValidationFailed => "validation_failed",
             Self::ProviderKeyInvalid => "provider_key_invalid",
             Self::CaptureBlocked => "capture_blocked",
+            Self::UnsupportedLink => "unsupported_link",
             Self::NotAvailable => "not_available",
             Self::UserLocked => "user_locked",
             Self::ExtensionOutdated => "extension_outdated",
@@ -539,6 +546,7 @@ mod tests {
             ErrorCode::ValidationFailed,
             ErrorCode::ProviderKeyInvalid,
             ErrorCode::CaptureBlocked,
+            ErrorCode::UnsupportedLink,
             ErrorCode::NotAvailable,
             ErrorCode::UserLocked,
             ErrorCode::ExtensionOutdated,

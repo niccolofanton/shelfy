@@ -57,6 +57,7 @@
 //! | [`migrate`] | `migrate`: the install of a migrated desktop library (P1-19) |
 //! | [`bulk`] | `bulk`: a bulk action over more than 500 posts (P1-11) |
 //! | [`purge`] | `purge`: emptying the trash, and the nightly 30-day retention (P1-11) |
+//! | [`hydrate`] | `link.hydrate`: a shared link's post from the platform's public endpoints (P2-11) |
 //! | [`idempotency`] | the `Idempotency-Key` middleware of job-creating routes |
 //! | `registry`, `context`, `clock` | [`Registry`], [`KindSpec`], [`Worker`]; [`JobContext`], [`JobError`], [`AttemptFence`]; [`Clock`] |
 //!
@@ -66,6 +67,7 @@
 pub mod bulk;
 mod clock;
 mod context;
+pub mod hydrate;
 pub mod idempotency;
 pub mod kinds;
 pub mod migrate;

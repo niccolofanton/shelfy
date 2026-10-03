@@ -1,5 +1,6 @@
 //! A fixture CDN with scripted answers (P2-04), for the outbound tests and
-//! the archive and hydration tests after them (P2-10, P2-11, P4-16).
+//! the archive and hydration tests after them (P2-10, P2-11, P4-16). P2-11
+//! added Pinterest's short-link hosts to the certificate.
 //!
 //! - Two loopback listeners: https, with a certificate for the platform
 //!   hosts ([`CERT_NAMES`]) signed by a test CA made on the fly, and plain
@@ -51,6 +52,8 @@ pub const CERT_NAMES: &[&str] = &[
     "publish.x.com",
     "www.pinterest.com",
     "widgets.pinterest.com",
+    "pin.it",
+    "api.pinterest.com",
     "*.example.test",
 ];
 
