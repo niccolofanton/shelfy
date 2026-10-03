@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { E2E } from './env';
-import { newContext, signInWithLink } from './support';
+import { newContext, signInWithLink, shot } from './support';
 
 test('operator settings persist and a stopped AI node reports offline then recovers over SSE', async ({
   browser,
@@ -37,6 +37,7 @@ test('operator settings persist and a stopped AI node reports offline then recov
     await expect(page.getByLabel('Concurrent BYOK calls', { exact: true })).toHaveValue('8');
     await expect(page.getByLabel('Generate search suggestions', { exact: true })).not.toBeChecked();
     await expect(page.getByTestId('ai-usage')).toContainText('No AI calls');
+    await shot(page, 'ai-settings-ready');
     const stopped = await fetch(`${E2E.stubControlUrl}/stop`, { method: 'POST' });
     expect(stopped.status).toBe(204);
     await expect(page.getByTestId('provider-status-banner')).toContainText(
@@ -44,6 +45,7 @@ test('operator settings persist and a stopped AI node reports offline then recov
       { timeout: 75_000 },
     );
     await expect(operator).toContainText('Offline');
+    await shot(page, 'ai-settings-offline');
     const restarted = await fetch(`${E2E.stubControlUrl}/start`, { method: 'POST' });
     expect(restarted.status).toBe(204);
     await expect(page.getByTestId('provider-status-banner')).toHaveCount(0, { timeout: 75_000 });

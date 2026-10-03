@@ -782,8 +782,8 @@ impl AiService {
         self.operator_probe_once(state).await;
     }
 
-    /// Probes the operator node once, ignoring the interval, and recovers it
-    /// if it answers. A health probe runs no generation; the models probe
+    /// Probes the operator node once, ignoring the interval, and updates its
+    /// reachability state. A health probe runs no generation; the models probe
     /// checks the key.
     pub async fn operator_probe_once(&self, state: &AppState) {
         let Some(op) = self.inner.operator.as_ref() else {

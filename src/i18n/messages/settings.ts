@@ -241,6 +241,8 @@ export default {
 
     // ── The web: an account on a server (src/views/settings/) ──────────────────
     pageSubtitleAccount: 'Il tuo account, la lingua, lo spazio e le note legali.',
+    pageSubtitleAccountAi:
+      'Il tuo account, le preferenze AI, la lingua, lo spazio e le note legali.',
     sectionAccount: 'Account',
     sectionConnections: 'Connessioni',
     sectionStorage: 'Spazio',
@@ -567,6 +569,7 @@ export default {
 
     // ── The web: an account on a server (src/views/settings/) ──────────────────
     pageSubtitleAccount: 'Your account, language, storage and legal notices.',
+    pageSubtitleAccountAi: 'Your account, AI preferences, language, storage and legal notices.',
     sectionAccount: 'Account',
     sectionConnections: 'Connections',
     sectionStorage: 'Storage',

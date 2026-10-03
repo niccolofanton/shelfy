@@ -2489,7 +2489,11 @@ function RoutedSettings({
   return (
     <div className="flex-1 h-full overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] bg-[#0f0f0f]">
       <div className="max-w-4xl mx-auto px-4 py-6 sm:px-8 sm:py-8">
-        <SettingsHeader subtitle={t('pageSubtitleAccount')} />
+        <SettingsHeader
+          subtitle={t(
+            sections.some((s) => s.id === 'ai') ? 'pageSubtitleAccountAi' : 'pageSubtitleAccount',
+          )}
+        />
         <nav
           role="tablist"
           aria-label={t('pageTitle')}
