@@ -19,12 +19,14 @@
 // remove it from KNOWN"), so each lane deletes exactly its own entries.
 //
 //   SHELFY_E2E_SHOTS=/some/dir pnpm run test:e2e:web:server -- ux.spec.ts
+import { execFileSync } from 'node:child_process';
 import { test, expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { E2E } from './env';
 import {
   UX_VIEWPORTS,
   lowContrastText,
   hitReport,
+  loginLink,
   newContext,
   newViewportContext,
   overflowReport,
@@ -39,7 +41,6 @@ import {
 // Filled from the first run on the current tip; a lane removes its entries
 // when it enables its own check.
 const ALL = ['desktop', 'tablet', 'ios', 'android'];
-const PHONES = ['ios', 'android'];
 const KNOWN: Record<string, string> = Object.fromEntries(
   (
     [
@@ -62,10 +63,6 @@ const KNOWN: Record<string, string> = Object.fromEntries(
         'post-modal/[post-modal-note-add] button',
         'UX-5 MOD: "Add a personal note" (4.4:1)',
       ],
-      ['contrast', ALL, 'trash/[trash-empty-state] p', 'UX-6 TR: empty-state title (2.6:1)'],
-      ['contrast', ALL, 'trash/[trash-empty-state] span', 'UX-6 TR: empty-state hint (2.0:1)'],
-      ['contrast', ALL, 'jobs/[jobs-view] span', 'UX-6 JOB: "State" label (4.47:1, borderline)'],
-      ['contrast', ALL, 'jobs/[job-row] span', 'UX-6 JOB-3: "n/m tries" (3.6:1)'],
       [
         'contrast',
         ALL,
@@ -78,14 +75,6 @@ const KNOWN: Record<string, string> = Object.fromEntries(
         'settings-legal/[legal-privacy-read] button',
         'UX-7 SET: legal link button (4.2:1)',
       ],
-      // Touch targets (44 px), phones only.
-      [
-        'target-size',
-        PHONES,
-        'select-checkbox',
-        'UX-4 GAL: the card checkbox is 20 px; it needs a 44 px hit area',
-      ],
-      ['target-size', PHONES, 'jobs-refresh', 'UX-6 JOB-1: the icon button is 32 px'],
     ] as const
   ).flatMap(([check, viewports, subject, note]) =>
     viewports.map((vp) => [`${check}:${vp}:${subject}`, note] as const),
@@ -99,14 +88,7 @@ type State = Awaited<ReturnType<BrowserContext['storageState']>>;
 
 // Settles one check's failures against KNOWN: unexpected failures and stale
 // KNOWN entries fail, known failures are annotated.
-// `lenientStale` for a check whose ratio moves with an animation near its
-// threshold (contrast): a known entry that happens not to fail is not stale.
-function settle(
-  check: string,
-  vp: UxViewport,
-  failures: Record<string, string>,
-  lenientStale = false,
-): void {
+function settle(check: string, vp: UxViewport, failures: Record<string, string>): void {
   const prefix = `${check}:${vp.name}:`;
   const unexpected: string[] = [];
   for (const [subject, detail] of Object.entries(failures)) {
@@ -121,11 +103,9 @@ function settle(
       unexpected.push(`${subject}: ${detail}`);
     }
   }
-  const stale = lenientStale
-    ? []
-    : Object.keys(KNOWN).filter(
-        (k) => k.startsWith(prefix) && !(k.slice(prefix.length) in failures),
-      );
+  const stale = Object.keys(KNOWN).filter(
+    (k) => k.startsWith(prefix) && !(k.slice(prefix.length) in failures),
+  );
   expect(unexpected, `${check} at ${vp.name}`).toEqual([]);
   expect(stale, `${check} at ${vp.name}: fixed, remove these from KNOWN`).toEqual([]);
 }
@@ -144,6 +124,27 @@ async function gallery(page: Page): Promise<void> {
 
 const SCREENS: Screen[] = [
   { id: 'gallery', go: gallery },
+  {
+    id: 'folder',
+    go: async (page) => {
+      const response = await page.request.get('/api/v1/collections');
+      expect(response.ok()).toBe(true);
+      const { items } = (await response.json()) as { items: { id: number; count: number }[] };
+      const folder = items.find((item) => item.count > 0);
+      expect(folder, 'the synth library includes a populated folder').toBeDefined();
+      await page.goto(`/c/${folder!.id}`);
+      await expect(page.getByTestId('post-card').first()).toBeVisible();
+    },
+  },
+  {
+    id: 'search-empty',
+    go: async (page) => {
+      await gallery(page);
+      await page.locator('[data-testid="gallery-view"] input').first().fill('zzzzshelfyabsentzzzz');
+      await expect(page.getByTestId('empty-clear-search')).toBeVisible();
+      await expect(page.getByTestId('post-card')).toHaveCount(0);
+    },
+  },
   {
     id: 'search',
     narrowOnly: true,
@@ -198,6 +199,7 @@ const SCREENS: Screen[] = [
     go: async (page) => {
       await page.goto('/jobs');
       await expect(page.getByTestId('jobs-view')).toBeVisible();
+      await expect(page.locator('[data-testid="job-row"][data-job-id="9100"]')).toBeVisible();
     },
   },
   ...['account', 'language', 'storage', 'legal'].map(
@@ -252,22 +254,48 @@ const TOOLBAR = [
 let state: State;
 test.beforeAll(async ({ browser }: { browser: Browser }) => {
   state = await signedInState(browser);
+  // Finished jobs cannot be claimed by the scheduler. A deterministic row
+  // makes the Jobs capture/contrast scan cover its attempt counter too,
+  // without touching jobs.spec.ts's fresh account or queue state.
+  execFileSync(
+    'sqlite3',
+    [
+      '-cmd',
+      '.timeout 5000',
+      E2E.controlDb,
+      `INSERT INTO jobs (id, user_id, kind, state, priority, payload_json,
+         attempts, max_attempts, run_at, created_at, updated_at, finished_at)
+       SELECT 9100, id, 'purge', 'succeeded', 100, '{}', 2, 3,
+         ${Date.now()}, ${Date.now()}, ${Date.now()}, ${Date.now()}
+       FROM users WHERE email = '${E2E.synthEmail}'
+       ON CONFLICT(id) DO NOTHING;`,
+    ],
+    { stdio: ['ignore', 'ignore', 'pipe'] },
+  );
 });
 
 // The signed-out screens: the sign-in page and the link landing page.
 test('captures the signed-out screens at every viewport', async ({ browser }) => {
+  // The real one-time link stays unspent: the landing must not redeem it.
+  const magicLink = loginLink('login', E2E.synthEmail);
   for (const vp of UX_VIEWPORTS) {
     const context = await newViewportContext(browser, vp);
     const page = await context.newPage();
-    await page.goto('/login');
-    await expect(page.getByTestId('login-form')).toBeVisible();
-    await shot(page, `ux-sign-in-${vp.name}`);
-    if (vp.narrow) {
-      const overflow = await overflowReport(page);
-      expect(overflow, `sign-in overflow at ${vp.name}`).toEqual({
-        pageOverflow: 0,
-        scrolledLeft: [],
-      });
+    for (const [screen, path, ready] of [
+      ['sign-in', '/login', 'login-form'],
+      ['magic-link', magicLink, 'magic-sign-in'],
+      ['invalid-link', '/login/magic', 'magic-invalid'],
+    ]) {
+      await page.goto(path);
+      await expect(page.getByTestId(ready)).toBeVisible();
+      await shot(page, `ux-${screen}-${vp.name}`);
+      if (vp.narrow) {
+        const overflow = await overflowReport(page);
+        expect(overflow, `${screen} overflow at ${vp.name}`).toEqual({
+          pageOverflow: 0,
+          scrolledLeft: [],
+        });
+      }
     }
     await context.close();
   }
@@ -335,7 +363,7 @@ for (const vp of UX_VIEWPORTS) {
         const measured: string[] = [];
         const measure = async (ids: string[]): Promise<void> => {
           for (const id of ids) {
-            const hit = await hitReport(page, id);
+            const hit = await hitReport(page, id, id === 'select-checkbox' ? 'post-card' : id);
             if (!hit) continue;
             measured.push(id);
             const problems: string[] = [];
@@ -376,6 +404,27 @@ for (const vp of UX_VIEWPORTS) {
         await page.getByTestId('select-toggle').click();
         await page.getByTestId('post-card').first().click();
         await measure(['select-checkbox', 'select-cancel']);
+        // The 20px selection marker is presentational; the card owns its
+        // click. Check the full 44px square at that corner through real taps,
+        // including the area outside the marker, before removing its KNOWN.
+        const card = page.getByTestId('post-card').first();
+        const box = (await card.boundingBox())!;
+        const checkbox = card.getByTestId('select-checkbox');
+        await expect(checkbox).toHaveAttribute('aria-checked', 'true');
+        for (const [index, [dx, dy]] of [
+          [1, 1],
+          [MIN_TARGET - 1, 1],
+          [MIN_TARGET - 1, MIN_TARGET - 1],
+          [1, MIN_TARGET - 1],
+        ].entries()) {
+          const point = [box.x + dx, box.y + dy] as const;
+          expect(await topmostTestIds(page, ...point)).toContain('post-card');
+          await page.touchscreen.tap(...point);
+          await expect(checkbox).toHaveAttribute(
+            'aria-checked',
+            index % 2 === 0 ? 'false' : 'true',
+          );
+        }
         await page.goto('/jobs');
         await expect(page.getByTestId('jobs-view')).toBeVisible();
         await measure(['jobs-refresh']);
@@ -422,6 +471,12 @@ for (const vp of UX_VIEWPORTS) {
     test('visible text keeps AA contrast', async () => {
       const failures: Record<string, string> = {};
       const scan = async (screen: string, within = 'body'): Promise<void> => {
+        if (screen === 'jobs') {
+          await expect(page.locator('[data-testid="job-row"][data-job-id="9100"]')).toContainText(
+            'Attempt 2 of 3',
+          );
+        }
+        await page.waitForTimeout(700); // settle entrance opacity before measuring contrast
         for (const [key, ratio] of Object.entries(
           await lowContrastText(page, MIN_CONTRAST, within),
         )) {
@@ -429,7 +484,6 @@ for (const vp of UX_VIEWPORTS) {
         }
       };
       await gallery(page);
-      await page.waitForTimeout(600); // entrance animations
       await scan('gallery');
       if (vp.narrow) {
         await page.getByTestId('sidebar-open').click();
@@ -437,8 +491,20 @@ for (const vp of UX_VIEWPORTS) {
         await scan('drawer', '[data-testid="sidebar"]');
         await page.getByTestId('sidebar-close').click();
       }
-      await openFirstPost(page);
-      await page.waitForTimeout(700);
+      // SSE's shared-suite probe edits the first post's note. Pick an
+      // actually blank note through the real API, so the add-note control
+      // remains covered both standalone and after that probe.
+      const response = await page.request.get('/api/v1/posts?limit=50');
+      expect(response.ok()).toBe(true);
+      const { items } = (await response.json()) as {
+        items: { key: string; userNote: string | null }[];
+      };
+      const blankNote = items.find((post) => !post.userNote);
+      expect(blankNote, 'the synth library includes a post without a note').toBeDefined();
+      await page.goto(`/p/${encodeURIComponent(blankNote!.key)}`);
+      await expect(page.getByTestId('post-modal')).toBeVisible();
+      await page.getByTestId('post-modal-note-add').scrollIntoViewIfNeeded();
+      await expect(page.getByTestId('post-modal-note-add')).toBeInViewport();
       await scan('post-modal', '[data-testid="post-modal"]');
       for (const [screen, path] of [
         ['trash', '/trash'],
@@ -448,10 +514,9 @@ for (const vp of UX_VIEWPORTS) {
       ]) {
         await page.goto(path);
         await expect(page.getByRole('heading').first()).toBeVisible();
-        await page.waitForTimeout(300);
         await scan(screen);
       }
-      settle('contrast', vp, failures, true);
+      settle('contrast', vp, failures);
     });
   });
 }

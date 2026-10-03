@@ -205,9 +205,11 @@ export async function addAuthenticator(page: Page): Promise<Authenticator> {
 // Saves a screenshot for the report when SHELFY_E2E_SHOTS names a directory,
 // once the entrance animations (at most 440 ms) are over.
 export async function shot(page: Page, name: string): Promise<void> {
+  // Keep the same settled screens and navigation pace without screenshot
+  // output too; otherwise the full harness bursts past real read limits.
+  await page.waitForTimeout(700);
   if (!E2E.shots) return;
   mkdirSync(E2E.shots, { recursive: true });
-  await page.waitForTimeout(700);
   await page.screenshot({ path: join(E2E.shots, `${name}.png`), fullPage: false });
 }
 
@@ -288,7 +290,9 @@ export async function overflowReport(page: Page): Promise<OverflowReport> {
   });
 }
 
-// A control's box against the viewport.
+// A control's interactive box against the viewport. A presentational child
+// can name the control that owns its click (for example a selection marker
+// inside a card); the caller must also verify that owner's hit area works.
 export interface HitReport {
   testId: string;
   width: number;
@@ -296,8 +300,12 @@ export interface HitReport {
   inViewport: boolean;
 }
 
-export async function hitReport(page: Page, testId: string): Promise<HitReport | null> {
-  const loc = page.getByTestId(testId).first();
+export async function hitReport(
+  page: Page,
+  testId: string,
+  hitAreaTestId = testId,
+): Promise<HitReport | null> {
+  const loc = page.getByTestId(hitAreaTestId).first();
   if ((await loc.count()) === 0) return null;
   const box = await loc.boundingBox();
   if (!box) return null;
