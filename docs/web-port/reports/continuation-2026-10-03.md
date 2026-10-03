@@ -1,6 +1,6 @@
 # Shelfy — local continuation and current tracking
 
-Snapshot time: 2026-10-03 19:23 CEST. Integration branch `web/foundations` is now `cc4f594`: P2-14/F22 and F20 integrated after the fetched `abdd810` base and continuation documentation. Publication and remote CI are recorded separately below. This report supplements `EXECUTION.md`; it distinguishes implementation, verification and release.
+Historical snapshot: 2026-10-03 19:23 CEST. See the latest checkpoint below before using these historical rows as current state. Integration branch `web/foundations` is now `cc4f594`: P2-14/F22 and F20 integrated after the fetched `abdd810` base and continuation documentation. Publication and remote CI are recorded separately below. This report supplements `EXECUTION.md`; it distinguishes implementation, verification and release.
 
 | Area | Confirmed state | Next action / owner |
 |---|---|---|
@@ -91,3 +91,13 @@ The owner requested implementation status, not time estimates. The complete inve
 After the owner raised the cap to ten subagents and restarted Codex, all lane worktrees survived. Current parallel assignments use GPT-6.1 Sol / high: P3-13 completion, X1 harness tuning, P4-11 export, P2-08 Activity, P2-16 selection, P3-02 vault, P3-05 tag ranking, P3-06 clusters/aliases, UX-0 harness and the implementation inventory. F20 finished and its slot moved to X1.
 
 Under E22 the immediate operational priority remains the tagging chain: correct the real-node benchmark, improve shared prompts/media selection, finish and verify P3-13, deploy with operator concurrency one, then queue all saved Instagram posts for the owner's profile. The production CAS/video coverage must be measured separately from the privately fetched benchmark media. No full owner tagging run has started.
+
+## Checkpoint after the parallel-lane audit, 2026-10-03
+
+- Integration source `3a03d2c`, documentation `d7219ae`, then CI-only fix `56d82ee`. The full locked Rust workspace run completed with exit 0: **1,654 passed, 8 ignored across 114 suite summaries**. Private local evidence: `shelfy-web-local/data/release-candidate-rust-2118.log`.
+- Publication of `d7219ae` was stopped by the normal pre-push hook: **1,746 passed, 2 failed** in `tests/shared-ai/eval-run.test.ts`. Both concern Git worktree detection for private benchmark output directories. The harness lane is correcting the subprocess environment; the privacy guard must remain enforced. This is not a successful push.
+- CI fix `56d82ee` builds the deterministic AI stub before real-server Playwright. Previous run `37146987723` failed before executing browser specs because that binary was missing; the fix still needs remote CI.
+- Ten lanes were checked and responded with concrete progress. P3-14 is ready at `c20e7ad` (38 server and 56 core tests reported after rebase); its agent proceeds to P3-15 UI. P4-13 is ready at `8419d5c`, with full compose isolation on Docker >=28 still unverified. P3-27 checkpoint `42c5c21` has its three exact server tests passing; rich design parity continues. None of these pending commits is described as deployed.
+- Shared Git `core.bare=true` interrupted linked worktree discovery. Local `git config --worktree core.bare false` restores each affected lane without changing the common configuration.
+- Disk reached 546 MiB free. The P3-14 agent removed only its generated target after confirming no active handles; the lead verified **7.6 GiB free** afterward. Large parallel builds remain restricted; GC/export gets one targeted rerun.
+- Production remains rc.5; owner tagging has not started. The completed X1 benchmark, live backup evidence, next CI gate, 81-poster recovery and actual owner run remain distinct steps.

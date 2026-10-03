@@ -42,15 +42,15 @@ From the owner's handoff of 2026-10-03 (§17.4–17.5), for when P3-13 has lande
 5. Ask for the estimate on an Instagram selector with mode `all`; note `waitingForMedia` and `alreadyQueued`. The latest read-only census has 3,997 active Instagram posts: 2,136 analyzable, 1,861 waiting and zero queued. All waiting covers have expired URLs. Keep the full Instagram scope visible while recovering media; do not call the eligible subset the completed full library.
 6. Confirm with the returned token and a stable Idempotency-Key; watch one post go pending → analyzing → done with its tags saved; then monitor done, error, waiting, provider state and backlog without re-launching `all` while the first run is queued.
 
-Status: engine integrated; production deploy and owner run not started. X1 full40 validation is running serially on Ornyth.
+Status: engine integrated; production deploy and owner run not started. X1 full40 validation completed serially on Ornyth: 38 valid, 2 gated, zero provider/schema errors; report `x1-node-benchmark-2026-10-03.md`, prompt digest `ac46d33ae3fc`.
 
 Additional gates and recovery, recorded on 2026-10-03:
 
 - Match the evaluated input profile: `deep=true` gives still images at 1024; the owner Instagram library currently has no stored video objects, so this does not imply frame extraction. Use poster/slide plus weak caption evidence; do not download all videos or run STT implicitly.
 - Admin helper `24a3368` can recover 81 existing poster files from the verified private bundle. After backup, perform its live default dry-run first. Stop only Shelfy API, apply with `--server-stopped --apply`, restart and recount readiness. Do not substitute the local mirror dry-run for a live check.
-- Remaining expired URLs need P2-17 refresh through the already authenticated Instagram tab. Its synthetic tests pass; independent review is correcting legacy queue account binding before deployment. No automated live social action has run yet.
+- Remaining expired URLs need P2-17 refresh through the already authenticated Instagram tab. Its synthetic tests pass and independent review closed legacy queue account binding in integrated `3e44bef`; deployment and live verification remain. No automated live social action has run yet.
 - P3-18 settings and P3-16 taxonomy jobs are integrated; P3-20 queue UI and BYOK remain separate tracked work. The owner first run must still verify persisted tags and progress on production.
-- Record the exact release commit, CI run, image digest, backup evidence and unchanged Hermes health/restart count. The latest published CI85c37a8 has all blocking jobs green; Lighthouse F18 remains open. No new release tag exists after rc.5 yet.
+- Record the exact release commit, CI run, image digest, backup evidence and unchanged Hermes health/restart count. CI `37144780896` on `85c37a8` has all blocking jobs green. The newer `37146987723` on `970959a` failed live-browser setup because its AI stub was not built; fix `56d82ee` is integrated, awaiting publication and rerun. Lighthouse F18 remains open. No new release tag exists after rc.5 yet.
 
 ## P2-13: the first real syncs (owner, P2-23)
 
