@@ -1,0 +1,65 @@
+# shelfy-egress: Smokescreen settings (SPIKE-4 candidate for osn PR 2).
+#
+# Mounted read-only at /etc/shelfy-egress/config.yaml and loaded with
+# `--config-file`. Flags given on the command line add to these values: compose
+# appends `--deny-range` for the VPS's own public addresses (see compose.capture.yml).
+#
+# Ports: Smokescreen has no port policy. The shelfy-egress wrapper (../egress)
+# allows only SHELFY_EGRESS_ALLOWED_PORTS, 80 and 443 by default, and with that
+# decider in place every IPv6 literal destination is refused as well.
+
+ip: 0.0.0.0
+port: 4750
+
+# Resolve A records only: the Docker networks have no IPv6, so an AAAA answer
+# could only fail or, after a config change, reach something unintended.
+network: ip4
+dns_timeout: 5s
+
+acl_file: /etc/shelfy-egress/acl.yaml
+# There are no client certificates, so every client gets the ACL's default rule.
+allow_missing_role: true
+
+connect_timeout: 10s
+# CONNECT tunnels (HTTPS, WebSockets) idle for longer than this are closed.
+idle_timeout: 300s
+# On SIGTERM, wait this long for open connections (compose stop_grace_period is 20 s).
+exit_timeout: 15s
+read_header_timeout: 10s
+
+# Smokescreen already refuses, after DNS resolution: non-global-unicast addresses
+# (loopback, link-local including 169.254.169.254, multicast, unspecified,
+# broadcast), RFC 1918 and fc00::/7 (which cover every Docker network on the VPS),
+# CGNAT 100.64.0.0/10 (Tailscale), NAT64, 6to4, Teredo and its own interface
+# addresses. The list below repeats the ranges that matter, so the policy does not
+# depend on the Smokescreen version, and adds the special-purpose ranges it allows.
+#
+# Never add ::ffff:0:0/96: Go maps it to 0.0.0.0/0 and it would refuse every
+# IPv4 destination.
+deny_ranges:
+  - 0.0.0.0/8 # "this network"
+  - 10.0.0.0/8 # RFC 1918 (osn_edge is 10.91.0.0/24)
+  - 100.64.0.0/10 # CGNAT, Tailscale
+  - 127.0.0.0/8 # loopback
+  - 169.254.0.0/16 # link-local, cloud metadata 169.254.169.254
+  - 172.16.0.0/12 # RFC 1918 (Docker's default pools)
+  - 192.0.0.0/24 # IETF protocol assignments
+  - 192.0.2.0/24 # TEST-NET-1
+  - 192.88.99.0/24 # 6to4 relay anycast
+  - 192.168.0.0/16 # RFC 1918
+  - 198.18.0.0/15 # benchmarking
+  - 198.51.100.0/24 # TEST-NET-2
+  - 203.0.113.0/24 # TEST-NET-3
+  - 224.0.0.0/4 # multicast
+  - 240.0.0.0/4 # reserved, broadcast
+  - ::/96 # unspecified, loopback, IPv4-compatible
+  - 64:ff9b::/96 # NAT64
+  - 64:ff9b:1::/48 # NAT64 local use
+  - 100::/64 # discard-only
+  - 2001::/32 # Teredo
+  - 2001:db8::/32 # documentation
+  - 2002::/16 # 6to4
+  - fc00::/7 # unique local
+  - fe80::/10 # link-local
+  - fec0::/10 # site-local (deprecated)
+  - ff00::/8 # multicast

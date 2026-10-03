@@ -1,0 +1,10 @@
+# Build context of shelfy-egress.Dockerfile: BuildKit reads this file instead of
+# a root .dockerignore. Only the Go sources of the port-allowlist wrapper go in;
+# Smokescreen and the rest are fetched from go.sum inside the build.
+*
+!deploy
+deploy/*
+!deploy/docker
+deploy/docker/*
+!deploy/docker/shelfy-egress
+**/.DS_Store
