@@ -54,7 +54,9 @@
 //! `shelfy_breaker_open`.
 //!
 //! **Seams.** P2-14 stores extension uploads with [`store::prepare`] and
-//! [`store::commit`] (origin `extension`). P2-09 derives the states of
+//! [`store::commit`] (origin `extension`), and the drain wakes the
+//! extension's task polls when it hands posts over (an expiry, an open
+//! breaker: [`crate::extension::tasks::wake`]). P2-09 derives the states of
 //! ingested posts with [`modes`] and calls [`enqueue`]. P4-12's GC and P4's
 //! Jobs view (retry: reset `fetch_attempts` and `fetch_error`, then
 //! [`enqueue`]) work on the same columns.
@@ -867,7 +869,12 @@ impl Drain {
                 })
                 .map_err(JobError::from)
             })
-            .await
+            .await?;
+        if matches!(record, Record::Expired) {
+            // The extension's `refresh_media` (P2-14).
+            crate::extension::tasks::wake(self.state(), self.ctx.user_id());
+        }
+        Ok(())
     }
 
     /// Derives the states of the posts `ids` again; returns the keys of
@@ -896,7 +903,8 @@ impl Drain {
     /// breakers are open. Returns the keys of the posts that changed.
     async fn hand_off(&self, platforms: Vec<Platform>) -> Result<Vec<String>, JobError> {
         let (now, modes) = (self.now(), modes(self.state()));
-        self.ctx
+        let keys = self
+            .ctx
             .user_db(move |db| {
                 db.write(|tx| -> Result<Vec<String>, RepoError> {
                     let before = states_of(tx, &platforms)?;
@@ -909,11 +917,14 @@ impl Drain {
                         .into_iter()
                         .filter(|(key, state)| before.get(key) != Some(state))
                         .map(|(key, _)| key)
-                        .collect())
+                        .collect::<Vec<_>>())
                 })
                 .map_err(JobError::from)
             })
-            .await
+            .await?;
+        // The extension's `upload_media` (P2-14).
+        crate::extension::tasks::wake(self.state(), self.ctx.user_id());
+        Ok(keys)
     }
 
     fn record_latency(&self, platform: Platform, imported_at: i64) {

@@ -7,7 +7,7 @@
 //! | Group | Limits | Routes |
 //! |---|---|---|
 //! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03); passkeys and re-authentication (P1-13); the account, its sessions and tokens, and the device flow (P1-17); bulk actions and the trash (P1-11); the extension's pairing, configuration and status (P2-03); shared links (P2-11) |
-//! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
+//! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3), the extension's long poll `GET /api/v1/ingest/tasks` (P2-14) |
 //! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
 //! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, P4-08, [`uploads`]) |
 //! | ingest, STT | [`RouteLimits::INGEST`], [`RouteLimits::STT`] | added with their routes (P2, P3) |
@@ -68,6 +68,11 @@
 //! in [`me`], over [`crate::extension`]. Every token route an `extension`
 //! token reaches also passes its version gate ([`crate::extension::admit`]).
 //!
+//! The extension's tasks (P2-14): [`ingest_tasks`] (`GET /ingest/tasks`, the
+//! long poll, and `POST /ingest/tasks/{id}/complete`), a `tasks` token, over
+//! [`crate::extension::tasks`]; its uploads are tus uploads of purpose
+//! `archive-object` with the `uploads` scope.
+//!
 //! The committed copy of the document, `crates/server/openapi.json`, is what
 //! the TypeScript client is generated from (T11). After changing a route,
 //! regenerate it with
@@ -85,6 +90,7 @@ pub mod events;
 pub mod extension;
 pub mod health;
 pub mod ingest;
+pub mod ingest_tasks;
 pub mod jobs;
 pub mod links;
 pub mod listing;
@@ -188,7 +194,8 @@ const PROBLEM_RESPONSE: &str = "Problem";
         (
             name = "uploads",
             description = "Resumable uploads (tus 1.0): bookmark files and imports from the web \
-                           app, migration bundles from the CLI."
+                           app, migration bundles from the CLI, archive objects from the browser \
+                           extension."
         ),
         (
             name = "migration",
@@ -242,7 +249,7 @@ pub const CSRF_EXEMPT_ROUTES: &[(Method, &str)] = &[
 /// `migrate` token, and the purpose of each upload decides further (P4-08);
 /// `GET /extension/config` takes the extension's `ingest` token (P2-03);
 /// `POST /links` takes the iOS Shortcut's `links:create` token or a session
-/// (P2-11).
+/// (P2-11); the extension's tasks take its `tasks` token (P2-14).
 pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
     (Method::POST, "/api/v1/posts/lookup", &[Scope::Lookup], true),
     (Method::POST, "/api/v1/links", &[Scope::LinksCreate], true),
@@ -269,6 +276,13 @@ pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
         Method::GET,
         "/api/v1/extension/sources",
         &[Scope::Ingest],
+        false,
+    ),
+    (Method::GET, "/api/v1/ingest/tasks", &[Scope::Tasks], false),
+    (
+        Method::POST,
+        "/api/v1/ingest/tasks/{id}/complete",
+        &[Scope::Tasks],
         false,
     ),
     (
@@ -399,6 +413,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(sync_runs::open_sync_run, sync_runs::list_sync_runs))
         .routes(routes!(sync_runs::update_sync_run))
         .routes(routes!(sync_runs::list_extension_sources))
+        .routes(routes!(ingest_tasks::complete_extension_task))
         .routes(routes!(trash::list_trash))
         .routes(routes!(trash::restore_trash))
         .routes(routes!(trash::empty_trash))
@@ -420,7 +435,9 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(extension::router())
         .merge(jobs::router());
     // Streams end when the shutdown token fires instead of on a timer.
-    let streams = OpenApiRouter::default().routes(routes!(events::stream_events));
+    let streams = OpenApiRouter::default()
+        .routes(routes!(events::stream_events))
+        .routes(routes!(ingest_tasks::list_extension_tasks));
     let upload_chunks = OpenApiRouter::default().routes(routes!(uploads::append_upload));
     // Capture batches are larger (up to 8 MiB, ≤ 500 items).
     let ingest = OpenApiRouter::default().routes(routes!(ingest::ingest_batch));

@@ -569,6 +569,54 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/ingest/tasks': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Leases the extension's tasks (contract C6).
+     * @description A `tasks` token. Answers at once when tasks are ready for this poller,
+     *     else waits up to `wait` seconds for some, or until the server shuts
+     *     down. The tasks are leased to the token for 5 minutes; a poll by the same
+     *     token returns its leased tasks again, with the lease renewed.
+     */
+    get: operations['listExtensionTasks'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/ingest/tasks/{id}/complete': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Ends one of the extension's tasks (contract C6).
+     * @description A `tasks` token. Idempotent: an outcome for a task that no longer exists
+     *     changes nothing. `uploaded` stores the upload `uploadId` (purpose
+     *     `archive-object`) in the task's slot; 422 when the upload is not a
+     *     complete one of the user, 409 `upload_consumed` when it was used before
+     *     and the slot is still empty. 422 for an outcome the task's kind does not
+     *     have; 404 for a text that is not a task id.
+     */
+    post: operations['completeExtensionTask'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/jobs': {
     parameters: {
       query?: never;
@@ -2387,6 +2435,49 @@ export interface components {
        *     disconnected. `null` when none sent a valid version.
        */
       version: string | null;
+    };
+    /** @description One task (contract C6). */
+    ExtensionTask: {
+      /**
+       * Format: int64
+       * @description When `url` expires (`upload_media`), or the first expired URL
+       *     (`refresh_media`), unix ms.
+       */
+      expiresAt: number | null;
+      /** @description Its id, for the completion: stable while the work is the same. */
+      id: string;
+      /** @description What to do. */
+      kind: components['schemas']['TaskKind'];
+      /**
+       * Format: int64
+       * @description Until when the task is this poller's, unix ms.
+       */
+      leaseUntil: number;
+      /** @description The post's native id (Instagram's media pk, for `/api/v1/media/<pk>/info/`). */
+      nativeId: string;
+      /** @description The post's platform. */
+      platform: components['schemas']['Platform'];
+      /**
+       * Format: int64
+       * @description `upload_media` of a slide: its position. `null` for the cover, and
+       *     for the tasks about the whole post.
+       */
+      position: number | null;
+      /** @description The post's key. */
+      postKey: string;
+      /** @description The link to the post. */
+      postUrl: string;
+      /** @description Instagram's code. */
+      shortcode: string | null;
+      /** @description `upload_media`: the URL to fetch (`credentials: "omit"`) and upload. */
+      url: string | null;
+    };
+    /** @description The answer of `GET /ingest/tasks` (contract C6). */
+    ExtensionTasks: {
+      /** @description The tasks leased to this poller. */
+      tasks: components['schemas']['ExtensionTask'][];
+      /** @description Every task that waits, per platform, leased ones included. */
+      waiting: components['schemas']['Waiting'];
     };
     /** @description One field that failed validation. */
     FieldError: {
@@ -4474,6 +4565,28 @@ export interface components {
      * @enum {string}
      */
     TagSource: 'ai' | 'manual';
+    /** @description How a task ended (contract C6). */
+    TaskCompletion: {
+      /**
+       * @description `failed`, `skipped`: why, as a short code (`http_403`,
+       *     `no_instagram_tab`); kept with the item's tries.
+       */
+      errorCode?: string | null;
+      /** @description The outcome. */
+      outcome: components['schemas']['TaskOutcome'];
+      /** @description `uploaded`: the complete `archive-object` upload holding the bytes. */
+      uploadId?: string | null;
+    };
+    /**
+     * @description What a task asks of the extension (C6).
+     * @enum {string}
+     */
+    TaskKind: 'upload_media' | 'refresh_media' | 'hydrate_link';
+    /**
+     * @description How the extension ended a task (C6).
+     * @enum {string}
+     */
+    TaskOutcome: 'uploaded' | 'refreshed' | 'gone' | 'failed' | 'skipped';
     /**
      * @description Who holds a token.
      * @enum {string}
@@ -4576,6 +4689,24 @@ export interface components {
       apiVersion: string;
       /** @description Version of the server build. */
       version: string;
+    };
+    /** @description Tasks per social platform. */
+    Waiting: {
+      /**
+       * Format: int64
+       * @description Instagram.
+       */
+      instagram: number;
+      /**
+       * Format: int64
+       * @description Pinterest.
+       */
+      pinterest: number;
+      /**
+       * Format: int64
+       * @description X.
+       */
+      twitter: number;
     };
     /** @description The current capture of a website, without its page texts. */
     WebCapture: {
@@ -5327,6 +5458,72 @@ export interface operations {
         content: {
           'application/json': components['schemas']['IngestResult'];
         };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  listExtensionTasks: {
+    parameters: {
+      query?: {
+        /** @description Seconds to wait for a task when none is ready (0–25; default 0). */
+        wait?: number;
+        /** @description Most tasks to lease (1–50; default 20). */
+        limit?: number;
+      };
+      header?: {
+        /**
+         * @description The extension's manifest version (`0.2.0`). An extension token's
+         *     request without it, or below `minVersion`, gets 426
+         *     `extension_outdated`, except `GET /extension/config`.
+         */
+        'X-Shelfy-Extension'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The leased tasks. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ExtensionTasks'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  completeExtensionTask: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description The extension's manifest version (`0.2.0`). An extension token's
+         *     request without it, or below `minVersion`, gets 426
+         *     `extension_outdated`, except `GET /extension/config`.
+         */
+        'X-Shelfy-Extension'?: string;
+      };
+      path: {
+        /** @description The task's id. */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['TaskCompletion'];
+      };
+    };
+    responses: {
+      /** @description Done. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       default: components['responses']['Problem'];
     };

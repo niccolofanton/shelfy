@@ -196,7 +196,8 @@ fn target(conn: &Connection, key: &str) -> Result<Option<Target>, RepoError> {
 }
 
 /// A post's link from its native id, for a post saved without one.
-fn canonical_url(platform: Platform, native_id: &str) -> String {
+#[must_use]
+pub fn canonical_url(platform: Platform, native_id: &str) -> String {
     match platform {
         Platform::Instagram => format!(
             "https://www.instagram.com/p/{}/",
@@ -394,6 +395,10 @@ async fn set_state(
             ChangeReason::Ingest,
             Some(vec![target.key.clone()]),
         );
+        if verdict == ArchiveState::Client {
+            // The extension's `hydrate_link` (P2-14).
+            crate::extension::tasks::wake(ctx.state(), ctx.user_id());
+        }
     }
     Ok(())
 }

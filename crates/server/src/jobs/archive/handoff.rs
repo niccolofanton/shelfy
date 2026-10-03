@@ -131,6 +131,10 @@ pub async fn rederive_all(
             })
         })
         .await;
+        if written.is_ok() {
+            // Posts may have gone to `client`: the extension's tasks (P2-14).
+            crate::extension::tasks::wake(state, &user);
+        }
         match written {
             Ok(written) if enqueue && written.value > 0 => {
                 if let Err(err) = super::enqueue(state.jobs(), &user).await {

@@ -23,8 +23,8 @@
 //!   (`server_work() > 0`);
 //! - emits `sync.progress` with the run's running totals (throttled to one a
 //!   second per run);
-//! - leaves a seam where P2-14 wakes the extension's task poller when posts
-//!   went to `client`.
+//! - wakes the extension's waiting task polls when posts went to `client`
+//!   ([`crate::extension::tasks::wake`], P2-14).
 //!
 //! The route ([`crate::routes::ingest`]) sanitizes the batch, refuses a killed
 //! source (409 `source_disabled`) and a batch whose run is unknown (404
@@ -166,10 +166,9 @@ pub async fn ingest_batch(
         tracing::warn!(error = %err, "cannot enqueue the archive drain after ingest");
     }
     if committed.client_work > 0 {
-        // P2-14 seam: wake the extension's `GET /ingest/tasks` long-poll so it
-        // acts on the posts that went to `client` without waiting for its
-        // 5-minute alarm. The tasks API does not exist yet; until it lands the
-        // extension picks the work up on its next poll.
+        // The extension's waiting `GET /ingest/tasks` acts on the posts that
+        // went to `client` without waiting for its 5-minute alarm.
+        crate::extension::tasks::wake(state, user_id);
     }
     emit_progress(state, user_id, run, &committed.ingested);
     Ok(committed.ingested)
