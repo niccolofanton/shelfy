@@ -105,6 +105,44 @@ export interface NewToken {
   value: string;
 }
 
+// A code that pairs the browser extension with the account (plan §2.19
+// Connections): single-use, good for 60 seconds.
+export interface PairingCode {
+  code: string;
+  // Unix ms.
+  expiresAt: number;
+}
+
+// Whether the account's extension is talking to the server (`GET
+// /extension/status`, then the `extension.status` events).
+export interface ExtensionStatus {
+  // One of its tokens made a request in the last 10 minutes.
+  connected: boolean;
+  // Unix ms; null when there was none since the server started.
+  lastSeenAt: number | null;
+  version: string | null;
+}
+
+// What this browser's page can tell about the extension (`shelfy.ping`):
+// - `unsupported`: not a Chromium browser, so no extension can be installed;
+// - `missing`: Chromium, but nothing answers (not installed, or disabled);
+// - `ready`: it answered.
+export type ExtensionProbe =
+  | { state: 'unsupported' }
+  | { state: 'missing' }
+  | { state: 'ready'; version: string; paired: boolean; outdated: boolean };
+
+// The extension's answer to `shelfy.pair`: `{ok: true}` or a code
+// (`invalid_pairing_code`, `network`, `access_redirect`, `bad_response`,
+// `bad_request`, ...) that the UI turns into its own message.
+export type ExtensionPairResult = { ok: true } | { ok: false; code: string };
+
+// The page's line to the extension (web/src/extension/bridge.ts).
+export interface ExtensionBridge {
+  probe(): Promise<ExtensionProbe>;
+  pair(code: string): Promise<ExtensionPairResult>;
+}
+
 export interface StorageUsage {
   // Media plus database.
   usedBytes: number;
@@ -176,6 +214,16 @@ export interface AccountApi {
   listTokens(): Promise<AccountToken[]>;
   createToken(kind: Exclude<TokenKind, 'migrate'>, label?: string): Promise<NewToken>;
   revokeToken(id: string): Promise<void>;
+
+  // A code for the extension to pair with (after a re-authentication if the
+  // last sign-in is older than 5 minutes). Rejects `rate_limited` while ten
+  // codes are unused.
+  createPairingCode(): Promise<PairingCode>;
+  extensionStatus(): Promise<ExtensionStatus>;
+  // Called with every `extension.status` event.
+  onExtensionStatus(listener: (status: ExtensionStatus) => void): () => void;
+  // The page's line to the browser extension; undefined where there is none.
+  readonly extension?: ExtensionBridge;
 
   getUsage(): Promise<StorageUsage>;
   // Called when the storage use was counted again (read it again then).

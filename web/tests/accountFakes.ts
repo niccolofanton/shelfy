@@ -13,6 +13,7 @@ export type FakeAccount = {
 } & {
   // Says the storage was counted again (`onUsageChanged`).
   emitUsage: () => void;
+  emitExtensionStatus: (s: object) => void;
 };
 
 export const NO_CONSENT: ConsentRecord = {
@@ -33,6 +34,7 @@ export function fakeAccount(
   overrides: Partial<Record<keyof AccountApi, unknown>> = {},
 ): FakeAccount {
   const usageListeners = new Set<() => void>();
+  const statusListeners = new Set<(s: object) => void>();
   const account = {
     profile: { id: 'u1', email: 'o@x.test', role: 'owner', createdAt: 0 },
     signIn: { passkeys: true, emailLink: false },
@@ -106,6 +108,17 @@ export function fakeAccount(
       },
     })),
     revokeToken: vi.fn(async () => {}),
+    createPairingCode: vi.fn(async () => ({ code: 'c'.repeat(43), expiresAt: 60_000 })),
+    extensionStatus: vi.fn(async () => ({ connected: false, lastSeenAt: null, version: null })),
+    onExtensionStatus: vi.fn((listener: (s: object) => void) => {
+      statusListeners.add(listener);
+      return () => statusListeners.delete(listener);
+    }),
+    extension: {
+      probe: vi.fn(async () => ({ state: 'missing' })),
+      pair: vi.fn(async () => ({ ok: true })),
+    },
+    emitExtensionStatus: (s: object) => statusListeners.forEach((l) => l(s)),
     getUsage: vi.fn(async () => ({
       usedBytes: 3 * 1024 * 1024,
       mediaBytes: 2 * 1024 * 1024,

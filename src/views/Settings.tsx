@@ -32,7 +32,7 @@ import ImportModal from '../components/ImportModal';
 import DisclaimerGate from '../components/DisclaimerGate';
 import LanguageCard from '../components/LanguageCard';
 import { getDisclaimerAcceptance, DISCLAIMER_VERSION } from '../disclaimer';
-import { useT, useLang, localeTag } from '../i18n';
+import { useT, useLang, localeTag, withMessages } from '../i18n';
 import { useCapabilities, useShelfy } from '../api/ShelfyProvider';
 import { DEFAULT_SETTINGS_SECTION, useNavigation, type Navigation } from '../api/navigation';
 import { buildTime } from 'virtual:build-time';
@@ -2229,6 +2229,10 @@ interface SettingsProps {
 // desktop never needs them (plan §2.19: Settings is code-split).
 const AccountSection = React.lazy(() => import('./settings/Account'));
 const StorageSection = React.lazy(() => import('./settings/Storage'));
+// F14: its strings are their own namespace, loaded with the chunk.
+const ConnectionsSection = React.lazy(
+  withMessages(() => import('./settings/Connections'), 'connections'),
+);
 const AccountLegalSection = React.lazy(() => import('./settings/Legal'));
 
 // A section of Settings. On the web it has an address (`/settings/<id>`) and
@@ -2390,6 +2394,12 @@ function useSections({ onDataCleared }: SettingsProps): SettingsSection[] {
       title: t('sectionAccount'),
       delay: '20ms',
       content: <AccountSection account={account} />,
+    },
+    !!account && {
+      id: 'connections',
+      title: t('sectionConnections'),
+      delay: '20ms',
+      content: <ConnectionsSection account={account} />,
     },
     { id: 'language', title: tl('section'), delay: '20ms', content: <LanguageCard /> },
     caps.ai && { id: 'ai', title: t('sectionAi'), delay: '40ms', content: <AiSection /> },

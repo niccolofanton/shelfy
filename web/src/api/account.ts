@@ -7,6 +7,9 @@
 // calls just wait.
 import type {
   AccountApi,
+  ExtensionBridge,
+  ExtensionStatus,
+  PairingCode,
   AccountPasskey,
   AccountSession,
   AccountSettings,
@@ -16,6 +19,7 @@ import type {
   StorageUsage,
 } from '@ui/api/account';
 import { createPasskey } from '../auth/passkeys';
+import { createExtensionBridge } from '../extension/bridge';
 import type { EventStream } from './events';
 import type { Http } from './http';
 import type { components } from './schema';
@@ -47,6 +51,9 @@ export interface AccountApiOptions {
   events: Pick<EventStream, 'on'>;
   // Clock, for the age of a passkey draft.
   now?: () => number;
+  // The page's line to the browser extension; default: the one on
+  // `chrome.runtime` (./../extension/bridge.ts).
+  extension?: ExtensionBridge;
 }
 
 export function createAccountApi(
@@ -166,6 +173,17 @@ export function createAccountApi(
     async revokeToken(id) {
       await http.send('DELETE', `/api/v1/me/tokens/${encodeURIComponent(id)}`);
     },
+
+    async createPairingCode(): Promise<PairingCode> {
+      return json<Schemas['PairingCode']>(
+        await http.send('POST', '/api/v1/me/tokens/pairing-code'),
+      );
+    },
+    extensionStatus: () => http.get<ExtensionStatus>('/api/v1/extension/status'),
+    onExtensionStatus(listener) {
+      return options.events.on('extension.status', (status) => listener({ ...status }));
+    },
+    extension: options.extension ?? createExtensionBridge(),
 
     getUsage: () => http.get<StorageUsage>('/api/v1/me/usage'),
     onUsageChanged(listener) {

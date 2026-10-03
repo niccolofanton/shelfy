@@ -242,6 +242,7 @@ export default {
     // ── The web: an account on a server (src/views/settings/) ──────────────────
     pageSubtitleAccount: 'Il tuo account, la lingua, lo spazio e le note legali.',
     sectionAccount: 'Account',
+    sectionConnections: 'Connessioni',
     sectionStorage: 'Spazio',
     versionPillWeb: 'server {server} · web {build}',
     versionTitleWeb: 'Versione del server {server} · build dell’app web {build} (UTC)',
@@ -566,6 +567,7 @@ export default {
     // ── The web: an account on a server (src/views/settings/) ──────────────────
     pageSubtitleAccount: 'Your account, language, storage and legal notices.',
     sectionAccount: 'Account',
+    sectionConnections: 'Connections',
     sectionStorage: 'Storage',
     versionPillWeb: 'server {server} · web {build}',
     versionTitleWeb: 'Server version {server} · web app build {build} (UTC)',
