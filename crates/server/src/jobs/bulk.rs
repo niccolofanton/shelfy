@@ -170,10 +170,17 @@ impl Payload {
 ///
 /// # Errors
 ///
-/// 422 when the payload is over the job system's 64 KiB (a selector near the
-/// request's own limit); the control database failed.
+/// 422 `validation_failed` naming `selector` when the payload is over the
+/// job system's 64 KiB (a selector near the request's own limit, P1-11
+/// review L5); the control database failed.
 pub async fn enqueue(jobs: &Jobs, user_id: &str, payload: &Payload) -> Result<Enqueued, ApiError> {
     let payload = serde_json::to_value(payload).map_err(ApiError::internal)?;
+    if payload.to_string().len() > super::MAX_PAYLOAD_BYTES {
+        return Err(ApiError::invalid_field(
+            "selector",
+            "is too large to run as a job: send fewer `exceptKeys`",
+        ));
+    }
     jobs.enqueue(NewJob::new(user_id, KIND).payload(payload))
         .await
 }

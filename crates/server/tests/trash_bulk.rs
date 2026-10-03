@@ -40,6 +40,7 @@ use shelfy_server::events::model::{EventTopic, JobState};
 use shelfy_server::ids::{new_ulid, now_ms};
 use shelfy_server::jobs::idempotency::{IDEMPOTENCY_KEY, REPLAYED};
 use shelfy_server::jobs::{Scheduler, kinds};
+use shelfy_server::limits::RouteLimits;
 use shelfy_server::tokens::{SecretToken, hash_token};
 use support::auth::{owner, sign_in, spa, with_session};
 use support::jobs::START;
@@ -456,13 +457,42 @@ async fn api_tokens_never_call_the_new_routes() {
             response.status()
         );
     }
-    let mut forged = with_session(
+    // Every unsafe route refuses a cookie request without the web app's
+    // headers (CSRF), and changes nothing.
+    let other = call(
+        &app,
+        spa(
+            &t,
+            post("/api/v1/collections", &json!({ "name": "other" })),
+            &cookie,
+        ),
+        StatusCode::CREATED,
+    )
+    .await;
+    for request in [
         bulk(json!({ "keys": ["x_2002"] }), "delete", Value::Null),
-        &cookie,
+        restore(json!({ "selector": { "keys": ["x_2001"] } })),
+        post_empty("/api/v1/trash/empty"),
+        delete(&format!(
+            "/api/v1/collections/{}?mode=withPosts",
+            other["id"]
+        )),
+    ] {
+        let route = format!("{} {}", request.method(), request.uri());
+        let mut forged = with_session(request, &cookie);
+        forged.headers_mut().remove("x-shelfy-client");
+        let refused = problem(send(&app, forged).await, StatusCode::FORBIDDEN).await;
+        assert_eq!(refused.code, ErrorCode::CsrfFailed, "{route}");
+    }
+    let folders = ok(&app, spa(&t, get("/api/v1/collections"), &cookie)).await;
+    assert!(
+        folders["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["id"] == other["id"]),
+        "the folder is still there"
     );
-    forged.headers_mut().remove("x-shelfy-client");
-    let refused = problem(send(&app, forged).await, StatusCode::FORBIDDEN).await;
-    assert_eq!(refused.code, ErrorCode::CsrfFailed);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -835,6 +865,72 @@ async fn small_selections_run_inline_and_are_announced() {
         reason_keys("delete", &["pin_3001"])
     );
     assert_index_consistent(&t, ALICE, "inline bulk actions");
+}
+
+/// A `POST /posts/bulk` delete by filter with `exceptKeys`, whose body is
+/// exactly `size` bytes.
+fn delete_body_of(size: usize) -> String {
+    let body = |keys: &[String]| {
+        json!({ "selector": { "filter": {}, "exceptKeys": keys }, "action": "delete" }).to_string()
+    };
+    let mut keys: Vec<String> = Vec::new();
+    while body(&keys).len() + 203 < size {
+        keys.push("k".repeat(200));
+    }
+    let rest = size.saturating_sub(body(&keys).len() + 3);
+    keys.push("k".repeat(rest));
+    let text = body(&keys);
+    assert_eq!(text.len(), size);
+    text
+}
+
+/// Selectors that would widen a write or that cannot run (P1-11 review):
+/// a null or blank filter member, a key longer than any key, more than
+/// 1,000 exceptions, and a selection too large to store as a job, each a
+/// 422 naming the member; nothing changes.
+#[tokio::test]
+async fn selectors_that_would_widen_or_overflow_are_refused() {
+    let (t, _) = two_libraries().await;
+    t.write(ALICE, |tx| synthetic_library(tx, 600, 57)).await;
+    let app = t.app_as(ALICE);
+    for (selector, field) in [
+        (
+            json!({ "filter": { "collection": null } }),
+            "selector.filter.collection",
+        ),
+        (json!({ "filter": { "tag": "" } }), "selector.filter.tag"),
+        (json!({ "filter": { "q": " " } }), "selector.filter.q"),
+        (json!({ "filter": { "tags": [] } }), "selector.filter.tags"),
+        (json!({ "keys": ["k".repeat(201)] }), "selector.keys"),
+        (
+            json!({ "filter": {}, "exceptKeys": vec!["ig_1"; 1_001] }),
+            "selector.exceptKeys",
+        ),
+    ] {
+        invalid(&app, bulk(selector, "delete", Value::Null), field).await;
+    }
+    invalid(
+        &app,
+        restore(json!({ "selector": { "filter": { "trash": true, "platform": null } } })),
+        "selector.filter.platform",
+    )
+    .await;
+
+    // A body the route takes, whose job would be over the job system's
+    // 64 KiB: the 422 names the selector, not the job's payload.
+    let largest = delete_body_of(RouteLimits::STANDARD.body_bytes);
+    invalid(&app, post_json("/api/v1/posts/bulk", largest), "selector").await;
+    assert_eq!(jobs_in(&t, ALICE, "bulk", "queued"), 0);
+    assert_eq!(trash_stamps(&t, ALICE).len(), 1, "nothing changed");
+    // A large one that fits runs as a job.
+    let large = delete_body_of(60_000);
+    call(
+        &app,
+        post_json("/api/v1/posts/bulk", large),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    assert_eq!(jobs_in(&t, ALICE, "bulk", "queued"), 1);
 }
 
 #[tokio::test]
@@ -1504,6 +1600,52 @@ async fn a_purge_waits_for_a_restore_asked_before_it() {
     let count = ok(&app, get("/api/v1/posts/count")).await;
     assert_eq!(count["total"], 1_207, "every post the undo restored stayed");
     assert_index_consistent(&t, ALICE, "a purge after a restore");
+}
+
+/// Review L4: a purge try that purged posts and then stopped (its queue
+/// paused) still has the storage counted again; the next try finds less to
+/// purge and would not.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_purge_stopped_after_a_chunk_still_recounts_the_storage() {
+    let t = TestState::new();
+    t.add_user(ALICE);
+    t.write(ALICE, |tx| {
+        let keys = synthetic_library(tx, 700, 58)?;
+        let ids: Vec<i64> = keys
+            .iter()
+            .map(|k| posts::id_for_key(tx, k).map(Option::unwrap))
+            .collect::<Result<_, _>>()?;
+        posts::trash(tx, &ids, NOW)
+    })
+    .await;
+    let app = t.app_as(ALICE);
+    let _jobs = scheduler(&t);
+    let usage_jobs = || {
+        ["queued", "running", "succeeded"]
+            .iter()
+            .map(|state| jobs_in(&t, ALICE, "usage.recompute", state))
+            .sum::<i64>()
+    };
+    ok(&app, post_empty("/api/v1/queues/purge/pause")).await;
+    let emptying = call(
+        &app,
+        post_empty("/api/v1/trash/empty"),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    let id = emptying["job"]["id"].as_i64().unwrap();
+    let held = HeldWriter::take(&t, ALICE);
+    ok(&app, post_empty("/api/v1/queues/purge/resume")).await;
+    wait_in_first_chunk(&t, ALICE, id, "purge").await;
+    ok(&app, post_empty("/api/v1/queues/purge/pause")).await;
+    assert_eq!(usage_jobs(), 0);
+    held.release();
+    poll_job(&t.state, ALICE, id, |job| {
+        job.state == JobState::Queued && job.progress.is_some_and(|p| p > 0.0)
+    })
+    .await;
+    assert_eq!(ok(&app, get("/api/v1/trash?limit=1")).await["total"], 200);
+    assert_eq!(usage_jobs(), 1, "counted again after the stopped try");
 }
 
 /// How a test stops a bulk job right after its first chunk.

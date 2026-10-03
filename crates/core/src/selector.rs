@@ -15,8 +15,9 @@
 //! so an action runs as one statement whatever the selection's size:
 //! `INSERT … SELECT p.id FROM posts p WHERE <condition>`, `UPDATE posts SET …
 //! WHERE id IN (SELECT p.id FROM posts p WHERE <condition>)`. [`count`] and
-//! [`ids`] answer how many and which (newest first, for an action that runs
-//! in chunks).
+//! [`ids`] answer how many and which (newest first, the gallery's order). An
+//! action that runs in chunks goes through the selection in id order with
+//! [`crate::bulk::next_chunk`].
 //!
 //! **The filter is the list's.** The condition of a filter is built by the
 //! same code as the list and its count ([`posts::count`]), so a selection by

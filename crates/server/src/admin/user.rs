@@ -3,6 +3,9 @@
 //! time"), and a user's limits (P4-07: the storage quota and the daily
 //! captures; E4 has no admin pages, so the CLI sets them).
 //!
+//! `restore-db` also cancels the user's queued `purge` and `bulk` jobs
+//! ([`cancel_library_jobs`]): they were asked of the library it replaced.
+//!
 //! 1. `admin user lock <id>`: the user's requests get 423 `user_locked`, and
 //!    the server releases the library at their next request or within its
 //!    maintenance interval (30 s). Jobs, the upgrade sweep and `admin
@@ -195,6 +198,19 @@ pub fn run(data: &DataDir, args: &UserArgs, out: &mut dyn Write) -> anyhow::Resu
             if let Some(kept) = &installed.kept {
                 writeln!(out, "the previous library is kept as {}", kept.display())?;
             }
+            out.flush()?;
+            let cancelled = cancel_library_jobs(data, &args.user);
+            match &cancelled {
+                Ok(n) => writeln!(
+                    out,
+                    "cancelled {n} queued purge and bulk jobs of the previous library"
+                )?,
+                Err(_) => writeln!(
+                    out,
+                    "could not cancel the user's queued purge and bulk jobs: cancel them \
+                     before the unlock"
+                )?,
+            }
             writeln!(
                 out,
                 "unlock the user when done: shelfy-server admin user unlock {}",
@@ -203,6 +219,10 @@ pub fn run(data: &DataDir, args: &UserArgs, out: &mut dyn Write) -> anyhow::Resu
             out.flush()?;
             record_restore(data, &args.user, &installed).context(
                 "the library is restored (see above), but its audit row could not be written",
+            )?;
+            cancelled.context(
+                "the library is restored (see above), but its queued purge and bulk jobs \
+                 could not be cancelled",
             )?;
         }
         UserCommand::Limits(args) => {
@@ -377,6 +397,31 @@ pub fn restore_db(
     }
     let keep = kept_path(&live, &restore_stamp(now_ms()));
     install_file(file, &live, Kind::Library, &keep, wait)
+}
+
+/// After a [`restore_db`]: cancels `user_id`'s queued and running `purge`
+/// and `bulk` jobs, which were asked of the library the restore replaced. A
+/// purge queued during the lock (the nightly one, or an emptying asked just
+/// before) would otherwise delete the trash the restore brought back, and a
+/// bulk job would redo changes on it (P1-11 review). Returns how many. The
+/// server's scheduler finds them cancelled when it next tries them.
+///
+/// # Errors
+///
+/// The control database cannot be written.
+pub fn cancel_library_jobs(data: &DataDir, user_id: &str) -> anyhow::Result<u64> {
+    let control = open_existing_control(data)?;
+    let now = now_ms();
+    let cancelled = control
+        .write(|tx| -> Result<_, RepoError> {
+            let mut cancelled = 0;
+            for kind in [crate::jobs::purge::KIND, crate::jobs::bulk::KIND] {
+                cancelled += crate::control::jobs::cancel_kind(tx, user_id, kind, now)?.len();
+            }
+            Ok(cancelled)
+        })
+        .context("cannot cancel the user's jobs")?;
+    Ok(u64::try_from(cancelled).unwrap_or(u64::MAX))
 }
 
 /// Writes the audit row of a [`restore_db`] of `user_id`'s library.

@@ -619,6 +619,56 @@ fn restore_db_swaps_a_locked_library_and_keeps_the_old_one() {
     assert_eq!(post_count(&kept), 42, "the earlier kept file is untouched");
 }
 
+/// After `restore-db`, the user's queued and running purge and bulk jobs
+/// are cancelled: a purge queued during the lock must not delete the trash
+/// the restore brought back (P1-11 review). Other kinds and other users'
+/// jobs stay.
+#[test]
+fn restore_db_cancels_the_users_purge_and_bulk_jobs() {
+    let (_dir, data, owner) = data_dir();
+    seed_library(&data, &owner, 5, 0, 1);
+    let other = new_ulid();
+    let control = Connection::open(data.control_db()).unwrap();
+    control
+        .execute(
+            "INSERT INTO users (id, email, role, quota_bytes, created_at) \
+             VALUES (?1, 'other@example.test', 'member', 0, 0)",
+            [&other],
+        )
+        .unwrap();
+    for (user, kind, state) in [
+        (&owner, "purge", "queued"),
+        (&owner, "bulk", "queued"),
+        (&owner, "bulk", "running"),
+        (&owner, "usage.recompute", "queued"),
+        (&other, "purge", "queued"),
+    ] {
+        control
+            .execute(
+                "INSERT INTO jobs (user_id, kind, state, payload_json, max_attempts, run_at, \
+                 created_at, updated_at) VALUES (?1, ?2, ?3, '{}', 3, 0, 0, 0)",
+                params![user, kind, state],
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        shelfy_server::admin::user::cancel_library_jobs(&data, &owner).unwrap(),
+        3
+    );
+    let states: Vec<(String, String, String)> = control
+        .prepare("SELECT user_id, kind, state FROM jobs ORDER BY id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    let state_of = |i: usize| states[i].2.as_str();
+    assert_eq!(
+        (0..5).map(state_of).collect::<Vec<_>>(),
+        ["cancelled", "cancelled", "cancelled", "queued", "queued"]
+    );
+}
+
 #[test]
 fn install_snapshots_restores_a_whole_host() {
     let (_dir, data, owner) = data_dir();

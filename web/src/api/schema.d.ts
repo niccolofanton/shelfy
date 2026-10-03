@@ -3348,13 +3348,13 @@ export interface components {
       exceptKeys?: string[];
       /**
        * @description Every post `GET /posts` lists with these filters, over all its pages
-       *     (`trash: true` selects in the trash). A member that is not a filter
-       *     is refused.
+       *     (`trash: true` selects in the trash). A member that is not a filter,
+       *     or that is null or blank, is refused.
        */
       filter?: components['schemas']['FilterParams'];
       /**
-       * @description These posts, by key, in the trash or not: at most 500. Unknown keys
-       *     are skipped.
+       * @description These posts, by key, in the trash or not: at most 500, each at most
+       *     200 bytes. Unknown keys are skipped.
        */
       keys?: string[];
     };

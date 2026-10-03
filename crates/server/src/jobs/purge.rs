@@ -27,8 +27,10 @@
 //! nothing more. Each chunk is announced (`posts.changed`, reason `delete`,
 //! and `stats.changed`) from the blocking task that committed it, and
 //! reported on `job.updated` (`stage` `purge`). Once posts were purged, the
-//! user's storage is counted again ([`super::usage::enqueue`]). A user
-//! without a library has nothing to purge, and none is created.
+//! user's storage is counted again ([`super::usage::enqueue`]), however the
+//! try ends: done, cancelled, paused, stopped by a shutdown or failed (P1-11
+//! review L4). A user without a library has nothing to purge, and none is
+//! created.
 //!
 //! **Idempotent.** A purged post is gone: a try that starts over, or a
 //! second purge, finds only what is left.
@@ -130,22 +132,26 @@ async fn run(ctx: JobContext) -> JobResult {
     }
     ctx.progress(Some(0.0), Some(STAGE)).await;
     let mut done = 0_u64;
-    loop {
+    let ended = loop {
         if ctx.is_cancelled() {
-            return Err(JobError::cancelled());
+            break Err(JobError::cancelled());
         }
         if ctx.is_paused() {
-            return Ok(Outcome::Requeue { run_at: None });
+            break Ok(Outcome::Requeue { run_at: None });
         }
-        if after_earlier_bulk(&ctx).await? {
-            let run_at = ctx
-                .jobs()
-                .clock()
-                .now_ms()
-                .saturating_add(millis(BULK_WAIT));
-            return Ok(Outcome::Requeue {
-                run_at: Some(run_at),
-            });
+        match after_earlier_bulk(&ctx).await {
+            Ok(false) => {}
+            Ok(true) => {
+                let run_at = ctx
+                    .jobs()
+                    .clock()
+                    .now_ms()
+                    .saturating_add(millis(BULK_WAIT));
+                break Ok(Outcome::Requeue {
+                    run_at: Some(run_at),
+                });
+            }
+            Err(err) => break Err(err),
         }
         let chunk = PurgeChunk {
             fence: ctx.attempt_fence(),
@@ -155,19 +161,22 @@ async fn run(ctx: JobContext) -> JobResult {
             clock: *ctx.jobs().clock(),
             through,
         };
-        match ctx.user_db(move |db| chunk.run(db)).await? {
-            Purged::Posts(n) => {
+        match ctx.user_db(move |db| chunk.run(db)).await {
+            Ok(Purged::Posts(n)) => {
                 done += n;
                 ctx.progress(Some(super::bulk::share(done, total)), Some(STAGE))
                     .await;
             }
-            Purged::Nothing => break,
+            Ok(Purged::Nothing) => break Ok(Outcome::Succeeded),
             // Cancelled meanwhile, or another try took the job over.
-            Purged::Stopped => return Err(JobError::cancelled()),
+            Ok(Purged::Stopped) => break Err(JobError::cancelled()),
+            Err(err) => break Err(err),
         }
-    }
+    };
     if done > 0 {
-        // The storage the library uses (`GET /me/usage`) is counted again.
+        // The storage the library uses (`GET /me/usage`) is counted again,
+        // however this try ends: a try cancelled or stopped after its last
+        // chunk leaves the next one nothing to purge (P1-11 review L4).
         if let Err(err) = usage::enqueue(ctx.jobs(), ctx.user_id()).await {
             tracing::warn!(job_id = ctx.id(), error = %err, "cannot enqueue the usage count");
         }
@@ -177,9 +186,10 @@ async fn run(ctx: JobContext) -> JobResult {
         user_id = %ctx.user_id(),
         purged = done,
         nightly = payload.through.is_none(),
+        finished = matches!(ended, Ok(Outcome::Succeeded)),
         "trash purged"
     );
-    Ok(Outcome::Succeeded)
+    ended
 }
 
 /// One chunk of a purge: everything it needs on its blocking task.
