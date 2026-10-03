@@ -647,6 +647,60 @@ impl SweepContext {
     }
 }
 
+/// What a kind's cancel hook ([`super::Kind::with_cancel_hook`]) gets when
+/// its queue is cancelled: one user, so it can reset the item work that lives
+/// in the library (the `ai.drain` resets its `pending` posts, G3-6).
+#[derive(Clone)]
+pub struct CancelContext {
+    state: AppState,
+    user_id: Arc<str>,
+    now_ms: i64,
+}
+
+impl CancelContext {
+    /// Builds the context for a route that cancels a queue (the cancel hook
+    /// runs outside the scheduler, from the HTTP handler).
+    #[must_use]
+    pub fn new_for(state: AppState, user_id: &str, now_ms: i64) -> Self {
+        Self {
+            state,
+            user_id: user_id.into(),
+            now_ms,
+        }
+    }
+
+    /// The user whose queue was cancelled.
+    #[must_use]
+    pub fn user_id(&self) -> &str {
+        &self.user_id
+    }
+
+    /// The time of the cancel, unix ms.
+    #[must_use]
+    pub fn now_ms(&self) -> i64 {
+        self.now_ms
+    }
+
+    /// The application state.
+    #[must_use]
+    pub fn state(&self) -> &AppState {
+        &self.state
+    }
+
+    /// Runs `f` on the user's library, like [`JobContext::user_db`].
+    ///
+    /// # Errors
+    ///
+    /// `f`'s error, or the library cannot be opened.
+    pub async fn user_db<T, F>(&self, f: F) -> Result<T, JobError>
+    where
+        F: FnOnce(&UserDb) -> Result<T, JobError> + Send + 'static,
+        T: Send + 'static,
+    {
+        with_user_db(&self.state, &self.user_id, f).await
+    }
+}
+
 /// One chunk on `user_id`'s library: the handle is taken from the cache and
 /// dropped afterwards (see [`JobContext::user_db`]).
 async fn with_user_db<T, F>(state: &AppState, user_id: &str, f: F) -> Result<T, JobError>

@@ -416,7 +416,33 @@ pub async fn cancel_queue(
     Path(kind): Path<String>,
 ) -> Result<Json<QueueResult>, ApiError> {
     let cancelled = state.jobs().cancel_all(user.id(), &kind).await?;
-    queue_result(&state, user.id(), &kind, cancelled).await
+    let reset = run_cancel_hook(&state, user.id(), &kind).await?;
+    queue_result(&state, user.id(), &kind, cancelled + reset).await
+}
+
+/// Runs a kind's cancel hook, if it has one (G3-6): the `ai.drain` resets its
+/// `pending` posts. Returns how many items it changed, folded into
+/// `affected`.
+pub async fn run_cancel_hook(
+    state: &AppState,
+    user_id: &str,
+    kind: &str,
+) -> Result<u64, ApiError> {
+    let Some(hook) = state.jobs().registry().get(kind).and_then(crate::jobs::Kind::cancel_hook)
+    else {
+        return Ok(0);
+    };
+    let now = state.jobs().clock().now_ms();
+    let ctx = crate::jobs::CancelContext::new_for(state.clone(), user_id, now);
+    hook.cancel(ctx).await.map_err(|err| {
+        if err.is_user_locked() {
+            ApiError::user_locked()
+        } else if err.is_transient() {
+            ApiError::new(ErrorCode::Unavailable)
+        } else {
+            ApiError::internal(anyhow::anyhow!("the cancel hook failed: {err}"))
+        }
+    })
 }
 
 /// Deletes the finished (succeeded, failed and cancelled) jobs of a queue.

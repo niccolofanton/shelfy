@@ -104,6 +104,10 @@ pub enum ErrorCode {
     /// 422: the AI provider's account has no credit or quota left. Not
     /// retryable until its billing is sorted.
     ProviderQuotaExhausted,
+    /// 422: the confirmation token of `POST /ai/analyze` is unknown or older
+    /// than 10 minutes; call analyze again without a token to get a new
+    /// estimate and token (P3-13).
+    ConfirmTokenInvalid,
     /// 422: the egress policy or the site refused the capture.
     CaptureBlocked,
     /// 422: the shared link is not one Shelfy saves: not http(s), with
@@ -162,7 +166,8 @@ impl ErrorCode {
             | Self::UnsupportedLink
             | Self::NotAvailable
             | Self::AiNotConfigured
-            | Self::ProviderQuotaExhausted => StatusCode::UNPROCESSABLE_ENTITY,
+            | Self::ProviderQuotaExhausted
+            | Self::ConfirmTokenInvalid => StatusCode::UNPROCESSABLE_ENTITY,
             Self::AiConsentRequired => StatusCode::FORBIDDEN,
             Self::UserLocked => StatusCode::LOCKED,
             Self::ExtensionOutdated => StatusCode::UPGRADE_REQUIRED,
@@ -232,6 +237,7 @@ impl ErrorCode {
             Self::ProviderOffline => "provider_offline",
             Self::ProviderUnavailable => "provider_unavailable",
             Self::ProviderQuotaExhausted => "provider_quota_exhausted",
+            Self::ConfirmTokenInvalid => "confirm_token_invalid",
             Self::CaptureBlocked => "capture_blocked",
             Self::UnsupportedLink => "unsupported_link",
             Self::NotAvailable => "not_available",
@@ -589,6 +595,7 @@ mod tests {
             ErrorCode::ProviderOffline,
             ErrorCode::ProviderUnavailable,
             ErrorCode::ProviderQuotaExhausted,
+            ErrorCode::ConfirmTokenInvalid,
             ErrorCode::CaptureBlocked,
             ErrorCode::UnsupportedLink,
             ErrorCode::NotAvailable,

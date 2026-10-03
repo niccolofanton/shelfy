@@ -124,6 +124,38 @@ impl ImagePool {
         self.run(move || render::render_bytes(&bytes, spec)).await?
     }
 
+    /// Transcodes the image file at `path` to a JPEG whose long side is at
+    /// most `max_side`, on the pool ([`render::jpeg_file`]).
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError`], including [`RenderError::Panicked`].
+    pub async fn jpeg_file(
+        &self,
+        path: PathBuf,
+        max_side: u32,
+        quality: u8,
+    ) -> Result<Vec<u8>, RenderError> {
+        self.run(move || render::jpeg_file(&path, max_side, quality))
+            .await?
+    }
+
+    /// Transcodes an image held in memory to a JPEG, on the pool
+    /// ([`render::jpeg_bytes`]).
+    ///
+    /// # Errors
+    ///
+    /// [`RenderError`], including [`RenderError::Panicked`].
+    pub async fn jpeg_bytes(
+        &self,
+        bytes: Arc<[u8]>,
+        max_side: u32,
+        quality: u8,
+    ) -> Result<Vec<u8>, RenderError> {
+        self.run(move || render::jpeg_bytes(&bytes, max_side, quality))
+            .await?
+    }
+
     /// Threads in the pool.
     #[must_use]
     pub fn threads(&self) -> usize {

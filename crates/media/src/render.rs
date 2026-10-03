@@ -200,7 +200,72 @@ pub fn render_bytes(bytes: &[u8], spec: RenderSpec) -> Result<Rendered, RenderEr
 ///
 /// [`RenderError`]: the source is refused, damaged or unreadable, or the
 /// output cannot be produced.
-pub fn render<R: BufRead + Seek>(mut reader: R, spec: RenderSpec) -> Result<Rendered, RenderError> {
+pub fn render<R: BufRead + Seek>(reader: R, spec: RenderSpec) -> Result<Rendered, RenderError> {
+    let Decoded {
+        image: small,
+        source_width,
+        source_height,
+    } = decode_and_fit(reader, spec.max_side)?;
+    Ok(Rendered {
+        source_width,
+        source_height,
+        width: small.width(),
+        height: small.height(),
+        webp: encode_webp(&small, spec.quality)?,
+        thumbhash: thumbhash(&small)?,
+    })
+}
+
+/// Decodes the image at `path` and encodes it as a JPEG whose long side is at
+/// most `max_side`, at quality `quality` (1–100). For sending to a provider
+/// that rejects WebP (the owner's llama.cpp node, which decodes images with
+/// stb_image): the archived renditions and masters are WebP or the source's
+/// own type, so cataloging transcodes them to JPEG first (P3-13; the node's
+/// `without_webp`). Blocking and CPU-bound: run it on the [`crate::pool`].
+///
+/// # Errors
+///
+/// [`RenderError`]: the source is refused, damaged or unreadable, or the JPEG
+/// cannot be produced.
+pub fn jpeg_file(path: &Path, max_side: u32, quality: u8) -> Result<Vec<u8>, RenderError> {
+    jpeg(BufReader::new(File::open(path)?), max_side, quality)
+}
+
+/// [`jpeg_file`] from an in-memory image (a WebP rendition read from the CAS,
+/// a video frame).
+///
+/// # Errors
+///
+/// As [`jpeg_file`].
+pub fn jpeg_bytes(bytes: &[u8], max_side: u32, quality: u8) -> Result<Vec<u8>, RenderError> {
+    jpeg(Cursor::new(bytes), max_side, quality)
+}
+
+/// Decodes `reader` and encodes a JPEG (see [`jpeg_file`]).
+///
+/// # Errors
+///
+/// As [`jpeg_file`].
+pub fn jpeg<R: BufRead + Seek>(
+    reader: R,
+    max_side: u32,
+    quality: u8,
+) -> Result<Vec<u8>, RenderError> {
+    let Decoded { image: small, .. } = decode_and_fit(reader, max_side)?;
+    encode_jpeg(&small, quality)
+}
+
+/// A decoded image, resized and oriented, with its displayed source size.
+struct Decoded {
+    image: DynamicImage,
+    source_width: u32,
+    source_height: u32,
+}
+
+/// Decodes the image `reader` starts at, orients it by its EXIF, and resizes
+/// it to fit `max_side` on the long side (never up). The pipeline's one decode
+/// path, shared by the WebP and JPEG encoders.
+fn decode_and_fit<R: BufRead + Seek>(mut reader: R, max_side: u32) -> Result<Decoded, RenderError> {
     let (kind, source_bytes) = probe(&mut reader)?;
     if source_bytes > MAX_SOURCE_BYTES {
         return Err(RenderError::TooLarge);
@@ -243,7 +308,7 @@ pub fn render<R: BufRead + Seek>(mut reader: R, spec: RenderSpec) -> Result<Rend
     } else {
         (width, height)
     };
-    let (out_width, out_height) = fit(source_width, source_height, spec.max_side);
+    let (out_width, out_height) = fit(source_width, source_height, max_side);
     let stored = if swaps {
         (out_height, out_width)
     } else {
@@ -256,14 +321,10 @@ pub fn render<R: BufRead + Seek>(mut reader: R, spec: RenderSpec) -> Result<Rend
     }
     .ok_or_else(|| RenderError::Output("resized buffer of the wrong size".into()))?;
     small.apply_orientation(orientation);
-
-    Ok(Rendered {
+    Ok(Decoded {
+        image: small,
         source_width,
         source_height,
-        width: small.width(),
-        height: small.height(),
-        webp: encode_webp(&small, spec.quality)?,
-        thumbhash: thumbhash(&small)?,
     })
 }
 
@@ -371,6 +432,21 @@ fn encode_webp(image: &DynamicImage, quality: f32) -> Result<Vec<u8>, RenderErro
         .encode_advanced(&config)
         .map_err(|e| RenderError::Output(format!("libwebp: {e:?}")))?;
     Ok(encoded.to_vec())
+}
+
+/// Encodes `image` as a baseline JPEG at `quality` (1–100). An image with
+/// alpha is flattened onto white, since JPEG has no alpha channel.
+fn encode_jpeg(image: &DynamicImage, quality: u8) -> Result<Vec<u8>, RenderError> {
+    use image::{ExtendedColorType, ImageEncoder as _};
+    let rgb = match image {
+        DynamicImage::ImageRgb8(buffer) => buffer.clone(),
+        other => other.to_rgb8(),
+    };
+    let mut out = Cursor::new(Vec::new());
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100))
+        .write_image(rgb.as_raw(), rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
+        .map_err(|e| RenderError::Output(format!("jpeg: {e}")))?;
+    Ok(out.into_inner())
 }
 
 fn thumbhash(image: &DynamicImage) -> Result<Vec<u8>, RenderError> {

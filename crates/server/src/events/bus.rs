@@ -39,6 +39,22 @@ pub struct Published {
     pub at: Instant,
 }
 
+/// A live-only event (`ai.stream`, G3-7): it carries no id, never enters the
+/// replay ring, and reaches only the streams that asked for its topic. A
+/// connection that falls behind simply misses it (the authoritative result
+/// arrives as `posts.changed`).
+#[derive(Debug)]
+pub struct LiveEvent {
+    /// The SSE `event:`.
+    pub topic: EventTopic,
+    /// The payload as one line of JSON, the SSE `data:`.
+    pub data: Box<str>,
+}
+
+/// Capacity of the live channel: a stream this far behind on live events
+/// misses the ones it skipped, without a resync.
+const LIVE_CAPACITY: usize = 64;
+
 /// Which held change a flush sends.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum FlushKey {
@@ -67,6 +83,8 @@ pub(super) struct UserBus {
     /// a restart) never resolve here.
     epoch: u64,
     sender: broadcast::Sender<Arc<Published>>,
+    /// Live-only events (`ai.stream`): no ring, no id, lossy.
+    live: broadcast::Sender<Arc<LiveEvent>>,
     state: Mutex<State>,
 }
 
@@ -75,6 +93,7 @@ impl UserBus {
         Self {
             epoch: new_epoch(),
             sender: broadcast::Sender::new(CHANNEL_CAPACITY),
+            live: broadcast::Sender::new(LIVE_CAPACITY),
             state: Mutex::new(State {
                 head: 0,
                 ring: VecDeque::with_capacity(REPLAY_EVENTS),
@@ -133,6 +152,20 @@ impl UserBus {
         let data = to_json(payload);
         let mut state = self.lock();
         self.emit(&mut state, topic, data, now);
+    }
+
+    /// Publishes a live-only event (`ai.stream`, G3-7): straight onto the live
+    /// channel, with no id and no ring entry, so it never evicts replayable
+    /// events. A connection that is not listening for its topic, or that has
+    /// fallen behind, simply misses it.
+    pub(super) fn publish_live(&self, topic: EventTopic, payload: &impl Serialize, now: Instant) {
+        let event = Arc::new(LiveEvent {
+            topic,
+            data: to_json(payload).into(),
+        });
+        self.touch(now);
+        // An error only means nobody is connected.
+        let _ = self.live.send(event);
     }
 
     /// Offers a `posts.changed`; returns when to flush, if the change is held.
@@ -252,6 +285,7 @@ impl UserBus {
         // Under the lock: no event can slip between the copy of the ring and
         // the first live event.
         let receiver = self.sender.subscribe();
+        let live = self.live.subscribe();
         prune_ring(&mut state.ring, now);
         state.last_active = now;
         let head_id = self.event_id(state.head);
@@ -275,6 +309,7 @@ impl UserBus {
         Subscription {
             bus: Arc::clone(self),
             receiver,
+            live,
             head_id,
             fresh: resume.is_none(),
             queue,
@@ -368,6 +403,8 @@ fn new_epoch() -> u64 {
 pub enum Delivery {
     /// A published event.
     Event(Arc<Published>),
+    /// A live-only event (`ai.stream`): no id, not replayable.
+    Live(Arc<LiveEvent>),
     /// Events were lost; `id` is the position the stream continues from.
     Resync {
         /// Why.
@@ -382,6 +419,7 @@ pub enum Delivery {
 pub struct Subscription {
     bus: Arc<UserBus>,
     receiver: broadcast::Receiver<Arc<Published>>,
+    live: broadcast::Receiver<Arc<LiveEvent>>,
     head_id: String,
     fresh: bool,
     queue: VecDeque<Delivery>,
@@ -400,19 +438,34 @@ impl Subscription {
         self.fresh
     }
 
-    /// The next delivery. It waits for one as long as it takes.
+    /// The next delivery. It waits for one as long as it takes. Replayed and
+    /// published events come first; live-only events (`ai.stream`) interleave
+    /// as they arrive and are dropped when this connection falls behind on
+    /// them (they are not replayable).
     pub async fn next(&mut self) -> Delivery {
         if let Some(delivery) = self.queue.pop_front() {
             return delivery;
         }
-        match self.receiver.recv().await {
-            Ok(event) => Delivery::Event(event),
-            Err(RecvError::Lagged(_)) => Delivery::Resync {
-                reason: ResyncReason::Lagged,
-                id: self.skip_to_newest(),
-            },
-            // The subscription holds the bus, and with it the sender.
-            Err(RecvError::Closed) => std::future::pending().await,
+        loop {
+            tokio::select! {
+                biased;
+                published = self.receiver.recv() => return match published {
+                    Ok(event) => Delivery::Event(event),
+                    Err(RecvError::Lagged(_)) => Delivery::Resync {
+                        reason: ResyncReason::Lagged,
+                        id: self.skip_to_newest(),
+                    },
+                    // The subscription holds the bus, and with it the sender.
+                    Err(RecvError::Closed) => std::future::pending().await,
+                },
+                live = self.live.recv() => match live {
+                    Ok(event) => return Delivery::Live(event),
+                    // Behind on live events, or the sender is gone: keep waiting
+                    // on the published channel (live events are lossy).
+                    Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => std::future::pending().await,
+                },
+            }
         }
     }
 

@@ -88,9 +88,11 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 pub use clock::Clock;
-pub use context::{AttemptFence, JobContext, JobError, JobResult, Outcome, SweepContext, codes};
+pub use context::{
+    AttemptFence, CancelContext, JobContext, JobError, JobResult, Outcome, SweepContext, codes,
+};
 pub use queues::KindStats;
-pub use registry::{Backoff, BoxFuture, Kind, KindSpec, Registry, Sweep, Worker};
+pub use registry::{Backoff, BoxFuture, CancelHook, Kind, KindSpec, Registry, Sweep, Worker};
 
 use crate::control::jobs::JobRow;
 use crate::error::ApiError;
