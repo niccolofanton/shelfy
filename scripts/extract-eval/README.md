@@ -52,3 +52,34 @@ IQR alto ⇒ estrazione instabile per quel post (segnale per attivare T=0).
 ## Cosa resta da fornire (utente)
 - Decisione su T=0 in `electron/analyzer.js` se serve riproducibilità bit-a-bit.
 - Eventuale ampliamento di `ground-truth.json` per nuovi post.
+
+## Web pipeline (P3-24)
+
+Il contratto web usa gli stessi 20 casi e lo stesso `score.ts`, senza modificarli.
+`crates/server/tests/extract_eval.rs` attraversa il worker reale `ai_drain`:
+selezione DB, CAS, rendering, richiesta provider, normalizzazione e salvataggio.
+Le immagini sono sintetiche; le risposte canned derivano dal gold già committato.
+Il loro composite 1.000 misura il trasporto del contratto, non la qualità del nodo.
+
+```bash
+cargo test -p shelfy-server --test extract_eval
+pnpm exec vitest run tests/scripts/extract-eval.test.ts
+pnpm exec tsx scripts/extract-eval/web/generate.ts --check
+pnpm exec tsx scripts/extract-eval/run.ts --score-raw=scripts/extract-eval/web/expected-raw.json
+```
+
+Riutilizzare il target Cargo già assegnato alla lane; nessuna inferenza live,
+chiave o media dell'utente serve per questi test. Il provider è un loopback stub
+con `concurrency=1`. I due profili verificati sono poster `g480`/480 px e still
+1024 px (`deep=true`, senza oggetti video): cover prima, deduplicazione della
+slide uno, sei JPEG massimi, ordine delle immagini, caption con hashtag deboli,
+parametri della richiesta e raw salvato uguale al formato desktop.
+
+`web/{canned,expected-raw,contract}.json` sono fixture sintetici. Il digest catalog
+in `contract.json` deve coincidere con `shared/ai` e con un report aggregato di
+run reale: quello approvato di X1 è
+`docs/web-port/reports/x1-node-benchmark-2026-10-03.md`. Rigenerare il digest da
+solo non rende approvato un nuovo prompt. Lo scorer storico e il gold restano
+invariati. Il run reale sui 20 casi, e il confronto con una baseline desktop
+compatibile, restano un gate separato da questo controllo a stub; non usare il
+composite canned come sostituto di un gate qualitativo.

@@ -1,0 +1,8 @@
+{
+  "digest": "ac46d33ae3fc",
+  "cases": 20,
+  "composite": 1,
+  "profiles": ["poster-480", "poster-1024"],
+  "source": "synthetic CAS and gold-derived canned answers; no live inference",
+  "realRunReport": "docs/web-port/reports/x1-node-benchmark-2026-10-03.md"
+}

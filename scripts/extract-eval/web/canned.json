@@ -1,0 +1,566 @@
+[
+  {
+    "id": "2042584997689737464",
+    "mediaType": "video",
+    "caption": "Synthetic pipeline case 1. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "branding",
+      "general_tags": ["branding", "tipografia", "logotipo"],
+      "specific_tags": [
+        "amazzonia",
+        "typeface",
+        "lettering",
+        "identità visiva",
+        "design grafico",
+        "motion design",
+        "natura"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "branding amazzonia",
+        "logo fluido tipografia",
+        "identità visiva brasile",
+        "generative typeface rivers"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "1860798998199554550",
+    "mediaType": "video",
+    "caption": "Synthetic pipeline case 2. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "terreno procedurale",
+      "general_tags": ["terreno procedurale", "three.js", "shader"],
+      "specific_tags": [
+        "procedurale",
+        "webgl",
+        "glsl",
+        "creative coding",
+        "generative",
+        "noise",
+        "3d"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "terreno procedurale three.js",
+        "procedural terrain shader",
+        "three.js journey shaders",
+        "paesaggio generativo 3d"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "3301237502878540558_55976057039",
+    "mediaType": "video",
+    "caption": "Synthetic pipeline case 3. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "scultura urbana",
+      "general_tags": ["scultura urbana", "installazione", "arte di strada"],
+      "specific_tags": [
+        "mark jenkins",
+        "street art",
+        "scultura",
+        "figura umana",
+        "iperrealismo",
+        "manichino",
+        "arte pubblica"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "sculture di strada mark jenkins",
+        "installazioni urbane iperrealiste",
+        "figure umane scultura urbana",
+        "street sculpture eerie"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "2046789841669521745",
+    "mediaType": "video",
+    "caption": "Synthetic pipeline case 4. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "terminale",
+      "general_tags": ["terminale", "claude code", "cli"],
+      "specific_tags": [
+        "tooling",
+        "coding",
+        "sviluppo software",
+        "ai coding assistant",
+        "npx",
+        "skills",
+        "command line"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "claude code skill finder",
+        "cli terminale claude code",
+        "npx skills add trick",
+        "ai coding assistant terminal"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "2021054040122261860",
+    "mediaType": "video",
+    "caption": "Synthetic pipeline case 5. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "grafica vettoriale 3d",
+      "general_tags": ["grafica vettoriale 3d", "rendering vettoriale", "shader"],
+      "specific_tags": ["ortografica", "vettore", "3d", "toro", "anello", "datamosh", "glitch"],
+      "entities": [],
+      "search_keywords": [
+        "vettori da animazione 3d",
+        "rendering vettoriale ortografico",
+        "shader vector export tool",
+        "anello 3d glitch shader"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "3804281857714470174_229922596",
+    "mediaType": "video",
+    "caption": "Synthetic pipeline case 6. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "risorse di design",
+      "general_tags": ["risorse di design", "ispirazione design", "branding"],
+      "specific_tags": [
+        "design direction",
+        "siti web",
+        "pentagram",
+        "brand identity",
+        "three.js",
+        "graphic design",
+        "consigli design"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "siti ispirazione branding",
+        "risorse design direction",
+        "the brand identity pentagram",
+        "tool per designer"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "2046517988572983435",
+    "mediaType": "video",
+    "caption": "Synthetic pipeline case 7. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "sfera 3d",
+      "general_tags": ["sfera 3d", "render 3d", "astratto"],
+      "specific_tags": [
+        "orb",
+        "cgi",
+        "motion design",
+        "creative coding",
+        "rendering",
+        "luce",
+        "design astratto"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "sfera 3d astratta render",
+        "orb cgi glowing",
+        "render astratto motion",
+        "abstract 3d sphere loop"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "3484478139143713275_19719473",
+    "mediaType": "video",
+    "caption": "Synthetic pipeline case 8. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "cibo finto",
+      "general_tags": ["cibo finto", "sanpuru", "replica alimentare"],
+      "specific_tags": [
+        "mostra",
+        "food replica",
+        "iperrealismo",
+        "artigianato",
+        "giappone",
+        "scultura di cibo",
+        "japan house"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "repliche cibo finto giapponese",
+        "sanpuru food replicas",
+        "mostra japan house cibo",
+        "modelli di cibo iperrealistici"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "2031790691890630749",
+    "mediaType": "video",
+    "caption": "Synthetic pipeline case 9. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "visualizzazione dati",
+      "general_tags": ["visualizzazione dati", "interfaccia", "mappa di immagini"],
+      "specific_tags": [
+        "data visualization",
+        "embedding map",
+        "ui design",
+        "griglia di immagini",
+        "product teaser",
+        "noise",
+        "moodboard"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "mappa immagini visualizzazione",
+        "interfaccia embedding immagini",
+        "noise app waitlist",
+        "image map data viz ui"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "1812372254266724856",
+    "mediaType": "video",
+    "caption": "Synthetic pipeline case 10. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "app musicale",
+      "general_tags": ["app musicale", "interfaccia", "grafo a nodi"],
+      "specific_tags": [
+        "music network",
+        "ui design",
+        "node graph",
+        "mobile app",
+        "data visualization",
+        "scoperta musicale",
+        "interfaccia mobile"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "app rete musicale grafo",
+        "music network node graph app",
+        "interfaccia scoperta musicale",
+        "music discovery app nodes"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "3877585463960047840_3448625110",
+    "mediaType": "carousel",
+    "caption": "Synthetic pipeline case 11. #tool #type #art #design #study",
+    "sourceImages": 15,
+    "images": 6,
+    "answer": {
+      "description": "fotografia di moda",
+      "general_tags": ["fotografia di moda", "indie sleaze", "it girl"],
+      "specific_tags": [
+        "cory kennedy",
+        "flash photography",
+        "anni 2000",
+        "street style",
+        "ritratto",
+        "cobrasnake",
+        "tumblr"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "cory kennedy indie sleaze",
+        "it girl new york 2000s",
+        "fotografia flash indie sleaze",
+        "cobrasnake party photography"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "3837090888216631068_74555691791",
+    "mediaType": "carousel",
+    "caption": "Synthetic pipeline case 12. #tool #type #art #design #study",
+    "sourceImages": 14,
+    "images": 6,
+    "answer": {
+      "description": "campagna moda",
+      "general_tags": ["campagna moda", "louis vuitton", "pubblicità"],
+      "specific_tags": [
+        "vetrina",
+        "fashion advertising",
+        "moda di lusso",
+        "final fantasy",
+        "lightning",
+        "billboard",
+        "spring summer"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "louis vuitton final fantasy lightning",
+        "campagna moda series 4",
+        "vetrina louis vuitton",
+        "lv lightning ad campaign"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "3844828666039904590_58215990921",
+    "mediaType": "carousel",
+    "caption": "Synthetic pipeline case 13. #tool #type #art #design #study",
+    "sourceImages": 1,
+    "images": 1,
+    "answer": {
+      "description": "nuvola di punti",
+      "general_tags": ["nuvola di punti", "point cloud", "scansione 3d"],
+      "specific_tags": [
+        "digital twin",
+        "photogrammetry",
+        "fotogrammetria",
+        "lidar",
+        "spatial computing",
+        "gemello digitale",
+        "scansione urbana"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "nuvola di punti città",
+        "point cloud scansione urbana",
+        "digital twin benjamin bardou",
+        "volumetric point cloud city"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "3359295227448572293_5514806044",
+    "mediaType": "carousel",
+    "caption": "Synthetic pipeline case 14. #tool #type #art #design #study",
+    "sourceImages": 11,
+    "images": 6,
+    "answer": {
+      "description": "illustrazione",
+      "general_tags": ["illustrazione", "aerografo", "animali cromati"],
+      "specific_tags": [
+        "hajime sorayama",
+        "airbrush",
+        "robot",
+        "sci-fi",
+        "retro scifi",
+        "pittura",
+        "cromato"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "sorayama animali cromati",
+        "airbrush robot animals",
+        "illustrazione chrome sci-fi",
+        "hajime sorayama robot art"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "1876297677014462504",
+    "mediaType": "image",
+    "caption": "Synthetic pipeline case 15. #tool #type #art #design #study",
+    "sourceImages": 2,
+    "images": 2,
+    "answer": {
+      "description": "annuncio di lavoro",
+      "general_tags": ["annuncio di lavoro", "sviluppatore web", "full stack"],
+      "specific_tags": [
+        "hiring",
+        "job posting",
+        "vue",
+        "nuxt",
+        "pocketbase",
+        "web development",
+        "grafica testuale"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "annuncio sviluppatore full stack",
+        "cerco dev vue nuxt pocketbase",
+        "job post web developer",
+        "wanted full stack dev"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "3293444294558965152_63865130803",
+    "mediaType": "image",
+    "caption": "Synthetic pipeline case 16. #tool #type #art #design #study",
+    "sourceImages": 2,
+    "images": 2,
+    "answer": {
+      "description": "illustrazione",
+      "general_tags": ["illustrazione", "cavaliere", "pittura digitale"],
+      "specific_tags": [
+        "fantasy",
+        "digital painting",
+        "armatura",
+        "concept art",
+        "scena narrativa",
+        "medievale",
+        "bambino"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "illustrazione cavaliere fantasy",
+        "pittura digitale armatura",
+        "cavaliere legge libro bambino",
+        "fantasy knight digital painting"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "2977059115349252247_50840317139",
+    "mediaType": "image",
+    "caption": "Synthetic pipeline case 17. #tool #type #art #design #study",
+    "sourceImages": 2,
+    "images": 2,
+    "answer": {
+      "description": "ritratto",
+      "general_tags": ["ritratto", "studio di figura", "disegno"],
+      "specific_tags": [
+        "illustrazione",
+        "figure drawing",
+        "sketch",
+        "profilo",
+        "study from photo",
+        "digital painting",
+        "personaggio"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "studio di figura da foto",
+        "ritratto di profilo disegno",
+        "figure study sketch",
+        "disegno personaggio cappello pelliccia"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "1797361792328286561",
+    "mediaType": "text",
+    "caption": "Synthetic pipeline case 18. #tool #type #art #design #study",
+    "sourceImages": 0,
+    "images": 0,
+    "answer": {
+      "description": "asset di gioco",
+      "general_tags": ["asset di gioco", "game assets", "risorse gratuite"],
+      "specific_tags": [
+        "game development",
+        "3d assets",
+        "open source",
+        "modelli 3d",
+        "indie game",
+        "asset gratuiti",
+        "gamedev"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "asset di gioco gratuiti",
+        "free game assets download",
+        "50000 game assets liberi",
+        "risorse gamedev gratis"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "1882853379552289084",
+    "mediaType": "text",
+    "caption": "Synthetic pipeline case 19. #tool #type #art #design #study",
+    "sourceImages": 0,
+    "images": 0,
+    "answer": {
+      "description": "open source",
+      "general_tags": ["open source", "javascript", "active theory"],
+      "specific_tags": [
+        "github",
+        "js utilities",
+        "web development",
+        "creative coding",
+        "libreria",
+        "tooling",
+        "frontend"
+      ],
+      "entities": [],
+      "search_keywords": [
+        "active theory javascript utilities",
+        "librerie js open source github",
+        "utility javascript creative studio",
+        "active theory github"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  },
+  {
+    "id": "1859463939395821848",
+    "mediaType": "text",
+    "caption": "Synthetic pipeline case 20. #tool #type #art #design #study",
+    "sourceImages": 0,
+    "images": 0,
+    "answer": {
+      "description": "sfera di vetro",
+      "general_tags": ["sfera di vetro", "react three fiber", "three.js"],
+      "specific_tags": ["shader", "glass orb", "r3f", "drei", "webgl", "creative coding", "3d"],
+      "entities": [],
+      "search_keywords": [
+        "sfera di vetro react three fiber",
+        "glass orb r3f drei",
+        "shader effetto vetro three.js",
+        "glass orb breakdown webgl"
+      ],
+      "save_reason": "Synthetic reference for pipeline verification",
+      "language": "it"
+    }
+  }
+]
