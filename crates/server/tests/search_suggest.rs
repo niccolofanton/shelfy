@@ -57,7 +57,7 @@ async fn seed(t: &TestState, user: &str) {
 }
 fn canned(stub: &Stub, q: &str, text: &str) {
     let p = suggest::request(q).unwrap();
-    stub.add_canned(request_key(Some(&p.system), [p.user]), text);
+    stub.add_canned(request_key(Some(&p.system), [p.user.as_str()]), text);
 }
 async fn suggest_json(t: &TestState, app: &Router, cookie: &str, q: &str, scope: &str) -> Value {
     let response = send(
