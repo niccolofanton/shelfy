@@ -276,15 +276,21 @@ describe('PostCard', () => {
       expect(card.className).not.toContain('ring-1 ring-white/[0.06]');
     });
 
-    it('replaces the hairline ring with the accent ring when selected', () => {
+    it('draws the selected ring on an overlay above the cover, not on the card', () => {
       render(<PostCard post={basePost} onOpen={vi.fn()} selectable selected />);
       const card = screen.getByTestId('post-card');
-      expect(card.className).toContain('ring-2 ring-[#7B5CFF]');
+      expect(screen.getByTestId('selected-overlay').className).toContain('ring-2');
+      expect(card.className).not.toContain('ring-2');
       expect(card.className).not.toContain('ring-white/[0.06]');
     });
   });
 
   describe('hover overlay', () => {
+    it('does not repeat the handle on a fallback tile (GAL-3)', () => {
+      renderHovered(<PostCard post={basePost} onOpen={vi.fn()} />);
+      expect(screen.getAllByText('@testuser')).toHaveLength(1);
+    });
+
     it('shows @authorUsername in hover overlay', () => {
       const post = { ...basePost, thumbnailUrl: 'https://cdn.example.com/thumb.jpg' };
       renderHovered(<PostCard post={post} onOpen={vi.fn()} />);
