@@ -9,6 +9,7 @@ import { MSG, isRecord, parseSyncRunMessage, type BridgePong } from '../shared/p
 import { createRelay } from './relay';
 import { createViewerReader } from './scoping';
 import { SyncController } from './sync/controller';
+import { selectionRelay } from './select/bridge';
 
 function randomHex(bytes: number): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (byte) =>
@@ -62,6 +63,7 @@ const relay = createRelay(window, {
 });
 
 window.addEventListener('message', relay);
+window.addEventListener('message', selectionRelay);
 
 // Messages from the extension itself (the worker, the side panel); never from a page.
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

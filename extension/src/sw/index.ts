@@ -7,6 +7,7 @@ import { createPlannerBrowser } from './planner/browser';
 import { parseSchedule, parseSources } from './planner/model';
 import { PlannerService, PLANNER_ALARM } from './planner/service';
 import { PlannerScheduler, pollTasks } from './planner/scheduler';
+import { SelectionService } from '../content/select/service';
 import { BUILD } from '../shared/build-info';
 import {
   EXTERNAL,
@@ -205,6 +206,16 @@ const plannerScheduler = new PlannerScheduler({
   },
 });
 
+const selection = new SelectionService({
+  api,
+  store,
+  storage: chrome.storage.local,
+  tabs: chrome.tabs,
+  execute: (injection) => chrome.scripting.executeScript(injection),
+  client: { ext: EXTENSION_VERSION, parser: BUILD.parser },
+  changed,
+});
+
 // ── Runs, config and start-up ───────────────────────────────────────────────
 
 async function tabExists(tabId: number): Promise<boolean> {
@@ -281,6 +292,31 @@ async function addCensus(counts: CensusCounts): Promise<void> {
 // ── Routes ──────────────────────────────────────────────────────────────────
 
 const router = new Router(chrome.runtime.id, origin, log)
+  .internal(MSG.selectCommand, 'page', async (message) => {
+    if (
+      !Number.isSafeInteger(message.tabId) ||
+      typeof message.action !== 'string' ||
+      !['status', 'enable', 'disable', 'import'].includes(message.action) ||
+      !['auto', 'none'].includes(String(message.collection)) ||
+      !['en', 'it'].includes(String(message.lang))
+    )
+      return { ok: false, code: 'bad_request' };
+    return selection.command(
+      message.tabId as number,
+      message.action,
+      message.lang as 'en' | 'it',
+      message.collection as 'auto' | 'none',
+      typeof message.name === 'string' ? message.name.trim().slice(0, 120) : null,
+    );
+  })
+  .internal(MSG.selectLookup, 'content', async (message, sender) => {
+    if (!Array.isArray(message.keys) || message.keys.some((key) => typeof key !== 'string'))
+      return { ok: false };
+    return selection.lookup(message.keys as string[], sender);
+  })
+  .internal(MSG.selectOpen, 'content', async (message, sender) =>
+    typeof message.key === 'string' ? selection.open(message.key, sender) : { ok: false },
+  )
   .internal(MSG.capture, 'content', async (message, sender) => {
     const capture = parseCaptureMessage(message);
     if (!capture) return { ok: false, code: 'bad_request' };

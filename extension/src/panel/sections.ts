@@ -9,12 +9,14 @@ import { debugSection } from './sections/debug';
 import { queueSection } from './sections/queue';
 import { plannerSection } from './sections/planner';
 import { syncSection } from './sections/sync';
+import { selectSection } from './sections/select';
 
 export const SECTIONS: readonly PanelSection[] = [
   connectionSection,
   // P2-13: "Sync now" and the folder chooser.
   syncSection,
   plannerSection,
+  selectSection,
   captureSection,
   queueSection,
   debugSection,

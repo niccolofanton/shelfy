@@ -26,6 +26,7 @@ const exists = (path: string): boolean => allFiles.has(path);
 const goodBundles: Record<string, string> = {
   [FILES.hook]:
     '(() => { const MSG_TYPE = "SOCIAL_SAVED_INTERCEPT"; window.__ssReplayPinterest = 1; window.__ssScanTwitterBookmarks = 1; })();',
+  [FILES.select]: '(() => { window.__ssSelect = {}; })();',
   [FILES.bridge]: '(() => { window.addEventListener("message", () => {}); })();',
   [FILES.serviceWorker]: 'chrome.runtime.onMessage.addListener(() => false);',
   [FILES.panelScript]: '(() => {})();',

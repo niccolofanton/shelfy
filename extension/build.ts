@@ -99,6 +99,7 @@ export async function buildExtension(options: ExtensionBuildOptions = {}): Promi
     entryPoints: {
       'hook.main': join(src, 'content', debug ? 'hook.debug.ts' : 'hook.main.ts'),
       bridge: join(src, 'content', 'bridge.ts'),
+      'select.main': join(repoRoot, 'electron', 'webview-select.ts'),
       panel: join(src, 'panel', 'panel.ts'),
     },
   });

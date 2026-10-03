@@ -100,6 +100,7 @@ export class FakeShelfyApi {
   readonly posts = new Map<string, number>();
   /** Items of each accepted batch, by Idempotency-Key. */
   readonly batchItems = new Map<string, unknown[]>();
+  readonly lookups: Array<{ platform: Platform; keys: string[] }> = [];
   readonly patches: Array<{ id: string; body: unknown }> = [];
   minVersion: string;
   /** Platforms whose passive source is killed (409 source_disabled). */
@@ -248,6 +249,29 @@ export class FakeShelfyApi {
     }
     if (request.method === 'GET' && path === '/api/v1/extension/sources')
       return json(200, { items: this.sources });
+    if (request.method === 'POST' && path === '/api/v1/posts/lookup') {
+      if (
+        !isRecord(body) ||
+        !isPlatform(body.platform) ||
+        !Array.isArray(body.keys) ||
+        body.keys.length > 1000 ||
+        body.keys.some((key) => typeof key !== 'string')
+      )
+        return problem(422, 'validation_failed');
+      const keys = body.keys as string[];
+      this.lookups.push({ platform: body.platform, keys });
+      return json(200, {
+        items: keys.flatMap((key) => {
+          const identity = canonicalIdentity(body.platform as Platform, {
+            ids: [key],
+            shortcode: body.platform === 'instagram' ? key : undefined,
+          });
+          return identity && this.posts.has(identity.key)
+            ? [{ key, postKey: identity.key, trashed: false }]
+            : [];
+        }),
+      });
+    }
     if (request.method === 'POST' && path === '/api/v1/sync-runs') return this.createRun(body);
     const patch = /^\/api\/v1\/sync-runs\/([^/]+)$/.exec(path);
     if (request.method === 'PATCH' && patch)

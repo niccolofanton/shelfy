@@ -85,6 +85,12 @@ interface SelectState {
 }
 
 // The host-driven API this script publishes on window.__ssSelect.
+interface SelectLabels {
+  saved: string;
+  open: string;
+  disabled: string;
+}
+
 interface SelectApi {
   enable: () => void;
   disable: () => void;
@@ -92,6 +98,10 @@ interface SelectApi {
   clearSelection: () => void;
   collectJSON: () => string;
   refresh: () => void;
+  setLabels: (labels: SelectLabels) => void;
+  status: () => { enabled: boolean; count: number };
+  collectEntriesJSON: () => string;
+  retryCheck: (keys: string[]) => void;
 }
 
 // Custom MAIN-world properties this script reads/writes on `window` and on each
@@ -116,6 +126,14 @@ declare global {
 (function () {
   if (window.__ssSelectInjected) return;
   window.__ssSelectInjected = true;
+
+  let labels: SelectLabels = {
+    saved: 'Già in database',
+    open: 'Premi per vedere il post',
+    disabled: 'Già presente nel database',
+  };
+  // Snapshot fallbacks while a tile is mounted; recycled DOM must not change a selected item.
+  const snapshots = new Map<string, SelectItem>();
 
   const ACCENT = '#7B5CFF'; // brand purple — selected state
 
@@ -276,6 +294,8 @@ declare global {
   function resolveItem(key: string): SelectItem | null {
     const c = captured()[key];
     if (c) return c;
+    const snapshot = snapshots.get(key);
+    if (snapshot) return snapshot;
     const host = state.hostByKey.get(key);
     if (!host) return null;
     if (state.platform === 'twitter') return twFallback(host, key);
@@ -455,7 +475,7 @@ declare global {
       const label = document.createElement('div');
       label.className = 'ss-label';
       label.setAttribute('data-ss-open', '1');
-      label.title = 'Premi per vedere il post';
+      label.title = labels.open;
       label.style.cssText =
         'display:none;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;' +
         'font:600 11px/1.4 -apple-system,system-ui,sans-serif;color:#e8e8e8;' +
@@ -464,7 +484,7 @@ declare global {
         'transition:background .12s ease,border-color .12s ease;';
       label.innerHTML =
         '<span style="width:6px;height:6px;border-radius:50%;background:#9aa0a6;flex-shrink:0;"></span>' +
-        '<span>Già in database</span>' +
+        '<span data-ss-saved-text></span>' +
         '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#b8b8b8" stroke-width="2" ' +
         'stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
       label.addEventListener('mouseenter', () => {
@@ -496,6 +516,7 @@ declare global {
       card.__ssLabel = label;
       state.decorated.add(card);
     }
+    card.__ssBox?.setAttribute('data-ss-key', key);
     card.__ssKey = key;
     update(card, key);
   }
@@ -505,6 +526,9 @@ declare global {
     const label = card.__ssLabel;
     const wrap = card.__ssWrap;
     if (!box) return;
+    const text = label?.querySelector('[data-ss-saved-text]');
+    if (text && text.textContent !== labels.saved) text.textContent = labels.saved;
+    if (label) label.title = labels.open;
     const sav = state.saved.has(key);
     const sel = !sav && state.selected.has(key);
 
@@ -516,13 +540,13 @@ declare global {
 
     if (sav) {
       // Already in the DB → disabled, greyed-out, not selectable.
-      box.innerHTML = '';
+      if (box.innerHTML) box.innerHTML = '';
       box.style.background = 'rgba(60,60,60,0.6)';
       box.style.borderColor = '#9aa0a6';
       box.style.opacity = '0.75';
       box.style.cursor = 'not-allowed';
       box.style.boxShadow = '0 1px 4px rgba(0,0,0,0.4)';
-      box.title = 'Già presente nel database';
+      box.title = labels.disabled;
       if (wrap) wrap.style.boxShadow = 'none';
       return;
     }
@@ -530,7 +554,9 @@ declare global {
     box.style.opacity = '1';
     box.style.cursor = 'pointer';
     box.title = '';
-    box.innerHTML = sel ? CHECK_SVG : '';
+    const markup = sel ? CHECK_SVG : '';
+    // Browser HTML serialization expands SVG self-closing tags; compare selection state.
+    if (box.childElementCount > 0 !== sel) box.innerHTML = markup;
     box.style.background = sel ? ACCENT : 'rgba(0,0,0,0.55)';
     box.style.borderColor = '#fff';
     box.style.boxShadow = sel
@@ -666,6 +692,14 @@ declare global {
     }
     const toCheck: string[] = [];
     for (const { card, key } of posts) {
+      // Save before a virtual list recycles this element for a different post.
+      const item =
+        state.platform === 'twitter'
+          ? twFallback(card, key)
+          : state.platform === 'pinterest'
+            ? pinFallback(card, key)
+            : igFallback(card, key);
+      snapshots.set(key, item);
       decorate(card, key);
       if (state.saved.has(key)) continue;
       // Check by post KEY (shortcode on IG, tweet id on TW) — always derivable from
@@ -738,6 +772,7 @@ declare global {
     }
     undecorateAll();
     state.hostByKey.clear();
+    snapshots.clear();
     state.pos.clear();
     state.selected.clear();
     state.lastKey = null; // drop the shift-click anchor
@@ -793,5 +828,22 @@ declare global {
     return JSON.stringify(out);
   }
 
-  window.__ssSelect = { enable, disable, markSaved, clearSelection, collectJSON, refresh: scan };
+  window.__ssSelect = {
+    enable,
+    disable,
+    markSaved,
+    clearSelection,
+    collectJSON,
+    refresh: scan,
+    setLabels: (next) => {
+      labels = { ...labels, ...next };
+      refreshAll();
+    },
+    status: () => ({ enabled: state.enabled, count: state.selected.size }),
+    collectEntriesJSON: () =>
+      JSON.stringify(Array.from(state.selected, (key) => ({ key, item: resolveItem(key) }))),
+    retryCheck: (keys) => {
+      for (const key of keys) state.queried.delete(key);
+    },
+  };
 })();

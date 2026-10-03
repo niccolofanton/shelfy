@@ -26,6 +26,7 @@ export const MIN_CHROME_VERSION = 120;
 export const FILES = {
   hook: 'hook.main.js',
   bridge: 'bridge.js',
+  select: 'select.main.js',
   serviceWorker: 'sw.js',
   panelScript: 'panel.js',
   panelHtml: 'panel.html',
@@ -272,7 +273,13 @@ export function validateBundles(
   if (!options.debug && hook.includes(CENSUS_MESSAGE))
     problems.push(`${FILES.hook} of a release build contains the request census`);
 
-  for (const file of [FILES.hook, FILES.bridge, FILES.serviceWorker, FILES.panelScript]) {
+  for (const file of [
+    FILES.hook,
+    FILES.bridge,
+    FILES.select,
+    FILES.serviceWorker,
+    FILES.panelScript,
+  ]) {
     const code = readFile(file);
     if (code === null) {
       problems.push(`${file} is missing`);
@@ -290,7 +297,7 @@ export function validateBundles(
   }
   // The token never reaches page JS or a content script (P2-06): their bundles cannot even
   // name its storage key or the Authorization header.
-  for (const file of [FILES.hook, FILES.bridge]) {
+  for (const file of [FILES.hook, FILES.bridge, FILES.select]) {
     const code = readFile(file) ?? '';
     if (code.includes(TOKEN_STORAGE_KEY) || /\bAuthorization\b/.test(code))
       problems.push(`${file} references the extension token`);

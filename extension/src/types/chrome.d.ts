@@ -70,6 +70,7 @@ declare namespace chrome {
 
     /** Rejects when no tab has this id (closed, or from before a browser restart). */
     function get(tabId: number): Promise<Tab>;
+    function create(options: { url: string }): Promise<Tab>;
 
     // Delivers to the content scripts of the tab; rejects when none of this extension's
     // instance is listening (e.g. the tab was loaded before the extension was reloaded).
@@ -168,7 +169,8 @@ declare namespace chrome {
     function executeScript(injection: {
       target: InjectionTarget;
       world?: 'ISOLATED' | 'MAIN';
-      func: (...args: never[]) => unknown;
+      func?: (...args: never[]) => unknown;
+      files?: string[];
       args?: unknown[];
       injectImmediately?: boolean;
     }): Promise<InjectionResult[]>;

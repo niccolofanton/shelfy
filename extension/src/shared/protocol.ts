@@ -148,6 +148,9 @@ export function parseCensusMessage(data: unknown): CensusCounts | null {
 
 /** Message kinds inside the extension. The router checks who may send each one. */
 export const MSG = {
+  selectCommand: 'shelfy.select.command',
+  selectLookup: 'shelfy.select.lookup',
+  selectOpen: 'shelfy.select.open',
   /** bridge → worker: one relayed hook message. */
   capture: 'shelfy/capture',
   /** bridge → worker: census counts (debug builds). */
