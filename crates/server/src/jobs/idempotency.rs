@@ -15,8 +15,9 @@
 //!    - by a finished request: its response is sent again, with
 //!      `Idempotent-Replayed: true`, and the handler does not run;
 //! 4. the handler's response is stored with the key, except a server error,
-//!    a 401, 403, 408 or 429, or a body over 64 KiB, which release the key
-//!    so the request can be sent again.
+//!    a 401, 403, 408, 423 (a library locked for maintenance) or 429, or a
+//!    body over 64 KiB, which release the key so the request can be sent
+//!    again. A stored response keeps its `Content-Type` and `Retry-After`.
 //!
 //! A reservation whose request died (a crash) is taken over after a minute.
 //! Rows are pruned after 24 hours by the nightly schedule.
@@ -117,6 +118,8 @@ struct Envelope {
     fingerprint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry_after: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     body: String,
 }
@@ -157,8 +160,10 @@ fn fingerprint(method: &Method, target: &str, body: &[u8]) -> String {
 }
 
 /// Whether a response of this status is kept for replays: not when the
-/// outcome depends on the moment (auth, rate limits, timeouts, failures)
-/// rather than on the request.
+/// outcome depends on the moment (auth, a library locked for maintenance,
+/// rate limits, timeouts, failures) rather than on the request. A 423
+/// `user_locked` kept for 24 hours would answer every repeat of the request
+/// long after the unlock (P1-11 review M3).
 fn storable(status: StatusCode) -> bool {
     !(status.is_server_error()
         || matches!(
@@ -166,6 +171,7 @@ fn storable(status: StatusCode) -> bool {
             StatusCode::UNAUTHORIZED
                 | StatusCode::FORBIDDEN
                 | StatusCode::REQUEST_TIMEOUT
+                | StatusCode::LOCKED
                 | StatusCode::TOO_MANY_REQUESTS
         ))
 }
@@ -244,13 +250,17 @@ pub async fn layer(
         );
         release(state, user.id(), &key).await;
     } else {
+        let text = |name| {
+            parts
+                .headers
+                .get(name)
+                .and_then(|v: &HeaderValue| v.to_str().ok())
+                .map(str::to_owned)
+        };
         let envelope = Envelope {
             fingerprint,
-            content_type: parts
-                .headers
-                .get(header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_owned),
+            content_type: text(header::CONTENT_TYPE),
+            retry_after: text(header::RETRY_AFTER),
             body: STANDARD.encode(&bytes),
         };
         complete(
@@ -270,12 +280,13 @@ fn replay(status: u16, envelope: &Envelope) -> Response {
     let mut response = Response::new(Body::from(Bytes::from(body)));
     *response.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
     let headers = response.headers_mut();
-    if let Some(value) = envelope
-        .content_type
-        .as_deref()
-        .and_then(|v| HeaderValue::from_str(v).ok())
-    {
-        headers.insert(header::CONTENT_TYPE, value);
+    for (name, value) in [
+        (header::CONTENT_TYPE, &envelope.content_type),
+        (header::RETRY_AFTER, &envelope.retry_after),
+    ] {
+        if let Some(value) = value.as_deref().and_then(|v| HeaderValue::from_str(v).ok()) {
+            headers.insert(name, value);
+        }
     }
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.insert(REPLAYED, HeaderValue::from_static("true"));
@@ -383,6 +394,7 @@ mod tests {
         let envelope = Envelope {
             fingerprint: "ab".into(),
             content_type: Some("application/json".into()),
+            retry_after: Some("60".into()),
             body: STANDARD.encode(b"{\"id\":1}"),
         };
         let back = Envelope::decode(&envelope.encode());
@@ -391,15 +403,30 @@ mod tests {
         let replayed = replay(200, &back);
         assert_eq!(replayed.headers()[&REPLAYED], "true");
         assert_eq!(replayed.headers()[header::CONTENT_TYPE], "application/json");
+        assert_eq!(replayed.headers()[header::RETRY_AFTER], "60");
         assert_eq!(Envelope::decode(b"not json").fingerprint, "");
+        // Envelopes stored before `retryAfter` existed still decode.
+        let old = Envelope::decode(br#"{"fingerprint":"ab","body":""}"#);
+        assert_eq!(
+            (old.fingerprint.as_str(), old.retry_after.as_deref()),
+            ("ab", None)
+        );
+        assert!(
+            replay(202, &old)
+                .headers()
+                .get(header::RETRY_AFTER)
+                .is_none()
+        );
     }
 
     #[test]
     fn only_outcomes_of_the_request_itself_are_stored() {
-        for status in [200, 201, 400, 404, 409, 422] {
+        for status in [200, 201, 202, 400, 404, 409, 422] {
             assert!(storable(StatusCode::from_u16(status).unwrap()), "{status}");
         }
-        for status in [401, 403, 408, 429, 500, 503, 504] {
+        // P1-11 review M3: a library locked for maintenance (423) is a
+        // moment, like a rate limit.
+        for status in [401, 403, 408, 423, 429, 500, 503, 504] {
             assert!(!storable(StatusCode::from_u16(status).unwrap()), "{status}");
         }
     }

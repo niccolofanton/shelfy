@@ -1798,6 +1798,58 @@ async fn the_nightly_purge_keeps_thirty_days_of_trash() {
     assert_index_consistent(&t, ALICE, "the nightly purges");
 }
 
+/// Review M3: a 423 of a locked library is not kept for the key, so the same
+/// request with the same key runs once the library is unlocked; a repeat of
+/// the job request then gets the first 202 back, and one job is queued.
+#[tokio::test]
+async fn idempotency_keys_forget_locks_and_replay_jobs() {
+    let (t, _) = two_libraries().await;
+    t.write(ALICE, |tx| synthetic_library(tx, 700, 54)).await;
+    let app = t.app_as(ALICE);
+    let users = t.data_dir().users_dir();
+    let request = |key: &str| with_key(bulk(json!({ "filter": {} }), "delete", Value::Null), key);
+
+    assert!(shelfy_core::db::lock_library(&users, ALICE, "restore").unwrap());
+    let locked = send(&app, request("bulk-job-1")).await;
+    assert_eq!(locked.status(), StatusCode::LOCKED);
+    assert_eq!(locked.headers()[header::RETRY_AFTER], "60");
+    assert!(locked.headers().get(REPLAYED).is_none());
+    for (route, body) in [
+        ("/api/v1/trash/restore", json!({ "deletedAt": NOW })),
+        ("/api/v1/trash/empty", Value::Null),
+    ] {
+        let request = if body.is_null() {
+            post_empty(route)
+        } else {
+            post(route, &body)
+        };
+        let again = send(&app, with_key(request, &format!("locked-{route}"))).await;
+        assert_eq!(again.status(), StatusCode::LOCKED, "{route}");
+    }
+    assert!(shelfy_core::db::unlock_library(&users, ALICE).unwrap());
+
+    let first = send(&app, request("bulk-job-1")).await;
+    assert_eq!(first.status(), StatusCode::ACCEPTED, "the key was released");
+    assert!(first.headers().get(REPLAYED).is_none());
+    let first = json(first).await;
+    let again = send(&app, request("bulk-job-1")).await;
+    assert_eq!(again.status(), StatusCode::ACCEPTED);
+    assert_eq!(again.headers()[REPLAYED], "true");
+    assert_eq!(json(again).await, first);
+    assert_eq!(jobs_in(&t, ALICE, "bulk", "queued"), 1, "one job");
+    // The emptying's key works after the unlock too.
+    let emptying = send(
+        &app,
+        with_key(
+            post_empty("/api/v1/trash/empty"),
+            "locked-/api/v1/trash/empty",
+        ),
+    )
+    .await;
+    assert_eq!(emptying.status(), StatusCode::ACCEPTED);
+    assert!(emptying.headers().get(REPLAYED).is_none());
+}
+
 /// A repeated `POST /posts/bulk` with the same `Idempotency-Key` gets the
 /// first answer back and acts once; another body with that key is refused.
 #[tokio::test]
