@@ -1,15 +1,20 @@
-# P1-26 live-check tooling
+# Live-host tooling (P1-26, X2)
 
 Live checks of the [§6.2 performance budgets](../../docs/web-port/IMPLEMENTATION-PLAN.md#62-performance-budgets)
 and the [SPIKE-10 SSE leftovers](../../docs/web-port/spikes/10-sse-tunnel.md) on the real host,
-`https://refs.niccolofanton.dev`. Built for P1-26 prep; run by the lead ahead of (or as) the P1-26
-card in [`docs/web-port/phases/P1.md`](../../docs/web-port/phases/P1.md).
+`https://refs.niccolofanton.dev`, plus the [mock account](#mock-account-e6)'s seeded subset (E6,
+X2). Built for P1-26 prep and X2; run by the lead, ahead of (or as) the cards in
+[`docs/web-port/phases/P1.md`](../../docs/web-port/phases/P1.md) and
+[`docs/web-port/EXECUTION.md`](../../docs/web-port/EXECUTION.md).
 
-These tools hold a session and a token only for the duration of one run, minted from a login link
-the lead creates out of band and revoked at the end — never the owner's own browser session (P1
-lane rule 8, "no owner session in automation").
+The session and token tools (`session.mjs`, and everything under "Runbook" below) hold a session
+and a token only for the duration of one run, minted from a login link the lead creates out of
+band and revoked at the end — never the owner's own browser session (P1 lane rule 8, "no owner
+session in automation"); the [mock account](#mock-account-e6) is the one exception the rule itself
+allows.
 
-Node ESM, no dependencies beyond Node 24's built-in `fetch`. Every command below assumes:
+Node ESM, no dependencies beyond Node 24's built-ins (`fetch`; `subset-library.mjs` also uses
+`node:sqlite`). Every command below assumes:
 
 ```sh
 export PATH="/Users/fant/.nvm/versions/node/v24.20.0/bin:$PATH"   # the default `node` is v14
@@ -98,6 +103,93 @@ Paste `budgets-report.md` and the `sse-live.mjs` summary into the P1-26 section 
 - Nothing these tools print is a secret value: `redeem` and `token` log the user id and token id,
   never the cookie or the token string.
 
+## Mock account (E6)
+
+The owner decided (E6, [`docs/web-port/EXECUTION.md`](../../docs/web-port/EXECUTION.md)) that the
+live host needs a **mock account**: a regular member, seeded with about 500 of the owner's posts,
+that lanes may sign in to in automation — the one exception lane rule 8 ("no owner session in
+automation") itself carves out; it is never the owner's own account.
+
+Built for X2, with two new pieces:
+
+- `shelfy-server admin create-user` (the admin CLI, on the VPS, next to the server; not one of this
+  directory's scripts — see `crates/server/src/admin/create_user.rs`) creates the member account
+  itself. No Node, no Access headers: it runs locally on the server's own data directory, like
+  `admin create-owner`.
+- [`subset-library.mjs`](subset-library.mjs) (Node, in this directory) builds the seeded subset, as
+  a desktop-schema SQLite file `shelfy-migrate` can read, from a copy of the desktop library — never
+  from the live server, and it needs no Access headers either.
+
+### The lead's steps, once
+
+1. **Create the mock user, on the VPS** (`docker exec`, or wherever `admin` already runs):
+
+   ```sh
+   shelfy-server admin create-user --email <mock email, kept in osn secrets like the owner's> \
+     --display-name "Mock account"
+   ```
+
+   It is idempotent and prints only the new id (never the email) — note the id down.
+
+2. **Mint a `migrate` token for that user, on the VPS** (valid 7 days, shown once):
+
+   ```sh
+   shelfy-server admin migrate-token --email <mock email> > migrate-token.txt
+   chmod 600 migrate-token.txt
+   ```
+
+3. **Build the subset, locally**, from a copy of the desktop library (never the live server, and
+   never the owner's library directly — a snapshot of it, per lane rule 9):
+
+   ```sh
+   node scripts/live/subset-library.mjs --db <desktop shelfy.sqlite> --out <a local dir> \
+     --count 500 --seed <n> --platform-mix ig:0.6,x:0.35,web:0.05
+   ```
+
+   Prints aggregate counts only (lane rule 9) and writes `<dir>/shelfy.sqlite`. See the comment at
+   the top of that file for exactly how the sample and the cascades work, and
+   `subset-library.fixture.mjs` for the synthetic fixture it is tested against (never the owner's
+   library) — `docs/web-port/EXECUTION.md`'s X2 report has the reconciliation from that fixture and
+   from one redacted dry run on the owner's reference snapshot.
+
+4. **Check it, locally, then migrate it onto the live host:**
+
+   ```sh
+   shelfy-migrate plan --db <dir>/shelfy.sqlite --redact        # 0 unmapped columns, 0 orphan rows
+   shelfy-migrate run --db <dir>/shelfy.sqlite --media-root <desktop userData dir> \
+     --server https://refs.niccolofanton.dev --token "$(cat migrate-token.txt)" \
+     --header @access.headers --work-dir <a scratch dir>
+   ```
+
+   `run` reads only the files the subset's rows reference (`crates/migrate/src/files.rs`), not
+   every file under `--media-root`, so the smaller `posts` table alone is what uploads less — the
+   media store itself is untouched, nothing is deleted from it.
+
+5. **Check:** `shelfy-server admin bench --user <mock id>` on the VPS, or sign in (next section)
+   and browse. Delete `migrate-token.txt` once the run succeeds.
+
+### A lane: signing in to the mock account
+
+The lead hands a lane the mock account's email (or user id) out of band. From there, same pattern
+as this directory's other tools — a login link minted on the VPS, redeemed locally:
+
+```sh
+ssh <vps> "shelfy-server admin login-link --email <mock email> --public-url https://refs.niccolofanton.dev"
+# copy the printed URL
+
+node scripts/live/session.mjs redeem '<the login-link URL>' --out session.json --headers access.headers
+```
+
+`session.json`'s cookie is the lane's session for its own end-to-end checks against the mock
+account (X3: every web feature, against `docs/web-port/features/`) — not run through this
+directory's P1-26-specific tools, which are for the owner's own account and the §6.2 budgets. When
+the lane's checks are done:
+
+```sh
+node scripts/live/session.mjs revoke --session session.json --headers access.headers
+rm -f access.headers
+```
+
 ## What each tool does
 
 - **`session.mjs`** — `redeem`, `token`, `revoke`. See the comment at the top of the file for the
@@ -128,6 +220,19 @@ Paste `budgets-report.md` and the `sse-live.mjs` summary into the P1-26 section 
   <file>` replaces the live VictoriaMetrics query with a canned response, for a dry run or
   CI-less verification — see `scripts/live/budgets.fixture.json` for the exact JSON shape
   (the Prometheus HTTP API's `/api/v1/query` vector format).
+- **`subset-library.mjs`** — the mock account's seeded subset (E6), from a copy of a desktop
+  library: a random but deterministic sample of `--count` posts (`--seed`, optionally
+  `--platform-mix ig:0.6,x:0.35,web:0.05`), with every dependent row (`post_media`,
+  `post_collections`, `post_tags`, `post_entities`, `post_facets`, `web_snapshots`, `downloads`)
+  dropped or kept the same way the desktop's own `ON DELETE CASCADE` foreign keys would, and
+  collections left with no member removed. Needs only Node's built-in `node:sqlite`. Opens `--db`
+  read-only and immutable, and never writes next to it — see the comment at the top of the file for
+  exactly how a live (open, or not cleanly closed) source is handled safely instead of refused.
+  Prints aggregate counts only (lane rule 9).
+- **`subset-library.fixture.mjs`** — the synthetic desktop-schema database `subset-library.mjs` is
+  tested against (never the owner's library): `node subset-library.fixture.mjs <path>` writes it
+  standalone, or `import { buildFixture } from './subset-library.fixture.mjs'` from another script.
+  Every string in it is made up.
 
 ## Gaps found while building this
 
