@@ -550,7 +550,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:read"]
+          }
+        ]
       },
       "post": {
         "tags": ["library"],
@@ -580,7 +588,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:write"]
+          }
+        ]
       }
     },
     "/api/v1/collections/from-query": {
@@ -612,7 +628,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:write"]
+          }
+        ]
       }
     },
     "/api/v1/collections/{id}": {
@@ -655,7 +679,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:write"]
+          }
+        ]
       },
       "patch": {
         "tags": ["library"],
@@ -697,7 +729,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:write"]
+          }
+        ]
       }
     },
     "/api/v1/collections/{id}/posts": {
@@ -741,7 +781,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:write"]
+          }
+        ]
       }
     },
     "/api/v1/collections/{id}/posts/{key}": {
@@ -784,7 +832,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:write"]
+          }
+        ]
       }
     },
     "/api/v1/events": {
@@ -1525,7 +1581,7 @@
       "post": {
         "tags": ["library"],
         "summary": "Saves a shared link as a post (contract C7): a new post, or the one the\nlink already names. Social posts are filled in in the background\n(`link.hydrate`); web posts stay links until they are captured.",
-        "description": "A signed-in session, or an API token with the `links:create` scope (the\niOS Shortcut).",
+        "description": "A signed-in session, or an API token with the `links:create` scope (the\niOS Shortcut) or `library:write` (an API client).",
         "operationId": "createLink",
         "requestBody": {
           "content": {
@@ -1568,6 +1624,9 @@
           },
           {
             "bearer": ["links:create"]
+          },
+          {
+            "bearer": ["library:write"]
           }
         ]
       }
@@ -1891,7 +1950,7 @@
       },
       "post": {
         "tags": ["account"],
-        "summary": "Creates an API token for the extension or the iOS Shortcut; the answer\nis the only time its value is shown.",
+        "summary": "Creates an API token for the extension, iOS Shortcut or library client; the answer\nis the only time its value is shown.",
         "description": "Needs a sign-in or a re-authentication from the last 5 minutes (403\n`reauth_required` otherwise). 422 for the kind `migrate` (the migration\nCLI signs in with the device flow), for scopes that are not the kind's,\nor for a label over 64 characters; 409 `conflict` when the account holds\n50 working tokens already.",
         "operationId": "createApiToken",
         "requestBody": {
@@ -2587,7 +2646,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:read"]
+          }
+        ]
       }
     },
     "/api/v1/posts/batch-get": {
@@ -2619,7 +2686,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:read"]
+          }
+        ]
       }
     },
     "/api/v1/posts/bulk": {
@@ -2689,7 +2764,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:write"]
+          }
+        ]
       }
     },
     "/api/v1/posts/count": {
@@ -2917,14 +3000,22 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:read"]
+          }
+        ]
       }
     },
     "/api/v1/posts/lookup": {
       "post": {
         "tags": ["library"],
         "summary": "Which of these posts, named by the ids a platform's pages show, are\nalready saved (desktop `savedByKeys`): the \"already saved\" badges of the\nselection overlay. An Instagram id matches by the media pk it stands for\nor by the post's stored shortcode.",
-        "description": "A signed-in session, or an API token with the `lookup` scope (the\nextension's).",
+        "description": "A signed-in session, or an API token with the `lookup` scope (the\nextension's) or `library:read` (an API client).",
         "operationId": "lookupPosts",
         "requestBody": {
           "content": {
@@ -2957,6 +3048,9 @@
           },
           {
             "bearer": ["lookup"]
+          },
+          {
+            "bearer": ["library:read"]
           }
         ]
       }
@@ -3025,7 +3119,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:read"]
+          }
+        ]
       },
       "patch": {
         "tags": ["library"],
@@ -3066,7 +3168,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:write"]
+          }
+        ]
       }
     },
     "/api/v1/queues/{kind}/cancel-all": {
@@ -3341,7 +3451,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:read"]
+          }
+        ]
       }
     },
     "/api/v1/stats": {
@@ -3399,7 +3517,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:read"]
+          }
+        ]
       }
     },
     "/api/v1/sync-runs": {
@@ -3940,7 +4066,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:read"]
+          }
+        ]
       }
     },
     "/api/v1/trash/empty": {
@@ -3981,7 +4115,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:write"]
+          }
+        ]
       }
     },
     "/api/v1/trash/restore": {
@@ -4050,7 +4192,15 @@
           "default": {
             "$ref": "#/components/responses/Problem"
           }
-        }
+        },
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "bearer": ["library:write"]
+          }
+        ]
       }
     },
     "/api/v1/uploads": {
@@ -4688,7 +4838,7 @@
         "properties": {
           "kind": {
             "$ref": "#/components/schemas/TokenKind",
-            "description": "Who will hold it: `extension` or `shortcut`."
+            "description": "Who will hold it: `extension`, `shortcut` or `library`."
           },
           "label": {
             "type": "string",
@@ -4699,7 +4849,7 @@
             "items": {
               "$ref": "#/components/schemas/TokenScope"
             },
-            "description": "What it may do: some of the kind's scopes; all of them when left out."
+            "description": "What it may do: a non-empty subset of the kind's scopes. When left\nout, `library` grants `library:read` only; other kinds grant all."
           }
         },
         "additionalProperties": false
@@ -9623,12 +9773,21 @@
       "TokenKind": {
         "type": "string",
         "description": "Who holds a token.",
-        "enum": ["extension", "shortcut", "migrate"]
+        "enum": ["extension", "shortcut", "migrate", "library"]
       },
       "TokenScope": {
         "type": "string",
         "description": "What a token may do (§2.9).",
-        "enum": ["ingest", "tasks", "uploads", "lookup", "links:create", "migrate"]
+        "enum": [
+          "ingest",
+          "tasks",
+          "uploads",
+          "lookup",
+          "links:create",
+          "migrate",
+          "library:read",
+          "library:write"
+        ]
       },
       "TrashEmptying": {
         "type": "object",
@@ -9894,7 +10053,7 @@
         "type": "http",
         "scheme": "bearer",
         "bearerFormat": "shx_",
-        "description": "A scoped API token (`shx_…`) of the extension, the iOS Shortcut or the migration CLI. Tokens cannot call routes that only accept the session."
+        "description": "A scoped API token (`shx_…`) of the extension, the iOS Shortcut, migration CLI or a library client. The independent library:read and library:write scopes grant only the routes that name them; write does not imply read. Tokens cannot call routes that only accept the session."
       },
       "session": {
         "type": "apiKey",

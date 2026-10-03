@@ -4,7 +4,7 @@
 //!
 //! | Via | Kind | Scopes | Lifetime | Who |
 //! |---|---|---|---|---|
-//! | `account` (`POST /me/tokens`, re-authentication within 5 minutes) | `extension` or `shortcut` | a non-empty subset of the kind's scopes, all by default | until revoked | the signed-in user |
+//! | `account` (`POST /me/tokens`, re-authentication within 5 minutes) | `extension`, `shortcut` or `library` | a non-empty subset of the kind's scopes; library defaults to read only | until revoked | the signed-in user |
 //! | `device` (the device flow, [`super::device`]) | `migrate` | `migrate` | 7 days | the migration CLI, approved by a signed-in user |
 //! | `cli` (`admin migrate-token`) | `migrate` | `migrate` | 7 days | the operator |
 //! | `pairing` (`POST /extension/pair`, [`crate::extension::pairing`]) | `extension` | all four | until revoked | the browser extension, with a pairing code a signed-in user asked for |
@@ -50,6 +50,17 @@ pub const fn allowed_scopes(kind: TokenKind) -> &'static [Scope] {
         TokenKind::Extension => &[Scope::Ingest, Scope::Tasks, Scope::Uploads, Scope::Lookup],
         TokenKind::Shortcut => &[Scope::LinksCreate],
         TokenKind::Migrate => &[Scope::Migrate],
+        TokenKind::Library => &[Scope::LibraryRead, Scope::LibraryWrite],
+    }
+}
+
+/// Scopes granted when the account leaves them out. Library writes must
+/// be requested explicitly; existing device kinds keep their defaults.
+#[must_use]
+pub const fn default_scopes(kind: TokenKind) -> &'static [Scope] {
+    match kind {
+        TokenKind::Library => &[Scope::LibraryRead],
+        _ => allowed_scopes(kind),
     }
 }
 

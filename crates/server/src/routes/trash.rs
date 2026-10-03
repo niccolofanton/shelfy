@@ -16,7 +16,8 @@
 //! all, inline or as a job of its own (P1-11 review M2). The nightly purge
 //! deletes what has been in the trash for 30 days ([`crate::jobs::purge`]).
 //!
-//! Every route needs a session; another user's posts are unknown keys.
+//! Every route needs a session or its library scope (`library:read` for
+//! listing, `library:write` for restore/empty); other users' posts are unknown.
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -88,6 +89,7 @@ pub struct TrashPage {
     path = "/api/v1/trash",
     tag = "library",
     operation_id = "listTrash",
+    security(("session" = []), ("bearer" = ["library:read"])),
     params(TrashQuery, ConditionalHeaders),
     responses(
         (
@@ -173,6 +175,7 @@ pub struct RestoreRequest {
     path = "/api/v1/trash/restore",
     tag = "library",
     operation_id = "restoreTrash",
+    security(("session" = []), ("bearer" = ["library:write"])),
     params(IdempotencyHeader),
     request_body = RestoreRequest,
     responses(
@@ -262,6 +265,7 @@ pub struct TrashEmptying {
     path = "/api/v1/trash/empty",
     tag = "library",
     operation_id = "emptyTrash",
+    security(("session" = []), ("bearer" = ["library:write"])),
     params(IdempotencyHeader),
     responses(
         (

@@ -246,6 +246,7 @@ pub struct BulkResult {
     path = "/api/v1/posts/bulk",
     tag = "library",
     operation_id = "bulkPosts",
+    security(("session" = []), ("bearer" = ["library:write"])),
     params(IdempotencyHeader),
     request_body = BulkRequest,
     responses(

@@ -429,7 +429,7 @@ async fn another_users_upload_is_not_found() {
 }
 
 #[tokio::test]
-async fn a_token_never_reaches_a_cookie_only_route() {
+async fn upload_tokens_reach_neither_cookie_only_nor_library_routes() {
     let t = TestState::new();
     let (app, cookie, owner_id) = signed_in(&t).await;
     let uploads_token = token(&t, &owner_id, "extension", "uploads");
@@ -446,12 +446,18 @@ async fn a_token_never_reaches_a_cookie_only_route() {
         // With the token alone, and beside a valid session cookie.
         for (alone, beside) in requests().into_iter().zip(requests()) {
             let uri = alone.uri().to_string();
+            let library_route = matches!(uri.as_str(), "/api/v1/posts" | "/api/v1/collections");
+            let (status, code) = if library_route {
+                (StatusCode::FORBIDDEN, ErrorCode::Forbidden)
+            } else {
+                (StatusCode::UNAUTHORIZED, ErrorCode::Unauthorized)
+            };
             for request in [
                 bearer(alone, token),
                 bearer(with_session(beside, &cookie), token),
             ] {
-                let refused = problem(send(&app, request).await, StatusCode::UNAUTHORIZED).await;
-                assert_eq!(refused.code, ErrorCode::Unauthorized, "{uri}");
+                let refused = problem(send(&app, request).await, status).await;
+                assert_eq!(refused.code, code, "{uri}");
             }
         }
     }

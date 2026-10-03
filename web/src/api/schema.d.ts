@@ -821,7 +821,7 @@ export interface paths {
      *     link already names. Social posts are filled in in the background
      *     (`link.hydrate`); web posts stay links until they are captured.
      * @description A signed-in session, or an API token with the `links:create` scope (the
-     *     iOS Shortcut).
+     *     iOS Shortcut) or `library:write` (an API client).
      */
     post: operations['createLink'];
     delete?: never;
@@ -1036,7 +1036,7 @@ export interface paths {
     get: operations['listApiTokens'];
     put?: never;
     /**
-     * Creates an API token for the extension or the iOS Shortcut; the answer
+     * Creates an API token for the extension, iOS Shortcut or library client; the answer
      *     is the only time its value is shown.
      * @description Needs a sign-in or a re-authentication from the last 5 minutes (403
      *     `reauth_required` otherwise). 422 for the kind `migrate` (the migration
@@ -1380,7 +1380,7 @@ export interface paths {
      *     selection overlay. An Instagram id matches by the media pk it stands for
      *     or by the post's stored shortcode.
      * @description A signed-in session, or an API token with the `lookup` scope (the
-     *     extension's).
+     *     extension's) or `library:read` (an API client).
      */
     post: operations['lookupPosts'];
     delete?: never;
@@ -2010,11 +2010,14 @@ export interface components {
     };
     /** @description Body of `POST /api/v1/me/tokens`. */
     ApiTokenRequest: {
-      /** @description Who will hold it: `extension` or `shortcut`. */
+      /** @description Who will hold it: `extension`, `shortcut` or `library`. */
       kind: components['schemas']['TokenKind'];
       /** @description A name for the list, up to 64 characters; trimmed, and blank is none. */
       label?: string;
-      /** @description What it may do: some of the kind's scopes; all of them when left out. */
+      /**
+       * @description What it may do: a non-empty subset of the kind's scopes. When left
+       *     out, `library` grants `library:read` only; other kinds grant all.
+       */
       scopes?: components['schemas']['TokenScope'][];
     };
     /**
@@ -5053,12 +5056,20 @@ export interface components {
      * @description Who holds a token.
      * @enum {string}
      */
-    TokenKind: 'extension' | 'shortcut' | 'migrate';
+    TokenKind: 'extension' | 'shortcut' | 'migrate' | 'library';
     /**
      * @description What a token may do (§2.9).
      * @enum {string}
      */
-    TokenScope: 'ingest' | 'tasks' | 'uploads' | 'lookup' | 'links:create' | 'migrate';
+    TokenScope:
+      | 'ingest'
+      | 'tasks'
+      | 'uploads'
+      | 'lookup'
+      | 'links:create'
+      | 'migrate'
+      | 'library:read'
+      | 'library:write';
     /** @description The purge that empties the trash. */
     TrashEmptying: {
       /** @description The `purge` job: its progress arrives as `job.updated`. */

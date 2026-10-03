@@ -238,6 +238,7 @@ impl PostPatch {
     path = "/api/v1/posts/{key}",
     tag = "library",
     operation_id = "updatePost",
+    security(("session" = []), ("bearer" = ["library:write"])),
     params(
         ("key" = String, Path, description = "The post's key, for example `ig_3141592653589793238`."),
     ),

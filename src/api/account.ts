@@ -84,9 +84,9 @@ export interface AccountSession {
   userAgent: string | null;
 }
 
-// Who holds a token: the browser extension, the iOS Shortcut, or the
-// migration tool (which gets its token by approving a device code).
-export type TokenKind = 'extension' | 'shortcut' | 'migrate';
+// Who holds a token: the browser extension, iOS Shortcut, a library API
+// client, or the migration tool (which gets a token via a device code).
+export type TokenKind = 'extension' | 'shortcut' | 'migrate' | 'library';
 
 export interface AccountToken {
   id: string;

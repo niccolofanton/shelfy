@@ -144,6 +144,88 @@ fn control_schema_has_every_table_and_index() {
 }
 
 #[test]
+fn library_token_kind_upgrade_preserves_existing_credentials() {
+    for version in [4, 5] {
+        let mut conn = migrated(Kind::Control, version);
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        // Historical rows must not use the latest-version fixture builder:
+        // both pre-export v4 and export v5 must upgrade losslessly.
+        conn.execute_batch(
+            "INSERT INTO users (id, email, role, quota_bytes, created_at) \
+         VALUES ('existing-user', 'existing@example.test', 'member', 0, 0); \
+         INSERT INTO api_tokens \
+           (id, user_id, kind, token_hash, label, scopes, created_at, last_used_at, \
+            revoked_at, expires_at, install_hash) \
+         VALUES \
+           ('extension-token', 'existing-user', 'extension', X'aa01', 'Chrome', \
+            'ingest tasks uploads lookup', 100, 110, 120, NULL, X'bb01'), \
+           ('migrate-token', 'existing-user', 'migrate', X'aa02', 'Migration', \
+            'migrate', 100, 110, NULL, 1000, NULL), \
+           ('shortcut-token', 'existing-user', 'shortcut', X'aa03', 'Phone', \
+            'links:create', 100, NULL, NULL, NULL, NULL);",
+        )
+        .unwrap();
+        let tokens = |conn: &Connection| {
+            conn.prepare(
+                "SELECT id, user_id, kind, token_hash, label, scopes, created_at, last_used_at, \
+             revoked_at, expires_at, install_hash FROM api_tokens ORDER BY id",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                (0..row.as_ref().column_count())
+                    .map(|i| row.get::<_, rusqlite::types::Value>(i))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+        };
+        if version == 5 {
+            conn.execute_batch("INSERT INTO exports (id,user_id,job_id,created_at,expires_at,estimated_bytes,bytes,deleted_at) VALUES ('existing-export','existing-user',99,100,1000,4096,2048,NULL)").unwrap();
+        }
+        let exports = |conn: &Connection| {
+            conn.prepare("SELECT id,user_id,job_id,created_at,expires_at,estimated_bytes,bytes,deleted_at FROM exports ORDER BY id")
+            .unwrap().query_map([], |row| {
+                (0..row.as_ref().column_count()).map(|i| row.get::<_, rusqlite::types::Value>(i)).collect::<rusqlite::Result<Vec<_>>>()
+            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+        };
+        let exports_before = (version == 5).then(|| exports(&conn));
+        let before = tokens(&conn);
+        schema::migrate(&mut conn, Kind::Control).unwrap();
+        assert_eq!(
+            tokens(&conn),
+            before,
+            "hashes, scopes, expiry and install kept"
+        );
+        assert_eq!(schema::version(&conn).unwrap(), 6);
+        if let Some(before) = exports_before {
+            assert_eq!(exports(&conn), before, "export metadata kept from v5 to v6");
+        }
+        assert!(names(&conn, "index").contains(&"api_tokens_install".to_owned()));
+        conn.execute(
+            "INSERT INTO users (id, email, role, quota_bytes, created_at) \
+         VALUES ('library-user', 'library@example.test', 'member', 0, 0)",
+            [],
+        )
+        .unwrap();
+        let insert = "INSERT INTO api_tokens (id, user_id, kind, token_hash, scopes, created_at) \
+                  VALUES ('library-token', 'library-user', ?1, X'ffff', 'library:read', 0)";
+        assert!(
+            conn.execute(insert, ["unknown"]).is_err(),
+            "kind CHECK remains"
+        );
+        conn.execute(insert, ["library"]).unwrap();
+        conn.execute("DELETE FROM users WHERE id = 'library-user'", [])
+            .unwrap();
+        assert_eq!(
+            tokens(&conn),
+            before,
+            "user deletion still cascades to tokens"
+        );
+    }
+}
+
+#[test]
 fn post_tags_key_includes_the_source() {
     let conn = migrated(Kind::Library, 1);
     let pk: Vec<String> = conn

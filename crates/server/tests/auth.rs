@@ -1056,15 +1056,21 @@ async fn tokens_reach_token_routes_only_and_skip_the_cookie_check() {
         ),
         bearer(with_session(get("/api/v1/me"), &cookie), &token),
         bearer(with_session(get("/test/sensitive"), &cookie), &token),
-        bearer(
-            with_session(get(&format!("/media/{}.jpg", "a".repeat(64))), &cookie),
-            &token,
-        ),
     ] {
         let uri = request.uri().to_string();
         let refused = problem(send(&app, request).await, StatusCode::UNAUTHORIZED).await;
         assert_eq!(refused.code, ErrorCode::Unauthorized, "{uri}");
     }
+    // Media is now a library-read route; these device scopes cannot read it.
+    let response = send(
+        &app,
+        bearer(
+            with_session(get(&format!("/media/{}.jpg", "a".repeat(64))), &cookie),
+            &token,
+        ),
+    )
+    .await;
+    problem(response, StatusCode::FORBIDDEN).await;
     assert_eq!(me(&app, &cookie).await, StatusCode::OK, "still signed in");
 
     // A token-only route refuses the session; a token-or-session one takes both.
@@ -1194,7 +1200,8 @@ fn operations() -> Vec<Operation> {
     operations
 }
 
-/// Routes outside the OpenAPI document; every one needs a session.
+/// Routes outside the OpenAPI document: media takes a session or
+/// `library:read` (GET covers HEAD in the access policy).
 const UNDOCUMENTED: &[(&str, &str)] = &[("get", "/media/{file}"), ("head", "/media/{file}")];
 
 /// A concrete request for `path`, its parameters filled with placeholders, as
@@ -1249,7 +1256,7 @@ async fn the_access_policy_matches_the_document() {
         "public operations (security(())) and routes::PUBLIC_ROUTES differ"
     );
 
-    let documented: BTreeSet<(String, String, Vec<String>, bool)> = operations
+    let mut documented: BTreeSet<(String, String, Vec<String>, bool)> = operations
         .iter()
         .filter_map(|op| {
             let scopes = op.bearer_scopes()?;
@@ -1261,6 +1268,12 @@ async fn the_access_policy_matches_the_document() {
             ))
         })
         .collect();
+    documented.insert((
+        "get".to_owned(),
+        "/media/{file}".to_owned(),
+        vec!["library:read".to_owned()],
+        true,
+    ));
     let declared: BTreeSet<(String, String, Vec<String>, bool)> = policy
         .rules()
         .iter()
@@ -1293,11 +1306,7 @@ async fn every_protected_route_answers_401_without_a_session() {
     let app = t.app();
     let owner_id = owner(&t);
     let cookie = sign_in(&app, &t).await;
-    let token = api_token(
-        &t,
-        &owner_id,
-        "ingest tasks uploads lookup links:create migrate",
-    );
+    let token = api_token(&t, &owner_id, &Scope::list(&Scope::ALL));
     let unknown = SecretToken::generate();
 
     let mut routes: Vec<(String, String, bool)> = operations()
@@ -1311,7 +1320,7 @@ async fn every_protected_route_answers_401_without_a_session() {
     routes.extend(
         UNDOCUMENTED
             .iter()
-            .map(|(method, path)| ((*method).to_owned(), (*path).to_owned(), false)),
+            .map(|(method, path)| ((*method).to_owned(), (*path).to_owned(), true)),
     );
     for (method, path, takes_tokens) in &routes {
         let route = format!("{} {path}", method.to_ascii_uppercase());

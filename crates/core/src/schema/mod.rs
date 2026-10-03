@@ -130,6 +130,10 @@ const CONTROL_MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/control/0005_exports.sql"),
         comment: "control schema v5: export bundles",
     },
+    Migration {
+        sql: include_str!("../../migrations/control/0006_library_tokens.sql"),
+        comment: "control schema v6: library API token kind",
+    },
 ];
 
 /// Which database a connection belongs to.

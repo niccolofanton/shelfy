@@ -22,6 +22,7 @@ use crate::state::{AppState, blocking};
     path = "/api/v1/stats",
     tag = "library",
     operation_id = "getStats",
+    security(("session" = []), ("bearer" = ["library:read"])),
     params(ConditionalHeaders),
     responses(
         (

@@ -127,6 +127,7 @@ fn has_criteria(filter: &PostFilter) -> bool {
     path = "/api/v1/search",
     tag = "search",
     operation_id = "search",
+    security(("session" = []), ("bearer" = ["library:read"])),
     params(SearchQuery, ConditionalHeaders),
     responses(
         (

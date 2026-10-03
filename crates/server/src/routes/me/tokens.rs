@@ -24,7 +24,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
 use crate::auth::RecentAuth;
-use crate::auth::api_tokens::{self, MAX_ACTIVE_TOKENS, Mint, Minted, Via, allowed_scopes};
+use crate::auth::api_tokens::{self, MAX_ACTIVE_TOKENS, Mint, Minted, Via, default_scopes};
 use crate::auth::bearer::Scope;
 use crate::auth::passkeys::normalize_label;
 use crate::control::api_tokens::TokenKind as StoredKind;
@@ -59,6 +59,9 @@ pub enum TokenKind {
     /// The migration CLI: scope `migrate`, 7 days; from the device flow
     /// only.
     Migrate,
+    /// Desktop API clients and MCP: `library:read`, `library:write`.
+    /// Read only by default; writes must be requested explicitly.
+    Library,
 }
 
 impl From<StoredKind> for TokenKind {
@@ -67,6 +70,7 @@ impl From<StoredKind> for TokenKind {
             StoredKind::Extension => Self::Extension,
             StoredKind::Shortcut => Self::Shortcut,
             StoredKind::Migrate => Self::Migrate,
+            StoredKind::Library => Self::Library,
         }
     }
 }
@@ -77,6 +81,7 @@ impl From<TokenKind> for StoredKind {
             TokenKind::Extension => Self::Extension,
             TokenKind::Shortcut => Self::Shortcut,
             TokenKind::Migrate => Self::Migrate,
+            TokenKind::Library => Self::Library,
         }
     }
 }
@@ -130,13 +135,14 @@ pub struct ApiTokenList {
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ApiTokenRequest {
-    /// Who will hold it: `extension` or `shortcut`.
+    /// Who will hold it: `extension`, `shortcut` or `library`.
     pub kind: TokenKind,
     /// A name for the list, up to 64 characters; trimmed, and blank is none.
     #[serde(default)]
     #[schema(nullable = false)]
     pub label: Option<String>,
-    /// What it may do: some of the kind's scopes; all of them when left out.
+    /// What it may do: a non-empty subset of the kind's scopes. When left
+    /// out, `library` grants `library:read` only; other kinds grant all.
     #[serde(default)]
     #[schema(nullable = false)]
     pub scopes: Option<Vec<Scope>>,
@@ -190,7 +196,7 @@ pub async fn list_tokens(
     Ok(no_store(Json(list).into_response()))
 }
 
-/// Creates an API token for the extension or the iOS Shortcut; the answer
+/// Creates an API token for the extension, iOS Shortcut or library client; the answer
 /// is the only time its value is shown.
 ///
 /// Needs a sign-in or a re-authentication from the last 5 minutes (403
@@ -223,7 +229,7 @@ pub async fn create_token(
     let label = normalize_label(request.label.as_deref())?;
     let scopes = match request.scopes {
         Some(scopes) => scopes,
-        None => allowed_scopes(kind).to_vec(),
+        None => default_scopes(kind).to_vec(),
     };
     let control = Arc::clone(state.control());
     let user_id = user.id().to_owned();

@@ -26,9 +26,10 @@
 //! # Authentication
 //!
 //! The handler takes a [`CurrentUser`]. The authentication layer
-//! ([`crate::auth::session`]) inserts one for a valid session cookie and never
-//! for an API token, so media stays cookie-only (D5, §2.9). Without one the
-//! request answers 401 before any file is touched.
+//! ([`crate::auth::access`]) inserts one for a valid session cookie or a
+//! token with `library:read` (F21). Both read only their own store. Without
+//! credentials the request answers 401 before any file is touched;
+//! tokens without `library:read` get 403.
 
 pub mod preconditions;
 

@@ -46,9 +46,11 @@ impl Modify for SecuritySchemes {
                     .scheme(HttpAuthScheme::Bearer)
                     .bearer_format("shx_")
                     .description(Some(
-                        "A scoped API token (`shx_…`) of the extension, the iOS Shortcut or \
-                         the migration CLI. Tokens cannot call routes that only accept the \
-                         session.",
+                        "A scoped API token (`shx_…`) of the extension, the iOS Shortcut, \
+                         migration CLI or a library client. The independent library:read \
+                         and library:write scopes grant only the routes that name them; \
+                         write does not imply read. Tokens cannot call routes that only \
+                         accept the session.",
                     ))
                     .build(),
             ),

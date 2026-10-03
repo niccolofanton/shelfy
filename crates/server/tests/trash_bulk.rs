@@ -418,11 +418,10 @@ async fn every_new_route_needs_a_session() {
     assert_eq!(jobs_in(&t, ALICE, "purge", "queued"), 0);
 }
 
-/// The new routes are cookie-only: a valid token with every scope is
-/// refused, alone or beside a valid session cookie; the cookie alone works,
-/// through the CSRF guard.
+/// Existing device scopes cannot access trash or bulk writes, even beside
+/// a valid session cookie. Cookie requests still use the CSRF guard.
 #[tokio::test]
-async fn api_tokens_never_call_the_new_routes() {
+async fn device_tokens_lack_library_scopes() {
     let t = TestState::new();
     let app = t.app();
     let owner_id = owner(&t);
@@ -440,10 +439,10 @@ async fn api_tokens_never_call_the_new_routes() {
             };
             let refused = problem(
                 send(&app, bearer(request, &token)).await,
-                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
             )
             .await;
-            assert_eq!(refused.code, ErrorCode::Unauthorized, "{route}");
+            assert_eq!(refused.code, ErrorCode::Forbidden, "{route}");
         }
     }
     assert_eq!(trash_stamps(&t, &owner_id).len(), 1, "nothing changed");

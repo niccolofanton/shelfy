@@ -214,12 +214,11 @@ async fn every_new_route_needs_a_session() {
     assert_eq!(folders["items"].as_array().unwrap().len(), 2);
 }
 
-/// Lane rule 4: these routes are cookie-only. A valid token with every
-/// scope (`lookup` included: it joins `POST /posts/lookup` in P1-17) is
-/// refused, alone or beside a valid session cookie; the cookie alone works,
+/// Existing device scopes cannot read or edit the library, even beside a
+/// session. Their narrow `lookup` still works; cookie requests still pass
 /// through the CSRF guard.
 #[tokio::test]
-async fn api_tokens_never_call_the_new_routes() {
+async fn device_tokens_lack_library_scopes() {
     let t = TestState::new();
     let app = t.app();
     let owner_id = owner(&t);
@@ -243,10 +242,10 @@ async fn api_tokens_never_call_the_new_routes() {
             }
             let refused = problem(
                 send(&app, bearer(request, &token)).await,
-                StatusCode::UNAUTHORIZED,
+                StatusCode::FORBIDDEN,
             )
             .await;
-            assert_eq!(refused.code, ErrorCode::Unauthorized, "{route}");
+            assert_eq!(refused.code, ErrorCode::Forbidden, "{route}");
         }
     }
     let unchanged = ok(&app, with_session(get("/api/v1/posts/ig_1001"), &cookie)).await;

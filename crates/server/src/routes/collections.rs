@@ -48,6 +48,7 @@ use crate::state::{AppState, blocking};
     path = "/api/v1/collections",
     tag = "library",
     operation_id = "listCollections",
+    security(("session" = []), ("bearer" = ["library:read"])),
     params(ConditionalHeaders),
     responses(
         (
@@ -110,6 +111,7 @@ impl NewCollectionRequest {
     path = "/api/v1/collections",
     tag = "library",
     operation_id = "createCollection",
+    security(("session" = []), ("bearer" = ["library:write"])),
     request_body = NewCollectionRequest,
     responses(
         (status = CREATED, description = "The new collection.", body = Collection),
@@ -152,6 +154,7 @@ pub struct CollectionUpdate {
     path = "/api/v1/collections/{id}",
     tag = "library",
     operation_id = "updateCollection",
+    security(("session" = []), ("bearer" = ["library:write"])),
     params(("id" = i64, Path, description = "The collection's id.")),
     request_body = CollectionUpdate,
     responses(
@@ -245,6 +248,7 @@ pub struct CollectionDeleted {
     path = "/api/v1/collections/{id}",
     tag = "library",
     operation_id = "deleteCollection",
+    security(("session" = []), ("bearer" = ["library:write"])),
     params(
         ("id" = i64, Path, description = "The collection's id."),
         DeleteCollectionQuery,
@@ -316,6 +320,7 @@ pub struct CollectionPostsAdded {
     path = "/api/v1/collections/{id}/posts",
     tag = "library",
     operation_id = "addCollectionPosts",
+    security(("session" = []), ("bearer" = ["library:write"])),
     params(("id" = i64, Path, description = "The collection's id.")),
     request_body = AddPostsRequest,
     responses(
@@ -372,6 +377,7 @@ pub struct CollectionPostRemoved {
     path = "/api/v1/collections/{id}/posts/{key}",
     tag = "library",
     operation_id = "removeCollectionPost",
+    security(("session" = []), ("bearer" = ["library:write"])),
     params(
         ("id" = i64, Path, description = "The collection's id."),
         ("key" = String, Path, description = "The post's key."),
@@ -430,6 +436,7 @@ pub struct CollectionFromQuery {
     path = "/api/v1/collections/from-query",
     tag = "library",
     operation_id = "createCollectionFromQuery",
+    security(("session" = []), ("bearer" = ["library:write"])),
     request_body = CollectionFromQuery,
     responses(
         (status = CREATED, description = "The new collection.", body = CollectionPostsAdded),

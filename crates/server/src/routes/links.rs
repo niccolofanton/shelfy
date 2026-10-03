@@ -158,13 +158,13 @@ struct Saved {
 /// (`link.hydrate`); web posts stay links until they are captured.
 ///
 /// A signed-in session, or an API token with the `links:create` scope (the
-/// iOS Shortcut).
+/// iOS Shortcut) or `library:write` (an API client).
 #[utoipa::path(
     post,
     path = "/api/v1/links",
     tag = "library",
     operation_id = "createLink",
-    security(("session" = []), ("bearer" = ["links:create"])),
+    security(("session" = []), ("bearer" = ["links:create"]), ("bearer" = ["library:write"])),
     request_body = LinkCreate,
     responses(
         (status = CREATED, description = "The link created the post.", body = LinkCreated),

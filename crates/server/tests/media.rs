@@ -543,14 +543,14 @@ async fn a_signed_in_session_reads_its_own_media_and_tokens_get_none() {
     let response = send(&app, with_session(plain_get(&someone_elses), &cookie)).await;
     problem(response, StatusCode::NOT_FOUND).await;
 
-    // Media is cookie-only: an API token of the same user is not a session.
+    // Existing device scopes do not include library:read.
     let token = api_token(&t, &owner);
     let mut request = plain_get(&url);
     request.headers_mut().insert(
         header::AUTHORIZATION,
         format!("Bearer {token}").parse().unwrap(),
     );
-    problem(send(&app, request).await, StatusCode::UNAUTHORIZED).await;
+    problem(send(&app, request).await, StatusCode::FORBIDDEN).await;
 }
 
 /// Inserts an API token for `user_id` (as `tests/auth.rs` does); returns it.

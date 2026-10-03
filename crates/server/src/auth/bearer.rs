@@ -1,5 +1,5 @@
 //! API tokens (plan §2.9 Auth, §2.11 device tokens): bearer requests from the
-//! extension, the iOS Shortcut and the migration CLI.
+//! extension, the iOS Shortcut, migration CLI and library API clients.
 //!
 //! This module verifies tokens; [`super::api_tokens`] mints them (`POST
 //! /me/tokens`, the device flow of [`super::device`], `admin
@@ -68,17 +68,25 @@ pub enum Scope {
     /// The migration routes (the CLI).
     #[serde(rename = "migrate")]
     Migrate,
+    /// Read the user's posts, collections, search, stats, trash and media.
+    #[serde(rename = "library:read")]
+    LibraryRead,
+    /// Edit the user's library. Does not grant `library:read`.
+    #[serde(rename = "library:write")]
+    LibraryWrite,
 }
 
 impl Scope {
     /// Every scope, in the order `api_tokens.scopes` lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Ingest,
         Self::Tasks,
         Self::Uploads,
         Self::Lookup,
         Self::LinksCreate,
         Self::Migrate,
+        Self::LibraryRead,
+        Self::LibraryWrite,
     ];
 
     /// The scope named `name` in `api_tokens.scopes`.
@@ -119,6 +127,8 @@ impl Scope {
             Self::Lookup => "lookup",
             Self::LinksCreate => "links:create",
             Self::Migrate => "migrate",
+            Self::LibraryRead => "library:read",
+            Self::LibraryWrite => "library:write",
         }
     }
 
@@ -238,7 +248,16 @@ pub mod scopes {
         )*};
     }
 
-    scope!(Ingest, Tasks, Uploads, Lookup, LinksCreate, Migrate);
+    scope!(
+        Ingest,
+        Tasks,
+        Uploads,
+        Lookup,
+        LinksCreate,
+        Migrate,
+        LibraryRead,
+        LibraryWrite
+    );
 }
 
 /// A verified API token, inserted by the gate on token routes.
@@ -285,11 +304,14 @@ impl TokenPrincipal {
     }
 
     /// A verified token of `user_id` with `scopes`, for unit tests: of kind
-    /// `migrate` when it has that scope, `extension` otherwise.
+    /// `migrate` when it has that scope, `library` for library scopes,
+    /// `extension` otherwise.
     #[cfg(test)]
     pub(crate) fn for_tests(user_id: &str, scopes: &[Scope]) -> Self {
         let kind = if scopes.contains(&Scope::Migrate) {
             TokenKind::Migrate
+        } else if scopes.contains(&Scope::LibraryRead) || scopes.contains(&Scope::LibraryWrite) {
+            TokenKind::Library
         } else {
             TokenKind::Extension
         };

@@ -179,6 +179,7 @@ impl PostsQuery {
     path = "/api/v1/posts",
     tag = "library",
     operation_id = "listPosts",
+    security(("session" = []), ("bearer" = ["library:read"])),
     params(PostsQuery, ConditionalHeaders),
     responses(
         (
@@ -271,6 +272,7 @@ pub async fn serve_list(
     path = "/api/v1/posts/{key}",
     tag = "library",
     operation_id = "getPost",
+    security(("session" = []), ("bearer" = ["library:read"])),
     params(
         ("key" = String, Path, description = "The post's key, for example `ig_3141592653589793238`."),
         ConditionalHeaders,
@@ -346,6 +348,7 @@ pub struct PostCount {
     path = "/api/v1/posts/count",
     tag = "library",
     operation_id = "countPosts",
+    security(("session" = []), ("bearer" = ["library:read"])),
     params(FilterParams, ConditionalHeaders),
     responses(
         (
@@ -434,6 +437,7 @@ pub struct PostBatch {
     path = "/api/v1/posts/batch-get",
     tag = "library",
     operation_id = "batchGetPosts",
+    security(("session" = []), ("bearer" = ["library:read"])),
     request_body = BatchGetRequest,
     responses(
         (status = OK, description = "The posts found.", body = PostBatch),
@@ -511,13 +515,13 @@ pub struct LookupResult {
 /// or by the post's stored shortcode.
 ///
 /// A signed-in session, or an API token with the `lookup` scope (the
-/// extension's).
+/// extension's) or `library:read` (an API client).
 #[utoipa::path(
     post,
     path = "/api/v1/posts/lookup",
     tag = "library",
     operation_id = "lookupPosts",
-    security(("session" = []), ("bearer" = ["lookup"])),
+    security(("session" = []), ("bearer" = ["lookup"]), ("bearer" = ["library:read"])),
     request_body = LookupRequest,
     responses(
         (status = OK, description = "The saved posts found.", body = LookupResult),

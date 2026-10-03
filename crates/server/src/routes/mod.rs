@@ -39,6 +39,11 @@
 //! [`trash`]. `DELETE /collections/{id}?mode=withPosts` moves a collection's
 //! posts to the trash.
 //!
+//! Library API clients (F21) use independent `library:read` and
+//! `library:write` tokens on these routes and on media. Writes must be
+//! granted explicitly; a library token defaults to read only. The account,
+//! auth, provider, job and queue routes retain their existing cookie policy.
+//!
 //! The platform routes (P1-01): [`events`] (the SSE stream of
 //! [`crate::events`]), [`notifications`], [`client_errors`] and [`version`],
 //! all behind [`CurrentUser`](crate::current_user::CurrentUser).
@@ -256,9 +261,111 @@ pub const CSRF_EXEMPT_ROUTES: &[(Method, &str)] = &[
 /// `GET /extension/config` takes the extension's `ingest` token (P2-03);
 /// `POST /links` takes the iOS Shortcut's `links:create` token or a session
 /// (P2-11); the extension's tasks take its `tasks` token (P2-14).
+/// Library clients use independent `library:read` and `library:write`
+/// scopes (F21); write does not imply read. Media uses `library:read`,
+/// but stays outside the OpenAPI document as before.
 pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
-    (Method::POST, "/api/v1/posts/lookup", &[Scope::Lookup], true),
-    (Method::POST, "/api/v1/links", &[Scope::LinksCreate], true),
+    (Method::GET, "/api/v1/posts", &[Scope::LibraryRead], true),
+    (
+        Method::GET,
+        "/api/v1/posts/{key}",
+        &[Scope::LibraryRead],
+        true,
+    ),
+    (
+        Method::GET,
+        "/api/v1/posts/count",
+        &[Scope::LibraryRead],
+        true,
+    ),
+    (
+        Method::POST,
+        "/api/v1/posts/batch-get",
+        &[Scope::LibraryRead],
+        true,
+    ),
+    (Method::GET, "/api/v1/search", &[Scope::LibraryRead], true),
+    (Method::GET, "/api/v1/stats", &[Scope::LibraryRead], true),
+    (
+        Method::GET,
+        "/api/v1/collections",
+        &[Scope::LibraryRead],
+        true,
+    ),
+    (Method::GET, "/api/v1/trash", &[Scope::LibraryRead], true),
+    (Method::GET, "/media/{file}", &[Scope::LibraryRead], true),
+    (
+        Method::PATCH,
+        "/api/v1/posts/{key}",
+        &[Scope::LibraryWrite],
+        true,
+    ),
+    (
+        Method::POST,
+        "/api/v1/posts/bulk",
+        &[Scope::LibraryWrite],
+        true,
+    ),
+    (
+        Method::POST,
+        "/api/v1/collections",
+        &[Scope::LibraryWrite],
+        true,
+    ),
+    (
+        Method::PATCH,
+        "/api/v1/collections/{id}",
+        &[Scope::LibraryWrite],
+        true,
+    ),
+    (
+        Method::DELETE,
+        "/api/v1/collections/{id}",
+        &[Scope::LibraryWrite],
+        true,
+    ),
+    (
+        Method::POST,
+        "/api/v1/collections/{id}/posts",
+        &[Scope::LibraryWrite],
+        true,
+    ),
+    (
+        Method::DELETE,
+        "/api/v1/collections/{id}/posts/{key}",
+        &[Scope::LibraryWrite],
+        true,
+    ),
+    (
+        Method::POST,
+        "/api/v1/collections/from-query",
+        &[Scope::LibraryWrite],
+        true,
+    ),
+    (
+        Method::POST,
+        "/api/v1/trash/restore",
+        &[Scope::LibraryWrite],
+        true,
+    ),
+    (
+        Method::POST,
+        "/api/v1/trash/empty",
+        &[Scope::LibraryWrite],
+        true,
+    ),
+    (
+        Method::POST,
+        "/api/v1/posts/lookup",
+        &[Scope::Lookup, Scope::LibraryRead],
+        true,
+    ),
+    (
+        Method::POST,
+        "/api/v1/links",
+        &[Scope::LinksCreate, Scope::LibraryWrite],
+        true,
+    ),
     (
         Method::POST,
         "/api/v1/ingest/batches",

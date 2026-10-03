@@ -1,5 +1,5 @@
 //! `api_tokens` (plan §2.6, §2.11): scoped bearer tokens for the extension,
-//! the iOS Shortcut and the migration CLI.
+//! the iOS Shortcut, migration CLI and library API clients.
 //!
 //! A row keeps the SHA-256 of the whole value (`shx_…`), never the value.
 //! `scopes` is a space-separated list of scope names (`ingest lookup`).
@@ -32,6 +32,8 @@ pub enum TokenKind {
     Shortcut,
     /// The migration CLI (`shelfy-migrate`).
     Migrate,
+    /// A desktop API client or MCP integration.
+    Library,
 }
 
 impl TokenKind {
@@ -42,15 +44,21 @@ impl TokenKind {
             Self::Extension => "extension",
             Self::Shortcut => "shortcut",
             Self::Migrate => "migrate",
+            Self::Library => "library",
         }
     }
 
     /// The kind stored as `value`.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        [Self::Extension, Self::Shortcut, Self::Migrate]
-            .into_iter()
-            .find(|kind| kind.as_str() == value)
+        [
+            Self::Extension,
+            Self::Shortcut,
+            Self::Migrate,
+            Self::Library,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str() == value)
     }
 }
 
@@ -80,7 +88,7 @@ pub struct ApiToken {
     pub id: String,
     /// The user it acts for.
     pub user_id: String,
-    /// `extension`, `shortcut` or `migrate`.
+    /// `extension`, `shortcut`, `migrate` or `library`.
     pub kind: String,
     /// Space-separated scope names.
     pub scopes: String,
