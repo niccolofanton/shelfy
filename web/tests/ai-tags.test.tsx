@@ -48,12 +48,12 @@ function harness() {
   return { get, send, client, wrapper, on };
 }
 describe('web Tag Explorer', () => {
-  it('renders tags by tier without exposing unavailable queue/job actions', async () => {
+  it('renders tags by tier with taxonomy job controls', async () => {
     const { get, wrapper } = harness();
     render(<AiTags />, { wrapper });
     await screen.findByTestId('aitags-tag-index');
     expect(screen.queryByTestId('analyze-missing-btn')).not.toBeInTheDocument();
-    expect(screen.queryByText('Rigenera')).not.toBeInTheDocument();
+    expect(screen.getByTestId('regenerate-clusters-btn')).toBeInTheDocument();
     fireEvent.change(screen.getByTestId('aitags-tier'), { target: { value: 'manual' } });
     await waitFor(() =>
       expect(
@@ -63,6 +63,21 @@ describe('web Tag Explorer', () => {
         ),
       ).toBe(true),
     );
+  });
+  it('refreshes persisted proposals after a cancelled chunked run', async () => {
+    const { client, wrapper, get } = harness();
+    client.ai.tags.regenerateClusters = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('cancelled'), { code: 'cancelled' }));
+    const { result } = renderHook(() => useAiTags(), { wrapper });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    get.mockClear();
+    await act(async () => {
+      await expect(result.current.regenerateClusters()).rejects.toMatchObject({
+        code: 'cancelled',
+      });
+    });
+    expect(get.mock.calls.some(([path]) => path.endsWith('/tag-clusters'))).toBe(true);
   });
   it('creates a folder from the full server filter rather than the preview page', async () => {
     const { client, wrapper } = harness();

@@ -10,12 +10,25 @@ import type {
   ClusterStatusResult,
   MergeTagsResult,
   PostSearchResult,
-  ProposeAliasesResult,
   RemoveTagResult,
 } from '../../../types/electron-api';
 
 // Progress ticks for the long-running cluster/alias LLM jobs (desktop:
 // `aitags:clusterProgress` / `aitags:aliasProgress`, opaque run summaries).
+export interface AiTaxonomyProgress {
+  jobId: number;
+  state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  progress: number | null;
+  stage: string | null;
+  done: number;
+  total: number;
+  waiting: boolean;
+}
+// The web's job API does not return a proposal count; desktop does.
+export interface AiAliasProposalResult {
+  ok: boolean;
+  proposed?: number;
+}
 export type AiClusterProgress = unknown;
 export type AiAliasProgress = unknown;
 
@@ -44,7 +57,7 @@ export interface AiTagsApi {
 
   // `GET /tag-aliases?status`; `.../accept`, `.../dismiss`, `.../accept-all`.
   getAliases(args?: { status?: Shelfy.AliasStatus | null }): Promise<Shelfy.TagAlias[]>;
-  proposeAliases(onProgress?: (p: AiAliasProgress) => void): Promise<ProposeAliasesResult>;
+  proposeAliases(onProgress?: (p: AiAliasProgress) => void): Promise<AiAliasProposalResult>;
   cancelAliases(): Promise<CancelledResult>;
   acceptAlias(aliasNorm: string): Promise<AliasStatusResult>;
   acceptAllAliases?(): Promise<{ accepted: number; rewritten: number }>;

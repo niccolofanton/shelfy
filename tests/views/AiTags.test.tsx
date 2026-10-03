@@ -71,6 +71,29 @@ describe('AiTags — empty state', () => {
 describe('AiTags — dashboard', () => {
   beforeEach(populate);
 
+  it('recognizes desktop cancellation before the IPC cancel response arrives', async () => {
+    let rejectRun!: (error: Error) => void;
+    let finishCancel!: (value: { cancelled: boolean }) => void;
+    vi.mocked(window.electronAPI.regenerateClusters).mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRun = reject;
+        }),
+    );
+    vi.mocked(window.electronAPI.cancelClusters).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishCancel = resolve;
+          rejectRun(new Error('AbortError'));
+        }),
+    );
+    render(<AiTags />);
+    fireEvent.click(await screen.findByTestId('regenerate-clusters-btn'));
+    fireEvent.click(await screen.findByTestId('cancel-clusters-btn'));
+    await screen.findByText('Rigenerazione annullata');
+    finishCancel({ cancelled: true });
+  });
+
   it('loads all the aggregate data on mount', async () => {
     render(<AiTags />);
     await waitFor(() => expect(screen.getByTestId('aitags-dashboard')).toBeInTheDocument());

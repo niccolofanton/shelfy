@@ -9,10 +9,10 @@ import type {
   ClusterStatusResult,
   MergeTagsResult,
   PostSearchResult,
-  ProposeAliasesResult,
   QueuedResult,
   RemoveTagResult,
 } from '../../types/electron-api';
+import type { AiAliasProposalResult } from '../api/ai/tags';
 import type { ShelfyClient } from '../api/ShelfyClient';
 
 // Progress callback shape passed to the long-running cluster/alias LLM jobs. The
@@ -53,7 +53,7 @@ export interface UseAiTagsResult {
   dismissCluster: (id: number) => Promise<ClusterStatusResult>;
   renameCluster: (id: number, label: string) => Promise<ClusterStatusResult>;
   removeTagFromCluster: (tag: string, clusterId: number) => Promise<RemoveTagResult>;
-  proposeAliases: (onProgress?: ProgressCallback) => Promise<ProposeAliasesResult>;
+  proposeAliases: (onProgress?: ProgressCallback) => Promise<AiAliasProposalResult>;
   cancelAliasProposals: () => Promise<CancelledResult>;
   acceptAlias: (aliasNorm: string) => Promise<AliasStatusResult>;
   dismissAlias: (aliasNorm: string) => Promise<AliasStatusResult>;
@@ -269,11 +269,12 @@ export function useAiTags({ active = true, tier = null }: UseAiTagsOpts = {}): U
   // clusters.
   const regenerateClusters = useCallback(
     async (onProgress?: ProgressCallback): Promise<unknown> => {
-      const res = await tagsOf(client).regenerateClusters((p: AiClusterProgress) =>
-        onProgress?.(p),
-      );
-      await load({ silent: true });
-      return res;
+      try {
+        return await tagsOf(client).regenerateClusters((p: AiClusterProgress) => onProgress?.(p));
+      } finally {
+        // A durable run may have saved earlier chunks before cancellation.
+        await load({ silent: true });
+      }
     },
     [load, client],
   );
@@ -383,10 +384,12 @@ export function useAiTags({ active = true, tier = null }: UseAiTagsOpts = {}): U
   // to progress for the duration of the call, then reload the (now persisted)
   // proposals.
   const proposeAliases = useCallback(
-    async (onProgress?: ProgressCallback): Promise<ProposeAliasesResult> => {
-      const res = await tagsOf(client).proposeAliases((p: AiAliasProgress) => onProgress?.(p));
-      await reloadAliases();
-      return res;
+    async (onProgress?: ProgressCallback): Promise<AiAliasProposalResult> => {
+      try {
+        return await tagsOf(client).proposeAliases((p: AiAliasProgress) => onProgress?.(p));
+      } finally {
+        await reloadAliases();
+      }
     },
     [reloadAliases, client],
   );

@@ -4,12 +4,14 @@ import type { AiTagsApi } from '@ui/api/ai';
 import type { PostQuery } from '@ui/api/ShelfyClient';
 import type { Http } from '../http';
 import { listPostsParams, toPost, toSearchParams } from '../mapping';
+import { createTaxonomyJobs, type TaxonomyJobsOptions } from './taxonomyJobs';
 import type { components } from '../schema';
 type Schemas = components['schemas'];
 const ROOT = '/api/v1';
 const segment = encodeURIComponent;
 
-export function createTagsApi(http: Http): AiTagsApi {
+export function createTagsApi(http: Http, options: TaxonomyJobsOptions = {}): AiTagsApi {
+  const jobs = createTaxonomyJobs(http, options);
   async function write<T>(
     method: 'POST' | 'PATCH' | 'DELETE',
     path: string,
@@ -17,9 +19,6 @@ export function createTagsApi(http: Http): AiTagsApi {
   ): Promise<T> {
     return (await (await http.send(method, `${ROOT}${path}`, body)).json()) as T;
   }
-  const unsupported = async (): Promise<never> => {
-    throw new Error('AI job controls are unavailable');
-  };
   return {
     getOverview: () => http.get<Schemas['TagOverview']>(`${ROOT}/tags/overview`),
     async getTagStats({ limit = 200, tier } = {}) {
@@ -114,9 +113,12 @@ export function createTagsApi(http: Http): AiTagsApi {
       } while (cursor && posts.length < limit);
       return { posts, total };
     },
-    regenerateClusters: unsupported,
-    cancelClusters: unsupported,
-    proposeAliases: unsupported,
-    cancelAliases: unsupported,
+    regenerateClusters: (progress) => jobs.run('clusters', progress),
+    cancelClusters: () => jobs.cancel('clusters'),
+    async proposeAliases(progress) {
+      await jobs.run('aliases', progress);
+      return { ok: true };
+    },
+    cancelAliases: () => jobs.cancel('aliases'),
   };
 }

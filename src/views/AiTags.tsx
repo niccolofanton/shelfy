@@ -3,7 +3,8 @@ import VirtualPostGrid from '../components/VirtualPostGrid';
 import GridSizeControl from '../components/GridSizeControl';
 import PostGridSkeleton from '../components/PostGridSkeleton';
 import PostModal from '../components/PostModal';
-import { errorMessageKey } from '../api/errors';
+import type { AiTaxonomyProgress } from '../api/ai/tags';
+import { errorCodeOf, errorMessageKey } from '../api/errors';
 import { useCapabilities, useShelfy } from '../api/ShelfyProvider';
 import { useAiTags } from '../hooks/useAiTags';
 import { useAnalysis } from '../hooks/useAnalysis';
@@ -37,9 +38,57 @@ const ACCENT = '#7B5CFF';
 type TagMode = 'and' | 'or';
 
 // Progress payload emitted by the cluster/alias LLM runs.
-interface ProgressState {
+interface ProgressState extends Partial<AiTaxonomyProgress> {
   done: number;
   total: number;
+}
+
+function TaxonomyProgress({
+  progress,
+  label,
+  legacyMessage,
+}: {
+  progress: ProgressState;
+  label: string;
+  legacyMessage: string;
+}) {
+  const t = useT('aiTags');
+  const value =
+    typeof progress.progress === 'number'
+      ? progress.progress
+      : progress.total
+        ? progress.done / progress.total
+        : undefined;
+  const percent = value == null ? undefined : Math.max(0, Math.min(100, Math.round(value * 100)));
+  const message =
+    progress.state === 'queued'
+      ? t(progress.waiting ? 'taxonomyWaiting' : 'taxonomyQueued')
+      : progress.stage
+        ? t(`taxonomyStage.${progress.stage}`, {
+            done: progress.done,
+            total: progress.total || '…',
+          })
+        : legacyMessage;
+  return (
+    <div className="px-1 mb-2" data-testid="taxonomy-progress">
+      <div
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+        className="h-1.5 rounded-full bg-[#1a1a1a] overflow-hidden"
+      >
+        <div
+          className="h-full rounded-full u-progress"
+          style={{ width: `${percent ?? 5}%`, backgroundColor: ACCENT }}
+        />
+      </div>
+      <p role="status" className="text-[10px] text-gray-500 mt-1 tabular-nums">
+        {message}
+      </p>
+    </div>
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -595,13 +644,16 @@ export default function AiTags({
       const res = await regenerateClusters((p: unknown) => setClusterProgress(p as ProgressState));
       const summary = res as { count?: number; candidates?: number } | undefined;
       showToast(
-        t('proposedClusters', {
-          count: summary?.count ?? 0,
-          candidates: summary?.candidates ?? 0,
-        }),
+        web
+          ? t('clustersUpdated')
+          : t('proposedClusters', {
+              count: summary?.count ?? 0,
+              candidates: summary?.candidates ?? 0,
+            }),
       );
     } catch (err) {
-      if (clusterCancelledRef.current) showToast(t('regenCancelled'));
+      if (clusterCancelledRef.current || errorCodeOf(err) === 'cancelled')
+        showToast(t('regenCancelled'));
       else
         showToast(
           String((err as { message?: string } | null)?.message ?? '').includes('MODEL_NOT_READY')
@@ -612,16 +664,18 @@ export default function AiTags({
       setClustering(false);
       setClusterProgress(null);
     }
-  }, [regenerateClusters, showToast, t]);
+  }, [regenerateClusters, showToast, t, web]);
 
   const handleCancelClusters = useCallback(async () => {
-    clusterCancelledRef.current = true;
+    // Desktop IPC can reject the run before replying to its cancel request.
+    clusterCancelledRef.current = !web;
     try {
-      await cancelClusters();
+      const result = await cancelClusters();
+      clusterCancelledRef.current = result.cancelled;
     } catch {
-      /* ignore */
+      showToast(t('cancelError'));
     }
-  }, [cancelClusters]);
+  }, [cancelClusters, showToast, t, web]);
 
   const handleCancelAnalyze = useCallback(async () => {
     // cancelAllAnalyze wipes the ENTIRE shared analyze queue (every in-flight or
@@ -696,9 +750,10 @@ export default function AiTags({
     setAliasProgress({ done: 0, total: 0 });
     try {
       const res = await proposeAliases((p: unknown) => setAliasProgress(p as ProgressState));
-      showToast(t('proposedAliases', { n: res?.proposed ?? 0 }));
+      showToast(web ? t('aliasesUpdated') : t('proposedAliases', { n: res?.proposed ?? 0 }));
     } catch (err) {
-      if (aliasCancelledRef.current) showToast(t('aliasProposalCancelled'));
+      if (aliasCancelledRef.current || errorCodeOf(err) === 'cancelled')
+        showToast(t('aliasProposalCancelled'));
       else
         showToast(
           String((err as { message?: string } | null)?.message ?? '').includes('MODEL_NOT_READY')
@@ -709,16 +764,17 @@ export default function AiTags({
       setAliasing(false);
       setAliasProgress(null);
     }
-  }, [proposeAliases, showToast, t]);
+  }, [proposeAliases, showToast, t, web]);
 
   const handleCancelAliases = useCallback(async () => {
-    aliasCancelledRef.current = true;
+    aliasCancelledRef.current = !web;
     try {
-      await cancelAliasProposals();
+      const result = await cancelAliasProposals();
+      aliasCancelledRef.current = result.cancelled;
     } catch {
-      /* ignore */
+      showToast(t('cancelError'));
     }
-  }, [cancelAliasProposals]);
+  }, [cancelAliasProposals, showToast, t, web]);
 
   const handleAcceptAlias = useCallback(
     async (aliasNorm: string) => {
@@ -942,24 +998,25 @@ export default function AiTags({
                       <Check size={12} /> {t('acceptAll', { n: proposedCount })}
                     </button>
                   )}
-                  {!web &&
-                    (clustering ? (
-                      <button
-                        onClick={handleCancelClusters}
-                        className="flex items-center gap-1 text-[10px] text-red-300 hover:text-red-200 u-press"
-                        title={t('stopRegenTitle')}
-                      >
-                        <X size={12} /> {t('stop')}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={handleRegenerate}
-                        className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-200 u-press"
-                        title={t('regenerateTitle')}
-                      >
-                        <Wand2 size={12} /> {t('regenerate')}
-                      </button>
-                    ))}
+                  {clustering ? (
+                    <button
+                      data-testid="cancel-clusters-btn"
+                      onClick={handleCancelClusters}
+                      className="flex items-center gap-1 text-[10px] text-red-300 hover:text-red-200 u-press"
+                      title={t('stopRegenTitle')}
+                    >
+                      <X size={12} /> {t('stop')}
+                    </button>
+                  ) : (
+                    <button
+                      data-testid="regenerate-clusters-btn"
+                      onClick={handleRegenerate}
+                      className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-200 u-press"
+                      title={t(web ? 'regenerateTitleWeb' : 'regenerateTitle')}
+                    >
+                      <Wand2 size={12} /> {t('regenerate')}
+                    </button>
+                  )}
                   <button
                     onClick={() => setMergeOpen(true)}
                     className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-200 u-press"
@@ -974,23 +1031,14 @@ export default function AiTags({
             </SectionTitle>
 
             {clustering && clusterProgress && (
-              <div className="px-1 mb-2">
-                <div className="h-1.5 rounded-full bg-[#1a1a1a] overflow-hidden">
-                  <div
-                    className="h-full rounded-full u-progress"
-                    style={{
-                      width: `${clusterProgress.total ? Math.round((clusterProgress.done / clusterProgress.total) * 100) : 5}%`,
-                      backgroundColor: ACCENT,
-                    }}
-                  />
-                </div>
-                <p className="text-[10px] text-gray-500 mt-1 tabular-nums">
-                  {t('analyzingGroups', {
-                    done: clusterProgress.done,
-                    total: clusterProgress.total || '…',
-                  })}
-                </p>
-              </div>
+              <TaxonomyProgress
+                progress={clusterProgress}
+                label={t('clusters')}
+                legacyMessage={t('analyzingGroups', {
+                  done: clusterProgress.done,
+                  total: clusterProgress.total || '…',
+                })}
+              />
             )}
 
             <div className="space-y-1.5">
@@ -999,14 +1047,15 @@ export default function AiTags({
                   <p className="text-xs text-gray-600 mb-2">
                     {t(web ? 'noClustersWeb' : 'noClusters')}
                   </p>
-                  {!web && (
+                  {
                     <button
+                      data-testid="regenerate-clusters-empty-btn"
                       onClick={handleRegenerate}
                       className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] u-press"
                     >
                       <Wand2 size={13} /> {t('regenerateClusters')}
                     </button>
-                  )}
+                  }
                 </div>
               )}
               {visibleClusters.map((cl) => (
@@ -1042,24 +1091,25 @@ export default function AiTags({
                       <Check size={12} /> {t('acceptAll', { n: proposedAliasCount })}
                     </button>
                   )}
-                  {!web &&
-                    (aliasing ? (
-                      <button
-                        onClick={handleCancelAliases}
-                        className="flex items-center gap-1 text-[10px] text-red-300 hover:text-red-200 u-press"
-                        title={t('stopAliasTitle')}
-                      >
-                        <X size={12} /> {t('stop')}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={handleProposeAliases}
-                        className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-200 u-press"
-                        title={t('generateProposalsTitle')}
-                      >
-                        <Wand2 size={12} /> {t('generateProposals')}
-                      </button>
-                    ))}
+                  {aliasing ? (
+                    <button
+                      data-testid="cancel-aliases-btn"
+                      onClick={handleCancelAliases}
+                      className="flex items-center gap-1 text-[10px] text-red-300 hover:text-red-200 u-press"
+                      title={t('stopAliasTitle')}
+                    >
+                      <X size={12} /> {t('stop')}
+                    </button>
+                  ) : (
+                    <button
+                      data-testid="propose-aliases-btn"
+                      onClick={handleProposeAliases}
+                      className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-200 u-press"
+                      title={t(web ? 'generateProposalsTitleWeb' : 'generateProposalsTitle')}
+                    >
+                      <Wand2 size={12} /> {t('generateProposals')}
+                    </button>
+                  )}
                 </div>
               }
             >
@@ -1079,23 +1129,14 @@ export default function AiTags({
             </p>
 
             {aliasing && aliasProgress && (
-              <div className="px-1 mb-2">
-                <div className="h-1.5 rounded-full bg-[#1a1a1a] overflow-hidden">
-                  <div
-                    className="h-full rounded-full u-progress"
-                    style={{
-                      width: `${aliasProgress.total ? Math.round((aliasProgress.done / aliasProgress.total) * 100) : 5}%`,
-                      backgroundColor: ACCENT,
-                    }}
-                  />
-                </div>
-                <p className="text-[10px] text-gray-500 mt-1 tabular-nums">
-                  {t('analyzingTags', {
-                    done: aliasProgress.done,
-                    total: aliasProgress.total || '…',
-                  })}
-                </p>
-              </div>
+              <TaxonomyProgress
+                progress={aliasProgress}
+                label={t('aliases')}
+                legacyMessage={t('analyzingTags', {
+                  done: aliasProgress.done,
+                  total: aliasProgress.total || '…',
+                })}
+              />
             )}
 
             <div className="space-y-1.5">
@@ -1104,14 +1145,15 @@ export default function AiTags({
                   <p className="text-xs text-gray-600 mb-2">
                     {t(web ? 'noAliasesWeb' : 'noAliases')}
                   </p>
-                  {!web && (
+                  {
                     <button
+                      data-testid="propose-aliases-empty-btn"
                       onClick={handleProposeAliases}
                       className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs text-white bg-[#7B5CFF] hover:bg-[#5A3DDE] u-press"
                     >
                       <Wand2 size={13} /> {t('generateProposals')}
                     </button>
-                  )}
+                  }
                 </div>
               )}
               {aliases.map((a) => (

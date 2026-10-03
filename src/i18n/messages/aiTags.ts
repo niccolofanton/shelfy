@@ -14,6 +14,17 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    clustersUpdated: 'Cluster aggiornati. Rivedi le proposte.',
+    aliasesUpdated: 'Alias aggiornati. Rivedi le proposte.',
+    taxonomyWaiting: 'In attesa del tuo nodo AI',
+    taxonomyQueued: 'Job in coda',
+    'taxonomyStage.embed': 'Preparo i tag {done}/{total}',
+    'taxonomyStage.group': 'Raggruppo i tag',
+    'taxonomyStage.refine': 'Rivedo i gruppi {done}/{total}',
+    'taxonomyStage.aliases': 'Preparo gli alias {done}/{total}',
+    'taxonomyStage.complete': 'Completato',
+    regenerateTitleWeb: 'Rigenera i cluster con il tuo nodo AI',
+    generateProposalsTitleWeb: 'Genera proposte di alias con il tuo nodo AI',
     noClustersWeb: 'Nessun cluster da rivedere.',
     noAliasesWeb: 'Nessun alias proposto.',
     aliasHintWeb:
@@ -158,6 +169,17 @@ export default {
     loadError: 'Impossibile caricare i dati AI',
   },
   en: {
+    clustersUpdated: 'Clusters updated. Review the proposals.',
+    aliasesUpdated: 'Aliases updated. Review the proposals.',
+    taxonomyWaiting: 'Waiting for your AI node',
+    taxonomyQueued: 'Job queued',
+    'taxonomyStage.embed': 'Preparing tags {done}/{total}',
+    'taxonomyStage.group': 'Grouping tags',
+    'taxonomyStage.refine': 'Reviewing groups {done}/{total}',
+    'taxonomyStage.aliases': 'Preparing aliases {done}/{total}',
+    'taxonomyStage.complete': 'Complete',
+    regenerateTitleWeb: 'Regenerate clusters with your AI node',
+    generateProposalsTitleWeb: 'Generate alias proposals with your AI node',
     noClustersWeb: 'No clusters to review.',
     noAliasesWeb: 'No proposed aliases.',
     aliasHintWeb:
