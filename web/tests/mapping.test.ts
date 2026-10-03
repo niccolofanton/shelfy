@@ -165,6 +165,20 @@ describe('bulk/trash selector (P1-11/P1-14)', () => {
     expect(noExceptions).not.toHaveProperty('exceptKeys');
     expect(noExceptions.filter).toMatchObject({ trash: true });
   });
+
+  it('toPostSelector: the filter carries only the members that are set (F11)', () => {
+    const { filter } = toPostSelector({
+      filter: { platform: 'instagram', search: '  ', concepts: [], collectionId: undefined },
+    });
+    expect(filter).toEqual({ platform: 'instagram' });
+    for (const value of Object.values(filter ?? {})) {
+      expect(value).not.toBeNull();
+      expect(value).not.toEqual([]);
+      expect(value).not.toEqual('');
+    }
+    // An empty query selects everything only as an explicit, empty filter object.
+    expect(toPostSelector({ filter: {} }).filter).toEqual({});
+  });
 });
 
 describe('media references', () => {

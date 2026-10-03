@@ -145,9 +145,22 @@ export function toFilterParams(query: PostQuery): Schemas['FilterParams'] {
 
 // A `BulkSelector` (ShelfyClient's transport-neutral shape) as the API's
 // `PostSelector` (P1-03/P1-11): exactly one of `keys` or `filter`.
+// A selector's filter carries only the members that are set: the server refuses
+// a null, blank or empty member there (F11), so that a misspelled or missing
+// field can never widen a destructive action to the whole library.
+function compactFilter(filter: Schemas['FilterParams']): Schemas['FilterParams'] {
+  const set = Object.entries(filter).filter(
+    ([, value]) =>
+      value != null &&
+      !(typeof value === 'string' && value.trim() === '') &&
+      !(Array.isArray(value) && value.length === 0),
+  );
+  return Object.fromEntries(set) as Schemas['FilterParams'];
+}
+
 export function toPostSelector(selector: BulkSelector): Schemas['PostSelector'] {
   if (selector.filter) {
-    const out: Schemas['PostSelector'] = { filter: toFilterParams(selector.filter) };
+    const out: Schemas['PostSelector'] = { filter: compactFilter(toFilterParams(selector.filter)) };
     if (selector.exceptKeys?.length) out.exceptKeys = selector.exceptKeys;
     return out;
   }
