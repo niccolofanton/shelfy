@@ -345,6 +345,21 @@ impl Shared {
         Ok(Enqueued { job, created })
     }
 
+    pub(super) fn admit_committed(&self, row: &JobRow) {
+        if row.state == JobState::Queued {
+            self.queues().add(
+                row.id,
+                &row.kind,
+                &row.user_id,
+                row.priority,
+                row.run_at,
+                self.clock.now_ms(),
+            );
+            self.wake.notify_one();
+        }
+        self.publish(row);
+    }
+
     pub(super) async fn get(&self, user_id: &str, id: i64) -> Result<Option<JobRow>, ApiError> {
         let control = Arc::clone(&self.control);
         let user = user_id.to_owned();

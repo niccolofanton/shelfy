@@ -519,6 +519,54 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/exports': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['listExports'];
+    put?: never;
+    post: operations['startExport'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/exports/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete: operations['deleteExport'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/exports/{id}/download': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get: operations['downloadExport'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/extension/config': {
     parameters: {
       query?: never;
@@ -2560,6 +2608,21 @@ export interface components {
       | 'provider.status'
       | 'sync.progress'
       | 'ai.stream';
+    /** @description A live export and its worker, polled through the jobs API. */
+    Export: {
+      /**
+       * Format: int64
+       * @description Absent while the worker builds the bundle.
+       */
+      bytes?: number | null;
+      /** Format: int64 */
+      createdAt: number;
+      /** Format: int64 */
+      expiresAt: number;
+      id: string;
+      /** Format: int64 */
+      jobId: number;
+    };
     /**
      * @description What `GET /api/v1/extension/config` answers: the extension's minimum
      *     version, kill switches, pacing and stop thresholds (contract C3). Data
@@ -5818,6 +5881,121 @@ export interface operations {
         content: {
           'text/event-stream': string;
         };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  listExports: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Live bundles, at most one. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Export'][];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  startExport: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Export queued or existing live bundle. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['Export'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  deleteExport: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Bundle deleted and worker cancelled. */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  downloadExport: {
+    parameters: {
+      query?: never;
+      header?: {
+        /** @description Single byte range. */
+        Range?: string | null;
+      };
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description ZIP64 bundle. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/zip': unknown;
+        };
+      };
+      /** @description Requested byte range. */
+      206: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/zip': unknown;
+        };
+      };
+      /** @description Unsatisfiable range. */
+      416: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       default: components['responses']['Problem'];
     };

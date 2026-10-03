@@ -279,6 +279,12 @@ impl Jobs {
         self.shared.enqueue(job).await
     }
 
+    /// Admits a job inserted atomically with feature metadata in the control DB.
+    /// The caller must pass a committed row; boot recovery covers a crash before admission.
+    pub(crate) fn admit_committed(&self, row: &JobRow) {
+        self.shared.admit_committed(row);
+    }
+
     /// The job `id` of `user_id`.
     ///
     /// # Errors
@@ -433,3 +439,5 @@ pub(crate) fn row_post_key(payload_json: &str) -> Option<String> {
         .as_ref()
         .and_then(post_key)
 }
+
+pub mod export;

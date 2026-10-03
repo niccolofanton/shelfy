@@ -89,6 +89,24 @@ fn invalid(reason: impl Into<String>) -> Invalid {
 /// [`Invalid::Bundle`] with the first rule the file breaks;
 /// [`Invalid::Sqlite`] when it cannot be read at all.
 pub fn validate(path: &Path, limits: &BundleLimits) -> Result<BundleFacts, Invalid> {
+    validate_with_origin(path, limits, false)
+}
+
+/// Checks a v2 export snapshot through the migration validator. The schema,
+/// integrity, foreign keys, types, roles and byte caps are identical; exports
+/// also carry native CAS origins and unreferenced masters for lossless recovery.
+///
+/// # Errors
+/// The same validation failures as [`validate`].
+pub fn validate_export(path: &Path, limits: &BundleLimits) -> Result<BundleFacts, Invalid> {
+    validate_with_origin(path, limits, true)
+}
+
+fn validate_with_origin(
+    path: &Path,
+    limits: &BundleLimits,
+    export: bool,
+) -> Result<BundleFacts, Invalid> {
     let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -174,7 +192,15 @@ pub fn validate(path: &Path, limits: &BundleLimits) -> Result<BundleFacts, Inval
             .ok_or_else(|| invalid(format!("object {id}: size out of range")))?;
         let role =
             parse_role(&role).ok_or_else(|| invalid(format!("object {id}: unknown role")))?;
-        if origin != "migration" || unreferenced.is_some() {
+        let origin_valid = if export {
+            matches!(
+                origin.as_str(),
+                "migration" | "server" | "extension" | "upload" | "capture"
+            )
+        } else {
+            origin == "migration" && unreferenced.is_none()
+        };
+        if !origin_valid {
             return Err(invalid(format!(
                 "object {id}: not a migrated, referenced object"
             )));
@@ -284,6 +310,35 @@ mod tests {
         assert_eq!(facts.objects[0].kind, MediaKind::Jpeg);
         assert_eq!(facts.objects[0].digest, Digest::from_bytes([7; 32]));
         assert!(facts.summary.is_object());
+    }
+
+    #[test]
+    fn export_policy_accepts_native_unreferenced_objects_but_keeps_type_and_origin_checks() {
+        for origin in ["migration", "server", "extension", "upload", "capture"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = library(dir.path());
+            let conn = Connection::open(&path).unwrap();
+            object(&conn, &[1; 32], "jpg", "image/jpeg", origin);
+            conn.execute("UPDATE media_objects SET unreferenced_since=1", [])
+                .unwrap();
+            assert!(validate(&path, &BundleLimits::default()).is_err());
+            assert_eq!(
+                validate_export(&path, &BundleLimits::default())
+                    .unwrap()
+                    .objects
+                    .len(),
+                1
+            );
+            conn.execute("UPDATE media_objects SET origin='outside-store'", [])
+                .unwrap();
+            assert!(validate_export(&path, &BundleLimits::default()).is_err());
+            conn.execute(
+                "UPDATE media_objects SET origin='server',mime='text/html'",
+                [],
+            )
+            .unwrap();
+            assert!(validate_export(&path, &BundleLimits::default()).is_err());
+        }
     }
 
     #[test]

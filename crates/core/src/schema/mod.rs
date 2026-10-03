@@ -126,6 +126,10 @@ const CONTROL_MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/control/0004_extension_installs.sql"),
         comment: "control schema v4: api_tokens.install_hash",
     },
+    Migration {
+        sql: include_str!("../../migrations/control/0005_exports.sql"),
+        comment: "control schema v5: export bundles",
+    },
 ];
 
 /// Which database a connection belongs to.

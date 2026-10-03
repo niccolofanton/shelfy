@@ -596,6 +596,7 @@ pub fn fixture_control(conn: &Connection) {
                            max_attempts, run_at, created_at, updated_at)
          VALUES ('{user}', 'archive.drain', 'archive.drain', 'queued', 100, '{{}}', 0, 5,
                  {NOW}, {NOW}, {NOW});
+         INSERT INTO exports (id,user_id,job_id,created_at,expires_at,estimated_bytes,bytes) VALUES ('01J9Z3B8K4QW6TFX0V7G2N5RCE','{user}',1,{NOW},{NOW}+604800000,4096,2048);
          INSERT INTO queue_state (user_id, kind, paused) VALUES ('{user}', 'ai.drain', 1);
          INSERT INTO uploads (id, user_id, purpose, length, upload_offset, meta_json, created_at, expires_at)
          VALUES ('01J9Z3B8K4QW6TFX0V7G2N5RCC', '{user}', 'bookmark', 2048, 1024, '{{}}', {NOW},

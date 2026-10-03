@@ -42,6 +42,7 @@ pub fn registry() -> Registry {
         .register(ai_drain::kind())
         .register(usage::kind())
         .register(migrate::kind())
+        .register(super::export::kind())
         .register(bulk::kind())
         .register(purge::kind())
         .register(hydrate::kind())

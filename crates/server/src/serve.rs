@@ -331,6 +331,7 @@ async fn maintenance(state: AppState, metrics: PrometheusHandle, token: Cancella
             _ = disk.tick() => telemetry::metrics::sample_disk(&state).await,
             _ = housekeeping.tick() => {
                 crate::migrations::housekeeping::sweep(&state, crate::ids::now_ms()).await;
+                crate::exports::sweep(&state, crate::ids::now_ms()).await;
             }
         }
     }

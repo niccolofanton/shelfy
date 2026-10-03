@@ -17,6 +17,7 @@ secrecy.workspace = true
 zeroize.workspace = true
 clap = { workspace = true, features = ["env"] }
 futures-util.workspace = true
+fs2 = "0.4.3"
 getrandom.workspace = true
 httpdate.workspace = true
 lettre.workspace = true
@@ -65,6 +66,7 @@ utoipa-axum.workspace = true
 webauthn-rs.workspace = true
 webauthn-rs-proto.workspace = true
 webpki-roots.workspace = true
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2", "deflate-flate2-zlib-rs"] }
 
 [features]
 # Tests only (F15): `Egress::loopback_for_tests` and `AiTransport::with_loopback_for_tests`

@@ -858,6 +858,149 @@
         }
       }
     },
+    "/api/v1/exports": {
+      "get": {
+        "tags": ["exports"],
+        "operationId": "listExports",
+        "responses": {
+          "200": {
+            "description": "Live bundles, at most one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Export"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      },
+      "post": {
+        "tags": ["exports"],
+        "operationId": "startExport",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "A key you choose for this request, 1–255 visible ASCII characters\n(a UUID works). Sending the same request again with the same key\nwithin 24 hours returns the first response, marked\n`Idempotent-Replayed: true`, instead of acting twice. Reusing a key\nfor another request answers 422 `validation_failed`; while the first\nrequest is still running, 409 `conflict`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Export queued or existing live bundle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Export"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/exports/{id}": {
+      "delete": {
+        "tags": ["exports"],
+        "operationId": "deleteExport",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Bundle deleted and worker cancelled."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
+    "/api/v1/exports/{id}/download": {
+      "get": {
+        "tags": ["exports"],
+        "operationId": "downloadExport",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "description": "Single byte range.",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ZIP64 bundle.",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "206": {
+            "description": "Requested byte range.",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "416": {
+            "description": "Unsatisfiable range."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ]
+      }
+    },
     "/api/v1/extension/config": {
       "get": {
         "tags": ["extension"],
@@ -5493,6 +5636,34 @@
           "sync.progress",
           "ai.stream"
         ]
+      },
+      "Export": {
+        "type": "object",
+        "description": "A live export and its worker, polled through the jobs API.",
+        "required": ["id", "jobId", "createdAt", "expiresAt"],
+        "properties": {
+          "bytes": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "Absent while the worker builds the bundle.",
+            "minimum": 0
+          },
+          "createdAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "expiresAt": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "jobId": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
       },
       "ExtensionConfig": {
         "type": "object",

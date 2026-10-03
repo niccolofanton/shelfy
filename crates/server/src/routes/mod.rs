@@ -354,6 +354,11 @@ pub const IDEMPOTENT_ROUTES: &[IdempotentRoute] = &[
     },
     IdempotentRoute {
         method: Method::POST,
+        path: "/api/v1/exports",
+        body_bytes: RouteLimits::STANDARD.body_bytes,
+    },
+    IdempotentRoute {
+        method: Method::POST,
         path: "/api/v1/ingest/batches",
         body_bytes: RouteLimits::INGEST.body_bytes,
     },
@@ -457,6 +462,9 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(migrations::find_missing_objects))
         .routes(routes!(migrations::start_migration))
         .routes(routes!(migrations::get_migration))
+        .routes(routes!(exports::start_export, exports::list_exports))
+        .routes(routes!(exports::delete_export))
+        .routes(routes!(exports::download_export))
         .merge(auth::router())
         .merge(passkeys::router())
         .merge(reauth::router())
@@ -661,3 +669,5 @@ mod tests {
         assert_eq!(before, after);
     }
 }
+
+pub mod exports;
