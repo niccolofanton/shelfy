@@ -2,7 +2,7 @@
 
 ## Perimetro e significato degli stati
 
-- **Snapshot Git verificato:** `/Users/fant/work/experiments/shelfy-web-local/integration`, branch `web/foundations`, HEAD `11cb5b9`; include P2-14/F22 `30b4e97` e F20 `cc4f594`.
+- **Snapshot Git verificato:** `/Users/fant/work/experiments/shelfy-web-local/integration`, branch `web/foundations`, HEAD `c2147ca`; include P2-14/F22 `30b4e97` e F20 `cc4f594`.
 - **Perimetro:** tutte le **115 schede P1–P4**, più **F1–F22, UX-0–UX-10, X1–X7, P0 e P5** fuori conteggio. P6 storico è sostituito da X5 per E7/E10.
 - **Fonti:** [EXECUTION](../EXECUTION.md), schede [P1](../phases/P1.md), [P2](../phases/P2.md), [P3](../phases/P3.md), [P4](../phases/P4.md), [piano](../IMPLEMENTATION-PLAN.md), [continuazione](continuation-2026-10-03.md), [passi live](live-steps.md), [audit UX](../reviews/ux-audit.md), Git e worktree. Le tabelle storiche sono riconciliate con l’evidenza nuova.
 - **Integrata:** codice nel ramo comune, o azione operativa conclusa nel registro; P4-01 è assorbita da P2-04. Non implica distribuzione o accettazione finale.
@@ -21,14 +21,14 @@
 | Fase | Integrate | Pending in corso | Pending pronte | Pending prese in carico, da avviare | Da fare | Eliminate | Totale |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | P1 — Libreria web | 25 | 0 | 0 | 0 | 1 | 1 | 27 |
-| P2 — Ingest e sync | 14 | 1 | 2 | 0 | 8 | 0 | 25 |
-| P3 — AI | 6 | 5 | 2 | 0 | 18 | 0 | 31 |
-| P4 — Capture, video e dati | 9 | 1 | 1 | 6 | 15 | 0 | 32 |
-| **Totale** | **54** | **7** | **5** | **6** | **42** | **1** | **115** |
+| P2 — Ingest e sync | 16 | 1 | 0 | 0 | 8 | 0 | 25 |
+| P3 — AI | 11 | 4 | 0 | 1 | 15 | 0 | 31 |
+| P4 — Capture, video e dati | 10 | 3 | 0 | 4 | 15 | 0 | 32 |
+| **Totale** | **62** | **8** | **0** | **5** | **39** | **1** | **115** |
 
-- **Pending complessive: 18.** F21 pronta resta fuori dal conteggio delle fasi.
-- **Schede aperte: 60**, incluse 5 pronte da integrare. Il conteggio non misura lavoro pesato o accettazione live.
-- **Correzione al vecchio tracking:** P2-14/F22 integrate; P2-12/P2-13 e UX-4/UX-6 già integrate dai commit cloud. F20 integrato, con CI remota nuova ancora da verificare.
+- **Pending complessive: 13.** F21 integrata resta fuori dal conteggio delle fasi.
+- **Schede aperte: 52**, incluse 0 pronte da integrare. Il conteggio non misura lavoro pesato o accettazione live.
+- **Correzione al vecchio tracking:** P2-14/F22 integrate; P2-12/P2-13 e UX-4/UX-6 già integrate dai commit cloud. F20 integrato e verificato nella CI 37144780896; Lighthouse resta F18.
 
 
 ## P1 — Libreria web: tutte le schede
@@ -81,8 +81,8 @@
 | P2-12 | Connessioni: pairing, stato estensione e Shortcut | Integrata | Commit integrato: `ffa06ba`. Bridge pairing e Shortcut verificati con fakes; verifica vera ancora aperta. | P2-03, P2-06 |
 | P2-13 | Controller sync estensione: replay, scroll e resume | Integrata | Commit integrato: `262bf7e`, `139c480`, `512f96c`, `227f9cf`. Smoke 25/25 su pagine sintetiche; prime sync vere in P2-23. | P2-06 |
 | P2-14 | API task estensione, lease e upload media | Integrata | Commit integrato: `3b538de`, `4a65aee`, `30b4e97`. F22 integrato: completion valida eligibility corrente e lease holder; non più pending. | P2-03, P2-10, P2-11; P4-08 (L12/L23), F22 |
-| P2-15 | Sync sorgenti, promemoria e avvio dal web | Pending — pronta | 8e0efb3; planner e promemoria, 275 test e 15 check browser sintetici. Integrazione ancora da fare. | P2-09, P2-13 |
-| P2-16 | Overlay selezione post nell’estensione | Pending — pronta | 3834a75; overlay e batch, test/typecheck/build/smoke verdi. Integrazione ancora da fare. | P2-06, P2-09 |
+| P2-15 | Sync sorgenti, promemoria e avvio dal web | Integrata | 5246146; planner e promemoria integrati. Review: fix vincolo account in corso con P2-17, necessario prima del deploy. | P2-09, P2-13 |
+| P2-16 | Overlay selezione post nell’estensione | Integrata | 1c98ee8 + 2d2cdc8; overlay e batch vincolati al pairing; review indipendente e verifica combinata 448 test + typecheck verdi. | P2-06, P2-09 |
 | P2-17 | Worker estensione: upload, refresh ed idratazione Instagram | Pending — in corso | Lane Codex attiva, discendente planner: refresh URL scadute, upload poster e task leaseId. Nessuna azione social live ancora. | P2-05, P2-13, P2-14, P2-15 |
 | P2-18 | Controlli sync web ed attività di sincronizzazione | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P2-08, P2-09, P2-12, P2-15, P1-06, P1-14 |
 | P2-19 | E2E estensione in CI e strumenti parità | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P2-09–P2-17, P1-21 |
@@ -98,32 +98,32 @@
 | ID | Implementazione concreta | Stato | Evidenza e parte residua | Dipendenze |
 |---|---|---|---|---|
 | P3-01 | Adapter AI OpenAI-compatible, Anthropic, Whisper e stub | Integrata | Commit integrato: `90dfa24`, `baaed4e`. Adapter/stub, 135+ test e probe nodo nel registro. | — |
-| P3-02 | Vault chiavi e master key | Pending — pronta | 1712f9b rebased b3da626; vault/rotation, review indipendente senza finding. Verifica sul nuovo tip e integrazione da chiudere. | P1-12 |
+| P3-02 | Vault chiavi e master key | Integrata | f03c457; vault e rotazione integrati dopo review; ai_service11/key_vault5 verdi. | P1-12 |
 | P3-03 | Prompt/schemi AI v2 condivisi e core catalogo | Integrata | Commit integrato: `8a803be`, `5fc8c93`, `151ba35`. 22 richieste desktop e 154 casi golden nel registro; scorer condiviso. | P1-03, P1-10 |
 | P3-04 | Dati tag: explorer, salute, merge, rename e facet | Pending — in corso | Lane Codex attiva, discendente P3-06; gestione tag e API. | P1-03, P1-05; sequenza dopo P3-06 |
 | P3-05 | Ranking tag nella ricerca | Integrata | 27262f6 + e7a715a; ranking IDF e alias coerenti anche nei selettori della coda AI. Release20k tag-only p95 0,61 ms. | P1-05 |
-| P3-06 | Core cluster/alias e API di revisione | Pending — pronta | 0dd1b52; core cluster/alias e review API, golden/test/clippy verdi. Rebase con registri P3-13 prima della integrazione. | P1-03 |
-| P3-07 | Retrieval chat e pool search-eval | Pending — in corso | Lane Codex avviata dopo ranking integrato; retrieval e search-eval. | P1-05 |
+| P3-06 | Core cluster/alias e API di revisione | Integrata | 0aa28f9; core cluster/alias e API di revisione integrati, golden/test/clippy verdi. | P1-03 |
+| P3-07 | Retrieval chat e pool search-eval | Integrata | 2548281; retrieval indicizzato, cache isolata per utente, parser e pool parità. Sul tip combinato 6 retrieval + 32 golden + 11 search-eval passano; 2 generatori fixture ignorati intenzionalmente. | P1-05 |
 | P3-08 | Client AI comune desktop | Integrata | Commit integrato: `27985d1`. Client AI comune presente; sul web capacità disattivate finché le API non arrivano. | P1-04 |
 | P3-09 | Servizio AI e provider operatore | Integrata | Commit integrato: `25de428`. Routing vision/testo, pacing, breaker, health, usage, consenso ed eventi provider. | P3-01 |
 | P3-10 | SPIKE-6 completo sul nodo owner | Da fare | Probe preliminari esistono; SPIKE-6 e gate completo non conclusi. | P3-01, P3-03 |
 | P3-11 | Esploratore tag web | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-04, P3-06, P3-08, P1-06 |
 | P3-12 | Bridge eval e cluster-eval | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-05, P3-06, P3-07 |
 | P3-13 | Catalogazione social: ai.drain, analyze e coda | Integrata | 7b4bd8b; drain persistente, API analyze/queue, admin e guardie anti-stale/manual edit. Review indipendente chiusa; deploy/run owner ancora da fare, CPU budget non attestato. | P3-03, P3-09 |
-| P3-14 | Ricerca conversazionale tramite SSE | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-03, P3-07, P3-09 |
+| P3-14 | Ricerca conversazionale tramite SSE | Pending — in corso | Lane Codex attiva: chat SSE sul retrieval integrato; coordinamento servizio con BYOK e settings. | P3-03, P3-07, P3-09 |
 | P3-15 | API suggerimenti a chip | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-03, P3-07, P3-09 |
-| P3-16 | Job clustering ed alias | Pending — in corso | Lane Codex attiva; ai.run cluster/alias con persistenza e cancellazione parziale. | P3-03, P3-06, P3-09 |
+| P3-16 | Job clustering ed alias | Integrata | 78446c9; job cluster/alias persistenti, ripresa offline, cancellazione e cache embedding; review lead completata, 20 test combinati run/queue/OpenAPI verdi. | P3-03, P3-06, P3-09 |
 | P3-17 | Dettatura e trascrizione | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-08, P3-09 |
-| P3-18 | Impostazioni AI: provider, routing, utilizzo e stato | Pending — in corso | Lane Codex attiva; UI e allowlist impostazioni AI. | P3-08, P3-09 |
+| P3-18 | Impostazioni AI: provider, routing, utilizzo e stato | Integrata | b940770 + c2147ca; sei impostazioni AI allowlisted, stato provider e routing UI; 288 regressioni AI e smoke real-server verdi nella lane, 27 test account/service/OpenAPI verdi sul tip combinato. | P3-08, P3-09 |
 | P3-19 | BYOK: API, chiavi, test e consenso | Pending — in corso | Lane Codex attiva, discendente vault; API BYOK, test/consenso e routing. | P3-02, P3-09 |
-| P3-20 | UI coda AI, pannello post ed analisi selezione | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-13, P3-18, P1-06, P1-14 |
+| P3-20 | UI coda AI, pannello post ed analisi selezione | Pending — in corso | Lane Codex avviata sulla UI coda, pannello e analisi selezione; discendente P3-18. | P3-13, P3-18, P1-06, P1-14 |
 | P3-21 | Gallery AI: suggerimenti e facet dinamici | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-04, P3-08, P3-15, P1-14 |
 | P3-22 | Interfaccia AI Search web | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-05, P3-14, P3-17, P1-06 |
 | P3-23 | Avvio cluster ed alias dalla UI | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-11, P3-16 |
 | P3-24 | Extract-eval sulla pipeline web | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-13 |
 | P3-25 | Operazioni AI: dashboard, alert, stack test e runbook | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-09, P3-13 |
 | P3-26 | Wizard UI di collegamento provider BYOK | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-18, P3-19 |
-| P3-27 | Catalogazione siti e controllo qualità screenshot | Da fare | Serve ingest capture P4-14; servizio capture Node da solo non chiude catalogazione siti. | P3-13, P4-14 ingest capture |
+| P3-27 | Catalogazione siti e controllo qualità screenshot | Pending — presa in carico, da avviare | Assegnata alla lane P3-16 dopo la consegna; deve fornire enqueue catalogo web a P4-14. Il drain social non sostituisce questo requisito. | P3-13, P4-14 ingest capture |
 | P3-28 | Deploy AI sul VPS, nodo e catalogazione almeno 5.000 post | Da fare | Deploy drain/setup provider e classificazione live non avviati; servono F20, backup, gold valido ed Hermes verificato. | P3-13, P3-18, P3-20, P3-25 |
 | P3-29 | Gate qualitativi reali AI | Da fare | Gate reali da concludere; self-check gold non è qualità del nodo. | P3-10, P3-12, P3-16, P3-24, P3-28 |
 | P3-30 | Ritaratura pesi FTS sui campi AI | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P3-05, P3-07, P3-12, P3-28 |
@@ -143,10 +143,10 @@
 | P4-08 | Upload tus web con sessioni, scope e purpose | Integrata | Commit integrato: `46c6ba1`, `4a93d13`. Sessioni/scopi tus, purpose registry ed upload monouso. | — |
 | P4-09 | Vista Attività/Jobs e controlli code | Integrata | Commit integrato: `67d1c5c`. Paging/SSE/queue controls; rifinita da UX-6 e F19. | — |
 | P4-10 | Import v1: desktop, array ed export estensione | Pending — in corso | Lane Codex attiva; importv1 in worktree isolato. | P4-08 (dipendenza tardiva) |
-| P4-11 | Export v2 di libreria ed oggetti | Pending — pronta | f817d84; export ZIP64 lossless, recovery/TTL/range; 116 test pass, review indipendente in corso. CONTROL0005 prima F21 CONTROL0006. | — |
+| P4-11 | Export v2 di libreria ed oggetti | Integrata | 44b7518; export ZIP64 lossless con recovery/TTL/range, review indipendente conclusa. CONTROL0005 exports e CONTROL0006 token libreria integrati insieme; test mirati combinati verdi. | — |
 | P4-12 | Garbage collection oggetti e risorse | Pending — presa in carico, da avviare | Presa in carico E20; nessun risultato pubblicato recuperato.  GC, retention, sweep temporanei e quote ancora da chiudere. | — |
-| P4-13 | Immagine capture, seccomp ed isolamento | Pending — presa in carico, da avviare | Presa in carico E20; nessun risultato pubblicato recuperato.  Spike sandbox presente; immagine/isolation di produzione ancora da completare. | P4-02, P4-03 |
-| P4-14 | Job capture ed ingest artefatti | Pending — presa in carico, da avviare | Presa in carico E20; nessun risultato pubblicato recuperato.  Ingest NDJSON/artefatti, O_NOFOLLOW, reservation e job; deadline oltre budget capture 12 minuti (L21). | P4-03, P4-04, P4-07 |
+| P4-13 | Immagine capture, seccomp ed isolamento | Pending — in corso | Lane Codex attiva: immagine, seccomp e isolamento; Docker locale vecchio non prova isolamento host, verifica VPS ancora necessaria. | P4-02, P4-03 |
+| P4-14 | Job capture ed ingest artefatti | Pending — in corso | Lane Codex attiva: ingest artefatti, O_NOFOLLOW, quote e cancel fence. Auto-catalogo web dipende dalla nuova seam P3-27. | P4-03, P4-04, P4-07 |
 | P4-15 | API siti web | Da fare | Core siti pronto; esposizione API da fare, dopo P4-14 nella sequenza lead. | P4-04, P4-05; sequenza dopo P4-14 |
 | P4-16 | Video on demand: resolver, cache e conserva offline | Pending — presa in carico, da avviare | Presa in carico E20; nessun risultato pubblicato recuperato.  Cache/keep offline da implementare; CONTROL dopo exports (L20); yt-dlp Instagram abilitato di default (L22). | P4-01, P4-06, P4-07, P1-11 |
 | P4-17 | Rimozione copie archiviate e video conservati | Da fare | Quote liberate al GC; sequenza lead dopo P4-16. | P4-07, P1-11; sequenza dopo P4-16 |
@@ -190,7 +190,7 @@
 | F18 | Ridurre LCP Gallery sotto il budget sul cold load slow-4G | Pending — presa in carico, da avviare | E20; misura storica 3,9–4,6 s contro 2,5 s; Lighthouse non bloccante. Gate finale da chiudere nel pass UX/P5. |
 | F19 | Refresh riepilogo coda dopo cancel/retry di un singolo job | Integrata | `d305f7d`; test real-server non più fixme e unit useJobs; verifica della release ancora da eseguire. |
 | F20 | Rendere deterministici readiness SSRF ed ordinamento cancellazione video in CI | Integrata | `cc4f594`; review lead e verifiche locali: **92/92 SSRF** (89 rifiuti + 3 positivi), **38/38 video**, **3/3 cold-start IPv6**, clippy media verde; nuova CI remota non ancora verificata. SSRF resta gate bloccante. |
-| F21 | Token library:read/library:write con registry authz least privilege | Pending — pronta | `6f651ac`, worktree `/Users/fant/.codex/worktrees/f21-api-scopes/shelfy` pulito, branch codex/f21-library-scopes; route/media/OpenAPI/test presenti. **CONTROL 0006_library_tokens attende CONTROL 0005_exports di P4-11**; non è migrazione library. Rebase/test/integrazione dopo export, prima di X5/X6. |
+| F21 | Token library:read/library:write con registry authz least privilege | Integrata | 44b7518; library:read/library:write e registry authz integrati dopo export, CONTROL0006 e fixture v6. Review indipendente completata; token e schema verificati sul tip combinato. |
 | F22 | Rifiutare completion upload forgiate/stale e da holder di lease diverso | Integrata con P2-14 | `30b4e97`: eligibility corrente atomica, binding holder/generazione ed aggiornamento API/test; chiude blocker della review `c16c863`. |
 
 **Conteggio follow-up:** 18 integrati, tre presi in carico da avviare, uno pronto = 22. F12 conserva un passo live aperto pur essendo implementata.
@@ -306,3 +306,12 @@ P5 non è ancora scomposta in schede numerate; questi requisiti rimangono nel pi
 - X1: confronto controllato poster8, prompt originale composite0,416; candidato v3 precision0,917 ma composite0,409 e video0,324: gate complessivo non superato. Esperimento caption hashtag conservati come evidenza debole in corso, senza modificare ancora la policy engine. Nessun full40 dichiarato.
 
 - X1 aggiornamento successivo: v3 + caption weak supera confronto poster8 (composite0,454 vs0,416; video0,370 vs0,351; entityF1 0,700 vs0,556). Validazione38complete+2gated avviata seriale; allineamento policy engine autorizzato, full library non avviata.
+
+## Verifiche aggiornate del lead
+
+- Full Rust sullo snapshot 0aa28f9: 102 suite, 1565 pass, 8 ignorati, zero fallimenti. Le integrazioni successive ricevono verifiche mirate; non sono coperte retroattivamente da quel full run.
+- CI 37144780896 su 85c37a8: test, rust, read-api-budget, SSRF, web-e2e e web-e2e-live verdi; Lighthouse ancora oltre il budget F18.
+- F18: baseline locale LCP 4590 ms; esperimento sulla visibilità immagini 4602 ms, scartato. Chrome DevTools MCP installato e smoke verificato per proseguire la diagnosi.
+- Recupero cover: helper admin 24a3368 integrato e 81 poster verificati in bundle privato; nessun apply live. Il conteggio potenziale non è media già recuperata.
+- OSN f2d209d prepara configurazione AI operatore, segreto cifrato e runbook; health Ornyth dal VPS verificata. Nessun apply o nuovo deploy. Concorrenza inferenza 1.
+- X1: confronto controllato a 8 casi con caption weak migliora composite .416→.454, entity F1 .556→.700. Full40 in corso; non è ancora prova qualitativa completa. Tagging owner non avviato.
