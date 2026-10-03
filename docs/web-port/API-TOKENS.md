@@ -39,7 +39,8 @@ when the request carries a valid session. Missing/invalid credentials answer
 `library:read`. Existing `lookup` and `links:create` tokens still reach their
 respective narrow routes. Tag reading/filtering is part of posts and search;
 tag editing is part of post patch and bulk operations. There is no standalone
-tag endpoint in this API version.
+tag CRUD endpoint among the library-token routes. Alias and cluster review
+endpoints retain their cookie-only policy.
 
 Account settings, provider credentials, token/session management, passkeys,
 re-authentication, jobs/queues and other cookie-only routes remain unavailable
