@@ -551,7 +551,10 @@ async fn tokens_need_a_recent_sign_in_and_show_once() {
     assert_eq!(api_token["label"], "Chrome");
     assert_eq!(api_token["scopes"], json!(["lookup"]));
     assert_eq!(api_token["lastUsedAt"], Value::Null);
-    assert_eq!(api_token["expiresAt"], Value::Null);
+    assert_eq!(
+        api_token["expiresAt"].as_i64().unwrap() - api_token["createdAt"].as_i64().unwrap(),
+        90 * 24 * 3600 * 1_000
+    );
     let id = api_token["id"].as_str().unwrap().to_owned();
 
     // Stored as its hash; the list never shows the value again.

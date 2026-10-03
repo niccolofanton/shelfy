@@ -13,6 +13,7 @@
 //! It needs the same recent sign-in as creating a token.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -105,7 +106,7 @@ pub struct ApiToken {
     /// minute).
     #[schema(required = true)]
     pub last_used_at: Option<i64>,
-    /// When it stops working, unix ms; `null` until revoked.
+    /// When it stops working, unix ms; `null` for existing non-expiring tokens.
     #[schema(required = true)]
     pub expires_at: Option<i64>,
 }
@@ -131,6 +132,12 @@ pub struct ApiTokenList {
     pub items: Vec<ApiToken>,
 }
 
+/// New account tokens default to 90 days, bounding unattended credentials while
+/// allowing quarterly renewal. This does not change pairing or existing tokens.
+pub const DEFAULT_TOKEN_TTL_DAYS: u16 = 90;
+/// Largest validity allowed for a newly account-created token.
+pub const MAX_TOKEN_TTL_DAYS: u16 = 365;
+
 /// Body of `POST /api/v1/me/tokens`.
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -146,6 +153,29 @@ pub struct ApiTokenRequest {
     #[serde(default)]
     #[schema(nullable = false)]
     pub scopes: Option<Vec<Scope>>,
+    /// Validity in whole days: 1..365, default 90 when omitted. Never indefinite.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "ttl_days"
+    )]
+    #[schema(nullable = false, minimum = 1, maximum = 365, default = 90)]
+    pub ttl_days: Option<u16>,
+}
+
+fn ttl_days<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<u16>, D::Error> {
+    u16::deserialize(deserializer).map(Some)
+}
+
+fn token_ttl(days: Option<u16>) -> Result<Duration, ApiError> {
+    let days = days.unwrap_or(DEFAULT_TOKEN_TTL_DAYS);
+    if !(1..=MAX_TOKEN_TTL_DAYS).contains(&days) {
+        return Err(ApiError::invalid_field(
+            "ttlDays",
+            "must be between 1 and 365 days",
+        ));
+    }
+    Ok(Duration::from_secs(u64::from(days) * 24 * 3600))
 }
 
 /// A new API token.
@@ -202,6 +232,7 @@ pub async fn list_tokens(
 /// Needs a sign-in or a re-authentication from the last 5 minutes (403
 /// `reauth_required` otherwise). 422 for the kind `migrate` (the migration
 /// CLI signs in with the device flow), for scopes that are not the kind's,
+/// for invalid `ttlDays` (whole days 1..365; omitted means 90),
 /// or for a label over 64 characters; 409 `conflict` when the account holds
 /// 50 working tokens already.
 #[utoipa::path(
@@ -226,6 +257,7 @@ pub async fn create_token(
             "a migrate token comes from the device flow (shelfy-migrate login)",
         ));
     }
+    let ttl = token_ttl(request.ttl_days)?;
     let label = normalize_label(request.label.as_deref())?;
     let scopes = match request.scopes {
         Some(scopes) => scopes,
@@ -244,7 +276,7 @@ pub async fn create_token(
                 kind,
                 scopes: &scopes,
                 label: label.as_deref(),
-                ttl: None,
+                ttl: Some(ttl),
                 via: Via::Account,
                 actor: Some(&user_id),
             };

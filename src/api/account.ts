@@ -88,6 +88,14 @@ export interface AccountSession {
 // client, or the migration tool (which gets a token via a device code).
 export type TokenKind = 'extension' | 'shortcut' | 'migrate' | 'library';
 
+// Account-created tokens expire; pairing and existing tokens have their own policy.
+export const DEFAULT_TOKEN_TTL_DAYS = 90;
+export const TOKEN_TTL_OPTIONS = [7, 30, 90, 365] as const;
+export interface CreateTokenOptions {
+  // Whole days, 1..365. Omitted: the server's 90-day default.
+  ttlDays?: number;
+}
+
 export interface AccountToken {
   id: string;
   kind: TokenKind;
@@ -212,7 +220,11 @@ export interface AccountApi {
 
   // The working tokens, newest first.
   listTokens(): Promise<AccountToken[]>;
-  createToken(kind: Exclude<TokenKind, 'migrate'>, label?: string): Promise<NewToken>;
+  createToken(
+    kind: Exclude<TokenKind, 'migrate'>,
+    label?: string,
+    options?: CreateTokenOptions,
+  ): Promise<NewToken>;
   revokeToken(id: string): Promise<void>;
 
   // A code for the extension to pair with (after a re-authentication if the

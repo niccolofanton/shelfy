@@ -3,6 +3,8 @@
 // token and setup steps, and the bookmarklet and Android share. A code or a
 // token needs a sign-in from the last 5 minutes: the client asks the user to
 // confirm who they are, then carries on.
+import TokenExpirySelect from './TokenExpirySelect';
+import { DEFAULT_TOKEN_TTL_DAYS } from '../../api/account';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, Globe, MonitorSmartphone, Plus, Puzzle, Smartphone } from 'lucide-react';
 import type {
@@ -76,6 +78,7 @@ function TokenRows({
   empty: string;
 }): React.JSX.Element {
   const t = useT('connections');
+  const ts = useT('settings');
   const { lang } = useLang();
   if (items.length === 0) {
     return (
@@ -94,6 +97,8 @@ function TokenRows({
               {token.lastUsedAt
                 ? t('lastUsed', { date: formatDateTime(token.lastUsedAt, lang) })
                 : t('neverUsed')}
+              {token.expiresAt != null &&
+                ` · ${ts('tokenExpires', { date: formatDateTime(token.expiresAt, lang) })}`}
             </p>
           </div>
           <ConfirmAction
@@ -303,7 +308,7 @@ function ShortcutCard({ account }: { account: AccountApi }): React.JSX.Element {
   const t = useT('connections');
   const failure = useFailureText();
   const tokens = useTokens(account, 'shortcut');
-  const [form, setForm] = useState<{ label: string } | null>(null);
+  const [form, setForm] = useState<{ label: string; ttlDays: number } | null>(null);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<NewToken | null>(null);
   const [copied, setCopied] = useState(false);
@@ -316,7 +321,7 @@ function ShortcutCard({ account }: { account: AccountApi }): React.JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      const token = await account.createToken('shortcut', form.label);
+      const token = await account.createToken('shortcut', form.label, { ttlDays: form.ttlDays });
       setForm(null);
       setCopied(false);
       setCreated(token);
@@ -375,7 +380,7 @@ function ShortcutCard({ account }: { account: AccountApi }): React.JSX.Element {
         )}
 
         {form ? (
-          <form onSubmit={create} data-testid="sc-form" className="flex items-end gap-2">
+          <form onSubmit={create} data-testid="sc-form" className="flex flex-wrap items-end gap-2">
             <label className="flex-1 space-y-1">
               <span className="text-[11px] font-medium text-gray-400">{t('scLabel')}</span>
               <input
@@ -384,9 +389,15 @@ function ShortcutCard({ account }: { account: AccountApi }): React.JSX.Element {
                 maxLength={64}
                 placeholder={t('scLabelPlaceholder')}
                 value={form.label}
-                onChange={(e) => setForm({ label: e.target.value })}
+                onChange={(e) => setForm({ ...form, label: e.target.value })}
               />
             </label>
+            <TokenExpirySelect
+              testId="sc-expiry"
+              value={form.ttlDays}
+              onChange={(ttlDays) => setForm({ ...form, ttlDays })}
+              disabled={busy}
+            />
             <button
               type="submit"
               disabled={busy}
@@ -406,7 +417,7 @@ function ShortcutCard({ account }: { account: AccountApi }): React.JSX.Element {
             className={PRIMARY_BUTTON}
             onClick={() => {
               setCreated(null);
-              setForm({ label: '' });
+              setForm({ label: '', ttlDays: DEFAULT_TOKEN_TTL_DAYS });
             }}
           >
             <Plus size={13} />

@@ -121,14 +121,31 @@ describe('Connections', () => {
     await waitFor(() => expect(account.revokeToken).toHaveBeenCalledWith('e1'));
   });
 
+  it('offers the same expiry choices for Shortcut tokens and sends the selected validity', async () => {
+    const account = renderConnections();
+    fireEvent.click(await screen.findByTestId('sc-new'));
+    const expiry = screen.getByTestId('sc-expiry');
+    expect(
+      within(expiry)
+        .getAllByRole('option')
+        .map((o) => o.getAttribute('value')),
+    ).toEqual(['7', '30', '90', '365']);
+    fireEvent.change(expiry, { target: { value: '365' } });
+    fireEvent.change(screen.getByTestId('sc-label'), { target: { value: 'Phone' } });
+    fireEvent.click(screen.getByTestId('sc-submit'));
+    await waitFor(() =>
+      expect(account.createToken).toHaveBeenCalledWith('shortcut', 'Phone', { ttlDays: 365 }),
+    );
+  });
   it('shows a Shortcut token once, with the request to build', async () => {
     const account = renderConnections();
     fireEvent.click(await screen.findByTestId('sc-new'));
+    expect(screen.getByTestId('sc-expiry')).toHaveValue('90');
     fireEvent.change(screen.getByTestId('sc-label'), { target: { value: 'Phone' } });
     fireEvent.click(screen.getByTestId('sc-submit'));
     const value = (await screen.findByTestId('sc-value')) as HTMLInputElement;
     expect(value.value).toBe('shx_shown_once');
-    expect(account.createToken).toHaveBeenCalledWith('shortcut', 'Phone');
+    expect(account.createToken).toHaveBeenCalledWith('shortcut', 'Phone', { ttlDays: 90 });
     expect(screen.getByTestId('sc-steps').textContent).toContain('/api/v1/links');
     fireEvent.click(screen.getByTestId('sc-done'));
     expect(screen.queryByTestId('sc-value')).toBeNull();

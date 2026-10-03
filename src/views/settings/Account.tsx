@@ -3,6 +3,8 @@
 // sessions and the API tokens. Adding or removing a passkey and creating a
 // token need a sign-in from the last 5 minutes: the client asks the user to
 // confirm who they are, then carries on.
+import TokenExpirySelect from './TokenExpirySelect';
+import { DEFAULT_TOKEN_TTL_DAYS } from '../../api/account';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Check,
@@ -422,9 +424,11 @@ function TokensCard({ account }: { account: AccountApi }): React.JSX.Element {
   const failure = useFailureText();
   const load = useCallback(() => account.listTokens(), [account]);
   const { items, error: loadError, reload } = useList<AccountToken>(load);
-  const [form, setForm] = useState<{ kind: Exclude<TokenKind, 'migrate'>; label: string } | null>(
-    null,
-  );
+  const [form, setForm] = useState<{
+    kind: Exclude<TokenKind, 'migrate'>;
+    label: string;
+    ttlDays: number;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<NewToken | null>(null);
   const [copied, setCopied] = useState(false);
@@ -436,7 +440,7 @@ function TokensCard({ account }: { account: AccountApi }): React.JSX.Element {
     setBusy(true);
     setError(null);
     try {
-      const token = await account.createToken(form.kind, form.label);
+      const token = await account.createToken(form.kind, form.label, { ttlDays: form.ttlDays });
       setForm(null);
       setCopied(false);
       setCreated(token);
@@ -553,7 +557,7 @@ function TokensCard({ account }: { account: AccountApi }): React.JSX.Element {
           data-testid="token-new"
           onClick={() => {
             setError(null);
-            setForm({ kind: 'shortcut', label: '' });
+            setForm({ kind: 'shortcut', label: '', ttlDays: DEFAULT_TOKEN_TTL_DAYS });
           }}
           className={`${BUTTON} mt-4`}
         >
@@ -595,6 +599,12 @@ function TokensCard({ account }: { account: AccountApi }): React.JSX.Element {
               className={INPUT}
             />
           </label>
+          <TokenExpirySelect
+            testId="token-expiry"
+            value={form.ttlDays}
+            onChange={(ttlDays) => setForm({ ...form, ttlDays })}
+            disabled={busy}
+          />
           <div className="flex gap-2">
             <button
               type="submit"

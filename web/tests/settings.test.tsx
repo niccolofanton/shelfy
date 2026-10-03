@@ -176,14 +176,30 @@ describe('Settings → Account', () => {
     const account = renderSettings('/settings/account');
     fireEvent.click(await screen.findByTestId('token-new'));
     fireEvent.change(screen.getByTestId('token-label'), { target: { value: 'iPhone' } });
+    expect(screen.getByTestId('token-expiry')).toHaveValue('90');
     fireEvent.click(screen.getByTestId('token-create'));
     expect(await screen.findByTestId('token-value')).toHaveValue('shx_shown_once');
-    expect(account.createToken).toHaveBeenCalledWith('shortcut', 'iPhone');
+    expect(account.createToken).toHaveBeenCalledWith('shortcut', 'iPhone', { ttlDays: 90 });
     fireEvent.click(screen.getByTestId('token-done'));
     expect(screen.queryByTestId('token-value')).toBeNull();
     expect(document.body.textContent).not.toContain('shx_shown_once');
   });
 
+  it('offers bounded token validity and sends the chosen days', async () => {
+    const account = renderSettings('/settings/account');
+    fireEvent.click(await screen.findByTestId('token-new'));
+    const expiry = screen.getByTestId('token-expiry');
+    expect(
+      within(expiry)
+        .getAllByRole('option')
+        .map((o) => o.getAttribute('value')),
+    ).toEqual(['7', '30', '90', '365']);
+    fireEvent.change(expiry, { target: { value: '7' } });
+    fireEvent.click(screen.getByTestId('token-create'));
+    await waitFor(() =>
+      expect(account.createToken).toHaveBeenCalledWith('shortcut', '', { ttlDays: 7 }),
+    );
+  });
   it('signs out', async () => {
     const account = renderSettings('/settings/account');
     fireEvent.click(await screen.findByTestId('account-sign-out'));

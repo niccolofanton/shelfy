@@ -160,9 +160,10 @@ export function createAccountApi(
       const { items } = await http.get<Schemas['ApiTokenList']>('/api/v1/me/tokens');
       return items.map(toToken);
     },
-    async createToken(kind, label) {
-      const body: Schemas['ApiTokenRequest'] = {
+    async createToken(kind, label, options) {
+      const body: Schemas['ApiTokenRequest'] & { ttlDays?: number } = {
         kind,
+        ...(options?.ttlDays !== undefined ? { ttlDays: options.ttlDays } : {}),
         ...(label?.trim() ? { label: label.trim() } : {}),
       };
       const created = await json<Schemas['CreatedApiToken']>(
