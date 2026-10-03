@@ -12,6 +12,8 @@ name: CI
 # - rust: the Cargo workspace (crates/): rustfmt, clippy with warnings as errors, tests
 #   and cargo-deny, on the toolchain pinned in rust-toolchain.toml. Its tests include
 #   the check that crates/server/openapi.json matches the Rust routes.
+#   The size-limit step (P1-08, plan §6.2) enforces the web app's initial JS budget
+#   (≤220 KB gzip, .size-limit.json) against the build the previous step just produced.
 
 on:
   push:
@@ -37,6 +39,7 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run test:run
       - run: pnpm run web:build
+      - run: pnpm run size-limit
       - run: pnpm exec tsx scripts/golden/run.ts --check
       - run: pnpm exec tsx scripts/api-client/generate.ts --check
 
