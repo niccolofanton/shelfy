@@ -317,7 +317,7 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 | P4-02 | Egress proxy, policy and the SSRF suite | done: the Smokescreen image (15.5 MB, ports 80/443, deny ranges) and the SSRF suite (92 probes, 0 failures) as a CI `ssrf` job; the proxy logs only `requested_host` | `web/p4-02-egress-proxy` (65f4ce0, 81feadb) |
 | P4-03 | Capture service on capture v2 | running (Opus) | `web/p4-03-capture-service` |
 | UX-3 | Gallery: mobile toolbar, filter sheet, selection bar, empty states | running (Opus) | `web/ux-3-gallery` |
-| UX-5 | Post modal as a full-screen sheet | running (Opus) | `web/ux-5-modal` |
+| UX-5 | Post modal as a full-screen sheet | done: on-top portal, full-screen sheet with safe areas, a clean media fallback (platform glyph, Open original, Retry), text-post card, user tags/note split from AI, swipe and header chevrons, menus as bottom sheets; web Playwright 108/108 | `web/ux-5-modal` (e04aa22) |
 | P1-21 | Web e2e suite and Lighthouse in CI | running (Sonnet) | `web/p1-21-ci-e2e` |
 | P4-09 | Jobs view (replaces Downloads on the web) | done (Sonnet): `/jobs` with filters, paging, live `job.updated`, queue controls; mocked web e2e 7/7. The desktop e2e could not run under the machine's load; the lead re-runs it before the next deploy | `web/p4-09-jobs-view` (5f5397b) |
 | P3-01 | Provider adapters (OpenAI-compatible, Anthropic, whisper.cpp) and the stub provider | done: new crate `crates/ai` (`shelfy-ai`) on P2-04's client, the `shelfy-ai-stub` binary, 135+ tests; probed on the node | `web/p3-01-providers` (4 commits, …baaed4e) |
