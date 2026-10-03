@@ -46,7 +46,11 @@ export interface AiSearchApi {
 
   // `POST /search/chat`: a cancellable stream with a run id, then a result
   // (the sentinel-parsed tags/keywords, or the deterministic fallback).
-  chat(messages: AiChatMessage[], activeTags?: string[]): Promise<ChatSearchResult>;
+  chat(
+    messages: AiChatMessage[],
+    activeTags?: string[],
+    options?: { source?: SourceScope },
+  ): Promise<ChatSearchResult>;
   cancelChat(): Promise<OkResult>;
   onToken(cb: (payload: unknown) => void): () => void;
 
@@ -54,6 +58,7 @@ export interface AiSearchApi {
   // (desktop: a filtered `interceptor:newPosts` signal; dropped once previews
   // stream from the CAS instead of a background cache, P1-19).
   onResultsStale(cb: () => void): () => void;
+  onSessionEnded?(cb: () => void): () => void;
 
   // The chat provider toggle (AI-43) and the readiness of the model it may
   // need (desktop: the local VLM shares this gate with cataloging; web:
@@ -63,5 +68,5 @@ export interface AiSearchApi {
   selectProvider(id: string): Promise<AiSearchProvider[]>;
   getModelStatus(): Promise<unknown>;
   onModelProgress(cb: (progress: unknown) => void): () => void;
-  downloadModel(): Promise<unknown>;
+  downloadModel?(): Promise<unknown>;
 }

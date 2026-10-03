@@ -261,6 +261,7 @@ const ALL_SOURCE: ActiveSource = { type: 'platform', value: 'all' };
 function viewOfRoute(route: CurrentRoute): ViewId {
   if (route.name === 'aiTags') return 'aitags';
   if (route.name === 'trash') return 'trash';
+  if (route.name === 'aiSearch') return 'aisearch';
   if (route.name === 'jobs') return 'jobs';
   if (route.name === 'aiQueue') return 'aiqueue';
   if (route.name === 'settings') return 'settings';
@@ -292,6 +293,7 @@ function routeOfView(view: View, source: ActiveSource): AppRoute | null {
   if (view === 'gallery') return routeOfSource(source);
   if (view === 'aitags') return { name: 'aiTags' };
   if (view === 'trash') return { name: 'trash' };
+  if (view === 'aisearch') return { name: 'aiSearch' };
   if (view === 'jobs') return { name: 'jobs', kind: [], state: [] };
   if (view === 'aiqueue') return { name: 'aiQueue' };
   if (view === 'settings') return { name: 'settings', section: DEFAULT_SETTINGS_SECTION };
@@ -453,11 +455,12 @@ function AppInner(): React.JSX.Element {
         });
         focusGallerySearch();
       } else if (target === 'library') setView('gallery');
-      else if (target === 'ai') setView(caps.aiQueue ? 'aiqueue' : 'aitags');
+      else if (target === 'ai')
+        setView(caps.aiQueue ? 'aiqueue' : caps.aiTags ? 'aitags' : 'aisearch');
       else if (target === 'jobs') setView('jobs');
       else setView('settings');
     },
-    [setView, focusGallerySearch, caps.aiQueue],
+    [setView, focusGallerySearch, caps.aiQueue, caps.aiTags],
   );
   const [devBarVisible, setDevBarVisible] = useState<boolean>(false);
   const devBarMounted = useRef<boolean>(false);
@@ -1324,14 +1327,17 @@ function AppInner(): React.JSX.Element {
                         />
                       </Suspense>
                     )}
-                    {v === 'aisearch' && (
-                      <Suspense fallback={<ViewLoading />}>
-                        <AiSearchMemo
-                          onOpenInWebsites={caps.websites ? goOpenInWebsites : undefined}
-                          onReanalyzeWeb={caps.websites ? goReanalyzeWeb : undefined}
-                        />
-                      </Suspense>
-                    )}
+                    {v === 'aisearch' &&
+                      (caps.aiChat ? (
+                        <Suspense fallback={<ViewLoading />}>
+                          <AiSearchMemo
+                            onOpenInWebsites={caps.websites ? goOpenInWebsites : undefined}
+                            onReanalyzeWeb={caps.websites ? goReanalyzeWeb : undefined}
+                          />
+                        </Suspense>
+                      ) : (
+                        unavailablePanel
+                      ))}
                     {v === 'settings' &&
                       (caps.settings ? (
                         <Suspense fallback={<ViewLoading />}>

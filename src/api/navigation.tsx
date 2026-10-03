@@ -20,6 +20,7 @@ export type AppRoute =
   | { name: 'trash' }
   | { name: 'aiTags' }
   | { name: 'aiQueue' }
+  | { name: 'aiSearch' }
   // `kind`/`state` repeat the query's values verbatim (empty: no filter); the
   // Jobs view (src/views/Jobs.tsx) is the one place that knows which values
   // are valid job kinds and states.

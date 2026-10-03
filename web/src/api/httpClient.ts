@@ -1,4 +1,5 @@
 import { createSyncApi } from './sync';
+import { createAiSearchApi } from './ai/search';
 import { createActivityApi } from './activity';
 // The web ShelfyClient: the HTTP API of shelfy-server (`/api/v1`), typed by
 // the generated OpenAPI types (./schema.d.ts), and its realtime stream.
@@ -125,6 +126,7 @@ export function webCapabilities(me: Schemas['Me'] | null | undefined): ShelfyCap
     jobs: true,
     activity: true,
     sync: me.capabilities.extension,
+    aiChat: Boolean(me.capabilities['ai.tasks']),
   });
 }
 
@@ -195,10 +197,7 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
           ...(me.capabilities['ai.tasks']
             ? {
                 aiProviders: createAiProvidersApi(http, events),
-                ai: {
-                  tags: createTagsApi(http, { events }),
-                  webQueue: createWebAiQueueApi(http, events),
-                },
+                ai: { tags: createTagsApi(http, { events }), webQueue: createWebAiQueueApi(http, events), search: createAiSearchApi(http, events) },
               }
             : {}),
           links: createLinksApi(http),

@@ -119,6 +119,7 @@ export interface SearchSuggestResult {
 
 // A multi-turn AI-search chat result (search:chat → analyzer.chatSearch).
 export interface ChatSearchResult {
+  replyCode?: 'suggestions' | 'no_matches';
   reply: string;
   tagsToAdd: string[];
   tagsToRemove: string[];

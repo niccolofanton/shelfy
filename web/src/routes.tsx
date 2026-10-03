@@ -39,6 +39,7 @@ export const PATHS = {
   post: '/p/:key',
   trash: '/trash',
   aiTags: '/ai/tags',
+  aiSearch: '/ai/search',
   jobs: '/jobs',
   aiQueue: '/ai/queue',
   settings: '/settings/:section',
@@ -126,6 +127,7 @@ const APP_ROUTES: {
   { pattern: PATHS.aiTags, route: () => ({ name: 'aiTags' }) },
   { pattern: PATHS.trash, route: () => ({ name: 'trash' }) },
   { pattern: PATHS.aiQueue, route: () => ({ name: 'aiQueue' }) },
+  { pattern: PATHS.aiSearch, route: () => ({ name: 'aiSearch' }) },
   {
     pattern: PATHS.jobs,
     route: (_params, search) => {
@@ -204,6 +206,8 @@ export function pathOf(route: AppRoute | { name: 'device' } | ShareRoute): strin
       return PATHS.trash;
     case 'aiQueue':
       return PATHS.aiQueue;
+    case 'aiSearch':
+      return PATHS.aiSearch;
     case 'jobs':
       return jobsPath(route.kind, route.state);
     case 'settings':
@@ -235,6 +239,7 @@ export function patternOf(route: WebRoute): string {
     case 'aiTags':
     case 'jobs':
     case 'aiQueue':
+    case 'aiSearch':
     case 'device':
     case 'login':
     case 'magic':

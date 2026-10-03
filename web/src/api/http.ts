@@ -38,6 +38,8 @@ export function isApiError(err: unknown, code?: ApiError['code']): err is ApiErr
 type UnsafeMethod = 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export interface SendOptions {
+  signal?: AbortSignal;
+  reauthenticate?: boolean;
   // Let the request outlive the page (fetch `keepalive`): crash reports.
   keepalive?: boolean;
   // Sent as `Idempotency-Key`: a repeated request (a double click, or this
@@ -134,6 +136,7 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
       keepalive?: boolean;
       idempotencyKey?: string;
       headers?: Record<string, string>;
+      reauthenticate?: boolean;
       // How many re-authentications this request asked for already.
       reauthRounds?: number;
     } = {},
@@ -163,6 +166,7 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
     const confirm = reauth;
     const rounds = init.reauthRounds ?? 0;
     if (
+      init.reauthenticate !== false &&
       error.code === 'reauth_required' &&
       confirm &&
       rounds < MAX_REAUTH_ROUNDS &&
@@ -191,6 +195,8 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
         keepalive: options?.keepalive,
         idempotencyKey: options?.idempotencyKey,
         headers: options?.headers,
+        signal: options?.signal,
+        reauthenticate: options?.reauthenticate,
       }),
     onUnauthorized(listener) {
       unauthorized.add(listener);

@@ -4,6 +4,7 @@ import GridSizeControl from '../components/GridSizeControl';
 import PostGridSkeleton from '../components/PostGridSkeleton';
 import PostModal from '../components/PostModal';
 import Chip from '../components/Chip';
+import { useShelfy } from '../api/ShelfyProvider';
 import { useAiSearch } from '../hooks/useAiSearch';
 import { useDictation } from '../hooks/useDictation';
 import { useToast } from '../hooks/useToast';
@@ -736,6 +737,9 @@ export default function AiSearch({
 }: AiSearchProps): React.JSX.Element {
   const t = useT('aiSearch');
   const td = useT('dictation');
+  const client = useShelfy();
+  const isWeb = !client.capabilities.localModels;
+  const [mobileTab, setMobileTab] = useState<'chat' | 'results'>('chat');
   const {
     messages,
     activeTags,
@@ -748,6 +752,7 @@ export default function AiSearch({
     chatLoading,
     streamingText,
     resultsLoading,
+    error,
     modelStatus,
     searchProviders,
     actions,
@@ -897,20 +902,16 @@ export default function AiSearch({
     async ({ name, color }: { name: string; color?: string }) => {
       const ids = collectionModal?.ids ?? [];
       // createCollection is positional (name, color) — see preload.js.
-      const created = await window.electronAPI.createCollection(name, color || ACCENT);
+      const created = await client.createCollection(name, color || ACCENT);
       if (!created?.id) {
         showToast(t('collectionError'));
         return;
       }
-      const res = await window.electronAPI.addPostsToCollections(ids, [created.id]);
+      await client.addPostsToCollections(ids, [created.id]);
       // Trust the backend count; show the number only when it's a real value.
-      showToast(
-        typeof res?.added === 'number'
-          ? t('collectionCreatedWithPosts', { name, n: res.added })
-          : t('collectionCreated', { name }),
-      );
+      showToast(t('collectionCreatedWithPosts', { name, n: ids.length }));
     },
-    [collectionModal, showToast, t],
+    [collectionModal, showToast, t, client],
   );
 
   const hasMessages = messages.length > 0;
@@ -931,7 +932,11 @@ export default function AiSearch({
   // lock editing in both states to keep the affordance honest.
   const inputLocked = isRecording || isBusyDict;
   const modelReadyForVoice = !!dictation.modelStatus?.ready;
-  const micDisabled = chatLoading || isBusyDict || (!isRecording && !modelReadyForVoice);
+  const micDisabled =
+    !client.capabilities.dictation ||
+    chatLoading ||
+    isBusyDict ||
+    (!isRecording && !modelReadyForVoice);
   // While recording OR transcribing, overlay the live text so the content
   // never disappears during the gap between stop and handleDictationResult firing.
   // Newlines from whisper are collapsed to spaces.
@@ -940,15 +945,60 @@ export default function AiSearch({
     isRecording || isBusyDict ? (draft.trim() ? `${draft.trim()} ${cleanLive}` : cleanLive) : draft;
 
   return (
-    <div data-testid="aisearch-view" className="flex h-full overflow-hidden">
+    <div
+      data-testid="aisearch-view"
+      className={`flex h-full min-h-0 overflow-hidden ${isWeb ? 'narrow:flex-col narrow:[&_button]:min-h-11 narrow:[&_button]:min-w-11' : ''}`}
+    >
+      {isWeb && (
+        <div
+          role="tablist"
+          aria-label={t('chatTitle')}
+          className="hidden narrow:flex shrink-0 border-b border-[#2e2e2e]"
+        >
+          {(['chat', 'results'] as const).map((tab) => (
+            <button
+              key={tab}
+              role="tab"
+              aria-selected={mobileTab === tab}
+              data-testid={`chat-mobile-${tab}`}
+              onClick={() => setMobileTab(tab)}
+              className="flex-1 min-h-11 text-sm text-gray-200"
+            >
+              {tab === 'chat' ? t('chatTitle') : `${t('resultsTab')} (${total})`}
+            </button>
+          ))}
+        </div>
+      )}
       {/* ── Left: chat panel ──────────────────────────────────────────────── */}
-      <div className="w-[420px] min-w-[420px] border-r border-[#2e2e2e] flex flex-col bg-[#0f0f0f]">
+      <div
+        className={`w-[420px] min-w-[420px] border-r border-[#2e2e2e] flex flex-col bg-[#0f0f0f] ${isWeb ? `narrow:w-full narrow:min-w-0 narrow:flex-1 narrow:min-h-0 ${mobileTab === 'results' ? 'narrow:hidden' : ''}` : ''}`}
+      >
         {/* Header */}
         <div className="flex items-center gap-2 px-4 h-[52px] shrink-0 border-b border-[#2e2e2e]">
           <Sparkles size={16} style={{ color: ACCENT }} />
           <h1 className="text-white text-sm font-semibold tracking-tight">{t('chatTitle')}</h1>
           <div className="flex-1" />
-          {remoteProvider && (
+          {isWeb && searchProviders.length > 0 && (
+            <select
+              data-testid="chat-provider-select"
+              aria-label={t('providerChoice')}
+              value={activeRemoteProvider?.id ?? ''}
+              disabled={chatLoading}
+              onChange={(e) =>
+                void selectSearchProvider(e.target.value).catch(() =>
+                  showToast(t('remoteSearchError')),
+                )
+              }
+              className="min-w-0 max-w-[160px] bg-[#1a1a1a] text-xs text-gray-200 min-h-9 rounded px-1"
+            >
+              {searchProviders.map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {!isWeb && remoteProvider && (
             <label
               className="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer"
               title={t(remoteProvider.vision ? 'remoteVisionHint' : 'remoteSearchHint')}
@@ -1011,11 +1061,15 @@ export default function AiSearch({
           >
             <div className="flex-1 min-w-0">
               <p className="text-xs text-gray-300">
-                {modelDownloading ? t('modelDownloading') : t('modelUnavailable')}
+                {isWeb
+                  ? t('providerFallback')
+                  : modelDownloading
+                    ? t('modelDownloading')
+                    : t('modelUnavailable')}
               </p>
               <p className="text-[11px] text-gray-500 mt-0.5">{t('modelTextFallback')}</p>
             </div>
-            {!modelDownloading && (
+            {!isWeb && !modelDownloading && (
               <button
                 data-testid="model-download-btn"
                 onClick={downloadModel}
@@ -1031,12 +1085,26 @@ export default function AiSearch({
         )}
 
         {/* Voice model status (same flow as the classification model) */}
-        <VoiceModelBanner
-          modelStatus={dictation.modelStatus}
-          modelProgress={dictation.modelProgress}
-          onDownload={dictation.downloadModel}
-        />
+        {client.capabilities.localModels && (
+          <VoiceModelBanner
+            modelStatus={dictation.modelStatus}
+            modelProgress={dictation.modelProgress}
+            onDownload={dictation.downloadModel}
+          />
+        )}
 
+        {error && (
+          <div role="alert" className="flex items-center gap-2 px-3 py-2 text-xs text-red-300">
+            <span className="flex-1">{error}</span>
+            <button
+              data-testid="chat-retry-btn"
+              className="min-h-11 px-2"
+              onClick={() => void actions.retry()}
+            >
+              {t('retry')}
+            </button>
+          </div>
+        )}
         {/* Message log */}
         <div
           ref={logRef}
@@ -1172,25 +1240,29 @@ export default function AiSearch({
       </div>
 
       {/* ── Right: gallery ─────────────────────────────────────────────────── */}
-      <ResultsPane
-        results={results}
-        total={total}
-        resultsLoading={resultsLoading}
-        activeTags={activeTags}
-        activeKeywords={activeKeywords}
-        tagMode={tagMode}
-        source={source}
-        setTagMode={setTagMode}
-        setSource={setSource}
-        removeTag={removeTag}
-        removeKeyword={removeKeyword}
-        clearFilters={clearFilters}
-        onPromoteCollection={handlePromoteCollection}
-        onCopyLinks={handleCopyLinks}
-        onExportMarkdown={handleExportMarkdown}
-        onOpen={setActivePost}
-        scrollRef={resultsScrollRef}
-      />
+      <div
+        className={`flex flex-1 min-w-0 min-h-0 ${isWeb && mobileTab === 'chat' ? 'narrow:hidden' : ''}`}
+      >
+        <ResultsPane
+          results={results}
+          total={total}
+          resultsLoading={resultsLoading}
+          activeTags={activeTags}
+          activeKeywords={activeKeywords}
+          tagMode={tagMode}
+          source={source}
+          setTagMode={setTagMode}
+          setSource={setSource}
+          removeTag={removeTag}
+          removeKeyword={removeKeyword}
+          clearFilters={clearFilters}
+          onPromoteCollection={handlePromoteCollection}
+          onCopyLinks={handleCopyLinks}
+          onExportMarkdown={handleExportMarkdown}
+          onOpen={setActivePost}
+          scrollRef={resultsScrollRef}
+        />
+      </div>
 
       {activePost && (
         <PostModal

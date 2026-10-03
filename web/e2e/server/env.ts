@@ -60,6 +60,7 @@ export const E2E = {
   // The owner's account stays an empty library: account.spec.ts and
   // jobs.spec.ts both rely on "a fresh account" (no jobs, no posts).
   ownerEmail: 'owner@example.test',
+  chatEmail: 'chat@example.test',
   // P1-21: a second, non-owner member account (`admin create-user`, the same
   // tool E6's mock account uses) with its own small `admin synth` library,
   // for specs that need real posts — today just sse-latency.spec.ts — without

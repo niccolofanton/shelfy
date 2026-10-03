@@ -21,6 +21,14 @@ export default {
   it: {
     // Chat panel header
     chatTitle: 'Chat',
+    fallbackSuggestions: 'Ecco i filtri suggeriti dal tuo archivio.',
+    fallbackNoMatches: 'Non ho trovato filtri pertinenti nel tuo archivio. Prova con altre parole.',
+    resultsError: 'Impossibile caricare i risultati.',
+    retry: 'Riprova',
+    resultsTab: 'Risultati',
+    providerFallback: 'Senza un provider disponibile, cerco nel tuo archivio.',
+    providerChoice: 'Provider della chat',
+
     newConversation: 'Nuova conversazione',
     newConversationShort: 'Nuova',
     remoteSearchHint: 'Usa il nodo AI remoto per cercare immagini nell’archivio.',
@@ -106,6 +114,14 @@ export default {
   },
   en: {
     chatTitle: 'Chat',
+    fallbackSuggestions: 'Here are suggested filters from your archive.',
+    fallbackNoMatches: 'No relevant filters found in your archive. Try different words.',
+    resultsError: 'Unable to load results.',
+    retry: 'Retry',
+    resultsTab: 'Results',
+    providerFallback: 'Without an available provider, I search your archive.',
+    providerChoice: 'Chat provider',
+
     newConversation: 'New conversation',
     newConversationShort: 'New',
     remoteSearchHint: 'Use the remote AI node to search images in the archive.',

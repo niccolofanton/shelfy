@@ -23,7 +23,7 @@ execFileSync(E2E.serverBin, ['admin', 'create-owner', '--email', E2E.ownerEmail]
 // `jobsEmail`) and sse-latency.spec.ts gets posts to work with. `synth` fills
 // an empty library and must run while the server is stopped
 // (crates/server/src/admin/synth.rs): both calls below happen before `serve`.
-for (const email of [E2E.synthEmail, E2E.jobsEmail, E2E.queueEmail]) {
+for (const email of [E2E.synthEmail, E2E.jobsEmail, E2E.queueEmail, E2E.chatEmail]) {
   execFileSync(E2E.serverBin, ['admin', 'create-user', '--email', email], {
     env,
     stdio: ['ignore', 'ignore', 'inherit'],
@@ -71,6 +71,13 @@ execFileSync(
     `UPDATE posts SET platform='twitter', media_type='text', caption='Synthetic catalog lamp', archive_state='done', ai_status=NULL, ai_description=NULL, ai_tags_json=NULL, ai_save_reason=NULL;`,
   ],
   { stdio: ['ignore', 'ignore', 'inherit'] },
+);
+// A separate synthetic AI archive for conversational-search acceptance; keep
+// the owner and the general UX fixtures untouched.
+execFileSync(
+  E2E.serverBin,
+  ['admin', 'synth', '--email', E2E.chatEmail, '--posts', '40', '--profile', 'ai'],
+  { env, stdio: ['ignore', 'ignore', 'inherit'] },
 );
 const stopStub = await startAiStub();
 const server = spawn(E2E.serverBin, ['serve'], { env, stdio: 'inherit' });

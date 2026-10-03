@@ -137,14 +137,14 @@ let chatToken = 0; // bumped per sendMessage; ignores stale invoke RESULTS
 // run with { start: true, runId } on the token channel BEFORE its first token
 // (IPC delivery is FIFO), so adopting the latest announcement binds the stream
 // to the newest run and stragglers from an aborted run carry an older runId.
-let activeChatRunId: number | null = null;
+let activeChatRunId: number | string | null = null;
 
 // Shape of a streamed-token event on the chat-token channel. Either a run
 // announcement ({ start, runId }) or a token chunk ({ token, runId }). The seam
 // delivers this as `unknown`, so it's narrowed before use.
 interface ChatTokenPayload {
   start?: boolean;
-  runId?: number | null;
+  runId?: number | string | null;
   token?: string;
 }
 
@@ -234,8 +234,13 @@ function runGallerySearch(
     })
     .catch((err) => {
       if (reqId !== resultsReqId) return;
-      console.error('[useAiSearch] gallery search error:', err);
-      setState({ results: [], total: 0 });
+      if (activeClient?.capabilities.localModels)
+        console.error('[useAiSearch] gallery search error:', err);
+      setState({
+        results: [],
+        total: 0,
+        error: translate(getInitialLang(), 'aiSearch.resultsError'),
+      });
     })
     .finally(() => {
       if (reqId === resultsReqId) setState({ resultsLoading: false });
@@ -295,11 +300,18 @@ async function sendMessage(text: string): Promise<void> {
   activeChatRunId = null;
 
   try {
-    const res = await api.chat(history, state.activeTags);
+    const res = await api.chat(history, state.activeTags, { source: state.source });
     // A newer request (or a cancel) superseded this one — drop the result.
     if (runId !== chatToken) return;
 
-    const reply = res?.reply ?? '';
+    const reply = res?.replyCode
+      ? translate(
+          getInitialLang(),
+          res.replyCode === 'suggestions'
+            ? 'aiSearch.fallbackSuggestions'
+            : 'aiSearch.fallbackNoMatches',
+        )
+      : (res?.reply ?? '');
     const tagsToAdd = Array.isArray(res?.tagsToAdd) ? res.tagsToAdd : [];
     const tagGroups: TagGroups =
       res?.tagGroups && typeof res.tagGroups === 'object' ? res.tagGroups : null;
@@ -337,7 +349,8 @@ async function sendMessage(text: string): Promise<void> {
     runGallerySearch(nextTags, nextKeywords, state.tagMode);
   } catch (err) {
     if (runId !== chatToken) return;
-    console.error('[useAiSearch] chatSearch error:', err);
+    if (activeClient?.capabilities.localModels)
+      console.error('[useAiSearch] chatSearch error:', err);
     const errMsg: Message = {
       id: nextId(),
       role: 'assistant',
@@ -351,7 +364,7 @@ async function sendMessage(text: string): Promise<void> {
       messages: [...s.messages, errMsg],
       chatLoading: false,
       streamingText: '',
-      error: err instanceof Error ? err.message : 'Errore durante la ricerca',
+      error: translate(getInitialLang(), 'aiSearch.chatError'),
     }));
   }
 }
@@ -433,7 +446,9 @@ function reset(): void {
   state = { ...initialState(), modelStatus: ms, searchProviders: providers };
   listeners.forEach((l) => l());
   try {
-    searchApi()?.cancelChat();
+    void searchApi()
+      ?.cancelChat()
+      .catch(() => {});
   } catch {
     /* ignore */
   }
@@ -454,7 +469,9 @@ async function refreshModelStatus(): Promise<void> {
   const api = searchApi();
   if (!api) return;
   try {
+    const client = activeClient;
     const s = asRawModelStatus(await api.getModelStatus());
+    if (client !== activeClient) return;
     setState({
       modelStatus: {
         ready: !!s?.ready,
@@ -470,7 +487,10 @@ async function refreshSearchProviders(): Promise<void> {
   const api = searchApi();
   if (!api) return;
   try {
-    setState({ searchProviders: await api.getProviders() });
+    const client = activeClient;
+    const providers = await api.getProviders();
+    if (client !== activeClient) return;
+    setState({ searchProviders: providers });
   } catch (err) {
     console.error('[useAiSearch] getSearchProviders error:', err);
   }
@@ -480,17 +500,20 @@ async function selectSearchProvider(id: string): Promise<void> {
   if (state.chatLoading) return;
   const api = searchApi();
   if (!api) return;
-  setState({ searchProviders: await api.selectProvider(id) });
+  const client = activeClient;
+  const providers = await api.selectProvider(id);
+  if (client !== activeClient) return;
+  setState({ searchProviders: providers });
   await refreshModelStatus();
   window.dispatchEvent(new Event('ai-model-changed'));
 }
 
 async function downloadModel(): Promise<void> {
   const api = searchApi();
-  if (!api) return;
+  if (!api?.downloadModel) return;
   setState({ modelStatus: { ...state.modelStatus, downloading: true } });
   try {
-    await api.downloadModel();
+    await api.downloadModel?.();
   } catch (err) {
     console.error('[useAiSearch] downloadModel error:', err);
   } finally {
@@ -503,6 +526,7 @@ async function downloadModel(): Promise<void> {
 let initialized = false;
 let modelProgressUnsub: (() => void) | null = null;
 let newPostsUnsub: (() => void) | null = null;
+let sessionUnsub: (() => void) | null = null;
 let modelPollTimer: ReturnType<typeof setInterval> | null = null;
 let previewRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 // While a download is in flight, poll the authoritative status. The analyzer's
@@ -532,6 +556,14 @@ function ensureInit(): void {
   refreshModelStatus();
   refreshSearchProviders();
   const api = searchApi();
+  sessionUnsub =
+    api?.onSessionEnded?.(() => {
+      chatToken += 1;
+      resultsReqId += 1;
+      activeChatRunId = null;
+      state = initialState();
+      listeners.forEach((listener) => listener());
+    }) ?? null;
   newPostsUnsub =
     api?.onResultsStale(() => {
       if (!state.results.length) return;
@@ -584,6 +616,7 @@ export interface AiSearchActions {
   applyMessageTags: (messageId: string) => void;
   setTagMode: (mode: TagMode) => void;
   setSource: (source: SourceScope) => void;
+  retry: () => Promise<void>;
   clearFilters: () => void;
   stopStreaming: () => Promise<void>;
   reset: () => void;
@@ -611,6 +644,16 @@ const actions: AiSearchActions = {
   refreshModelStatus,
   selectSearchProvider,
   refresh: runGallerySearch,
+  retry: async () => {
+    const last = [...state.messages].reverse().find((m) => m.role === 'user');
+    if (last && state.messages.at(-1)?.isError) {
+      setState({ messages: state.messages.slice(0, -2), error: null });
+      await sendMessage(last.content);
+    } else {
+      setState({ error: null });
+      runGallerySearch();
+    }
+  },
 };
 
 // What the hook returns: the persisted snapshot plus the stable actions.
@@ -629,8 +672,24 @@ export type UseAiSearchResult = AiSearchStoreState & { actions: AiSearchActions 
  *              downloadModel, refreshModelStatus }
  */
 export function useAiSearch(): UseAiSearchResult {
-  // Stashed for the module-scope functions above (see the file-header note).
-  activeClient = useShelfy();
+  const client = useShelfy();
+  if (activeClient && activeClient !== client) {
+    void activeClient.ai?.search?.cancelChat().catch(() => {});
+    chatTokenUnsub?.();
+    modelProgressUnsub?.();
+    newPostsUnsub?.();
+    sessionUnsub?.();
+    chatTokenUnsub = modelProgressUnsub = newPostsUnsub = sessionUnsub = null;
+    stopModelStatusPoll();
+    if (previewRefreshTimer) clearTimeout(previewRefreshTimer);
+    previewRefreshTimer = null;
+    chatToken += 1;
+    resultsReqId += 1;
+    activeChatRunId = null;
+    state = initialState();
+    initialized = false;
+  }
+  activeClient = client;
   ensureInit();
   ensureChatTokenSubscription();
   const snapshot = useSyncExternalStore(subscribe, getSnapshot);

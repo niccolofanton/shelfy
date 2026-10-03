@@ -29,6 +29,7 @@ describe('route table', () => {
       ['/p/ig_3141', { name: 'post', key: 'ig_3141' }],
       ['/trash', { name: 'trash' }],
       ['/ai/queue', { name: 'aiQueue' }],
+      ['/ai/search', { name: 'aiSearch' }],
       ['/settings/storage', { name: 'settings', section: 'storage' }],
       ['/device', { name: 'device' }],
     ];
