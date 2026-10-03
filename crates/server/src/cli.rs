@@ -27,7 +27,9 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Run the HTTP API until SIGTERM or Ctrl-C.
-    Serve(ServeArgs),
+    // Boxed: every task adds settings to `serve`, which keeps outgrowing the
+    // other commands past clippy's `large_enum_variant`; it is parsed once.
+    Serve(Box<ServeArgs>),
     /// Operator commands. Their output goes to stdout, never to the logs.
     Admin(AdminArgs),
     /// Exit 0 only when the server on SHELFY_LISTEN_ADDR answers `GET
@@ -40,7 +42,7 @@ pub enum Command {
 pub fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Serve(args) => crate::serve::run(args),
+        Command::Serve(args) => crate::serve::run(*args),
         Command::Admin(args) => crate::admin::run(args),
         Command::Healthcheck(args) => crate::healthcheck::run(&args),
     };
@@ -71,7 +73,7 @@ mod tests {
         let Command::Serve(args) = cli.command else {
             unreachable!("parsed serve")
         };
-        Config::from_args(args).map_err(|e| e.to_string())
+        Config::from_args(*args).map_err(|e| e.to_string())
     }
 
     #[test]
@@ -120,6 +122,32 @@ mod tests {
             "127.0.0.1:8080".parse().unwrap(),
         );
         assert_eq!(err, expected.to_string());
+    }
+
+    #[test]
+    fn video_tool_flags_are_parsed_and_validated() {
+        let config = serve(&[]).unwrap();
+        assert_eq!(
+            config.video_tools,
+            shelfy_media::video::ToolPaths::default()
+        );
+        let config = serve(&[
+            "--ytdlp-bin",
+            "/opt/homebrew/bin/yt-dlp",
+            "--ffmpeg-bin",
+            "/opt/homebrew/bin/ffmpeg",
+        ])
+        .unwrap();
+        assert_eq!(
+            config.video_tools.ytdlp,
+            std::path::Path::new("/opt/homebrew/bin/yt-dlp")
+        );
+        assert_eq!(
+            config.video_tools.ffmpeg,
+            std::path::Path::new("/opt/homebrew/bin/ffmpeg")
+        );
+        let err = serve(&["--ffmpeg-bin", "ffmpeg"]).unwrap_err();
+        assert!(err.contains("SHELFY_FFMPEG_BIN"), "{err}");
     }
 
     #[test]

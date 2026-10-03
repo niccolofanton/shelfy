@@ -27,6 +27,8 @@
 //! | `SHELFY_ARCHIVE_RATE_INSTAGRAM`, `…_X`, `…_PINTEREST` | `2` | CDN requests per second per host group |
 //! | `SHELFY_DEV_EGRESS_HOSTS`, `SHELFY_DEV_EGRESS_CA` | none | dev and tests: fixture hosts on loopback ports, and their CA; loopback public URL only |
 //! | `SHELFY_IMPORT_MAX_GB` | `10` | largest file to import (a JSON export or a bundle), in GiB: the cap of an `import` upload |
+//! | `SHELFY_YTDLP_BIN` | `/opt/yt-dlp/yt-dlp` | yt-dlp, for on-demand videos (the image's pinned build, L6) |
+//! | `SHELFY_FFMPEG_BIN` | `/usr/bin/ffmpeg` | ffmpeg, which readies videos and extracts frames (Debian's, L5) |
 //!
 //! [`crate::mail`] validates the email settings and [`crate::outbound`] the
 //! outbound ones. Later tasks add their variables here (master key, media
@@ -40,6 +42,7 @@ use std::time::Duration;
 
 use clap::{Args, ValueEnum};
 use shelfy_core::db::{ControlDbConfig, LIBRARY_FILE_NAME, UserDbCacheConfig, UserDbConfig};
+use shelfy_media::video::{DEFAULT_FFMPEG_BIN, DEFAULT_YTDLP_BIN, ToolPaths};
 use url::Url;
 
 use crate::auth::AuthConfig;
@@ -181,6 +184,59 @@ pub struct ServeArgs {
         value_parser = clap::value_parser!(u64).range(1..=MAX_IMPORT_MAX_GB)
     )]
     pub import_max_gb: u64,
+
+    #[command(flatten)]
+    pub video_tools: VideoToolArgs,
+}
+
+/// The binaries of the video tools (P4-06, plan §2.13).
+#[derive(Clone, Debug, Args)]
+pub struct VideoToolArgs {
+    /// yt-dlp, for on-demand videos (D15, L17). The image ships its pinned,
+    /// unpacked build there (L6). An absolute path; a missing binary turns
+    /// the yt-dlp route off, it does not stop the server.
+    #[arg(
+        long = "ytdlp-bin",
+        env = "SHELFY_YTDLP_BIN",
+        value_name = "PATH",
+        default_value = DEFAULT_YTDLP_BIN
+    )]
+    pub ytdlp: PathBuf,
+
+    /// ffmpeg, which readies videos for the browser and extracts posters and
+    /// keyframes. The image ships Debian's there (L5). An absolute path; a
+    /// missing binary turns those features off.
+    #[arg(
+        long = "ffmpeg-bin",
+        env = "SHELFY_FFMPEG_BIN",
+        value_name = "PATH",
+        default_value = DEFAULT_FFMPEG_BIN
+    )]
+    pub ffmpeg: PathBuf,
+}
+
+impl VideoToolArgs {
+    /// Validates the paths: absolute, or empty for the default.
+    ///
+    /// # Errors
+    ///
+    /// [`ConfigError::ToolPath`] naming the variable of a relative path.
+    pub fn paths(self) -> Result<ToolPaths, ConfigError> {
+        let defaults = ToolPaths::default();
+        let pick = |path: PathBuf, default: PathBuf, var: &'static str| {
+            if path.as_os_str().is_empty() {
+                Ok(default)
+            } else if path.is_absolute() {
+                Ok(path)
+            } else {
+                Err(ConfigError::ToolPath(var))
+            }
+        };
+        Ok(ToolPaths {
+            ytdlp: pick(self.ytdlp, defaults.ytdlp, "SHELFY_YTDLP_BIN")?,
+            ffmpeg: pick(self.ffmpeg, defaults.ffmpeg, "SHELFY_FFMPEG_BIN")?,
+        })
+    }
 }
 
 /// Format of the logs on stdout (plan §3.7).
@@ -232,6 +288,8 @@ pub struct Config {
     pub outbound: OutboundConfig,
     /// The largest `import` upload, in bytes (`SHELFY_IMPORT_MAX_GB`, P4-08).
     pub import_max_bytes: u64,
+    /// The binaries of the video tools (P4-06).
+    pub video_tools: ToolPaths,
 }
 
 impl Config {
@@ -256,6 +314,7 @@ impl Config {
             .map(WebApp::load)
             .transpose()
             .map_err(ConfigError::WebDir)?;
+        let video_tools = args.video_tools.paths()?;
         Ok(Self {
             listen: args.listen,
             metrics_listen: args.metrics_listen,
@@ -266,6 +325,7 @@ impl Config {
             web,
             outbound,
             import_max_bytes: args.import_max_gb.saturating_mul(GIB),
+            video_tools,
             ..Self::with_data_dir(data_dir)
         })
     }
@@ -291,6 +351,7 @@ impl Config {
             web: None,
             outbound: OutboundConfig::default(),
             import_max_bytes: DEFAULT_IMPORT_MAX_GB * GIB,
+            video_tools: ToolPaths::default(),
         }
     }
 }
@@ -323,6 +384,9 @@ pub enum ConfigError {
     /// The outbound settings are inconsistent.
     #[error("{0}")]
     Outbound(String),
+    /// A video tool's path is relative.
+    #[error("{0}: give an absolute path")]
+    ToolPath(&'static str),
 }
 
 /// The public origin of the web app: `http(s)://host[:port]`, no trailing slash.
@@ -550,6 +614,32 @@ mod tests {
         );
         assert!(DataDir::new("").is_err());
         assert!(DataDir::new("relative/dir").unwrap().root().is_absolute());
+    }
+
+    #[test]
+    fn video_tool_paths_are_absolute_or_the_default() {
+        let args = |ytdlp: &str, ffmpeg: &str| VideoToolArgs {
+            ytdlp: ytdlp.into(),
+            ffmpeg: ffmpeg.into(),
+        };
+        let image = args(DEFAULT_YTDLP_BIN, DEFAULT_FFMPEG_BIN).paths().unwrap();
+        assert_eq!(image, ToolPaths::default());
+        assert_eq!(image.ytdlp, Path::new("/opt/yt-dlp/yt-dlp"));
+        assert_eq!(image.ffmpeg, Path::new("/usr/bin/ffmpeg"));
+        // Empty counts as unset.
+        assert_eq!(args("", "").paths().unwrap(), ToolPaths::default());
+        let local = args("/opt/homebrew/bin/yt-dlp", "/opt/homebrew/bin/ffmpeg")
+            .paths()
+            .unwrap();
+        assert_eq!(local.ffmpeg, Path::new("/opt/homebrew/bin/ffmpeg"));
+        assert!(matches!(
+            args("yt-dlp", DEFAULT_FFMPEG_BIN).paths(),
+            Err(ConfigError::ToolPath("SHELFY_YTDLP_BIN"))
+        ));
+        assert!(matches!(
+            args(DEFAULT_YTDLP_BIN, "bin/ffmpeg").paths(),
+            Err(ConfigError::ToolPath("SHELFY_FFMPEG_BIN"))
+        ));
     }
 
     #[test]

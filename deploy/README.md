@@ -59,6 +59,8 @@ validated at start: a bad one stops the process with a message.
 | `SHELFY_DEV_EGRESS_HOSTS` | none | Local runs and tests only: `host=127.0.0.1:port` pairs, comma-separated, that send those names to a loopback fixture without DNS or the address check. Refused unless `SHELFY_PUBLIC_URL` is loopback, and together with `SHELFY_EGRESS_PROXY` |
 | `SHELFY_DEV_EGRESS_CA` | none | Local runs and tests only: a PEM file of extra root certificates to trust (a fixture CDN's CA). Refused unless `SHELFY_PUBLIC_URL` is loopback |
 | `SHELFY_IMPORT_MAX_GB` | `10` | Largest file a user may import (a desktop JSON export or an export bundle), in GiB, 1–1024: the cap of an `import` upload (`POST /api/v1/uploads`, P4-08). A user's uploads that wait to be used (imports, bookmark files) may hold this plus 1 GiB at once; complete ones wait 24 h, under `<data>/work/uploads/` |
+| `SHELFY_YTDLP_BIN` | `/opt/yt-dlp/yt-dlp` | yt-dlp, for on-demand videos (D15, L17): the image's pinned, unpacked build (L6). An absolute path. A missing binary turns the yt-dlp route off; the server still starts. Runs anonymously (no config, cookies, cache or plugins), through the egress proxy |
+| `SHELFY_FFMPEG_BIN` | `/usr/bin/ffmpeg` | ffmpeg, which readies videos for the browser (`-c copy`, `+faststart` only when the index comes last) and extracts posters and keyframes: Debian's in the image (L5). An absolute path. yt-dlp and ffmpeg run two at a time, at `nice +10`, without the server's environment |
 
 Empty values count as unset, so a compose file may pass `SHELFY_SMTP_HOST=` when email is off.
 Later tasks add the master key and the media budgets (§3.2, §3.4). The operator commands
