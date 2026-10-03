@@ -1,0 +1,98 @@
+# shelfy-capture and shelfy-egress: SPIKE-4 candidate for osn PR 2 (plan §2.18,
+# §3.2, Appendix B). Plan §3.2 with what SPIKE-4 changed, marked "SPIKE-4".
+# Merge into osn compose.yml; files under /opt/osn/stack/shelfy/ come from
+# deploy/osn/shelfy/ through `just shelfy-sync` once P4 moves them there.
+#
+# Needs in osn .env: SHELFY_VERSION, SHELFY_EGRESS_VERSION, SHELFY_INTERNAL_TOKEN
+# (PR 1), and OSN_PUBLIC_IPV4 / OSN_PUBLIC_IPV6_PREFIX (the VPS's own addresses,
+# which are public and therefore not refused by Smokescreen's built-in rules).
+
+services:
+  shelfy-capture:
+    image: ghcr.io/niccolofanton/shelfy-capture:${SHELFY_VERSION:?}
+    restart: unless-stopped
+    user: '10100:10100'
+    read_only: true
+    tmpfs: ['/tmp:size=1g,mode=1777']
+    shm_size: 512m
+    environment:
+      - HOME=/tmp # Chromium profile and font cache on tmpfs (read-only root)
+      - CAPTURE_WORK_DIR=/work
+      - CAPTURE_INTERNAL_TOKEN=${SHELFY_INTERNAL_TOKEN}
+      - CAPTURE_SITES_PARALLEL=1
+      # SPIKE-11: without a GPU the scroll video records 1–2.5 frames/s; whether to
+      # keep it is a product decision (11-capture-cost.md, input 4).
+      - CAPTURE_VIDEO=true
+      # Chromium: Playwright's `proxy` launch option, which also routes loopback
+      # through the proxy (SPIKE-4: a bare --proxy-server flag does not).
+      - CAPTURE_PROXY=http://shelfy-egress:4750
+      # SPIKE-4: Node's own fetch (discovery, og:image, favicon) uses the same
+      # proxy with no code change. Nothing is exempt: leave NO_PROXY unset.
+      - NODE_USE_ENV_PROXY=1
+      - HTTP_PROXY=http://shelfy-egress:4750
+      - HTTPS_PROXY=http://shelfy-egress:4750
+    volumes:
+      - /data/shelfy/work/capture:/work
+    networks: [shelfy_capture]
+    # SPIKE-11: one page at a time at 1× peaks at 1.43 GiB held; 1.75 GiB is
+    # recommended for headroom (lead decision, docs/web-port/spikes/11-capture-cost.md).
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    cpus: 1.5
+    cpu_shares: 256
+    pids_limit: 1024
+    oom_score_adj: 600
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      # SPIKE-4: Docker's default profile plus clone/unshare (user, PID and network
+      # namespaces only) and chroot. Chromium's sandbox stays on; AppArmor stays
+      # docker-default; no host setting changes.
+      - seccomp=/opt/osn/stack/shelfy/chromium-seccomp.json
+    stop_grace_period: 20s
+    healthcheck:
+      # The service's own endpoint (P4). NODE_USE_ENV_PROXY=0: the proxy refuses loopback.
+      test:
+        [
+          'CMD-SHELL',
+          "NODE_USE_ENV_PROXY=0 node -e \"fetch('http://127.0.0.1:8080/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  shelfy-egress:
+    image: ghcr.io/niccolofanton/shelfy-egress:${SHELFY_EGRESS_VERSION:?}
+    restart: unless-stopped
+    user: '10101:10101'
+    read_only: true
+    command:
+      - --config-file=/etc/shelfy-egress/config.yaml
+      # SPIKE-4: the VPS's own public addresses (allowed by default: they are public).
+      - --deny-range=${OSN_PUBLIC_IPV4:?}/32
+      - --deny-range=${OSN_PUBLIC_IPV6_PREFIX:?}
+    environment:
+      - SHELFY_EGRESS_ALLOWED_PORTS=80,443
+    volumes:
+      - /opt/osn/stack/shelfy/egress:/etc/shelfy-egress:ro # config.yaml, acl.yaml
+    networks: [shelfy_capture, shelfy_egress]
+    mem_limit: 96m
+    cpus: 0.5
+    pids_limit: 256
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    stop_grace_period: 20s
+
+networks:
+  shelfy_capture:
+    driver: bridge
+    internal: true
+    driver_opts:
+      # SPIKE-4: no host address on this bridge. With Docker's default, an internal
+      # network still carries the host's gateway address, and the containers reach
+      # every host service that ufw allows from it (sshd on the VPS). PR 1 created
+      # osn_shelfy_capture without it: PR 2 must recreate the network.
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+  shelfy_egress:
+    driver: bridge

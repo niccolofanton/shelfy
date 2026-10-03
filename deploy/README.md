@@ -21,10 +21,11 @@ needs it; the last column says when.
 | `test-backup-jobs.sh` | Checks of the backup jobs' shared helpers that need no restic: the result of a job stopped by a signal, the textfile directory's mode, the restic env file's mode, restic's errors in the log. Runs in `debian:bookworm-slim` | F4 |
 | `compose.test.yml` | Test stack (§3.8): `shelfy-api` from a local image with its own data (a named volume, or a host path), production's user, read-only root, limits and healthcheck, API on `127.0.0.1:8081`. Optional `mail` profile with mailpit (E4). The mock AI provider, the fixture CDN and Smokescreen allowing only the fixture subnet join in P2–P4; P1-21 runs the web e2e suite on it | P1-09 |
 | `restart-check.sh` | Restarts `shelfy-api` in the test stack and fails unless `/health` answers 200 within 3 s (§6.2) | P1-09 |
+| `spikes/capture/` | SPIKE-4 deploy candidates for osn PR 2: the capture and egress compose services, the Chromium seccomp profile, the Smokescreen config and ACL, and `shelfy-egress` (Smokescreen with a port allowlist). [README](spikes/capture/README.md) | SPIKE-4; moved to `osn/shelfy/` in P4 |
 | Dockerfile for `shelfy-capture` | `node:24-bookworm-slim`, pinned `playwright-core` with `chromium-headless-shell`, Debian `ffmpeg`, Noto and Liberation fonts (§2.18) | P4 |
-| Dockerfile for `shelfy-egress` | Smokescreen built from a pinned commit on `golang`, shipped on `distroless/static` (§3.2) | P4 |
-| Smokescreen ACL | Egress policy: public destinations only, ports 80 and 443, extra deny ranges (§2.18) | P4 (SPIKE-4) |
-| `osn/shelfy/chromium-seccomp.json` | Chromium seccomp profile mounted into `shelfy-capture` (§3.2) | P4 (SPIKE-4) |
+| Dockerfile for `shelfy-egress` | Smokescreen built from a pinned commit on `golang`, shipped on `distroless/static` (§3.2). Candidate: `spikes/capture/egress/`, which adds the port allowlist | P4 |
+| Smokescreen ACL | Egress policy: public destinations only, ports 80 and 443, extra deny ranges (§2.18). Candidate: `spikes/capture/smokescreen/` | P4 (SPIKE-4) |
+| `osn/shelfy/chromium-seccomp.json` | Chromium seccomp profile mounted into `shelfy-capture` (§3.2). Candidate: `spikes/capture/chromium-seccomp.json` | P4 (SPIKE-4) |
 
 `.github/workflows/release-server.yml` builds the image on `server-v*` tags and pushes it to GHCR
 (§3.8): see [Releases](#releases).

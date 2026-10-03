@@ -1,0 +1,22 @@
+# shelfy-egress: egress ACL (SPIKE-4 candidate for osn PR 2).
+#
+# The capture service fetches arbitrary public sites, so the default rule is
+# `open`: the real control is the address policy in config.yaml, applied after
+# DNS resolution, plus the port allowlist of the shelfy-egress wrapper. The deny
+# list refuses internal-only names by name, so they fail with a clear reason
+# before any DNS lookup. No rule lists `allowed_external_proxies`, so a request
+# that asks Smokescreen to chain to another proxy (X-Upstream-Https-Proxy) is
+# refused.
+version: v1
+services: []
+default:
+  name: default
+  project: shelfy
+  action: open
+global_deny_list:
+  - localhost
+  - '*.localhost'
+  - '*.local'
+  - '*.internal'
+  - '*.home.arpa'
+  - '*.ts.net'
