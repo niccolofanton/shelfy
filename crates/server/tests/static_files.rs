@@ -217,7 +217,7 @@ async fn server_paths_never_get_the_page() {
         "/api",
         "/api/v1/no-such-route",
         "/media/abc/def",
-        "/health/capture",
+        "/health/no-such-service",
         "/.well-known/security.txt",
     ] {
         problem(send(&app, get(uri)).await, StatusCode::NOT_FOUND).await;
@@ -227,6 +227,17 @@ async fn server_paths_never_get_the_page() {
     let response = send(&app, get("/health")).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(json(response).await["status"], "ok");
+    // Capture has a real health route; an unconfigured service must report
+    // unavailable as JSON rather than falling back to the web page.
+    let response = send(&app, get("/health/capture")).await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        response.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .contains("json")
+    );
+    assert_ne!(body(response).await, INDEX);
     let response = send(&app, get("/api/v1/openapi.json")).await;
     assert_eq!(response.status(), StatusCode::OK);
     problem(

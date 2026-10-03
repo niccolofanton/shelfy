@@ -249,7 +249,8 @@ async fn the_extension_pairs_with_a_code_from_the_web_app() {
         answer["scopes"],
         json!(["ingest", "tasks", "uploads", "lookup"])
     );
-    assert_eq!(answer.as_object().unwrap().len(), 3);
+    assert_eq!(answer["accountId"], owner(&t));
+    assert_eq!(answer.as_object().unwrap().len(), 4);
 
     // The code is spent; the token is an extension token of the owner, tied
     // to the installation's digest, minted `via: pairing`.

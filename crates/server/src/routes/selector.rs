@@ -549,11 +549,12 @@ mod tests {
     #[test]
     fn filter_members_are_the_fields_of_filter_params() {
         let members = FilterParams::members();
-        assert_eq!(members.len(), 17, "{members:?}");
+        assert_eq!(members.len(), 18, "{members:?}");
         for name in [
             "collection",
             "mediaType",
             "aiTagged",
+            "aiLanguage",
             "conceptMode",
             "trash",
         ] {

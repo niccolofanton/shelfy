@@ -1161,6 +1161,7 @@ export interface paths {
      * @description Needs a sign-in or a re-authentication from the last 5 minutes (403
      *     `reauth_required` otherwise). 422 for the kind `migrate` (the migration
      *     CLI signs in with the device flow), for scopes that are not the kind's,
+     *     for invalid `ttlDays` (whole days 1..365; omitted means 90),
      *     or for a label over 64 characters; 409 `conflict` when the account holds
      *     50 working tokens already.
      */
@@ -1652,6 +1653,22 @@ export interface paths {
     get?: never;
     put?: never;
     post: operations['cancelSearchChat'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/search/suggest': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['searchSuggest'];
     delete?: never;
     options?: never;
     head?: never;
@@ -2368,7 +2385,7 @@ export interface components {
       createdAt: number;
       /**
        * Format: int64
-       * @description When it stops working, unix ms; `null` until revoked.
+       * @description When it stops working, unix ms; `null` for existing non-expiring tokens.
        */
       expiresAt: number | null;
       /** @description Its id (ULID), for `DELETE /me/tokens/{id}`. */
@@ -2402,6 +2419,12 @@ export interface components {
        *     out, `library` grants `library:read` only; other kinds grant all.
        */
       scopes?: components['schemas']['TokenScope'][];
+      /**
+       * Format: int32
+       * @description Validity in whole days: 1..365, default 90 when omitted. Never indefinite.
+       * @default 90
+       */
+      ttlDays: number;
     };
     /**
      * @description Which assets of a post are archived: the desktop's "asset types to
@@ -5483,6 +5506,14 @@ export interface components {
        */
       videos: number;
     };
+    SuggestBody: {
+      q: string;
+      scope?: components['schemas']['SearchScope'];
+    };
+    SuggestResult: {
+      reason?: string | null;
+      tags: string[];
+    };
     /** @description The listing a sync run walks, in a `sync.progress` event (contract C4). */
     SyncListing: {
       /** @description The folder or board id, when the listing names one. */
@@ -8497,6 +8528,31 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  searchSuggest: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SuggestBody'];
+      };
+    };
+    responses: {
+      /** @description Related tags present in this user's live scoped vocabulary; empty with a reason when unavailable. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SuggestResult'];
+        };
       };
       default: components['responses']['Problem'];
     };

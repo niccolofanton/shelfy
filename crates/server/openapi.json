@@ -2252,7 +2252,7 @@
       "post": {
         "tags": ["account"],
         "summary": "Creates an API token for the extension, iOS Shortcut or library client; the answer\nis the only time its value is shown.",
-        "description": "Needs a sign-in or a re-authentication from the last 5 minutes (403\n`reauth_required` otherwise). 422 for the kind `migrate` (the migration\nCLI signs in with the device flow), for scopes that are not the kind's,\nor for a label over 64 characters; 409 `conflict` when the account holds\n50 working tokens already.",
+        "description": "Needs a sign-in or a re-authentication from the last 5 minutes (403\n`reauth_required` otherwise). 422 for the kind `migrate` (the migration\nCLI signs in with the device flow), for scopes that are not the kind's,\nfor invalid `ttlDays` (whole days 1..365; omitted means 90),\nor for a label over 64 characters; 409 `conflict` when the account holds\n50 working tokens already.",
         "operationId": "createApiToken",
         "requestBody": {
           "content": {
@@ -3831,6 +3831,37 @@
         "responses": {
           "204": {
             "description": "Cancelled."
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/search/suggest": {
+      "post": {
+        "tags": ["library"],
+        "operationId": "searchSuggest",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SuggestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Related tags present in this user's live scoped vocabulary; empty with a reason when unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuggestResult"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Problem"
@@ -5758,7 +5789,7 @@
           "expiresAt": {
             "type": ["integer", "null"],
             "format": "int64",
-            "description": "When it stops working, unix ms; `null` until revoked."
+            "description": "When it stops working, unix ms; `null` for existing non-expiring tokens."
           },
           "id": {
             "type": "string",
@@ -5819,6 +5850,14 @@
               "$ref": "#/components/schemas/TokenScope"
             },
             "description": "What it may do: a non-empty subset of the kind's scopes. When left\nout, `library` grants `library:read` only; other kinds grant all."
+          },
+          "ttlDays": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Validity in whole days: 1..365, default 90 when omitted. Never indefinite.",
+            "default": 90,
+            "maximum": 365,
+            "minimum": 1
           }
         },
         "additionalProperties": false
@@ -11085,6 +11124,34 @@
             "format": "int64",
             "description": "At least one kept video.",
             "minimum": 0
+          }
+        }
+      },
+      "SuggestBody": {
+        "type": "object",
+        "required": ["q"],
+        "properties": {
+          "q": {
+            "type": "string"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/SearchScope"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SuggestResult": {
+        "type": "object",
+        "required": ["tags"],
+        "properties": {
+          "reason": {
+            "type": ["string", "null"]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

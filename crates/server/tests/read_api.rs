@@ -216,7 +216,7 @@ async fn language_and_none_status_facets_match_lists_counts_and_bulk_filter_quer
     t.write(ALICE, |tx| {
         tx.execute_batch(
             "UPDATE posts SET ai_language=NULL;
-            UPDATE posts SET ai_language='it' WHERE key='ig_3101';",
+            UPDATE posts SET ai_language='it' WHERE key='ig_1001';",
         )
         .unwrap();
         Ok(())
@@ -226,7 +226,7 @@ async fn language_and_none_status_facets_match_lists_counts_and_bulk_filter_quer
     let facets = get_ok(&app, "/api/v1/facets").await;
     assert_eq!(facets["language"], json!([{ "value": "it", "count": 1 }]));
     let page = get_ok(&app, "/api/v1/posts?aiLanguage=it&includeTotal=true").await;
-    assert_eq!(keys(&page), ["ig_3101"]);
+    assert_eq!(keys(&page), ["ig_1001"]);
     assert_eq!(page["total"], 1);
     let count = get_ok(&app, "/api/v1/posts/count?aiLanguage=it").await;
     assert_eq!(count["total"], 1);
