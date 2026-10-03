@@ -10,8 +10,11 @@
 //! Posts go to the trash with `POST /posts/bulk` (`delete`) and with
 //! `DELETE /collections/{id}?mode=withPosts`; both answer the `deletedAt`
 //! every post of that delete got, which `POST /trash/restore {deletedAt}`
-//! takes to undo it. The nightly purge deletes what has been in the trash for
-//! 30 days ([`crate::jobs::purge`]).
+//! takes to undo it. The undo of a delete that a `bulk` job still runs
+//! cancels the job first ([`crate::jobs::bulk::cancel_deletes`]): once the
+//! cancel is committed the job moves no more posts, so the restore gets them
+//! all, inline or as a job of its own (P1-11 review M2). The nightly purge
+//! deletes what has been in the trash for 30 days ([`crate::jobs::purge`]).
 //!
 //! Every route needs a session; another user's posts are unknown keys.
 
@@ -36,7 +39,7 @@ use crate::conditional::{ConditionalHeaders, ETag};
 use crate::current_user::CurrentUser;
 use crate::error::{ApiError, ErrorCode};
 use crate::extract::{Json, Query};
-use crate::jobs::bulk::Selection;
+use crate::jobs::bulk::{self as job, Selection};
 use crate::jobs::idempotency::IdempotencyHeader;
 use crate::jobs::purge;
 use crate::state::{AppState, blocking};
@@ -151,17 +154,20 @@ pub struct RestoreRequest {
     pub selector: Option<PostSelector>,
     /// The posts one delete moved to the trash: the `deletedAt` its answer
     /// gave (`POST /posts/bulk` `delete`, `DELETE /collections/{id}` with
-    /// posts). This is the undo of that delete.
+    /// posts). This is the undo of that delete: when a `bulk` job still runs
+    /// it (queued or running), the job is cancelled first, so every post it
+    /// moved comes back and it moves no more.
     #[schema(nullable = false)]
     pub deleted_at: Option<i64>,
 }
 
 /// Brings posts back from the trash, with their folders and search text as
 /// they were: some by key, all those a filter selects in the trash, or all
-/// those of one delete (its `deletedAt`, the undo). Up to 500 posts it runs
-/// in the request and answers 200; a larger selection answers 202 with the
-/// `bulk` job that runs it, reported by `job.updated`. Send an
-/// `Idempotency-Key` so that a repeat acts once.
+/// those of one delete (its `deletedAt`, the undo; a delete job still at
+/// work is cancelled first). Up to 500 posts it runs in the request and
+/// answers 200; a larger selection answers 202 with the `bulk` job that runs
+/// it, reported by `job.updated`. Send an `Idempotency-Key` so that a repeat
+/// acts once.
 #[utoipa::path(
     post,
     path = "/api/v1/trash/restore",
@@ -206,7 +212,15 @@ pub async fn restore_trash(
             }
             (Selection::selector(wire), selector)
         }
-        (None, Some(at)) => (Selection::DeletedAt(at), Selector::TrashedAt(at)),
+        (None, Some(at)) => {
+            // The undo of a delete: a delete job still at work is stopped
+            // first, so the restore gets every post it moved, and it moves
+            // no more (P1-11 review M2). A locked library answers 423 before
+            // anything is cancelled.
+            state.user_db(user.id()).await?;
+            job::cancel_deletes(&state, user.id(), at).await?;
+            (Selection::DeletedAt(at), Selector::TrashedAt(at))
+        }
         _ => {
             return Err(ApiError::invalid_field(
                 "selector",

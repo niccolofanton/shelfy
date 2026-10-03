@@ -54,12 +54,14 @@ use super::{
     AttemptFence, Clock, Enqueued, JobContext, JobError, JobResult, Jobs, Kind, KindSpec, NewJob,
     Outcome,
 };
-use crate::error::ApiError;
+use crate::control::jobs::{self as rows, ListFilter};
+use crate::error::{ApiError, ErrorCode};
 use crate::events::EventBus;
-use crate::events::model::ChangeReason;
+use crate::events::model::{ChangeReason, JobState};
 use crate::library;
 use crate::routes::bulk::{BulkAction, BulkParams, changed_keys};
 use crate::routes::selector::PostSelector;
+use crate::state::{AppState, blocking};
 
 /// The kind's name.
 pub const KIND: &str = "bulk";
@@ -174,6 +176,57 @@ pub async fn enqueue(jobs: &Jobs, user_id: &str, payload: &Payload) -> Result<En
     let payload = serde_json::to_value(payload).map_err(ApiError::internal)?;
     jobs.enqueue(NewJob::new(user_id, KIND).payload(payload))
         .await
+}
+
+/// Most active bulk jobs of a user [`cancel_deletes`] looks through; a user
+/// has one running and a few queued.
+const MAX_ACTIVE_LOOKED_AT: u32 = 1_000;
+
+/// Cancels `user_id`'s active (queued or running) bulk deletes stamped `at`,
+/// so that the undo of a delete stops it before it restores its posts
+/// (P1-11 review M2, [`crate::routes::trash`]). A running try writes nothing
+/// once the cancel is committed ([`AttemptFence::is_current`], checked
+/// under the library's writer), and a chunk that saw the try current holds
+/// the writer until it commits: the restore, which writes after the cancel,
+/// sees every post the delete will ever have moved. Returns the ids of the
+/// jobs cancelled.
+///
+/// # Errors
+///
+/// The control database failed.
+pub async fn cancel_deletes(
+    state: &AppState,
+    user_id: &str,
+    at: i64,
+) -> Result<Vec<i64>, ApiError> {
+    let control = Arc::clone(state.control());
+    let user = user_id.to_owned();
+    let active = blocking(move || {
+        let kinds = [KIND.to_owned()];
+        let filter = ListFilter {
+            kinds: &kinds,
+            states: &[JobState::Queued, JobState::Running],
+            before: None,
+            limit: MAX_ACTIVE_LOOKED_AT,
+        };
+        control.read(|conn| rows::list(conn, &user, &filter))
+    })
+    .await?;
+    let deletes = active.into_iter().filter(|row| {
+        serde_json::from_str::<Payload>(&row.payload_json)
+            .is_ok_and(|payload| payload.action == BulkAction::Delete && payload.at == at)
+    });
+    let mut cancelled = Vec::new();
+    for row in deletes {
+        match state.jobs().cancel(user_id, row.id).await {
+            Ok(_) => cancelled.push(row.id),
+            // It finished meanwhile: its posts are all in the trash, where
+            // the restore finds them.
+            Err(err) if err.code() == ErrorCode::Conflict => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(cancelled)
 }
 
 async fn run(ctx: JobContext) -> JobResult {

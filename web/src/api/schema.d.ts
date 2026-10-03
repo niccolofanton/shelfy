@@ -1291,10 +1291,13 @@ export interface paths {
     put?: never;
     /**
      * Empties the trash: starts the `purge` job that deletes for good every
-     *     post trashed until this request (posts trashed later stay), with their
-     *     tags, folder memberships and search rows. Their media are released for
-     *     the storage cleanup. Answers 202 at once; the job's progress arrives as
-     *     `job.updated`. Send an `Idempotency-Key` so that a repeat starts one job.
+     *     post in the trash at this request, with their tags, folder memberships
+     *     and search rows. Posts that enter the trash later stay, even those of a
+     *     bulk delete asked before; posts restored before the job gets to them
+     *     stay too. The job runs after the user's earlier bulk jobs. Their media
+     *     are released for the storage cleanup. Answers 202 at once; the job's
+     *     progress arrives as `job.updated`. Send an `Idempotency-Key` so that a
+     *     repeat starts one job.
      */
     post: operations['emptyTrash'];
     delete?: never;
@@ -1315,10 +1318,11 @@ export interface paths {
     /**
      * Brings posts back from the trash, with their folders and search text as
      *     they were: some by key, all those a filter selects in the trash, or all
-     *     those of one delete (its `deletedAt`, the undo). Up to 500 posts it runs
-     *     in the request and answers 200; a larger selection answers 202 with the
-     *     `bulk` job that runs it, reported by `job.updated`. Send an
-     *     `Idempotency-Key` so that a repeat acts once.
+     *     those of one delete (its `deletedAt`, the undo; a delete job still at
+     *     work is cancelled first). Up to 500 posts it runs in the request and
+     *     answers 200; a larger selection answers 202 with the `bulk` job that runs
+     *     it, reported by `job.updated`. Send an `Idempotency-Key` so that a repeat
+     *     acts once.
      */
     post: operations['restoreTrash'];
     delete?: never;
@@ -3647,7 +3651,9 @@ export interface components {
        * Format: int64
        * @description The posts one delete moved to the trash: the `deletedAt` its answer
        *     gave (`POST /posts/bulk` `delete`, `DELETE /collections/{id}` with
-       *     posts). This is the undo of that delete.
+       *     posts). This is the undo of that delete: when a `bulk` job still runs
+       *     it (queued or running), the job is cancelled first, so every post it
+       *     moved comes back and it moves no more.
        */
       deletedAt?: number;
       /**
@@ -3890,7 +3896,8 @@ export interface components {
       job: components['schemas']['Job'];
       /**
        * Format: int64
-       * @description Posts in the trash when the request came: what the job deletes.
+       * @description Posts in the trash when the request came: what the job deletes (less
+       *     those restored before it gets to them).
        */
       selected: number;
     };

@@ -1613,6 +1613,141 @@ async fn a_retried_bulk_job_goes_on_where_it_stopped() {
     a_stopped_bulk_job_goes_on_where_it_stopped(Interruption::CancelThenRetry).await;
 }
 
+/// Review M2: the undo of a delete that still waits in the bulk queue
+/// cancels it, so it never moves a post. On a locked library the undo
+/// answers 423 and cancels nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_undo_of_a_queued_delete_job_cancels_it() {
+    let (t, _) = two_libraries().await;
+    t.write(ALICE, |tx| synthetic_library(tx, 800, 51)).await;
+    let app = t.app_as(ALICE);
+    let _jobs = scheduler(&t);
+    ok(&app, post_empty("/api/v1/queues/bulk/pause")).await;
+    let started = call(
+        &app,
+        bulk(json!({ "filter": {} }), "delete", Value::Null),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    let id = started["job"]["id"].as_i64().unwrap();
+    let stamp = started["deletedAt"].as_i64().unwrap();
+
+    let users = t.data_dir().users_dir();
+    assert!(shelfy_core::db::lock_library(&users, ALICE, "restore").unwrap());
+    let locked = problem(
+        send(&app, restore(json!({ "deletedAt": stamp }))).await,
+        StatusCode::LOCKED,
+    )
+    .await;
+    assert_eq!(locked.code, ErrorCode::UserLocked);
+    assert_eq!(t.job(ALICE, id).await.state, JobState::Queued);
+    assert!(shelfy_core::db::unlock_library(&users, ALICE).unwrap());
+
+    let undone = ok(&app, restore(json!({ "deletedAt": stamp }))).await;
+    assert_eq!(
+        (undone["selected"].clone(), undone["changed"].clone()),
+        (json!(0), json!(0))
+    );
+    assert_eq!(t.job(ALICE, id).await.state, JobState::Cancelled);
+    ok(&app, post_empty("/api/v1/queues/bulk/resume")).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(t.job(ALICE, id).await.state, JobState::Cancelled);
+    assert_eq!(trash_stamps(&t, ALICE), [(FIXTURE_TRASHED.to_owned(), NOW)]);
+}
+
+/// Review M2: the undo of a delete whose first chunk is under way cancels
+/// it; the chunk sees the cancel under the library's writer and moves
+/// nothing, so nothing of that delete is left in the trash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_undo_of_a_running_delete_job_leaves_nothing_behind() {
+    let (t, _) = two_libraries().await;
+    t.write(ALICE, |tx| synthetic_library(tx, 800, 52)).await;
+    let app = t.app_as(ALICE);
+    let _jobs = scheduler(&t);
+    let held = HeldWriter::take(&t, ALICE);
+    let started = call(
+        &app,
+        bulk(json!({ "filter": {} }), "delete", Value::Null),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    let id = started["job"]["id"].as_i64().unwrap();
+    let stamp = started["deletedAt"].as_i64().unwrap();
+    wait_in_first_chunk(&t, ALICE, id, "delete").await;
+
+    // The undo cancels the job, then waits for the writer to restore.
+    let undo = tokio::spawn({
+        let app = app.clone();
+        async move { send(&app, restore(json!({ "deletedAt": stamp }))).await }
+    });
+    poll_job(&t.state, ALICE, id, |job| job.state == JobState::Cancelled).await;
+    held.release();
+    let undone = json(undo.await.unwrap()).await;
+    assert_eq!(undone["changed"], 0, "{undone}");
+    assert_eq!(trash_stamps(&t, ALICE), [(FIXTURE_TRASHED.to_owned(), NOW)]);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let job = t.job(ALICE, id).await;
+    assert_eq!(job.state, JobState::Cancelled);
+    assert_eq!(checkpoint(&job), (0, 0), "the chunk moved nothing");
+    assert_eq!(trash_stamps(&t, ALICE).len(), 1);
+}
+
+/// Review M2: the undo of a delete job that moved 1,000 posts before it was
+/// stopped cancels it and restores the 1,000 as a job of its own; the
+/// delete never moves another post.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_undo_of_a_partly_done_delete_job_restores_all_it_moved() {
+    let t = TestState::new();
+    t.add_user(ALICE);
+    t.write(ALICE, |tx| synthetic_library(tx, 1_600, 53)).await;
+    let app = t.app_as(ALICE);
+    let _jobs = scheduler(&t);
+    let mut events = t.state.events().subscribe(ALICE, None);
+    let before = snapshot(&t, ALICE);
+
+    // Two chunks, each held until the queue is paused.
+    let held = HeldWriter::take(&t, ALICE);
+    let started = call(
+        &app,
+        bulk(json!({ "filter": {} }), "delete", Value::Null),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    let id = started["job"]["id"].as_i64().unwrap();
+    let stamp = started["deletedAt"].as_i64().unwrap();
+    wait_in_first_chunk(&t, ALICE, id, "delete").await;
+    ok(&app, post_empty("/api/v1/queues/bulk/pause")).await;
+    held.release();
+    poll_job(&t.state, ALICE, id, |job| {
+        job.state == JobState::Queued && checkpoint(job).1 == 500
+    })
+    .await;
+    let held = HeldWriter::take(&t, ALICE);
+    ok(&app, post_empty("/api/v1/queues/bulk/resume")).await;
+    wait_in_first_chunk(&t, ALICE, id, "delete").await;
+    ok(&app, post_empty("/api/v1/queues/bulk/pause")).await;
+    held.release();
+    poll_job(&t.state, ALICE, id, |job| {
+        job.state == JobState::Queued && checkpoint(job).1 == 1_000
+    })
+    .await;
+    assert_eq!(trash_stamps(&t, ALICE).len(), 1_000);
+
+    let undo = call(
+        &app,
+        restore(json!({ "deletedAt": stamp })),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    assert_eq!(undo["selected"], 1_000);
+    assert_eq!(t.job(ALICE, id).await.state, JobState::Cancelled);
+    ok(&app, post_empty("/api/v1/queues/bulk/resume")).await;
+    follow_job(&mut events, undo["job"]["id"].as_i64().unwrap()).await;
+    assert!(trash_stamps(&t, ALICE).is_empty());
+    assert_eq!(snapshot(&t, ALICE), before);
+    assert_eq!(t.job(ALICE, id).await.state, JobState::Cancelled);
+}
+
 /// The nightly purge (03:00 UTC) deletes what has been in the trash for 30
 /// days, on the job system's clock, and keeps the rest for later nights.
 #[tokio::test(start_paused = true)]

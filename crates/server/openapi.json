@@ -2866,7 +2866,7 @@
     "/api/v1/trash/empty": {
       "post": {
         "tags": ["library"],
-        "summary": "Empties the trash: starts the `purge` job that deletes for good every\npost trashed until this request (posts trashed later stay), with their\ntags, folder memberships and search rows. Their media are released for\nthe storage cleanup. Answers 202 at once; the job's progress arrives as\n`job.updated`. Send an `Idempotency-Key` so that a repeat starts one job.",
+        "summary": "Empties the trash: starts the `purge` job that deletes for good every\npost in the trash at this request, with their tags, folder memberships\nand search rows. Posts that enter the trash later stay, even those of a\nbulk delete asked before; posts restored before the job gets to them\nstay too. The job runs after the user's earlier bulk jobs. Their media\nare released for the storage cleanup. Answers 202 at once; the job's\nprogress arrives as `job.updated`. Send an `Idempotency-Key` so that a\nrepeat starts one job.",
         "operationId": "emptyTrash",
         "parameters": [
           {
@@ -2907,7 +2907,7 @@
     "/api/v1/trash/restore": {
       "post": {
         "tags": ["library"],
-        "summary": "Brings posts back from the trash, with their folders and search text as\nthey were: some by key, all those a filter selects in the trash, or all\nthose of one delete (its `deletedAt`, the undo). Up to 500 posts it runs\nin the request and answers 200; a larger selection answers 202 with the\n`bulk` job that runs it, reported by `job.updated`. Send an\n`Idempotency-Key` so that a repeat acts once.",
+        "summary": "Brings posts back from the trash, with their folders and search text as\nthey were: some by key, all those a filter selects in the trash, or all\nthose of one delete (its `deletedAt`, the undo; a delete job still at\nwork is cancelled first). Up to 500 posts it runs in the request and\nanswers 200; a larger selection answers 202 with the `bulk` job that runs\nit, reported by `job.updated`. Send an `Idempotency-Key` so that a repeat\nacts once.",
         "operationId": "restoreTrash",
         "parameters": [
           {
@@ -6834,7 +6834,7 @@
           "deletedAt": {
             "type": "integer",
             "format": "int64",
-            "description": "The posts one delete moved to the trash: the `deletedAt` its answer\ngave (`POST /posts/bulk` `delete`, `DELETE /collections/{id}` with\nposts). This is the undo of that delete."
+            "description": "The posts one delete moved to the trash: the `deletedAt` its answer\ngave (`POST /posts/bulk` `delete`, `DELETE /collections/{id}` with\nposts). This is the undo of that delete: when a `bulk` job still runs\nit (queued or running), the job is cancelled first, so every post it\nmoved comes back and it moves no more."
           },
           "selector": {
             "$ref": "#/components/schemas/PostSelector",
@@ -7234,7 +7234,7 @@
           "selected": {
             "type": "integer",
             "format": "int64",
-            "description": "Posts in the trash when the request came: what the job deletes.",
+            "description": "Posts in the trash when the request came: what the job deletes (less\nthose restored before it gets to them).",
             "minimum": 0
           }
         }
