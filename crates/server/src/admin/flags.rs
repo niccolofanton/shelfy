@@ -285,7 +285,11 @@ mod tests {
                 "{text}"
             );
         }
-        assert!(parse_value(min, "0.3.0-beta").is_err());
+        assert_eq!(
+            parse_value(min, "0.3.0-beta").unwrap().to_json(),
+            json!("0.3.0-beta")
+        );
+        assert!(parse_value(min, "0.3.0-").is_err());
         let switch = Flag::find(keys::INSTAGRAM_REPLAY).unwrap();
         assert_eq!(
             parse_value(switch, "false").unwrap(),

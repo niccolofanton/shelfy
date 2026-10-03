@@ -765,7 +765,14 @@ async fn outdated_or_unversioned_extensions_get_426_but_on_the_config() {
             "{version:?}"
         );
     }
-    for version in ["0.2.0", "0.2", "0.10.0", "1.0.0.1"] {
+    for version in [
+        "0.2.0",
+        "0.2",
+        "0.10.0",
+        "1.0.0.1",
+        "0.3.0-beta.1",
+        "0.2.1+build.7",
+    ] {
         let response = send(&app, ext(lookup(), &token, Some(version))).await;
         assert_eq!(response.status(), StatusCode::OK, "{version}");
     }

@@ -130,42 +130,84 @@ impl ExtensionState {
     }
 }
 
-/// A version of the extension: Chrome's manifest `version`, 1 to 4
-/// dot-separated integers from 0 to 65535 without leading zeros (`0.2.0`).
-/// Missing parts compare as 0, so `0.2` equals `0.2.0`.
+/// A version of the extension: 1 to 4 dot-separated numbers without
+/// leading zeros, as Chrome's manifest `version` (`0.2.0`), optionally
+/// followed by a semver pre-release (`-beta.1`) and build metadata (`+abc`).
+/// Precedence is semver's: the numbers, missing ones counting as 0 (so `0.2`
+/// equals `0.2.0`), then a pre-release sorts before its release. Build
+/// metadata is ignored, and not kept.
 #[derive(Clone, Copy)]
 pub struct ExtensionVersion {
-    parts: [u16; 4],
+    parts: [u32; 4],
     len: u8,
+    pre: [u8; Self::MAX_PRE_LEN],
+    pre_len: u8,
 }
 
 impl ExtensionVersion {
     /// Longest text read as a version.
-    const MAX_LEN: usize = 23;
+    const MAX_LEN: usize = 64;
+    /// Longest pre-release kept (`beta.1`).
+    const MAX_PRE_LEN: usize = 32;
+    /// Most digits in one number.
+    const MAX_DIGITS: usize = 9;
 
-    /// Parses `text`; `None` unless it is a manifest version.
+    /// Parses `text`; `None` unless it is a version as described above.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         if text.is_empty() || text.len() > Self::MAX_LEN {
             return None;
         }
-        let mut parts = [0u16; 4];
+        let (main, build) = match text.split_once('+') {
+            Some((main, build)) => (main, Some(build)),
+            None => (text, None),
+        };
+        if build.is_some_and(|build| !build.split('.').all(is_identifier)) {
+            return None;
+        }
+        let (core, pre) = match main.split_once('-') {
+            Some((core, pre)) => (core, Some(pre)),
+            None => (main, None),
+        };
+        let mut parts = [0u32; 4];
         let mut len = 0usize;
-        for part in text.split('.') {
-            if len == parts.len()
-                || part.is_empty()
-                || !part.bytes().all(|b| b.is_ascii_digit())
-                || (part.len() > 1 && part.starts_with('0'))
-            {
+        for part in core.split('.') {
+            if len == parts.len() || !is_number(part) || part.len() > Self::MAX_DIGITS {
                 return None;
             }
             parts[len] = part.parse().ok()?;
             len += 1;
         }
+        let mut stored = [0u8; Self::MAX_PRE_LEN];
+        let pre_len = match pre {
+            None => 0,
+            Some(pre) => {
+                let valid = pre.len() <= Self::MAX_PRE_LEN
+                    && pre.split('.').all(|id| {
+                        is_identifier(id)
+                            && (!id.bytes().all(|b| b.is_ascii_digit()) || is_number(id))
+                    });
+                if !valid {
+                    return None;
+                }
+                stored[..pre.len()].copy_from_slice(pre.as_bytes());
+                pre.len()
+            }
+        };
         Some(Self {
             parts,
             len: u8::try_from(len).ok()?,
+            pre: stored,
+            pre_len: u8::try_from(pre_len).ok()?,
         })
+    }
+
+    /// The pre-release (`beta.1`), if any.
+    #[must_use]
+    pub fn pre_release(&self) -> Option<&str> {
+        (self.pre_len > 0)
+            .then(|| std::str::from_utf8(&self.pre[..usize::from(self.pre_len)]).ok())
+            .flatten()
     }
 
     /// The version of a request's [`VERSION_HEADER`], if it carries a valid
@@ -181,9 +223,49 @@ impl ExtensionVersion {
     }
 }
 
+/// A semver identifier: one or more ASCII letters, digits or `-`.
+fn is_identifier(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// A number without leading zeros.
+fn is_number(text: &str) -> bool {
+    !text.is_empty()
+        && text.bytes().all(|b| b.is_ascii_digit())
+        && (text.len() == 1 || !text.starts_with('0'))
+}
+
+/// Semver precedence of two pre-releases (§11.4): identifier by identifier,
+/// numbers numerically and below words, words in ASCII order; then the one
+/// with more identifiers is higher.
+fn cmp_pre_release(a: &str, b: &str) -> Ordering {
+    let mut left = a.split('.');
+    let mut right = b.split('.');
+    loop {
+        match (left.next(), right.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) => {
+                let numeric = |id: &str| id.bytes().all(|b| b.is_ascii_digit());
+                let order = match (numeric(x), numeric(y)) {
+                    // No leading zeros: the longer number is the larger.
+                    (true, true) => x.len().cmp(&y.len()).then_with(|| x.cmp(y)),
+                    (true, false) => Ordering::Less,
+                    (false, true) => Ordering::Greater,
+                    (false, false) => x.cmp(y),
+                };
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+        }
+    }
+}
+
 impl PartialEq for ExtensionVersion {
     fn eq(&self, other: &Self) -> bool {
-        self.parts == other.parts
+        self.cmp(other) == Ordering::Equal
     }
 }
 
@@ -192,6 +274,7 @@ impl Eq for ExtensionVersion {}
 impl Hash for ExtensionVersion {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.parts.hash(state);
+        self.pre_release().hash(state);
     }
 }
 
@@ -203,7 +286,14 @@ impl PartialOrd for ExtensionVersion {
 
 impl Ord for ExtensionVersion {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.parts.cmp(&other.parts)
+        self.parts
+            .cmp(&other.parts)
+            .then_with(|| match (self.pre_release(), other.pre_release()) {
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+                (Some(a), Some(b)) => cmp_pre_release(a, b),
+            })
     }
 }
 
@@ -214,6 +304,9 @@ impl fmt::Display for ExtensionVersion {
                 f.write_str(".")?;
             }
             write!(f, "{part}")?;
+        }
+        if let Some(pre) = self.pre_release() {
+            write!(f, "-{pre}")?;
         }
         Ok(())
     }
@@ -312,7 +405,15 @@ mod tests {
 
     #[test]
     fn manifest_versions_parse_and_compare_numerically() {
-        for text in ["0", "0.2.0", "1.2.3.4", "65535.0.10", "10.0"] {
+        for text in [
+            "0",
+            "0.2.0",
+            "1.2.3.4",
+            "65535.0.10",
+            "10.0",
+            "65536",
+            "0.3.0-beta.1",
+        ] {
             assert_eq!(version(text).to_string(), text);
         }
         assert!(version("0.10.0") > version("0.9.9"));
@@ -328,17 +429,55 @@ mod tests {
             ".1",
             "1..2",
             "1.2.3.4.5",
-            "65536",
             "01.2",
             "1.02",
             "-1",
             "+1",
-            "1.2.3-beta",
             "v1.2",
             " 1.2",
             "1,2",
             "1.2.3.4444444444",
             "١.٢",
+        ] {
+            assert!(ExtensionVersion::parse(bad).is_none(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn semver_pre_releases_sort_before_their_release() {
+        // The precedence example of semver §11.
+        let chain = [
+            "1.0.0-alpha",
+            "1.0.0-alpha.1",
+            "1.0.0-alpha.beta",
+            "1.0.0-beta",
+            "1.0.0-beta.2",
+            "1.0.0-beta.11",
+            "1.0.0-rc.1",
+            "1.0.0",
+        ];
+        for pair in chain.windows(2) {
+            assert!(version(pair[0]) < version(pair[1]), "{pair:?}");
+        }
+        assert!(version("0.2.0-beta") < version("0.2.0"));
+        assert!(version("0.2.0-beta") > version("0.1.9"));
+        // Build metadata is ignored, and dropped.
+        assert_eq!(version("1.0.0+build.5"), version("1.0.0"));
+        assert_eq!(version("1.0.0-rc.1+build.5").to_string(), "1.0.0-rc.1");
+        assert_eq!(
+            version("1.0.0-rc.1").pre_release(),
+            Some("rc.1"),
+            "kept for display"
+        );
+        for bad in [
+            "1.0.0-",
+            "1.0.0-beta..1",
+            "1.0.0-01",
+            "1.0.0+",
+            "1.0.0+a+b",
+            "1.0.0-be_ta",
+            &format!("1.0.0-{}", "a".repeat(33)),
+            &format!("1.0.0+{}", "a".repeat(60)),
         ] {
             assert!(ExtensionVersion::parse(bad).is_none(), "{bad:?}");
         }

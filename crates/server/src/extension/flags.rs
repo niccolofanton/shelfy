@@ -320,7 +320,7 @@ impl Flag {
     }
 }
 
-const VERSION_HINT: &str = "must be an extension version such as \"0.2.0\" (1 to 4 numbers)";
+const VERSION_HINT: &str = "must be an extension version such as \"0.2.0\" or \"0.3.0-beta.1\"";
 
 /// The effective value of every flag: the defaults, with the stored values
 /// that fit.
@@ -786,7 +786,7 @@ mod tests {
                 ExtensionVersion::parse("0.3.1").unwrap()
             ))
         );
-        for bad in [json!("0.3.1-beta"), json!(3), json!(""), json!("v1")] {
+        for bad in [json!("0.3.1-"), json!(3), json!(""), json!("v1")] {
             assert!(min.parse(&bad).is_err(), "{bad}");
         }
         assert!(Flag::find("extension.instagram.nope").is_none());
