@@ -51,6 +51,9 @@ use rusqlite::{Connection, Transaction, params};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use shelfy_core::ids::{Platform, ig};
+use shelfy_core::ingest::archive::{
+    self, ArchiveModes, ArchivePolicy, ArchiveState, Asset, PostFacts, SlideFacts,
+};
 use shelfy_core::ingest::duplicates;
 use shelfy_core::legacy::convert::{
     Timestamp, cdn_url_expiry_ms, classify_timestamp, epoch_to_ms, is_local_path, json_string_array,
@@ -231,6 +234,9 @@ struct Builder<'a> {
     db: &'a LegacyDb,
     mapping: &'a PlanMapping,
     opts: &'a BundleOptions,
+    /// The archive policy of the new library: the server's default modes and
+    /// the desktop's asset types, which the bundle carries as its setting.
+    archive: ArchivePolicy,
     objects: ObjectTable,
     drafts: Vec<Draft>,
     summary: BundleSummary,
@@ -270,10 +276,19 @@ impl<'a> Builder<'a> {
         files.unreadable = counts.unreadable;
         files.hashed = counts.hashed;
         files.hashed_bytes = counts.hashed_bytes;
+        let archive = ArchivePolicy {
+            modes: ArchiveModes::default(),
+            assets: opts
+                .settings
+                .as_ref()
+                .and_then(|s| s.archive_asset_types)
+                .unwrap_or_default(),
+        };
         Builder {
             db,
             mapping,
             opts,
+            archive,
             objects,
             drafts: Vec::new(),
             summary,
@@ -512,17 +527,8 @@ impl<'a> Builder<'a> {
                 _ => covers.other += 1,
             }
         }
-        post.archive_state = Some(
-            archive_state(
-                m.platform,
-                cover.is_some(),
-                post.cover_url.is_some(),
-                post.cover_url_expires_at,
-                &drafted,
-                now,
-            )
-            .to_owned(),
-        );
+        let state = archive_state(&post, cover.is_some(), &drafted, &self.archive, now);
+        post.archive_state = Some(state.as_str().to_owned());
 
         let mut legacy_ids = vec![p.id.clone()];
         legacy_ids.extend(folded.iter().map(|row| row.id.clone()));
@@ -1144,36 +1150,42 @@ fn repo_platform(platform: Platform) -> shelfy_core::repo::Platform {
     }
 }
 
-/// The archive state of a post (plan §2.7): `done` when nothing is left to
-/// store, `client` when its Instagram cover URL has expired (an extension
-/// task, OI-7), `partial` when something is stored, else `pending`. Only the
-/// cover and image slides count: videos are fetched on demand (D4). The
-/// server applies the same rule at install.
+/// The archive state of a drafted post: the core's rule
+/// (`shelfy_core::ingest::archive`, P2 contract C10) on what the bundle
+/// stores. Nothing has been fetched yet, so nothing has failed. The server
+/// derives the states again at install, with the same rule.
 fn archive_state(
-    platform: Platform,
+    post: &NewPost,
     cover_stored: bool,
-    has_cover_url: bool,
-    cover_expires_at: Option<i64>,
     slides: &[Slide],
+    policy: &ArchivePolicy,
     now: i64,
-) -> &'static str {
-    let cover_pending = !cover_stored && has_cover_url;
-    let slides_pending = slides
-        .iter()
-        .any(|s| s.kind == "image" && s.object.is_none() && s.source_url.is_some());
-    let stored = cover_stored || slides.iter().any(|s| s.object.is_some());
-    if !cover_pending && !slides_pending {
-        "done"
-    } else if cover_pending
-        && platform == Platform::Instagram
-        && cover_expires_at.is_some_and(|expiry| expiry <= now)
-    {
-        "client"
-    } else if stored {
-        "partial"
-    } else {
-        "pending"
-    }
+) -> ArchiveState {
+    let facts = PostFacts {
+        platform: post.platform,
+        media_type: post.media_type.clone(),
+        state: ArchiveState::Pending,
+        cover: Asset {
+            stored: cover_stored,
+            has_url: post.cover_url.is_some(),
+            expires_at: post.cover_url_expires_at,
+            failed: false,
+        },
+        slides: slides
+            .iter()
+            .map(|s| SlideFacts {
+                image: s.kind == "image",
+                asset: Asset {
+                    stored: s.object.is_some(),
+                    has_url: s.source_url.is_some(),
+                    expires_at: s.source_url_expires_at,
+                    failed: false,
+                },
+                video_stored: s.video_object.is_some(),
+            })
+            .collect(),
+    };
+    archive::state(&facts, policy, now)
 }
 
 /// Whether a desktop row holds an AI analysis, as the core's duplicate
@@ -1307,52 +1319,71 @@ mod tests {
         }
     }
 
+    /// A drafted post with a cover URL expiring at `expires_at`, if any.
+    fn post(
+        platform: shelfy_core::repo::Platform,
+        media_type: &str,
+        cover_url: bool,
+        expires_at: Option<i64>,
+    ) -> NewPost {
+        let mut post = NewPost::new("k_1", platform, "1", media_type, 0);
+        post.cover_url = cover_url.then(|| "https://cdn.example/c.jpg".to_owned());
+        post.cover_url_expires_at = expires_at;
+        post
+    }
+
+    fn state(post: &NewPost, cover_stored: bool, slides: &[Slide]) -> &'static str {
+        archive_state(post, cover_stored, slides, &ArchivePolicy::default(), 1_000).as_str()
+    }
+
     #[test]
     fn archive_states_follow_what_is_left_to_store() {
-        let now = 1_000;
-        let ig = Platform::Instagram;
+        use shelfy_core::repo::Platform::{Instagram, Twitter, Web};
         // Nothing to store: a text post, or everything stored.
-        assert_eq!(archive_state(ig, false, false, None, &[], now), "done");
         assert_eq!(
-            archive_state(
-                ig,
-                true,
-                true,
-                Some(10),
-                &[slide("image", Some(0), true)],
-                now
-            ),
+            state(&post(Instagram, "text", false, None), false, &[]),
+            "done"
+        );
+        let stored = post(Instagram, "image", true, Some(10));
+        assert_eq!(
+            state(&stored, true, &[slide("image", Some(0), true)]),
             "done"
         );
         // Videos are on demand: a stored poster is enough.
+        let video = post(Instagram, "video", true, None);
         assert_eq!(
-            archive_state(ig, true, true, None, &[slide("video", Some(0), true)], now),
+            state(&video, true, &[slide("video", Some(0), true)]),
             "done"
         );
         // An expired IG cover needs the extension.
+        let expired = post(Instagram, "image", true, Some(999));
+        assert_eq!(state(&expired, false, &[]), "client");
+        let valid = post(Instagram, "image", true, Some(1_001));
+        assert_eq!(state(&valid, false, &[]), "pending");
         assert_eq!(
-            archive_state(ig, false, true, Some(999), &[], now),
-            "client"
-        );
-        assert_eq!(
-            archive_state(ig, false, true, Some(1_001), &[], now),
-            "pending"
-        );
-        assert_eq!(
-            archive_state(Platform::Twitter, false, true, Some(1), &[], now),
+            state(&post(Twitter, "image", true, Some(1)), false, &[]),
             "pending"
         );
         // Something stored, something not.
+        let carousel = post(Instagram, "carousel", true, None);
+        let slides = [slide("image", Some(0), true), slide("image", None, true)];
+        assert_eq!(state(&carousel, true, &slides), "partial");
+        // The desktop's asset types: without images, the cover is enough.
+        let mut covers_only = ArchivePolicy::default();
+        covers_only.assets.image = false;
         assert_eq!(
-            archive_state(
-                ig,
-                true,
-                true,
-                None,
-                &[slide("image", Some(0), true), slide("image", None, true)],
-                now
-            ),
-            "partial"
+            archive_state(&carousel, true, &slides, &covers_only, 1_000),
+            ArchiveState::Done
+        );
+        // An Instagram post with no media at all waits for the server's
+        // hydration (L17); a site that stores nothing is a link.
+        assert_eq!(
+            state(&post(Instagram, "image", false, None), false, &[]),
+            "pending"
+        );
+        assert_eq!(
+            state(&post(Web, "website", false, None), false, &[]),
+            "link_only"
         );
     }
 

@@ -47,8 +47,10 @@
 //! for the unlock (`user_locked`, a transient error).
 //!
 //! Archive work for posts whose files were missing is recorded per post
-//! (`archive_state`, `cover_url_expires_at`) and counted in the report; the
-//! archive workers arrive with P2.
+//! (`archive_state`, `cover_url_expires_at`) and counted in the report. The
+//! states come from the core's rule (`shelfy_core::ingest::archive`), which
+//! the bundle builder applies too, with the asset types the library ends with
+//! (`install::archive_policy`); the archive workers arrive with P2.
 
 pub mod housekeeping;
 pub mod install;

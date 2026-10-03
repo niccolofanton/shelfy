@@ -39,6 +39,7 @@ use std::time::Instant;
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 use serde_json::Value;
+use shelfy_core::ingest::archive::{self, ArchivePolicy, Scope};
 use shelfy_core::ingest::duplicates::{self, Duplicate};
 use shelfy_core::repo::posts::{self, AiLayer, NewMedia, NewPost};
 use shelfy_core::repo::{Platform, RepoError};
@@ -200,6 +201,7 @@ pub(super) async fn merge(
     let collection_ids = Arc::new(collection_ids);
 
     // 4. The posts.
+    let policy = install::archive_policy(ctx, &work_db).await?;
     let post_ids: Vec<i64> = {
         let work_db = work_db.clone();
         blocking(move || -> Result<Vec<i64>, ApiError> {
@@ -226,7 +228,7 @@ pub(super) async fn merge(
         };
         let chunk_counts = ctx
             .user_db(move |db| {
-                db.write(|tx| merge_posts(tx, bundle_posts, now_ms()))
+                db.write(|tx| merge_posts(tx, bundle_posts, &policy, now_ms()))
                     .map_err(JobError::from)
             })
             .await?;
@@ -797,10 +799,12 @@ fn map_collections(
     Ok((ids, inserted, matched))
 }
 
-/// Merges one chunk of posts into the live library.
+/// Merges one chunk of posts into the live library, and derives the archive
+/// state of every post it touched under `policy`.
 fn merge_posts(
     tx: &Connection,
     posts: Vec<BundlePost>,
+    policy: &ArchivePolicy,
     now: i64,
 ) -> Result<MergeCounts, RepoError> {
     let mut counts = MergeCounts::default();
@@ -869,7 +873,7 @@ fn merge_posts(
             }
         }
     }
-    install::archive_states(tx, Some(&touched), now)?;
+    archive::refresh_states(tx, Scope::Posts(&touched), policy, now)?;
     Ok(counts)
 }
 

@@ -94,13 +94,23 @@ fn value(conn: &Connection, key: &str) -> Result<Option<String>> {
 /// The query failed.
 pub fn read(conn: &Connection) -> Result<Settings> {
     let language = value(conn, LANGUAGE)?.and_then(|json| serde_json::from_str(&json).ok());
-    let archive_asset_types = value(conn, ARCHIVE_ASSET_TYPES)?
-        .and_then(|json| serde_json::from_str(&json).ok())
-        .unwrap_or_default();
+    let archive_asset_types = stored_archive_asset_types(conn)?.unwrap_or_default();
     Ok(Settings {
         language,
         archive_asset_types,
     })
+}
+
+/// The asset types the library has stored, if any (and they parse): `None`
+/// when the default applies. The migration uses it to tell the library's own
+/// choice from the default, because a library's settings win over the
+/// desktop's.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn stored_archive_asset_types(conn: &Connection) -> Result<Option<ArchiveAssetTypes>> {
+    Ok(value(conn, ARCHIVE_ASSET_TYPES)?.and_then(|json| serde_json::from_str(&json).ok()))
 }
 
 /// Stores `value` under `key` at `now`.

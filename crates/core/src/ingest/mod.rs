@@ -14,17 +14,22 @@
 //!   the one with a user layer; folders are united and notes joined. The
 //!   migration uses it for duplicate desktop ids and for `--merge` into a
 //!   library that already holds the post.
+//! - [`archive`] derives a post's `archive_state` (P2 contract C10): what is
+//!   left to store of its media, and whether the server or the extension
+//!   acts on it. Ingest, the archive drain and the migration share it.
 //!
 //! The functions that write take the transaction of [`UserDb::write`] and the
 //! current time, like the repositories. A capture batch goes through
-//! [`sanitize::sanitize_batch`], then [`merge::upsert_batch`], in one
+//! [`sanitize::sanitize_batch`], then [`merge::upsert_batch`], then
+//! [`archive::refresh_states`] for the posts it inserted or changed, in one
 //! transaction.
 //!
-//! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.16 (ingest), §4.1–4.2 and
-//! §6.1 (golden parity, `scripts/golden/`).
+//! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.12–2.13 (archive), §2.16
+//! (ingest), §4.1–4.2 and §6.1 (golden parity, `scripts/golden/`).
 //!
 //! [`UserDb::write`]: crate::db::UserDb::write
 
+pub mod archive;
 pub mod duplicates;
 pub mod hosts;
 pub mod merge;

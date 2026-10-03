@@ -12,8 +12,10 @@ use futures_util::future::join_all;
 use rusqlite::{Connection, OptionalExtension as _, params};
 use serde_json::json;
 use shelfy_core::db::{LIBRARY_FILE_NAME, UserDb, UserDbConfig};
+use shelfy_core::ingest::archive::{self, ArchiveModes, ArchivePolicy, Scope};
 use shelfy_core::repo::RepoError;
 use shelfy_core::repo::notifications::{self, NewNotification, Notification};
+use shelfy_core::repo::settings;
 use shelfy_core::search::index;
 use shelfy_media::kind::KindSet;
 use shelfy_media::name::{Rendition, Variants};
@@ -445,13 +447,14 @@ async fn replace(
 
     // 3. Derived data: the search index and the archive state.
     stage(ctx, MigrationStage::Index, at::INDEX).await?;
+    let policy = archive_policy(ctx, &work_db).await?;
     {
         let db = Arc::clone(&db);
         let now = now_ms();
         blocking(move || {
             db.write(|tx| {
                 index::rebuild(tx).map_err(RepoError::from)?;
-                archive_states(tx, None, now).map_err(RepoError::from)
+                archive::refresh_states(tx, Scope::All, &policy, now)
             })
         })
         .await?;
@@ -891,36 +894,37 @@ pub(super) fn grid_objects(conn: &Connection) -> Result<HashMap<i64, bool>, Repo
     Ok(out)
 }
 
-/// Sets the `archive_state` of the posts `ids` (every post when `None`)
-/// from what is stored (the rule of the bundle builder,
-/// `shelfy_migrate::bundle`): `done` when nothing is left to store, `client`
-/// when the Instagram cover URL has expired (an extension task), `partial`
-/// when something is stored, else `pending`. Only the cover and image slides
-/// count; videos are fetched on demand.
-pub(super) fn archive_states(
-    tx: &Connection,
-    ids: Option<&[i64]>,
-    now: i64,
-) -> rusqlite::Result<usize> {
-    let scope = ids.map(|ids| serde_json::to_string(ids).expect("ids serialize"));
-    tx.execute(
-        "UPDATE posts SET archive_state = CASE
-           WHEN NOT (cover_object IS NULL AND cover_url IS NOT NULL)
-                AND NOT EXISTS (SELECT 1 FROM post_media m
-                                WHERE m.post_id = posts.id AND m.kind = 'image'
-                                  AND m.object_id IS NULL AND m.source_url IS NOT NULL)
-             THEN 'done'
-           WHEN cover_object IS NULL AND cover_url IS NOT NULL AND platform = 'instagram'
-                AND cover_url_expires_at IS NOT NULL AND cover_url_expires_at <= ?1
-             THEN 'client'
-           WHEN cover_object IS NOT NULL
-                OR EXISTS (SELECT 1 FROM post_media m
-                           WHERE m.post_id = posts.id AND m.object_id IS NOT NULL)
-             THEN 'partial'
-           ELSE 'pending' END
-         WHERE ?2 IS NULL OR id IN (SELECT value FROM json_each(?2))",
-        params![now, scope],
-    )
+/// The archive policy the installed library's states are derived with (the
+/// core's rule, `shelfy_core::ingest::archive`, as in the bundle builder):
+/// the default platform modes, and the asset types the library ends with.
+/// The web library's own setting wins, as its settings win at the swap and
+/// at the merge; else the desktop's, from the bundle; else the default.
+pub(super) async fn archive_policy(
+    ctx: &JobContext,
+    work_db: &Path,
+) -> Result<ArchivePolicy, JobError> {
+    let live = ctx
+        .user_db(|db| {
+            db.read(settings::stored_archive_asset_types)
+                .map_err(JobError::from)
+        })
+        .await?;
+    let assets = match live {
+        Some(types) => types,
+        None => {
+            let work_db = work_db.to_path_buf();
+            blocking(move || {
+                let conn = open_read_only(&work_db)?;
+                settings::stored_archive_asset_types(&conn).map_err(ApiError::internal)
+            })
+            .await?
+            .unwrap_or_default()
+        }
+    };
+    Ok(ArchivePolicy {
+        modes: ArchiveModes::default(),
+        assets,
+    })
 }
 
 fn count(tx: &Connection, sql: &str) -> rusqlite::Result<u64> {

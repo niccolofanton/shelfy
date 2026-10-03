@@ -1105,6 +1105,91 @@ async fn a_desktop_library_is_installed_end_to_end() {
     assert_eq!(uploads, 0, "nothing was uploaded");
 }
 
+/// The archive states of an install follow the asset types the library ends
+/// with: the web library's own setting, else the desktop's (P2-02).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn archive_states_follow_the_asset_types_the_library_keeps() {
+    use shelfy_core::repo::settings::{self, ArchiveAssetTypes, SettingsChange};
+
+    /// The second desktop, which keeps covers only.
+    fn covers_only() -> Desktop {
+        let desktop = Desktop::second();
+        local_storage::write(
+            &desktop.root,
+            &[(
+                local_storage::key("file://", "download:assetTypes"),
+                local_storage::latin1(r#"{"image":false}"#),
+            )],
+        );
+        desktop
+    }
+
+    async fn install(t: &TestState, desktop: &Desktop) -> (Vec<String>, Vec<String>) {
+        let origin = serve(t).await;
+        let token = migrate_token(t);
+        let work = t.dir.path().join("work").join("migrate-cli");
+        let outcome = run(desktop.options(&origin, &token, &work)).await.unwrap();
+        assert!(outcome.matches, "{:#?}", outcome.reconciliation);
+        assert_eq!(outcome.report.mode, "replace");
+        let library = t.state.user_db(&owner(t)).await.unwrap();
+        let states = library
+            .read(|c| {
+                c.prepare("SELECT key || '=' || archive_state FROM posts ORDER BY key")
+                    .unwrap()
+                    .query_map([], |r| r.get(0))
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<String>>>()
+                    .map_err(shelfy_core::db::DbError::from)
+            })
+            .unwrap();
+        (states, outcome.report.settings.clone())
+    }
+
+    // A new web library takes the desktop's choice: the X post's slides are
+    // not wanted, so its stored cover is enough.
+    let t = TestState::new();
+    let (states, taken) = install(&t, &covers_only()).await;
+    assert_eq!(taken, ["archiveAssetTypes"]);
+    assert!(
+        states.contains(&"x_1800000000000000009=done".to_owned()),
+        "{states:?}"
+    );
+    assert!(states.contains(&"x_1800000000000000004=done".to_owned()));
+    // The Instagram row without media waits for its hydration (the server
+    // first, L17).
+    assert!(states.contains(&format!("ig_{PK}=pending")), "{states:?}");
+
+    // A web library that keeps images wins over the desktop.
+    let t = TestState::new();
+    let owner_id = owner(&t);
+    let keeps_images = ArchiveAssetTypes {
+        thumbnail: true,
+        image: true,
+        video: false,
+    };
+    t.state
+        .user_db(&owner_id)
+        .await
+        .unwrap()
+        .write(|tx| {
+            let change = SettingsChange {
+                language: None,
+                archive_asset_types: Some(keeps_images),
+            };
+            settings::update(tx, &change, now_ms())
+        })
+        .unwrap();
+    let (states, taken) = install(&t, &covers_only()).await;
+    assert!(taken.is_empty(), "{taken:?}");
+    assert!(
+        states.contains(&"x_1800000000000000009=partial".to_owned()),
+        "{states:?}"
+    );
+    let library = t.state.user_db(&owner_id).await.unwrap();
+    let kept = library.read(settings::read).unwrap();
+    assert_eq!(kept.archive_asset_types, keeps_images);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_second_library_merges_into_one_that_is_not_empty() {
     let t = TestState::new();
