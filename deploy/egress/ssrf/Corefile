@@ -1,0 +1,14 @@
+# CoreDNS for the SSRF suite (plan §6.1; deploy/egress/ssrf). The egress
+# proxy's only resolver during the test: it answers the names in `hosts` and
+# NXDOMAIN for everything else, so no probe reaches a real network. Records that
+# point inward (loopback, RFC 1918, link-local, CGNAT) and a public-but-denied
+# address (self.fixture.test) exist only so the proxy refuses them after
+# resolution; the fixtures sit on the allowed subnet.
+. {
+    hosts /etc/coredns/hosts {
+        ttl 1
+        reload 0
+        no_reverse
+    }
+    errors
+}

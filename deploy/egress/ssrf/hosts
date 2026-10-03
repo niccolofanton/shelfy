@@ -1,0 +1,23 @@
+# SSRF test resolver records (deploy/egress/ssrf, plan §6.1). The egress proxy
+# resolves these during the suite; unlisted names (e.g. the numeric IPv4
+# spellings of category D) get NXDOMAIN, because CI has no network.
+#
+#  - The fixtures answer on the allowed subnet (10.133.0.0/24, --allow-range).
+#  - Every other record points at a loopback, private, link-local, CGNAT or
+#    public-but-deny-listed address the proxy must refuse after resolution.
+#  - ip6-localhost has an AAAA record only: with `network: ip4` the proxy finds
+#    no usable address and refuses it.
+10.133.0.10      allowed.fixture.test
+10.133.0.10      redirect.fixture.test
+169.254.169.254  metadata.fixture.test
+127.0.0.1        loopback.fixture.test
+127.0.0.1        localhost
+10.0.0.1         private10.fixture.test
+172.16.0.1       private172.fixture.test
+192.168.0.1      private192.fixture.test
+100.64.0.1       cgnat.fixture.test
+10.0.0.2         host.docker.internal
+10.0.0.3         shelfy-api
+10.0.0.7         rebind.fixture.test
+203.0.113.5      self.fixture.test
+::1              ip6-localhost

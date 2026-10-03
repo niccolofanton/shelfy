@@ -14,6 +14,11 @@ name: CI
 #   the check that crates/server/openapi.json matches the Rust routes.
 #   The size-limit step (P1-08, plan §6.2) enforces the web app's initial JS budget
 #   (≤220 KB gzip, .size-limit.json) against the build the previous step just produced.
+# - ssrf: the SSRF suite (P4-02, plan §6.1). Builds the egress proxy image, brings up
+#   deploy/compose.test.yml's egress, test resolver and fixtures, and runs
+#   crates/server/tests/ssrf.rs through the API's real outbound client against the real
+#   Smokescreen config; every probe in deploy/egress/ssrf/probes.json is refused and the
+#   positive controls pass. The suite's runtime is printed (--nocapture).
 
 on:
   push:
@@ -54,3 +59,24 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  ssrf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup toolchain install --no-self-update
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the egress proxy image
+        run: DOCKER_BUILDKIT=1 docker build -f deploy/docker/shelfy-egress.Dockerfile -t shelfy-egress:local .
+      - name: Start the egress proxy, resolver and fixtures
+        run: docker compose -f deploy/compose.test.yml -p shelfy-ssrf up -d --wait shelfy-ssrf-egress
+      - name: Run the SSRF suite against the real proxy
+        env:
+          SHELFY_SSRF_PROXY: http://127.0.0.1:4750
+        run: cargo test -p shelfy-server --test ssrf --locked -- --nocapture
+      - name: Proxy decisions (for the §3.7 log check)
+        if: always()
+        run: docker compose -f deploy/compose.test.yml -p shelfy-ssrf logs shelfy-ssrf-egress
+      - name: Tear down
+        if: always()
+        run: docker compose -f deploy/compose.test.yml -p shelfy-ssrf down -v

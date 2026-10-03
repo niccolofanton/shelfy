@@ -1,0 +1,798 @@
+{
+  "_doc": "SSRF probe list for the Shelfy egress proxy (plan §6.1, §7.1; SPIKE-4 categories A-L). crates/server/tests/ssrf.rs drives it through the API's real outbound client against a live Smokescreen (SHELFY_SSRF_PROXY); P4-13's capture-isolation-check.sh reuses it inside the capture container. Each probe is refused, or (category A) allowed, so the suite proves both directions. The test resolver (deploy/egress/ssrf/Corefile) answers the names below; the fixture subnet is the one the test configuration allows with --allow-range.",
+  "version": 1,
+  "fixture_subnet": "10.133.0.0/24",
+  "via": {
+    "client": "sent through the API's outbound client (Egress, purpose Link); https targets tunnel with CONNECT",
+    "raw-connect": "a raw CONNECT host:port line written to the proxy (the bytes under test, unnormalised)",
+    "raw-http": "a raw absolute-form GET written to the proxy"
+  },
+  "by": {
+    "client": "the outbound client refuses the URL before the proxy sees it (literal non-public address, bad port/scheme, localhost); 'refusal' is the Refusal code, or 'any' when the URL crate may instead reject the spelling as invalid",
+    "proxy": "the proxy refuses it: a 407 or X-Smokescreen-Error, or a DNS failure at the proxy; client probes surface this as Refusal::Proxy"
+  },
+  "probes": [
+    {
+      "cat": "A",
+      "id": "fixture-http",
+      "via": "client",
+      "target": "http://allowed.fixture.test/",
+      "expect": "allow"
+    },
+    {
+      "cat": "A",
+      "id": "fixture-http-raw",
+      "via": "raw-http",
+      "target": "http://allowed.fixture.test/",
+      "expect": "allow"
+    },
+    {
+      "cat": "A",
+      "id": "fixture-connect",
+      "via": "raw-connect",
+      "target": "allowed.fixture.test:443",
+      "expect": "allow"
+    },
+
+    {
+      "cat": "B",
+      "id": "loopback-client",
+      "via": "client",
+      "target": "http://127.0.0.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "loopback-connect",
+      "via": "raw-connect",
+      "target": "127.0.0.1:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "loopback-http",
+      "via": "raw-http",
+      "target": "http://127.0.0.1/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "loopback-53",
+      "via": "client",
+      "target": "http://127.0.0.53/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "rfc1918-10-client",
+      "via": "client",
+      "target": "http://10.0.0.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "rfc1918-10-connect",
+      "via": "raw-connect",
+      "target": "10.0.0.1:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "rfc1918-172-client",
+      "via": "client",
+      "target": "http://172.16.0.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "rfc1918-192-client",
+      "via": "client",
+      "target": "http://192.168.0.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "rfc1918-192-connect",
+      "via": "raw-connect",
+      "target": "192.168.0.1:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "metadata-client",
+      "via": "client",
+      "target": "http://169.254.169.254/latest/meta-data/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "metadata-connect",
+      "via": "raw-connect",
+      "target": "169.254.169.254:80",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "metadata-http",
+      "via": "raw-http",
+      "target": "http://169.254.169.254/latest/meta-data/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "link-local-client",
+      "via": "client",
+      "target": "http://169.254.1.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "cgnat-client",
+      "via": "client",
+      "target": "http://100.64.0.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "cgnat-connect",
+      "via": "raw-connect",
+      "target": "100.64.0.1:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "benchmark-client",
+      "via": "client",
+      "target": "http://198.18.0.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "benchmark-connect",
+      "via": "raw-connect",
+      "target": "198.18.0.1:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "ietf-protocol-client",
+      "via": "client",
+      "target": "http://192.0.0.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "ietf-protocol-connect",
+      "via": "raw-connect",
+      "target": "192.0.0.1:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "multicast-client",
+      "via": "client",
+      "target": "http://224.0.0.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "multicast-connect",
+      "via": "raw-connect",
+      "target": "224.0.0.1:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "reserved-240-client",
+      "via": "client",
+      "target": "http://240.0.0.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "reserved-240-connect",
+      "via": "raw-connect",
+      "target": "240.0.0.1:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "B",
+      "id": "this-network-client",
+      "via": "client",
+      "target": "http://0.0.0.0/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "B",
+      "id": "broadcast-client",
+      "via": "client",
+      "target": "http://255.255.255.255/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+
+    {
+      "cat": "C",
+      "id": "v6-loopback-client",
+      "via": "client",
+      "target": "http://[::1]/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "C",
+      "id": "v6-loopback-connect",
+      "via": "raw-connect",
+      "target": "[::1]:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "C",
+      "id": "v6-unspecified-client",
+      "via": "client",
+      "target": "http://[::]/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "C",
+      "id": "v6-mapped-rfc1918-client",
+      "via": "client",
+      "target": "http://[::ffff:10.0.0.1]/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "C",
+      "id": "v6-mapped-loopback-client",
+      "via": "client",
+      "target": "http://[::ffff:7f00:1]/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "C",
+      "id": "v6-mapped-metadata-connect",
+      "via": "raw-connect",
+      "target": "[::ffff:a9fe:a9fe]:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "C",
+      "id": "v6-link-local-client",
+      "via": "client",
+      "target": "http://[fe80::1]/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "C",
+      "id": "v6-ula-fc-client",
+      "via": "client",
+      "target": "http://[fc00::1]/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "C",
+      "id": "v6-ula-fd-connect",
+      "via": "raw-connect",
+      "target": "[fd00::1]:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "C",
+      "id": "v6-nat64-client",
+      "via": "client",
+      "target": "http://[64:ff9b::7f00:1]/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "C",
+      "id": "v6-nat64-connect",
+      "via": "raw-connect",
+      "target": "[64:ff9b::7f00:1]:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "C",
+      "id": "v6-6to4-client",
+      "via": "client",
+      "target": "http://[2002:7f00:1::1]/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "C",
+      "id": "v6-6to4-connect",
+      "via": "raw-connect",
+      "target": "[2002:7f00:1::1]:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+
+    {
+      "cat": "D",
+      "id": "decimal-loopback-client",
+      "via": "client",
+      "target": "http://2130706433/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "any"
+    },
+    {
+      "cat": "D",
+      "id": "decimal-loopback-raw",
+      "via": "raw-http",
+      "target": "http://2130706433/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "D",
+      "id": "hex-loopback-client",
+      "via": "client",
+      "target": "http://0x7f000001/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "any"
+    },
+    {
+      "cat": "D",
+      "id": "hex-loopback-raw",
+      "via": "raw-http",
+      "target": "http://0x7f000001/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "D",
+      "id": "octal-loopback-client",
+      "via": "client",
+      "target": "http://017700000001/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "any"
+    },
+    {
+      "cat": "D",
+      "id": "dotted-octal-client",
+      "via": "client",
+      "target": "http://0177.0.0.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "any"
+    },
+    {
+      "cat": "D",
+      "id": "short-127-1-client",
+      "via": "client",
+      "target": "http://127.1/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "any"
+    },
+    {
+      "cat": "D",
+      "id": "zero-padded-client",
+      "via": "client",
+      "target": "http://127.000.000.001/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "any"
+    },
+    {
+      "cat": "D",
+      "id": "decimal-metadata-raw",
+      "via": "raw-http",
+      "target": "http://2852039166/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+
+    {
+      "cat": "E",
+      "id": "name-metadata-client",
+      "via": "client",
+      "target": "http://metadata.fixture.test/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "name-metadata-raw",
+      "via": "raw-http",
+      "target": "http://metadata.fixture.test/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "name-loopback-client",
+      "via": "client",
+      "target": "http://loopback.fixture.test/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "name-rfc1918-client",
+      "via": "client",
+      "target": "http://private10.fixture.test/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "name-cgnat-client",
+      "via": "client",
+      "target": "http://cgnat.fixture.test/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "docker-internal-client",
+      "via": "client",
+      "target": "http://host.docker.internal/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "docker-internal-raw",
+      "via": "raw-http",
+      "target": "http://host.docker.internal/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "acl-internal-raw",
+      "via": "raw-http",
+      "target": "http://metadata.google.internal/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "acl-internal-connect",
+      "via": "raw-connect",
+      "target": "metadata.google.internal:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "acl-local-raw",
+      "via": "raw-http",
+      "target": "http://printer.local/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "acl-home-arpa-raw",
+      "via": "raw-http",
+      "target": "http://router.home.arpa/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "acl-tailnet-raw",
+      "via": "raw-http",
+      "target": "http://node.ts.net/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "localhost-client",
+      "via": "client",
+      "target": "http://localhost/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "host"
+    },
+    {
+      "cat": "E",
+      "id": "localhost-dot-client",
+      "via": "client",
+      "target": "http://localhost./",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "host"
+    },
+    {
+      "cat": "E",
+      "id": "localhost-sub-client",
+      "via": "client",
+      "target": "http://db.localhost/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "host"
+    },
+    {
+      "cat": "E",
+      "id": "localhost-raw",
+      "via": "raw-http",
+      "target": "http://localhost/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "localhost-dot-raw",
+      "via": "raw-http",
+      "target": "http://localhost./",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "E",
+      "id": "ip6-localhost-raw",
+      "via": "raw-http",
+      "target": "http://ip6-localhost/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+
+    {
+      "cat": "F",
+      "id": "redirect-to-name",
+      "via": "client",
+      "target": "http://redirect.fixture.test/to-private-name",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "F",
+      "id": "redirect-to-literal",
+      "via": "client",
+      "target": "http://redirect.fixture.test/to-private-literal",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+    {
+      "cat": "F",
+      "id": "redirect-to-metadata",
+      "via": "client",
+      "target": "http://redirect.fixture.test/to-metadata-literal",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "address"
+    },
+
+    {
+      "cat": "G",
+      "id": "connect-8443",
+      "via": "raw-connect",
+      "target": "allowed.fixture.test:8443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "G",
+      "id": "connect-ssh-22",
+      "via": "raw-connect",
+      "target": "allowed.fixture.test:22",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "G",
+      "id": "connect-smtp-25",
+      "via": "raw-connect",
+      "target": "allowed.fixture.test:25",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "G",
+      "id": "connect-redis-6379",
+      "via": "raw-connect",
+      "target": "allowed.fixture.test:6379",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "G",
+      "id": "connect-proxy-4750",
+      "via": "raw-connect",
+      "target": "allowed.fixture.test:4750",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "G",
+      "id": "connect-dns-53",
+      "via": "raw-connect",
+      "target": "allowed.fixture.test:53",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "G",
+      "id": "http-8080-raw",
+      "via": "raw-http",
+      "target": "http://allowed.fixture.test:8080/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "G",
+      "id": "http-81-raw",
+      "via": "raw-http",
+      "target": "http://allowed.fixture.test:81/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "G",
+      "id": "http-8080-client",
+      "via": "client",
+      "target": "http://allowed.fixture.test:8080/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "port"
+    },
+    {
+      "cat": "G",
+      "id": "https-8443-client",
+      "via": "client",
+      "target": "https://allowed.fixture.test:8443/",
+      "expect": "refuse",
+      "by": "client",
+      "refusal": "port"
+    },
+
+    {
+      "cat": "H",
+      "id": "ws-connect-loopback",
+      "via": "raw-connect",
+      "target": "loopback.fixture.test:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "H",
+      "id": "ws-upgrade-private",
+      "via": "raw-http",
+      "target": "http://private10.fixture.test/socket",
+      "header": "Upgrade: websocket",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "H",
+      "id": "ws-upgrade-metadata",
+      "via": "raw-http",
+      "target": "http://metadata.fixture.test/socket",
+      "header": "Upgrade: websocket",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+
+    {
+      "cat": "I",
+      "id": "api-8080-connect",
+      "via": "raw-connect",
+      "target": "shelfy-api:8080",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "I",
+      "id": "api-metrics-9464-raw",
+      "via": "raw-http",
+      "target": "http://shelfy-api:9464/metrics",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "I",
+      "id": "api-443-connect",
+      "via": "raw-connect",
+      "target": "shelfy-api:443",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "I",
+      "id": "self-public-denied-client",
+      "via": "client",
+      "target": "http://self.fixture.test/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+
+    {
+      "cat": "K",
+      "id": "rebind-private-client",
+      "via": "client",
+      "target": "http://rebind.fixture.test/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "K",
+      "id": "rebind-private-raw",
+      "via": "raw-http",
+      "target": "http://rebind.fixture.test/",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+
+    {
+      "cat": "L",
+      "id": "chain-upstream-private",
+      "via": "raw-connect",
+      "target": "allowed.fixture.test:443",
+      "header": "X-Upstream-Https-Proxy: https://10.0.0.1:3128",
+      "expect": "refuse",
+      "by": "proxy"
+    },
+    {
+      "cat": "L",
+      "id": "chain-upstream-public",
+      "via": "raw-connect",
+      "target": "allowed.fixture.test:443",
+      "header": "X-Upstream-Https-Proxy: https://chain.example:443",
+      "expect": "refuse",
+      "by": "proxy"
+    }
+  ]
+}

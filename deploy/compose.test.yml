@@ -82,5 +82,102 @@ services:
     ports:
       - "127.0.0.1:${SHELFY_TEST_MAILPIT_PORT:-8025}:8025"
 
+  # --- SSRF suite (profile `ssrf`, P4-02; plan §6.1, SPIKE-4) ---------------
+  #
+  # The egress proxy in production configuration plus `--allow-range` for the
+  # fixture subnet, a CoreDNS test resolver that answers inward and the
+  # fixtures, and an nginx fixture/redirect origin on the allowed subnet. The
+  # `ssrf` job (.github/workflows/ci.yml) builds shelfy-egress:local, brings
+  # this profile up and runs `cargo test -p shelfy-server --test ssrf` with
+  # SHELFY_SSRF_PROXY pointing at the published proxy; every probe is refused.
+  # P4-03/P4-13 reuse shelfy-ssrf-egress for the capture stack (union at rebase).
+  #
+  #   docker build -f deploy/docker/shelfy-egress.Dockerfile -t shelfy-egress:local .
+  #   docker compose -f deploy/compose.test.yml --profile ssrf up -d --wait
+  #   SHELFY_SSRF_PROXY=http://127.0.0.1:4750 cargo test -p shelfy-server --test ssrf -- --nocapture
+  #   docker compose -f deploy/compose.test.yml --profile ssrf down -v
+
+  shelfy-ssrf-resolver:
+    profiles: [ssrf]
+    image: coredns/coredns:1.12.0@sha256:40384aa1f5ea6bfdc77997d243aec73da05f27aed0c5e9d65bfa98933c519d97
+    restart: unless-stopped
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      - ./egress/ssrf/Corefile:/etc/coredns/Corefile:ro
+      - ./egress/ssrf/hosts:/etc/coredns/hosts:ro
+    networks:
+      shelfy-ssrf:
+        ipv4_address: 10.133.0.2
+    mem_limit: 64m
+    # An ephemeral test resolver that binds :53: its binary carries a file
+    # capability, so `no-new-privileges` with `cap_drop: ALL` would make exec
+    # fail. It is the one container here that keeps the default capabilities.
+
+  shelfy-ssrf-fixture:
+    profiles: [ssrf]
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    restart: unless-stopped
+    volumes:
+      - ./egress/ssrf/fixture.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      shelfy-ssrf:
+        ipv4_address: 10.133.0.10
+    mem_limit: 64m
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost/"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+      start_period: 2s
+
+  shelfy-ssrf-egress:
+    profiles: [ssrf]
+    image: ${SHELFY_EGRESS_TEST_IMAGE:-shelfy-egress:local}
+    pull_policy: never
+    restart: unless-stopped
+    user: "10101:10101"
+    read_only: true
+    # Production arguments (config.yaml + acl.yaml) plus the one test-only flag:
+    # the fixture subnet is allowed so the positive controls have somewhere to
+    # reach. Production adds --deny-range for the VPS's own addresses instead
+    # (deploy/egress/README.md); it never adds --allow-range.
+    command:
+      - --config-file=/etc/shelfy-egress/config.yaml
+      - --allow-range=10.133.0.0/24
+    volumes:
+      - ./egress/config.yaml:/etc/shelfy-egress/config.yaml:ro
+      - ./egress/acl.yaml:/etc/shelfy-egress/acl.yaml:ro
+    # The proxy's only resolver is the test CoreDNS: unlisted names get NXDOMAIN.
+    dns: ["10.133.0.2"]
+    ports:
+      # The proxy on the loopback, for `cargo test --test ssrf`. Not published
+      # in production: only the capture network reaches it there.
+      - "127.0.0.1:${SHELFY_SSRF_PORT:-4750}:4750"
+    networks:
+      shelfy-ssrf:
+        ipv4_address: 10.133.0.3
+    mem_limit: 96m
+    cpus: 0.5
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on:
+      shelfy-ssrf-resolver:
+        condition: service_started
+      shelfy-ssrf-fixture:
+        condition: service_healthy
+
 volumes:
   shelfy-test-data:
+
+networks:
+  # A fixed subnet so the resolver and the fixtures have stable addresses and
+  # the proxy can allow exactly that range. Not `internal`: the proxy's policy,
+  # not the network, is what the suite exercises (capture-network isolation is
+  # P4-13). The private 10.133.0.0/24 is inside the proxy's 10.0.0.0/8 deny
+  # range, so only `--allow-range` lets the fixtures through.
+  shelfy-ssrf:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.133.0.0/24
