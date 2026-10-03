@@ -21,7 +21,9 @@
 //! 401, even next to a valid cookie. Another user's session or token is a
 //! 404, like a missing one. Every answer is `Cache-Control: no-store`.
 
+pub mod ai_usage;
 pub mod consent;
+pub mod providers;
 pub mod sessions;
 pub mod settings;
 pub mod tokens;
@@ -53,6 +55,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(settings::router())
         .merge(consent::router())
         .merge(usage::router())
+        .merge(ai_usage::router())
+        .merge(providers::router())
         .merge(sessions::router())
         .merge(tokens::router())
 }
@@ -130,7 +134,7 @@ impl Capabilities {
             passkeys: state.auth().passkeys().is_enabled(),
             email_link: state.mailer().is_enabled(),
             extension: true,
-            ai_tasks: false,
+            ai_tasks: state.ai().is_configured(),
             capture: false,
             video_on_demand: false,
         }

@@ -46,6 +46,7 @@ use shelfy_core::db::{ControlDbConfig, LIBRARY_FILE_NAME, UserDbCacheConfig, Use
 use shelfy_media::video::{DEFAULT_FFMPEG_BIN, DEFAULT_YTDLP_BIN, ToolPaths};
 use url::Url;
 
+use crate::ai::{OperatorArgs, OperatorConfig};
 use crate::auth::AuthConfig;
 use crate::extension::ExtensionSettings;
 use crate::jobs::JobsConfig;
@@ -195,6 +196,9 @@ pub struct ServeArgs {
     #[command(flatten)]
     pub archive: ArchiveArgs,
 
+    #[command(flatten)]
+    pub operator: OperatorArgs,
+
     /// The media budget of every user library together, in GiB (2^30
     /// bytes): a store that would take the `users` area of the data
     /// directory past it is refused with `storage_full`, for every user.
@@ -328,6 +332,8 @@ pub struct Config {
     pub extension: ExtensionSettings,
     /// Who archives each platform's media (P2-10).
     pub archive: ArchiveConfig,
+    /// The operator AI provider, from the environment (L15, L16; P3-09).
+    pub operator: OperatorConfig,
 }
 
 impl Config {
@@ -356,6 +362,8 @@ impl Config {
         let archive = ArchiveConfig::from_args(&args.archive);
         let quota = QuotaConfig::from_gib(args.media_budget_gb)
             .ok_or(ConfigError::MediaBudget(args.media_budget_gb))?;
+        let operator = OperatorConfig::from_args(args.operator, &outbound.allow_origins)
+            .map_err(ConfigError::Operator)?;
         Ok(Self {
             listen: args.listen,
             metrics_listen: args.metrics_listen,
@@ -369,6 +377,7 @@ impl Config {
             video_tools,
             quota,
             archive,
+            operator,
             ..Self::with_data_dir(data_dir)
         })
     }
@@ -398,6 +407,7 @@ impl Config {
             quota: QuotaConfig::default(),
             extension: ExtensionSettings::default(),
             archive: ArchiveConfig::default(),
+            operator: OperatorConfig::default(),
         }
     }
 }
@@ -436,6 +446,9 @@ pub enum ConfigError {
     /// The media budget does not fit in bytes.
     #[error("SHELFY_MEDIA_BUDGET_GB ({0}) is too large")]
     MediaBudget(u64),
+    /// The operator AI settings are inconsistent (P3-09).
+    #[error("{0}")]
+    Operator(String),
 }
 
 /// The public origin of the web app: `http(s)://host[:port]`, no trailing slash.

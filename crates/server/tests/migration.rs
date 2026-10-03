@@ -1175,6 +1175,7 @@ async fn archive_states_follow_the_asset_types_the_library_keeps() {
             let change = SettingsChange {
                 language: None,
                 archive_asset_types: Some(keeps_images),
+                ..SettingsChange::default()
             };
             settings::update(tx, &change, now_ms())
         })

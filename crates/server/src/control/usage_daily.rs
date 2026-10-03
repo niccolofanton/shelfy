@@ -9,9 +9,7 @@
 //! | `captures` | site captures that succeeded | the capture job (P4-14), which also checks `users.capture_daily_limit` against it |
 //! | `ingest_items` | items an ingest batch accepted | the ingest service (P2) |
 //! | `bytes_in` | bytes stored in the user's media: each commit of a quota reservation ([`crate::quota`]) | [`crate::quota::Reservation::commit`] |
-//!
-//! The AI columns (`ai_calls`, `ai_in_tokens`, `ai_out_tokens`) are P3's:
-//! it adds their variants to [`Field`].
+//! | `ai_calls`, `ai_in_tokens`, `ai_out_tokens` | AI calls and the tokens providers reported | the AI service ([`crate::ai`]), through [`record_ai`] |
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 use shelfy_core::repo::{RepoError, Result};
@@ -28,6 +26,12 @@ pub enum Field {
     IngestItems,
     /// Bytes stored.
     BytesIn,
+    /// AI calls (P3).
+    AiCalls,
+    /// Prompt tokens of AI calls (P3).
+    AiInTokens,
+    /// Answer tokens of AI calls (P3).
+    AiOutTokens,
 }
 
 impl Field {
@@ -38,6 +42,9 @@ impl Field {
             Self::Captures => "captures",
             Self::IngestItems => "ingest_items",
             Self::BytesIn => "bytes_in",
+            Self::AiCalls => "ai_calls",
+            Self::AiInTokens => "ai_in_tokens",
+            Self::AiOutTokens => "ai_out_tokens",
         }
     }
 }
@@ -51,6 +58,25 @@ pub struct Daily {
     pub ingest_items: i64,
     /// Bytes stored.
     pub bytes_in: i64,
+    /// AI calls.
+    pub ai_calls: i64,
+    /// Prompt tokens of AI calls.
+    pub ai_in_tokens: i64,
+    /// Answer tokens of AI calls.
+    pub ai_out_tokens: i64,
+}
+
+/// One day's AI usage, for `GET /me/usage/ai` (P3-09).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AiDay {
+    /// The UTC day, `YYYY-MM-DD`.
+    pub day: String,
+    /// AI calls that day.
+    pub calls: i64,
+    /// Prompt tokens.
+    pub in_tokens: i64,
+    /// Answer tokens.
+    pub out_tokens: i64,
 }
 
 /// The UTC day of `unix_ms`, as stored: `YYYY-MM-DD`.
@@ -100,18 +126,81 @@ pub fn bump(conn: &Connection, user_id: &str, field: Field, n: i64, now: i64) ->
 pub fn of_day(conn: &Connection, user_id: &str, now: i64) -> Result<Daily> {
     Ok(conn
         .prepare_cached(
-            "SELECT captures, ingest_items, bytes_in FROM usage_daily
-             WHERE user_id = ?1 AND day = ?2",
+            "SELECT captures, ingest_items, bytes_in, ai_calls, ai_in_tokens, ai_out_tokens \
+             FROM usage_daily WHERE user_id = ?1 AND day = ?2",
         )?
         .query_row(params![user_id, day_of(now)], |row| {
             Ok(Daily {
                 captures: row.get(0)?,
                 ingest_items: row.get(1)?,
                 bytes_in: row.get(2)?,
+                ai_calls: row.get(3)?,
+                ai_in_tokens: row.get(4)?,
+                ai_out_tokens: row.get(5)?,
             })
         })
         .optional()?
         .unwrap_or_default())
+}
+
+/// Adds one AI call and its tokens to `user_id`'s row for the day of `now`
+/// (creating it), in one statement. Token counts may be 0 when the provider
+/// reported none. Negative counts are refused.
+///
+/// # Errors
+///
+/// [`RepoError::Invalid`] for a negative count; database errors.
+pub fn record_ai(
+    conn: &Connection,
+    user_id: &str,
+    in_tokens: i64,
+    out_tokens: i64,
+    now: i64,
+) -> Result<()> {
+    if in_tokens < 0 || out_tokens < 0 {
+        return Err(RepoError::Invalid {
+            field: "tokens",
+            reason: "a daily counter only grows",
+        });
+    }
+    conn.prepare_cached(
+        "INSERT INTO usage_daily (user_id, day, ai_calls, ai_in_tokens, ai_out_tokens) \
+         VALUES (?1, ?2, 1, ?3, ?4) \
+         ON CONFLICT (user_id, day) DO UPDATE SET \
+         ai_calls = ai_calls + 1, \
+         ai_in_tokens = ai_in_tokens + excluded.ai_in_tokens, \
+         ai_out_tokens = ai_out_tokens + excluded.ai_out_tokens",
+    )?
+    .execute(params![user_id, day_of(now), in_tokens, out_tokens])?;
+    Ok(())
+}
+
+/// The AI usage of `user_id` over the last `days` days up to the day of `now`,
+/// newest day first, skipping days with no row. `days` is clamped to 1..=365.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn ai_recent(conn: &Connection, user_id: &str, days: u32, now: i64) -> Result<Vec<AiDay>> {
+    let days = i64::from(days.clamp(1, 365));
+    let since = day_of(now - (days - 1) * DAY_MS);
+    let mut statement = conn.prepare_cached(
+        "SELECT day, ai_calls, ai_in_tokens, ai_out_tokens FROM usage_daily \
+         WHERE user_id = ?1 AND day >= ?2 AND day <= ?3 \
+         AND (ai_calls > 0 OR ai_in_tokens > 0 OR ai_out_tokens > 0) \
+         ORDER BY day DESC",
+    )?;
+    let rows = statement
+        .query_map(params![user_id, since, day_of(now)], |row| {
+            Ok(AiDay {
+                day: row.get(0)?,
+                calls: row.get(1)?,
+                in_tokens: row.get(2)?,
+                out_tokens: row.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
 }
 
 #[cfg(test)]
@@ -151,6 +240,7 @@ mod tests {
                 captures: 3,
                 ingest_items: 50,
                 bytes_in: 4_096,
+                ..Daily::default()
             }
         );
         assert_eq!(
@@ -166,5 +256,49 @@ mod tests {
         let err = add(&owner, Field::Captures, -1, NOW).unwrap_err();
         assert!(matches!(err, RepoError::Invalid { .. }), "{err}");
         assert_eq!(read(&owner, NOW).captures, 3);
+    }
+
+    #[test]
+    fn ai_calls_and_tokens_accumulate_and_list_by_day() {
+        let (db, owner, _member) = control_with_users();
+        let record = |in_t, out_t, at| db.write(|tx| record_ai(tx, &owner, in_t, out_t, at));
+        record(1_200, 300, NOW).unwrap();
+        record(900, 150, NOW + 3_600_000).unwrap();
+        record(1_000, 200, NOW + DAY_MS).unwrap();
+
+        let today = db.read(|conn| of_day(conn, &owner, NOW)).unwrap();
+        assert_eq!(today.ai_calls, 2);
+        assert_eq!(today.ai_in_tokens, 2_100);
+        assert_eq!(today.ai_out_tokens, 450);
+
+        // Two days have AI rows; newest first, and days without AI are skipped.
+        let rows = db
+            .read(|conn| ai_recent(conn, &owner, 7, NOW + DAY_MS))
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].day, day_of(NOW + DAY_MS));
+        assert_eq!(
+            (rows[0].calls, rows[0].in_tokens, rows[0].out_tokens),
+            (1, 1_000, 200)
+        );
+        assert_eq!(rows[1].calls, 2);
+
+        // A one-day window shows only today.
+        let one = db.read(|conn| ai_recent(conn, &owner, 1, NOW)).unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].day, day_of(NOW));
+
+        // A capture-only day never shows up as AI usage.
+        db.write(|tx| bump(tx, &owner, Field::Captures, 1, NOW + 2 * DAY_MS))
+            .unwrap();
+        let rows = db
+            .read(|conn| ai_recent(conn, &owner, 7, NOW + 2 * DAY_MS))
+            .unwrap();
+        assert!(rows.iter().all(|r| r.day != day_of(NOW + 2 * DAY_MS)));
+
+        let err = db
+            .write(|tx| record_ai(tx, &owner, -1, 0, NOW))
+            .unwrap_err();
+        assert!(matches!(err, RepoError::Invalid { .. }), "{err}");
     }
 }

@@ -34,16 +34,20 @@ pub enum EventTopic {
     /// The browser extension connected, disconnected or changed version.
     #[serde(rename = "extension.status")]
     ExtensionStatus,
+    /// An AI provider's state changed (P3-09).
+    #[serde(rename = "provider.status")]
+    ProviderStatus,
 }
 
 impl EventTopic {
     /// Every topic, in a stable order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::PostsChanged,
         Self::StatsChanged,
         Self::JobUpdated,
         Self::Notification,
         Self::ExtensionStatus,
+        Self::ProviderStatus,
     ];
 
     /// The event name.
@@ -55,22 +59,24 @@ impl EventTopic {
             Self::JobUpdated => "job.updated",
             Self::Notification => "notification",
             Self::ExtensionStatus => "extension.status",
+            Self::ProviderStatus => "provider.status",
         }
     }
 
-    const fn bit(self) -> u8 {
-        1 << self as u8
+    const fn bit(self) -> u16 {
+        1 << self as u16
     }
 }
 
-/// The topics a stream carries.
+/// The topics a stream carries. A `u16` leaves room for the topics P2–P4 add
+/// (P3-09's assumption); `ai.stream` (P3-13) is live-only and never a bit here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TopicSet(u8);
+pub struct TopicSet(u16);
 
 impl TopicSet {
     /// Every topic: the stream of a client that names none. Opt-in topics
     /// (`ai.stream`, P3) will stay out of it.
-    pub const ALL: Self = Self(0b1_1111);
+    pub const ALL: Self = Self(0b11_1111);
 
     /// The topics named in `topics`, or [`TopicSet::ALL`] when it is empty.
     #[must_use]
@@ -280,6 +286,53 @@ pub struct ExtensionStatusEvent {
     pub last_seen_at: Option<i64>,
 }
 
+/// The state of an AI provider (plan §2.15 "Reliability", P3-09). The circuit
+/// breaker and the operator's health probe move a provider between these.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderState {
+    /// Working: calls go through.
+    Ok,
+    /// Working, but recent calls failed or were slow: calls still go through.
+    Degraded,
+    /// Unreachable (the operator's node is asleep or offline). Queued work
+    /// waits without spending a try until a health probe passes.
+    Offline,
+    /// The circuit breaker is open after repeated failures: calls are held
+    /// for a cool-down.
+    Down,
+    /// The provider refused the key: the account's AI queue is paused until a
+    /// new key or a passing probe.
+    InvalidKey,
+}
+
+impl ProviderState {
+    /// The wire form, for example `invalid_key`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ok => "ok",
+            Self::Degraded => "degraded",
+            Self::Offline => "offline",
+            Self::Down => "down",
+            Self::InvalidKey => "invalid_key",
+        }
+    }
+}
+
+/// `provider.status`: an AI provider changed state (P3-09), sent on each
+/// change. The web app shows the provider's state and reacts (an offline
+/// operator shows AI work as waiting, an invalid key asks for a new one).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderStatusEvent {
+    /// The provider: `operator` for the operator's node, else the user's
+    /// provider id.
+    pub provider_id: String,
+    /// The new state.
+    pub state: ProviderState,
+}
+
 /// Every event of `GET /api/v1/events`: `event` is the SSE event name and
 /// `data` the JSON of its `data:` line. A type for clients; no response sends
 /// this object as such.
@@ -307,6 +360,9 @@ pub enum ServerEvent {
     /// The browser extension connected, disconnected or changed version.
     #[serde(rename = "extension.status")]
     ExtensionStatus(ExtensionStatusEvent),
+    /// An AI provider changed state.
+    #[serde(rename = "provider.status")]
+    ProviderStatus(ProviderStatusEvent),
 }
 
 #[cfg(test)]

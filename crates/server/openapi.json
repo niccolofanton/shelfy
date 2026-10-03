@@ -1223,6 +1223,31 @@
         }
       }
     },
+    "/api/v1/me/providers": {
+      "get": {
+        "tags": ["account"],
+        "summary": "The AI providers the account may use. No keys: the operator provider's key\nis the server's, and a BYOK key is only ever shown as `last4` by P3-19.",
+        "operationId": "getProviders",
+        "responses": {
+          "200": {
+            "description": "The AI providers, with no keys.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderSummary"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/me/sessions": {
       "get": {
         "tags": ["account"],
@@ -1450,6 +1475,41 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Usage"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/usage/ai": {
+      "get": {
+        "tags": ["account"],
+        "summary": "The account's AI usage over the last `days` days (default 30).",
+        "operationId": "getAiUsage",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Days up to today (UTC), 1–365; default 30.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The daily AI usage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiUsage"
                 }
               }
             }
@@ -3393,6 +3453,51 @@
         },
         "additionalProperties": false
       },
+      "AiUsage": {
+        "type": "object",
+        "description": "The account's AI usage.",
+        "required": ["days"],
+        "properties": {
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AiUsageDay"
+            },
+            "description": "The daily rows, newest day first."
+          }
+        }
+      },
+      "AiUsageDay": {
+        "type": "object",
+        "description": "One day's AI usage.",
+        "required": ["day", "calls", "inputTokens", "outputTokens", "cost"],
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "description": "AI calls that day."
+          },
+          "cost": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "The cost in US dollars, for a priced BYOK provider; `null` otherwise."
+          },
+          "day": {
+            "type": "string",
+            "description": "The UTC day, `YYYY-MM-DD`."
+          },
+          "inputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Prompt tokens providers reported."
+          },
+          "outputTokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Answer tokens providers reported."
+          }
+        }
+      },
       "ApiToken": {
         "type": "object",
         "description": "An API token of the account. Its value is never shown again.",
@@ -4286,6 +4391,11 @@
           "unsupported_media_type",
           "validation_failed",
           "provider_key_invalid",
+          "ai_not_configured",
+          "ai_consent_required",
+          "provider_offline",
+          "provider_unavailable",
+          "provider_quota_exhausted",
           "capture_blocked",
           "unsupported_link",
           "not_available",
@@ -4306,7 +4416,8 @@
           "stats.changed",
           "job.updated",
           "notification",
-          "extension.status"
+          "extension.status",
+          "provider.status"
         ]
       },
       "ExtensionConfig": {
@@ -6530,6 +6641,80 @@
           }
         }
       },
+      "ProviderModels": {
+        "type": "object",
+        "description": "The model ids a provider offers, as `GET /me/providers` shows them.",
+        "required": ["text", "vision", "embed"],
+        "properties": {
+          "embed": {
+            "type": ["string", "null"],
+            "description": "The embedding model."
+          },
+          "text": {
+            "type": ["string", "null"],
+            "description": "The text model."
+          },
+          "vision": {
+            "type": ["string", "null"],
+            "description": "The vision model (cataloging and QC)."
+          }
+        }
+      },
+      "ProviderState": {
+        "type": "string",
+        "description": "The state of an AI provider (plan §2.15 \"Reliability\", P3-09). The circuit\nbreaker and the operator's health probe move a provider between these.",
+        "enum": ["ok", "degraded", "offline", "down", "invalid_key"]
+      },
+      "ProviderStatusEvent": {
+        "type": "object",
+        "description": "`provider.status`: an AI provider changed state (P3-09), sent on each\nchange. The web app shows the provider's state and reacts (an offline\noperator shows AI work as waiting, an invalid key asks for a new one).",
+        "required": ["providerId", "state"],
+        "properties": {
+          "providerId": {
+            "type": "string",
+            "description": "The provider: `operator` for the operator's node, else the user's\nprovider id."
+          },
+          "state": {
+            "$ref": "#/components/schemas/ProviderState",
+            "description": "The new state."
+          }
+        }
+      },
+      "ProviderSummary": {
+        "type": "object",
+        "description": "One provider as `GET /me/providers` lists it: no key, and the operator\nprovider is `managed` (no edit or delete).",
+        "required": ["id", "kind", "label", "managed", "models", "stt", "status"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The provider id (`operator`, or the user's id)."
+          },
+          "kind": {
+            "type": "string",
+            "description": "The protocol (`operator`, `openai_compatible`, `anthropic`)."
+          },
+          "label": {
+            "type": "string",
+            "description": "The display name."
+          },
+          "managed": {
+            "type": "boolean",
+            "description": "Whether the server manages it (the operator provider): no key, no edit."
+          },
+          "models": {
+            "$ref": "#/components/schemas/ProviderModels",
+            "description": "The models per use."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProviderState",
+            "description": "Its current state."
+          },
+          "stt": {
+            "type": "boolean",
+            "description": "Whether it transcribes (dictation)."
+          }
+        }
+      },
       "PublicKeyCredentialCreationOptionsJSON": {
         "type": "object",
         "description": "`PublicKeyCredentialCreationOptionsJSON`: what\n`navigator.credentials.create()` needs to create a passkey.",
@@ -7086,6 +7271,21 @@
               "event": {
                 "type": "string",
                 "enum": ["extension.status"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "An AI provider changed state.",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ProviderStatusEvent",
+                "description": "An AI provider changed state."
+              },
+              "event": {
+                "type": "string",
+                "enum": ["provider.status"]
               }
             }
           }

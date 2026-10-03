@@ -28,6 +28,7 @@
 //! This file is the command dispatch: a new command adds its module and one
 //! line here.
 
+pub mod ai_probe;
 pub mod bench;
 pub mod create_user;
 pub mod flags;
@@ -102,6 +103,9 @@ pub enum AdminCommand {
     /// switches, pacing and minimum version. A running server applies a
     /// change within 30 seconds.
     Flags(flags::FlagsArgs),
+    /// Probe an AI endpoint: the operator node (health, models with the key),
+    /// or a preset/URL with a keyless call as proof of egress (P3-09).
+    AiProbe(ai_probe::ProbeArgs),
 }
 
 /// Runs an admin command, writing its output to stdout.
@@ -126,6 +130,7 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
         AdminCommand::Synth(args) => synth::run(&data, &args, &mut out),
         AdminCommand::Bench(args) => bench::run(&data, &args, &mut out),
         AdminCommand::Flags(args) => flags::run(&data, &args, &mut out),
+        AdminCommand::AiProbe(args) => ai_probe::run(&data, args, &mut out),
     }?;
     out.flush()?;
     Ok(())

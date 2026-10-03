@@ -26,8 +26,8 @@ use shelfy_server::outbound::{HostGroup, Purpose};
 use shelfy_server::routes;
 use shelfy_server::static_files::WebApp;
 use shelfy_server::telemetry::metrics::{
-    self, DISK_AREAS, OTHER_AREA, egress_outcome, fetch_outcome, job_outcome, job_state, sample,
-    sample_disk,
+    self, DISK_AREAS, OTHER_AREA, ai_direction, ai_outcome, ai_provider_kind, ai_task,
+    egress_outcome, fetch_outcome, job_outcome, job_state, sample, sample_disk,
 };
 use support::auth::{OWNER_EMAIL, owner, post, sign_in, spa, with_session};
 use support::jobs::{Probe, kind, mode, modes};
@@ -444,10 +444,14 @@ async fn no_label_carries_a_per_user_value() {
                     outcomes.contains(&value.as_str())
                         || egress_outcome::ALL.contains(&value.as_str())
                         || fetch_outcome::ALL.contains(&value.as_str())
+                        || ai_outcome::ALL.contains(&value.as_str())
                 }
                 "area" => areas.contains(&value.as_str()),
                 "host_group" => host_groups.contains(&value.as_str()),
                 "purpose" => purposes.contains(&value.as_str()),
+                "provider_kind" => ai_provider_kind::ALL.contains(&value.as_str()),
+                "task" => ai_task::ALL.contains(&value.as_str()),
+                "direction" => ai_direction::ALL.contains(&value.as_str()),
                 "variant" => value == "g480",
                 "version" => value == shelfy_server::VERSION,
                 "le" | "quantile" => value == "+Inf" || value.parse::<f64>().is_ok(),

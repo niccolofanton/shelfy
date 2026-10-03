@@ -10,6 +10,7 @@ use shelfy_core::db::{ControlDb, UserDb, UserDbCache};
 use shelfy_core::schema::{Kind, Upgrade};
 use tokio_util::sync::CancellationToken;
 
+use crate::ai::AiService;
 use crate::auth::{self, AuthState};
 use crate::config::Config;
 use crate::error::ApiError;
@@ -43,6 +44,7 @@ struct Inner {
     quota: Quotas,
     extension: ExtensionState,
     archive: Archive,
+    ai: AiService,
     shutdown: CancellationToken,
 }
 
@@ -116,6 +118,25 @@ impl AppState {
             pinterest = config.archive.modes.pinterest.as_str(),
             "archive modes"
         );
+        // The AI service and the operator provider (P3-09). The start fails if
+        // the operator endpoints are set but not allowlisted; its key is never
+        // logged.
+        let ai = AiService::new(
+            &config.operator,
+            &config.outbound.allow_origins,
+            &outbound,
+            false,
+        )
+        .context("cannot set up the AI service")?;
+        tracing::info!(
+            operator = config.operator.is_configured(),
+            vision = config.operator.vision_model.is_some(),
+            embed = config.operator.embed_model.is_some(),
+            stt = config.operator.stt_url.is_some(),
+            concurrency = config.operator.concurrency,
+            timeout_secs = config.operator.timeout.as_secs(),
+            "AI service"
+        );
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
@@ -131,6 +152,7 @@ impl AppState {
                 quota,
                 extension,
                 archive,
+                ai,
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -209,6 +231,12 @@ impl AppState {
     #[must_use]
     pub fn quota(&self) -> &Quotas {
         &self.inner.quota
+    }
+
+    /// The AI service: the one entry point of AI calls ([`crate::ai`]).
+    #[must_use]
+    pub fn ai(&self) -> &AiService {
+        &self.inner.ai
     }
 
     /// The browser extension's flags and presence ([`crate::extension`]).

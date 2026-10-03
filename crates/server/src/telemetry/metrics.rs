@@ -20,6 +20,8 @@
 //! | `shelfy_sqlite_busy_total` | counter | — | SQLite calls that gave up on a lock ([`shelfy_core::db::sqlite_busy_total`]) |
 //! | `shelfy_rendition_bytes` | histogram, [`RENDITION_BUCKETS`] | `variant` (`g480`) | each rendition written ([`shelfy_media::store::RENDITION_BYTES`]) |
 //! | `shelfy_egress_requests_total` | counter | `purpose` ([`crate::outbound::Purpose`]), `outcome` ([`egress_outcome`]) | outbound HTTP requests, once each, redirects included |
+//! | `shelfy_ai_requests_total` | counter | `provider_kind` ([`ai_provider_kind`]), `task` ([`ai_task`]), `outcome` ([`ai_outcome`]) | AI calls through the service ([`crate::ai`]); no per-user label |
+//! | `shelfy_ai_tokens_total` | counter | `direction` ([`ai_direction`]) | prompt and answer tokens providers reported |
 //! | `shelfy_media_fetch_total` | counter | `host_group` (`instagram`, `x`, `pinterest`, [`fetch_outcome::NO_GROUP`]), `outcome` ([`fetch_outcome`]) | CDN fetches of the archive |
 //! | `shelfy_breaker_open` | gauge, 0 or 1 | `host_group` ([`crate::outbound::HostGroup`]: the three CDNs and `instagram_web`, `x_web`, `pinterest_web`) | whether a host group's breaker is open (or half-open); 0 from the start |
 //! | `shelfy_archive_cover_latency_seconds` | histogram, [`COVER_LATENCY_BUCKETS`] | `platform` (`instagram`, `twitter`, `pinterest`) | from a post's insert to its cover stored by the archive, for posts inserted in the last 7 days ([`crate::jobs::archive`]) |
@@ -77,6 +79,10 @@ pub const OPEN_USER_DBS: &str = "shelfy_open_user_dbs";
 pub const SQLITE_BUSY_TOTAL: &str = "shelfy_sqlite_busy_total";
 /// Counter of outbound HTTP requests, by purpose and [`egress_outcome`].
 pub const EGRESS_REQUESTS_TOTAL: &str = "shelfy_egress_requests_total";
+/// Counter of AI calls, by `provider_kind`, `task` and [`ai_outcome`].
+pub const AI_REQUESTS_TOTAL: &str = "shelfy_ai_requests_total";
+/// Counter of AI tokens, by [`ai_direction`].
+pub const AI_TOKENS_TOTAL: &str = "shelfy_ai_tokens_total";
 /// Counter of the archive's CDN fetches, by host group and [`fetch_outcome`].
 pub const MEDIA_FETCH_TOTAL: &str = "shelfy_media_fetch_total";
 /// Gauge: 1 while a host group's breaker is open or half-open.
@@ -201,6 +207,75 @@ pub mod fetch_outcome {
     pub const NO_GROUP: &str = "none";
 }
 
+/// The `provider_kind` values of [`AI_REQUESTS_TOTAL`]: `operator` for the
+/// operator's node, else the protocol of a user's provider. A fixed set, so
+/// the label never carries a per-user value.
+pub mod ai_provider_kind {
+    /// The operator's own node (L15).
+    pub const OPERATOR: &str = "operator";
+    /// A user's OpenAI-compatible provider.
+    pub const OPENAI_COMPATIBLE: &str = "openai_compatible";
+    /// A user's Anthropic provider.
+    pub const ANTHROPIC: &str = "anthropic";
+    /// A whisper.cpp server (dictation).
+    pub const WHISPER_CPP: &str = "whisper_cpp";
+    /// Every value.
+    pub const ALL: [&str; 4] = [OPERATOR, OPENAI_COMPATIBLE, ANTHROPIC, WHISPER_CPP];
+}
+
+/// The `task` values of [`AI_REQUESTS_TOTAL`] ([`crate::ai::Task`]).
+pub mod ai_task {
+    /// Cataloging a social post.
+    pub const CATALOG: &str = "catalog";
+    /// Screenshot quality control of a website capture.
+    pub const QC: &str = "qc";
+    /// Chat search.
+    pub const CHAT: &str = "chat";
+    /// Suggestion chips.
+    pub const SUGGEST: &str = "suggest";
+    /// A tag cluster refine run.
+    pub const CLUSTER: &str = "cluster";
+    /// A tag alias run.
+    pub const ALIAS: &str = "alias";
+    /// Embeddings.
+    pub const EMBED: &str = "embed";
+    /// Dictation (speech to text).
+    pub const STT: &str = "stt";
+    /// Every value.
+    pub const ALL: [&str; 8] = [CATALOG, QC, CHAT, SUGGEST, CLUSTER, ALIAS, EMBED, STT];
+}
+
+/// The `outcome` values of [`AI_REQUESTS_TOTAL`]: `ok`, or the kind of the
+/// [`shelfy_ai::ErrorKind`] that ended the call.
+pub mod ai_outcome {
+    /// The call succeeded.
+    pub const OK: &str = "ok";
+    /// Every value: `ok` and the error kinds callers act on.
+    pub const ALL: [&str; 11] = [
+        OK,
+        "offline",
+        "invalid_key",
+        "rate_limited",
+        "quota_exhausted",
+        "transient",
+        "bad_request",
+        "refused",
+        "schema_invalid",
+        "unsupported",
+        "cancelled",
+    ];
+}
+
+/// The `direction` values of [`AI_TOKENS_TOTAL`].
+pub mod ai_direction {
+    /// Prompt tokens.
+    pub const INPUT: &str = "input";
+    /// Answer tokens (reasoning included).
+    pub const OUTPUT: &str = "output";
+    /// Every value.
+    pub const ALL: [&str; 2] = [INPUT, OUTPUT];
+}
+
 /// The `area` values of [`DISK_BYTES`] with their directory: the top-level
 /// directories of the data directory (plan §2.5).
 pub const DISK_AREAS: &[(&str, &str)] = &[
@@ -294,6 +369,14 @@ fn describe() {
         MEDIA_FETCH_TOTAL,
         "CDN fetches of the archive, by host group and outcome."
     );
+    metrics::describe_counter!(
+        AI_REQUESTS_TOTAL,
+        "AI calls through the service, by provider kind, task and outcome."
+    );
+    metrics::describe_counter!(
+        AI_TOKENS_TOTAL,
+        "Prompt and answer tokens providers reported, by direction."
+    );
     metrics::describe_gauge!(
         BREAKER_OPEN,
         "1 while a host group's breaker is open or half-open, else 0."
@@ -332,6 +415,35 @@ pub fn record_http_request(route: &str, method: &Method, status: StatusCode, ela
     .increment(1);
     metrics::histogram!(HTTP_REQUEST_DURATION_SECONDS, "route" => route.to_owned())
         .record(elapsed.as_secs_f64());
+}
+
+/// Records one AI call (called by the AI service). `provider_kind` is one of
+/// [`ai_provider_kind`], `task` one of [`ai_task`], `outcome` one of
+/// [`ai_outcome`]; all are fixed sets, so no label carries a per-user value.
+/// `input_tokens` and `output_tokens` are added when the provider reported
+/// them (both 0 otherwise, which records nothing).
+pub fn record_ai_request(
+    provider_kind: &'static str,
+    task: &'static str,
+    outcome: &'static str,
+    input_tokens: u64,
+    output_tokens: u64,
+) {
+    metrics::counter!(
+        AI_REQUESTS_TOTAL,
+        "provider_kind" => provider_kind,
+        "task" => task,
+        "outcome" => outcome,
+    )
+    .increment(1);
+    if input_tokens > 0 {
+        metrics::counter!(AI_TOKENS_TOTAL, "direction" => ai_direction::INPUT)
+            .increment(input_tokens);
+    }
+    if output_tokens > 0 {
+        metrics::counter!(AI_TOKENS_TOTAL, "direction" => ai_direction::OUTPUT)
+            .increment(output_tokens);
+    }
 }
 
 /// Records one ended attempt of a job of `kind` (called by the scheduler,

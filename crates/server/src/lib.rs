@@ -42,10 +42,12 @@
 //! | [`security_headers`] | the content security policy, HSTS and `nosniff` on every response |
 //! | [`library`] | the library write path (events after each write) and the caches keyed by the generation |
 //! | [`quota`] | quotas, the media budget, reservations and usage accounting |
+//! | [`ai`] | the AI service and the operator provider: routing, consent, limits, breakers, usage, metrics, status |
 //!
 //! See `docs/web-port/IMPLEMENTATION-PLAN.md` §2.2–§2.4 and §3.
 
 pub mod admin;
+pub mod ai;
 pub mod app;
 pub mod auth;
 pub mod cli;

@@ -166,6 +166,7 @@ pub async fn put_settings(
     let change = SettingsChange {
         language: update.language.map(Into::into),
         archive_asset_types: update.archive_asset_types.map(Into::into),
+        ..SettingsChange::default()
     };
     let db = state.user_db(user.id()).await?;
     let now = now_ms();

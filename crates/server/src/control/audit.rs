@@ -58,6 +58,10 @@ pub const DEVICE_APPROVE: &str = "device.approve";
 /// A user accepted the disclaimer and the privacy notice. `meta`:
 /// `disclaimerVersion` and `privacyVersion`.
 pub const CONSENT_ACCEPT: &str = "consent.accept";
+/// Content was first sent to an AI provider for a user (P3-09). `target` is
+/// the provider id (`operator` for the owner's node, which counts as
+/// consented). No `meta`.
+pub const AI_PROVIDER_CONSENT: &str = "ai.provider.consent";
 /// A user's library was locked for maintenance (`admin user lock`).
 pub const USER_LOCK: &str = "user.lock";
 /// A user's library was unlocked (`admin user unlock`).

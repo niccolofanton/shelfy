@@ -324,6 +324,9 @@ async fn maintenance(state: AppState, metrics: PrometheusHandle, token: Cancella
             _ = upkeep.tick() => {
                 metrics.run_upkeep();
                 telemetry::metrics::sample(&state).await;
+                // Bring an offline operator node back when it answers again
+                // (P3-09): a health probe every minute, no generation.
+                state.ai().maintain(&state).await;
             }
             _ = disk.tick() => telemetry::metrics::sample_disk(&state).await,
             _ = housekeeping.tick() => {

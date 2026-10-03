@@ -159,6 +159,8 @@ const PROBLEM_RESPONSE: &str = "Problem";
         event::JobState,
         event::Notification,
         event::ExtensionStatusEvent,
+        event::ProviderStatusEvent,
+        event::ProviderState,
         listing::MatchMode,
         listing::PostSort,
         listing::YesNo,

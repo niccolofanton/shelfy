@@ -79,6 +79,25 @@ pub enum ErrorCode {
     ValidationFailed,
     /// 422: the AI provider refused the key.
     ProviderKeyInvalid,
+    /// 422: no AI provider can serve this task on this server. The operator
+    /// provider is not configured and the account has no provider that fits
+    /// (a vision task needs a vision model), so the request has no route
+    /// (P3-09, Q1). `GET /me/providers` says what is configured.
+    AiNotConfigured,
+    /// 403: sending library content to this provider needs consent first.
+    /// Accept it for the provider (P3-19), then retry. The operator provider
+    /// counts as consented for the owner.
+    AiConsentRequired,
+    /// 503: the AI provider cannot be reached right now (the operator's node
+    /// is asleep or offline). Retryable: queued work waits without spending a
+    /// try until the provider answers again. `Retry-After` suggests when.
+    ProviderOffline,
+    /// 503: the AI provider failed transiently, or its circuit breaker is
+    /// open after repeated failures. Retry after `Retry-After` seconds.
+    ProviderUnavailable,
+    /// 422: the AI provider's account has no credit or quota left. Not
+    /// retryable until its billing is sorted.
+    ProviderQuotaExhausted,
     /// 422: the egress policy or the site refused the capture.
     CaptureBlocked,
     /// 422: the shared link is not one Shelfy saves: not http(s), with
@@ -135,13 +154,18 @@ impl ErrorCode {
             | Self::ProviderKeyInvalid
             | Self::CaptureBlocked
             | Self::UnsupportedLink
-            | Self::NotAvailable => StatusCode::UNPROCESSABLE_ENTITY,
+            | Self::NotAvailable
+            | Self::AiNotConfigured
+            | Self::ProviderQuotaExhausted => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::AiConsentRequired => StatusCode::FORBIDDEN,
             Self::UserLocked => StatusCode::LOCKED,
             Self::ExtensionOutdated => StatusCode::UPGRADE_REQUIRED,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             Self::StorageFull => StatusCode::INSUFFICIENT_STORAGE,
-            Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            Self::Unavailable | Self::ProviderOffline | Self::ProviderUnavailable => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
         }
     }
@@ -195,6 +219,11 @@ impl ErrorCode {
             Self::UnsupportedMediaType => "unsupported_media_type",
             Self::ValidationFailed => "validation_failed",
             Self::ProviderKeyInvalid => "provider_key_invalid",
+            Self::AiNotConfigured => "ai_not_configured",
+            Self::AiConsentRequired => "ai_consent_required",
+            Self::ProviderOffline => "provider_offline",
+            Self::ProviderUnavailable => "provider_unavailable",
+            Self::ProviderQuotaExhausted => "provider_quota_exhausted",
             Self::CaptureBlocked => "capture_blocked",
             Self::UnsupportedLink => "unsupported_link",
             Self::NotAvailable => "not_available",
@@ -545,6 +574,11 @@ mod tests {
             ErrorCode::UnsupportedMediaType,
             ErrorCode::ValidationFailed,
             ErrorCode::ProviderKeyInvalid,
+            ErrorCode::AiNotConfigured,
+            ErrorCode::AiConsentRequired,
+            ErrorCode::ProviderOffline,
+            ErrorCode::ProviderUnavailable,
+            ErrorCode::ProviderQuotaExhausted,
             ErrorCode::CaptureBlocked,
             ErrorCode::UnsupportedLink,
             ErrorCode::NotAvailable,

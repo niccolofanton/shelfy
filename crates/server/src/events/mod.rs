@@ -49,7 +49,10 @@ use tokio::time::Instant;
 
 pub use bus::{Delivery, Published, Subscription};
 pub use coalesce::MAX_EVENT_KEYS;
-use model::{ChangeReason, EventTopic, ExtensionStatusEvent, JobUpdatedEvent, Notification};
+use model::{
+    ChangeReason, EventTopic, ExtensionStatusEvent, JobUpdatedEvent, Notification,
+    ProviderStatusEvent,
+};
 
 use crate::error::ApiError;
 use crate::ids::now_ms;
@@ -142,6 +145,13 @@ impl EventBus {
     pub fn extension_status(&self, user_id: &str, status: &ExtensionStatusEvent) {
         self.user(user_id)
             .publish(EventTopic::ExtensionStatus, status, Instant::now());
+    }
+
+    /// Publishes the new state of one of `user_id`'s AI providers (P3-09).
+    /// The service calls this only when the state changed.
+    pub fn provider_status(&self, user_id: &str, status: &ProviderStatusEvent) {
+        self.user(user_id)
+            .publish(EventTopic::ProviderStatus, status, Instant::now());
     }
 
     /// Opens a subscription to `user_id`'s events, resuming after the event

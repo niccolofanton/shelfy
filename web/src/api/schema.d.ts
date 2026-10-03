@@ -741,6 +741,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/me/providers': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * The AI providers the account may use. No keys: the operator provider's key
+     *     is the server's, and a BYOK key is only ever shown as `last4` by P3-19.
+     */
+    get: operations['getProviders'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/me/sessions': {
     parameters: {
       query?: never;
@@ -887,6 +907,23 @@ export interface paths {
      *     now (`usage.recompute`).
      */
     get: operations['getUsage'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/usage/ai': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The account's AI usage over the last `days` days (default 30). */
+    get: operations['getAiUsage'];
     put?: never;
     post?: never;
     delete?: never;
@@ -1464,6 +1501,36 @@ export interface components {
       /** @description Which posts. */
       selector: components['schemas']['PostSelector'];
     };
+    /** @description The account's AI usage. */
+    AiUsage: {
+      /** @description The daily rows, newest day first. */
+      days: components['schemas']['AiUsageDay'][];
+    };
+    /** @description One day's AI usage. */
+    AiUsageDay: {
+      /**
+       * Format: int64
+       * @description AI calls that day.
+       */
+      calls: number;
+      /**
+       * Format: double
+       * @description The cost in US dollars, for a priced BYOK provider; `null` otherwise.
+       */
+      cost: number | null;
+      /** @description The UTC day, `YYYY-MM-DD`. */
+      day: string;
+      /**
+       * Format: int64
+       * @description Prompt tokens providers reported.
+       */
+      inputTokens: number;
+      /**
+       * Format: int64
+       * @description Answer tokens providers reported.
+       */
+      outputTokens: number;
+    };
     /** @description An API token of the account. Its value is never shown again. */
     ApiToken: {
       /**
@@ -2026,6 +2093,11 @@ export interface components {
       | 'unsupported_media_type'
       | 'validation_failed'
       | 'provider_key_invalid'
+      | 'ai_not_configured'
+      | 'ai_consent_required'
+      | 'provider_offline'
+      | 'provider_unavailable'
+      | 'provider_quota_exhausted'
       | 'capture_blocked'
       | 'unsupported_link'
       | 'not_available'
@@ -2047,7 +2119,8 @@ export interface components {
       | 'stats.changed'
       | 'job.updated'
       | 'notification'
-      | 'extension.status';
+      | 'extension.status'
+      | 'provider.status';
     /**
      * @description What `GET /api/v1/extension/config` answers: the extension's minimum
      *     version, kill switches, pacing and stop thresholds (contract C3). Data
@@ -3462,6 +3535,55 @@ export interface components {
       /** @description Always `about:blank`: `code` carries the problem type. */
       type: string;
     };
+    /** @description The model ids a provider offers, as `GET /me/providers` shows them. */
+    ProviderModels: {
+      /** @description The embedding model. */
+      embed: string | null;
+      /** @description The text model. */
+      text: string | null;
+      /** @description The vision model (cataloging and QC). */
+      vision: string | null;
+    };
+    /**
+     * @description The state of an AI provider (plan §2.15 "Reliability", P3-09). The circuit
+     *     breaker and the operator's health probe move a provider between these.
+     * @enum {string}
+     */
+    ProviderState: 'ok' | 'degraded' | 'offline' | 'down' | 'invalid_key';
+    /**
+     * @description `provider.status`: an AI provider changed state (P3-09), sent on each
+     *     change. The web app shows the provider's state and reacts (an offline
+     *     operator shows AI work as waiting, an invalid key asks for a new one).
+     */
+    ProviderStatusEvent: {
+      /**
+       * @description The provider: `operator` for the operator's node, else the user's
+       *     provider id.
+       */
+      providerId: string;
+      /** @description The new state. */
+      state: components['schemas']['ProviderState'];
+    };
+    /**
+     * @description One provider as `GET /me/providers` lists it: no key, and the operator
+     *     provider is `managed` (no edit or delete).
+     */
+    ProviderSummary: {
+      /** @description The provider id (`operator`, or the user's id). */
+      id: string;
+      /** @description The protocol (`operator`, `openai_compatible`, `anthropic`). */
+      kind: string;
+      /** @description The display name. */
+      label: string;
+      /** @description Whether the server manages it (the operator provider): no key, no edit. */
+      managed: boolean;
+      /** @description The models per use. */
+      models: components['schemas']['ProviderModels'];
+      /** @description Its current state. */
+      status: components['schemas']['ProviderState'];
+      /** @description Whether it transcribes (dictation). */
+      stt: boolean;
+    };
     /**
      * @description `PublicKeyCredentialCreationOptionsJSON`: what
      *     `navigator.credentials.create()` needs to create a passkey.
@@ -3795,6 +3917,12 @@ export interface components {
           data: components['schemas']['ExtensionStatusEvent'];
           /** @enum {string} */
           event: 'extension.status';
+        }
+      | {
+          /** @description An AI provider changed state. */
+          data: components['schemas']['ProviderStatusEvent'];
+          /** @enum {string} */
+          event: 'provider.status';
         };
     /** @description A signed-in session of the account. */
     Session: {
@@ -4997,6 +5125,27 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  getProviders: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The AI providers, with no keys. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ProviderSummary'][];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   listSessions: {
     parameters: {
       query?: never;
@@ -5210,6 +5359,30 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['Usage'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getAiUsage: {
+    parameters: {
+      query?: {
+        /** @description Days up to today (UTC), 1–365; default 30. */
+        days?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The daily AI usage. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AiUsage'];
         };
       };
       default: components['responses']['Problem'];

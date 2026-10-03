@@ -767,6 +767,7 @@ fn the_policy_reads_the_users_asset_types() {
         &SettingsChange {
             language: None,
             archive_asset_types: Some(types),
+            ..SettingsChange::default()
         },
         NOW,
     )
