@@ -166,3 +166,16 @@ th {
   font-weight: 600;
   color: var(--muted);
 }
+
+/* P2-13: the folder chooser of "Sync now". */
+fieldset.chooser {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin: 8px 0 0;
+  padding: 4px 8px 8px;
+}
+
+fieldset.chooser legend {
+  color: var(--muted);
+  padding: 0 4px;
+}
