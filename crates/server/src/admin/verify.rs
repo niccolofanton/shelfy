@@ -14,7 +14,7 @@
 //!   fails. The default, 0, wants equal counts (right after
 //!   `install-snapshots`); the drill passes 10, since the live data moved on
 //!   after the snapshot. Volatile tables (sessions, jobs, the audit log,
-//!   notifications, caches) change by the minute: they are reported, never
+//!   notifications, exports, caches) change by the minute: they are reported, never
 //!   compared;
 //! - **media:** every object that a library's posts and captures reference
 //!   resolves to a file of the recorded size in the live store
@@ -49,6 +49,7 @@ use crate::config::{CONTROL_DB_FILE, DataDir};
 /// Control-database tables whose rows change by the minute.
 pub const VOLATILE_CONTROL_TABLES: &[&str] = &[
     "audit_log",
+    "exports",
     "idempotency",
     "jobs",
     "magic_links",
