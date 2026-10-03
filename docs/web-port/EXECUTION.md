@@ -294,7 +294,7 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 | P4-05 | Core: site listing, facets, colour, similar | done (Sonnet): keyset listing, OKLab colour filter, faceted counts and weighted-Jaccard similar, byte-for-byte with the desktop on 4 golden sets; p95 at 2,000 sites: list 13–33 ms, similar 24–48 ms, facet counts 43–70 ms under load | `web/p4-05-sites-core` (cffa8a5, 550e922) |
 | P2-10 | Archive drain | running (Opus) | `web/p2-10-archive-drain` |
 | P2-11 | Links API and link hydration | running (Opus) | `web/p2-11-links` |
-| X4a | UX/UI audit by design experts (E8): desktop web, mobile, desktop app | running (Opus) | `web/x4-ux-audit` |
+| X4a | UX/UI audit by design experts (E8): desktop web, mobile, desktop app | done: [reviews/ux-audit.md](reviews/ux-audit.md), 3 P0 findings (mobile menu button over content, a 748 px toolbar at 390 px, `100vh` and safe areas), focus rings, contrast, and 11 tasks UX-0…UX-10 | `web/x4-ux-audit` (8091b89) |
 | X1b | Gold labels for the 40 benchmark posts, by four Claude agents (10 posts each), outside the repo | done: `bench40/gold.json`, 40 posts | — |
 | P4-09 | Jobs view (replaces Downloads on the web) | done (Sonnet): `/jobs` with filters, paging, live `job.updated`, queue controls; mocked web e2e 7/7. The desktop e2e could not run under the machine's load; the lead re-runs it before the next deploy | `web/p4-09-jobs-view` (5f5397b) |
 | P3-01 | Provider adapters (OpenAI-compatible, Anthropic, whisper.cpp) and the stub provider | done: new crate `crates/ai` (`shelfy-ai`) on P2-04's client, the `shelfy-ai-stub` binary, 135+ tests; probed on the node | `web/p3-01-providers` (4 commits, …baaed4e) |
