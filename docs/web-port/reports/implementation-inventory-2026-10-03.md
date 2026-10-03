@@ -2,7 +2,7 @@
 
 ## Perimetro e significato degli stati
 
-- **Snapshot Git verificato:** `/Users/fant/work/experiments/shelfy-web-local/integration`, branch `web/foundations`, HEAD `7d91f2d`; include P2-14/F22 `30b4e97` e F20 `cc4f594`.
+- **Snapshot Git verificato:** `/Users/fant/work/experiments/shelfy-web-local/integration`, branch `web/foundations`, HEAD `e44c24b`; include P2-14/F22 `30b4e97` e F20 `cc4f594`.
 - **Perimetro:** tutte le **115 schede P1–P4**, più **F1–F22, UX-0–UX-10, X1–X7, P0 e P5** fuori conteggio. P6 storico è sostituito da X5 per E7/E10.
 - **Fonti:** [EXECUTION](../EXECUTION.md), schede [P1](../phases/P1.md), [P2](../phases/P2.md), [P3](../phases/P3.md), [P4](../phases/P4.md), [piano](../IMPLEMENTATION-PLAN.md), [continuazione](continuation-2026-10-03.md), [passi live](live-steps.md), [audit UX](../reviews/ux-audit.md), Git e worktree. Le tabelle storiche sono riconciliate con l’evidenza nuova.
 - **Integrata:** codice nel ramo comune, o azione operativa conclusa nel registro; P4-01 è assorbita da P2-04. Non implica distribuzione o accettazione finale.
@@ -35,7 +35,7 @@
 
 - **Verifica combinata lead su0b9edb3:** 1845/1845 test JavaScript in139file, tutte7configurazioni TypeScript e build web verdi dopo correzioni registri/eventi/i18n in f2cef46. Non copre gli ultimi backend STT/TTL né sostituisce il batch Rust. VPS letto alle22:26CEST: Docker29.6, rc.5 healthy, Hermes Up34h; nessun deploy nuovo. Runbook osn42e06ae corregge la precedente promessa di rollback N-1: schema7 richiede reader7, quindi niente rollback solo binario a rc.5.
 
-- **Batch Rust lead su48c6d10:** 126 suite, 1747 test passati, 5 asserzioni fallite e 8 ignorati. Correzioni fixture/contratti in e35eed6 (tabelle control7, filtro lingua, accountId pairing e health capture); rerun mirato concluso: lib376/376, extension18/18, read_api18/18 e static_files9/9 verdi. Contratto TTL corretto7d91f2d e OpenAPI4/4; rootJavaScript1864/1864 in141file. Evidenza combinata batch+rerun, non nuovo batch completo dopo le correzioni.
+- **Batch Rust lead su48c6d10:** 126 suite, 1747 test passati, 5 asserzioni fallite e 8 ignorati. Correzioni fixture/contratti in e35eed6 (tabelle control7, filtro lingua, accountId pairing e health capture); rerun mirato concluso: lib376/376, extension18/18, read_api18/18 e static_files9/9 verdi. Contratto TTL corretto7d91f2d e OpenAPI4/4; rootJavaScript1864/1864 in141file, tutte7configurazioni TypeScript e build web verdi. Il generatoree44c24b preserva i campi opzionali anche quando il server dichiara un default. Evidenza combinata batch+rerun, non nuovo batch completo dopo le correzioni.
 
 ## P1 — Libreria web: tutte le schede
 
