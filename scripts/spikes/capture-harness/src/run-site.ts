@@ -1,6 +1,6 @@
 // SPIKE-11 harness: runs capture v2 (electron/webcap/*) for one site in plain
 // Node, the way the P4 capture service will (plan §2.18), and records what it
-// cost. Built by build.mjs into out/run-site.cjs, with `electron` replaced by
+// cost. Built by build.mjs into .scratch/out/run-site.cjs, with `electron` replaced by
 // src/electron-shim.ts.
 //
 // Phases, as in electron/weborchestrator.ts captureWebReference() minus the DB
@@ -13,7 +13,7 @@
 // and assets), metrics.json (wall time, CPU, memory, network, output size).
 //
 // Usage:
-//   node out/run-site.cjs --url <url> --out <dir> [--label <name>]
+//   node .scratch/out/run-site.cjs --url <url> --out <dir> [--label <name>]
 //     [--max-pages 6] [--single-page] [--no-video] [--site-budget-s 600]
 //     [--fixtures <dir>]            serve https://fixtures.shelfy.test/<file>.html from <dir>
 //     [--page-concurrency N]        inner pages captured at once (default: capture v2's

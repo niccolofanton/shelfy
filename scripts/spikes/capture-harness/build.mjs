@@ -2,14 +2,14 @@
 /**
  * Builds the SPIKE-11 capture harness into a self-contained directory that runs
  * with plain Node 24 (for example in mcr.microsoft.com/playwright, or copied to
- * the VPS):
+ * the VPS). By default it is .scratch/out/, which git, ESLint and Prettier ignore:
  *
- *   out/run-site.cjs           src/run-site.ts + electron/webcap/* bundled by esbuild,
- *                              with `electron` replaced by src/electron-shim.ts
- *   out/resources/adblock/     the compiled content-blocking engine (build/adblock)
- *   out/fixtures/              the six capture fixtures (scripts/web-capture-eval)
- *   out/ssrf-probe.mjs         the SPIKE-4 probe suite (scripts/spikes/ssrf-probe.mjs)
- *   out/node_modules/          the runtime dependencies from ./package.json
+ *   run-site.cjs           src/run-site.ts + electron/webcap/* bundled by esbuild,
+ *                          with `electron` replaced by src/electron-shim.ts
+ *   resources/adblock/     the compiled content-blocking engine (build/adblock)
+ *   fixtures/              the six capture fixtures (scripts/web-capture-eval)
+ *   ssrf-probe.mjs         the SPIKE-4 probe suite (scripts/spikes/ssrf-probe.mjs)
+ *   node_modules/          the runtime dependencies from ./package.json
  *
  * Usage (from the repo root):
  *   pnpm install --frozen-lockfile                              # root: esbuild, build/adblock/engine.bin
@@ -25,7 +25,8 @@ import { build } from 'esbuild';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..', '..', '..');
 const outArg = process.argv.indexOf('--out');
-const OUT = outArg > 0 ? path.resolve(process.argv[outArg + 1]) : path.join(HERE, 'out');
+const OUT =
+  outArg > 0 ? path.resolve(process.argv[outArg + 1]) : path.join(HERE, '.scratch', 'out');
 
 const RUNTIME_DEPS = Object.keys(
   JSON.parse(fs.readFileSync(path.join(HERE, 'package.json'), 'utf8')).dependencies,
@@ -57,7 +58,7 @@ await build({
   sourcemap: true,
   logLevel: 'warning',
   alias: { electron: path.join(HERE, 'src', 'electron-shim.ts') },
-  // Loaded at runtime from out/node_modules; ffmpeg-static is optional in
+  // Loaded at runtime from <out>/node_modules; ffmpeg-static is optional in
   // electron/webcapture.ts and absent here (FFMPEG_BIN points at ffmpeg).
   external: [...RUNTIME_DEPS, 'ffmpeg-static'],
 });
