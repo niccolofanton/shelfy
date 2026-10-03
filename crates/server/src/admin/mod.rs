@@ -1,7 +1,9 @@
 //! `shelfy-server admin …`: operator commands (plan §2.11, §3.5).
 //!
 //! They run next to the server (`docker exec`, or the host timers) on the same
-//! data directory; SQLite's WAL mode and busy timeout make that safe.
+//! data directory; SQLite's WAL mode and busy timeout make that safe for
+//! commands that support a running API. `backfill-covers --apply` requires
+//! the API stopped, like `synth` and database installation.
 //!
 //! Output rules: results go to stdout, diagnostics to stderr, nothing to the
 //! logs. Secrets are never printed, with exceptions by design: `invite` and
@@ -30,6 +32,7 @@
 
 pub mod ai_probe;
 pub mod ai_status;
+pub mod backfill_covers;
 pub mod bench;
 pub mod create_user;
 pub mod flags;
@@ -112,6 +115,9 @@ pub enum AdminCommand {
     AiStatus(ai_status::AiStatusArgs),
     /// Re-seal BYOK credentials under the current master key; counts only.
     Rekey(rekey::RekeyArgs),
+    /// Recover existing Instagram covers from a private local-file manifest.
+    /// Dry-run by default; apply requires the API to be stopped.
+    BackfillCovers(backfill_covers::BackfillArgs),
 }
 
 /// Runs an admin command, writing its output to stdout.
@@ -139,6 +145,7 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
         AdminCommand::Rekey(args) => rekey::run(&data, args, &mut out),
         AdminCommand::AiProbe(args) => ai_probe::run(&data, args, &mut out),
         AdminCommand::AiStatus(args) => ai_status::run(&data, &args, &mut out),
+        AdminCommand::BackfillCovers(args) => backfill_covers::run(&data, &args, &mut out),
     }?;
     out.flush()?;
     Ok(())
