@@ -9,6 +9,7 @@
 
 mod support;
 
+use std::collections::HashMap;
 use std::fs;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,7 @@ use shelfy_server::outbound::{
 };
 use shelfy_server::telemetry::metrics;
 use support::cdn::{Answer, FixtureCdn, ProxyStub};
+use support::sleeping::SleepingNode;
 use tokio::time::Instant;
 use url::Url;
 
@@ -558,6 +560,154 @@ async fn a_hanging_destination_times_out() {
         .await;
     assert!(matches!(result, Err(EgressError::Timeout)), "{result:?}");
     assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+/// The outbound client with `node` as the operator's allowlisted origin.
+fn sleeping_operator(node: &SleepingNode, edit: impl FnOnce(&mut OutboundConfig)) -> Outbound {
+    let mut config = OutboundConfig {
+        allow_origins: OriginAllowlist::parse(&node.origin()).unwrap(),
+        ..OutboundConfig::default()
+    };
+    edit(&mut config);
+    Outbound::new(&config).unwrap()
+}
+
+#[tokio::test]
+async fn a_connect_timeout_is_a_connect_failure_after_the_purposes_timeout() {
+    let node = SleepingNode::start();
+    let url = format!("{}/health", node.origin());
+
+    // The operator's node: 3 s by default, then a connect failure, not a
+    // timeout (F15).
+    let outbound = sleeping_operator(&node, |_| {});
+    let started = Instant::now();
+    let result = outbound.client(Purpose::AiOperator).get(&url).send().await;
+    let elapsed = started.elapsed();
+    let error = result.unwrap_err();
+    assert!(matches!(error, EgressError::Connect(_)), "{error:?}");
+    assert!(error.is_connect_timeout(), "{error:?}");
+    assert!(
+        elapsed >= Duration::from_millis(2_900) && elapsed < Duration::from_secs(6),
+        "{elapsed:?}"
+    );
+
+    // An override per purpose.
+    let outbound = sleeping_operator(&node, |config| {
+        config.connect_timeouts =
+            HashMap::from([(Purpose::AiOperator, Duration::from_millis(300))]);
+    });
+    let started = Instant::now();
+    let error = outbound
+        .client(Purpose::AiOperator)
+        .get(&url)
+        .send()
+        .await
+        .unwrap_err();
+    assert!(error.is_connect_timeout(), "{error:?}");
+    assert!(started.elapsed() < Duration::from_secs(2));
+
+    // The request's own timeout, shorter than connecting, stays a timeout.
+    let started = Instant::now();
+    let result = sleeping_operator(&node, |_| {})
+        .client(Purpose::AiOperator)
+        .get(&url)
+        .timeout(Duration::from_millis(300))
+        .send()
+        .await;
+    assert!(matches!(result, Err(EgressError::Timeout)), "{result:?}");
+    assert!(started.elapsed() < Duration::from_secs(2));
+
+    // A refused connection is a connect failure, not a connect timeout.
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", closed.local_addr().unwrap());
+    drop(closed);
+    let outbound = Outbound::new(&OutboundConfig {
+        allow_origins: OriginAllowlist::parse(&origin).unwrap(),
+        ..OutboundConfig::default()
+    })
+    .unwrap();
+    let error = outbound
+        .client(Purpose::AiOperator)
+        .get(&format!("{origin}/health"))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(matches!(error, EgressError::Connect(_)), "{error:?}");
+    assert!(!error.is_connect_timeout(), "{error:?}");
+}
+
+#[tokio::test]
+async fn a_connect_timeout_is_counted_as_a_timeout() {
+    let handle = metrics::install();
+    let node = SleepingNode::start();
+    let outbound = sleeping_operator(&node, |config| {
+        config.connect_timeouts =
+            HashMap::from([(Purpose::AiOperator, Duration::from_millis(200))]);
+    });
+    let error = outbound
+        .client(Purpose::AiOperator)
+        .get(&format!("{}/health", node.origin()))
+        .send()
+        .await
+        .unwrap_err();
+    assert!(error.is_connect_timeout(), "{error:?}");
+    handle.run_upkeep();
+    let text = handle.render();
+    let series = "shelfy_egress_requests_total{purpose=\"ai_operator\",outcome=\"timeout\"}";
+    assert!(
+        text.lines().any(|line| line.starts_with(series)),
+        "no {series} in\n{text}"
+    );
+}
+
+#[test]
+fn a_connect_timeout_must_be_positive() {
+    let config = OutboundConfig {
+        connect_timeouts: HashMap::from([(Purpose::Link, Duration::ZERO)]),
+        ..OutboundConfig::default()
+    };
+    assert!(Outbound::new(&config).is_err());
+}
+
+#[tokio::test]
+async fn only_the_test_loopback_handle_reaches_a_loopback_port() {
+    let (fixture, outbound) = direct(|_| {}).await;
+    let port = fixture.http_addr().port();
+    fixture.route("127.0.0.1", "/v1/models", [Answer::text(200, "stub")]);
+    let url = format!("http://127.0.0.1:{port}/v1/models");
+
+    // The real handle: user AI providers stay on ports 80 and 443 and on
+    // public addresses (F15 keeps them).
+    let ai = outbound.client(Purpose::Ai);
+    assert_eq!(refusal(ai.get(&url).send().await), Refusal::Port);
+    assert_eq!(
+        refusal(ai.get("http://127.0.0.1/v1/models").send().await),
+        Refusal::Address
+    );
+
+    // The test-only handle reaches the loopback port, under `Purpose::Ai`.
+    let loopback = outbound.client(Purpose::Ai).loopback_for_tests();
+    assert_eq!(loopback.purpose(), Purpose::Ai);
+    assert_eq!(text(loopback.get(&url).send().await).await, "stub");
+
+    // Everything else keeps the strict rules.
+    for (url, expected) in [
+        ("http://10.0.0.1/v1/models".to_owned(), Refusal::Address),
+        ("http://169.254.169.254/".to_owned(), Refusal::Address),
+        (format!("http://localhost:{port}/v1/models"), Refusal::Port),
+        ("http://localhost/v1/models".to_owned(), Refusal::Host),
+        (
+            format!("http://user:pw@127.0.0.1:{port}/"),
+            Refusal::Credentials,
+        ),
+        (
+            "https://rebind.example.test/v1".to_owned(),
+            Refusal::Address,
+        ),
+        (format!("http://plain.example.test:{port}/"), Refusal::Port),
+    ] {
+        assert_eq!(refusal(loopback.get(&url).send().await), expected, "{url}");
+    }
 }
 
 #[tokio::test]

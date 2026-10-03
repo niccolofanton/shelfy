@@ -8,6 +8,7 @@ pub mod cdn;
 pub mod jobs;
 pub mod library;
 pub mod passkey;
+pub mod sleeping;
 pub mod sse;
 
 use axum::Router;

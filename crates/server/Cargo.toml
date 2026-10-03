@@ -62,6 +62,12 @@ webauthn-rs.workspace = true
 webauthn-rs-proto.workspace = true
 webpki-roots.workspace = true
 
+[features]
+# Tests only (F15): `Egress::loopback_for_tests` and `AiTransport::with_loopback_for_tests`
+# reach a loopback `shelfy-ai-stub` through `Purpose::Ai`. Only the dev-dependency below turns
+# it on; release builds (`cargo build -p shelfy-server`) never do.
+test-loopback = []
+
 [dev-dependencies]
 http-body-util.workspace = true
 # Decodable synthetic images for the migration tests.
@@ -70,6 +76,8 @@ jsonschema.workspace = true
 proptest.workspace = true
 # The test AI provider, behind the outbound client in the AI transport tests.
 shelfy-ai = { path = "../ai", features = ["stub"] }
+# The crate itself with the test-only loopback route, so that `cargo test` reaches it.
+shelfy-server = { path = ".", features = ["test-loopback"] }
 # The migration CLI, run end to end against the server in the migration tests.
 shelfy-migrate = { path = "../migrate" }
 tempfile.workspace = true

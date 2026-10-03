@@ -413,6 +413,48 @@ mod tests {
         );
     }
 
+    /// Every kind the adapters return, as `AiServiceError::Call` carries it.
+    const KINDS: [ErrorKind; 10] = [
+        ErrorKind::Offline,
+        ErrorKind::InvalidKey,
+        ErrorKind::RateLimited,
+        ErrorKind::QuotaExhausted,
+        ErrorKind::Transient,
+        ErrorKind::BadRequest,
+        ErrorKind::Refused,
+        ErrorKind::SchemaInvalid,
+        ErrorKind::Unsupported,
+        ErrorKind::Cancelled,
+    ];
+
+    #[test]
+    fn every_kind_moves_the_operator_as_its_action_needs() {
+        // Offline holds at once; an invalid key pauses; a transient error or
+        // a rate limit is backed off, and only two in a row hold. The rest
+        // mean the node answered. A new kind fails to compile here.
+        for kind in KINDS {
+            let (first, second) = match kind {
+                ErrorKind::Offline => (Some(ProviderState::Offline), None),
+                ErrorKind::InvalidKey => (Some(ProviderState::InvalidKey), None),
+                ErrorKind::Transient | ErrorKind::RateLimited => {
+                    (None, Some(ProviderState::Offline))
+                }
+                ErrorKind::QuotaExhausted
+                | ErrorKind::BadRequest
+                | ErrorKind::Refused
+                | ErrorKind::SchemaInvalid
+                | ErrorKind::Unsupported
+                | ErrorKind::Cancelled => (None, None),
+            };
+            let breaker = OperatorBreaker::new();
+            let transition =
+                |state: Option<ProviderState>| state.map_or(Transition::None, Transition::Changed);
+            assert_eq!(breaker.failed(kind, USER), transition(first), "{kind}");
+            assert_eq!(breaker.failed(kind, USER), transition(second), "{kind}");
+            assert_eq!(breaker.is_blocked(), first.or(second).is_some(), "{kind}");
+        }
+    }
+
     #[test]
     fn an_invalid_key_pauses_the_user_and_recovery_resumes_them() {
         let breaker = OperatorBreaker::new();

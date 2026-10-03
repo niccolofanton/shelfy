@@ -2749,6 +2749,7 @@ dependencies = [
  "shelfy-core",
  "shelfy-media",
  "shelfy-migrate",
+ "shelfy-server",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

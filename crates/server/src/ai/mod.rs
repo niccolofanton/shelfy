@@ -197,3 +197,59 @@ impl From<AiServiceError> for ApiError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use axum::http::header::RETRY_AFTER;
+    use axum::response::IntoResponse as _;
+    use shelfy_ai::{AiError, ErrorKind};
+
+    use super::*;
+
+    /// The code and `Retry-After` of a failed call of `kind`.
+    fn api(kind: ErrorKind) -> (ErrorCode, Option<String>) {
+        let error = ApiError::from(AiServiceError::Call(AiError::new(kind, "x")));
+        let code = error.code();
+        let response = error.into_response();
+        let retry = response
+            .headers()
+            .get(RETRY_AFTER)
+            .map(|value| value.to_str().unwrap().to_owned());
+        (code, retry)
+    }
+
+    #[test]
+    fn every_call_error_kind_has_its_problem() {
+        // Offline is held (come back in a minute); rate limits and transient
+        // errors are backed off; an invalid key or no quota is not retried. A connect
+        // timeout is `Offline` since F15. A new kind fails to compile here.
+        let kinds = [
+            ErrorKind::Offline,
+            ErrorKind::InvalidKey,
+            ErrorKind::RateLimited,
+            ErrorKind::QuotaExhausted,
+            ErrorKind::Transient,
+            ErrorKind::BadRequest,
+            ErrorKind::Refused,
+            ErrorKind::SchemaInvalid,
+            ErrorKind::Unsupported,
+            ErrorKind::Cancelled,
+        ];
+        for kind in kinds {
+            let expected = match kind {
+                ErrorKind::Offline => (ErrorCode::ProviderOffline, Some("60")),
+                ErrorKind::InvalidKey => (ErrorCode::ProviderKeyInvalid, None),
+                ErrorKind::QuotaExhausted => (ErrorCode::ProviderQuotaExhausted, None),
+                ErrorKind::RateLimited | ErrorKind::Transient | ErrorKind::SchemaInvalid => {
+                    (ErrorCode::ProviderUnavailable, Some("5"))
+                }
+                ErrorKind::Unsupported => (ErrorCode::NotAvailable, None),
+                ErrorKind::BadRequest | ErrorKind::Refused | ErrorKind::Cancelled => {
+                    (ErrorCode::BadRequest, None)
+                }
+            };
+            let (code, retry) = api(kind);
+            assert_eq!((code, retry.as_deref()), (expected.0, expected.1), "{kind}");
+        }
+    }
+}
