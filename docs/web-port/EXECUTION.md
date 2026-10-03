@@ -45,6 +45,8 @@ These owner decisions override the plan where they conflict.
 | E11 | 2026-10-03 | X1's full classification of the "References" folder (2,264 Instagram posts) runs after the rest of the work, one request at a time, at any hour: there are no other users. | — |
 | E12 | 2026-10-03 | X6's MCP server is local (stdio) for Claude Code and Claude Desktop, with a scoped Shelfy API token. | — |
 
+| E13 | 2026-10-03 | P1-27, a week of daily use as P1's exit, is dropped: P1 exits when its tasks are done. | §5's P1 exit criterion "owner uses the web daily" |
+
 ### Lead decisions
 
 Changes to the plan that the lead made during execution, with the reason.
@@ -124,7 +126,8 @@ Changes to the plan that the lead made during execution, with the reason.
 | P1-23 | First osn PR, part 3: apply stage 2 (DNS, Access, backups) | done on 2026-10-03, except the live SSE measurements (moved to P1-26, see below): `server-v0.1.0-rc.2` deployed; control schema upgraded to v3 and libraries to v2; Hermes unchanged. Backups are on. The first db and media snapshots are saved in `restic/shelfy`, the restore drill verified 2 databases with 0 problems, and `shelfy_backup_last_success` is 1. The Access service token `shelfy-refs-clients` was created by `just cf-apply` after O5 (the user token "Scope Minimo Token" needed Access: Service Tokens Edit) and is stored in SOPS. `/health` answers 200 through Access with it, and 302 without. | osn 44926e5, e65a777 |
 | P1-06 | Post modal, folders and Sidebar on the seam | done (Sonnet): web Playwright 41/41, desktop e2e at the F2 baseline | `web/p1-06-modal-folders` (7 commits, …560e84e) |
 | P1-08 | Gallery performance and the JS budget | done (Sonnet): initial JS 277 → 214 KB gzip under a 220 KB size-limit gate in CI; 6k and 20k synth libraries scroll at a median 119–120 fps with a worst frame of 27–32 ms; 0 third-party requests | `web/p1-08-gallery-perf` (9 commits) |
-| P1-24 | SPIKE-8: passkeys on the owner's devices | partial on 2026-10-03: passkeys registered in Chrome on macOS and Safari on iOS. Still to do: a passkey sign-in on each, the iOS home-screen app, Android, and Safari on macOS | owner |
+| P1-24 | SPIKE-8: passkeys on the owner's devices | done on 2026-10-03, confirmed by the owner on all their devices. The server holds two passkeys (Chrome on macOS, Safari on iOS; synced passkeys cover the other devices) and has not yet recorded a sign-in with a passkey | owner |
+| P1-27 | Owner daily use (exit) | dropped by the owner on 2026-10-03 (E13) | — |
 | rc.4 | Deploy of the night's work | done on 2026-10-03 at 09:49: `server-v0.1.0-rc.4` on `refs`, control schema 3 → 4, no errors; Hermes unchanged (same start, 0 restarts, node online). Brings P1-06, P1-08, P1-11 with F11, P1-14, P2-02–P2-07, P3-01, P3-03, P3-08, P4-04–P4-09, F14 | osn `abc2ec6` |
 | P1-25 | Reference library on the VPS and the first restore drill | done on 2026-10-03 except the owner's look: the owner's current desktop library (6,138 posts, 980.9 MiB) migrated through Access with every count matching; restore drill on the real libraries green. [Report](reports/p1-vps.md) | lead |
 | P1-16 | First osn PR, part 1: prepare (code only) | done; draft [osn PR #29](https://github.com/niccolofanton/osn/pull/29) | `web/p1-16-osn-prep` + osn `shelfy/p1-16-prepare` (967c83a…b5b94af) |
