@@ -33,16 +33,19 @@
 //! get them until the lease ends or the task completes. A poll by the same
 //! poller returns its own leased tasks again, with the lease renewed, so an
 //! extension that restarted picks its work back up (it dedupes by id). A
-//! restart of the server forgets the leases; the work is idempotent (the
-//! CAS dedupes uploads, a refresh merges).
+//! completion echoes the opaque `leaseId` generation: only the current
+//! token holder can change the task. A restart of the server forgets the
+//! leases, so the extension must poll again before completing its work.
 //!
 //! **Long poll.** `GET /ingest/tasks?wait=25` answers at once when it has
 //! tasks for the poller, else waits up to `wait` seconds for a wake-up
 //! ([`wake`]: posts went to `client` through ingest, the archive drain, the
 //! breaker handoff or a gated hydration), and ends at shutdown.
 //!
-//! **Completion** ([`complete`]) is idempotent: an outcome for a task that
-//! no longer exists (done, failed, backed off) changes nothing.
+//! **Completion** ([`complete`]) rechecks the leased task inside the library
+//! transaction. Work invalidated by a user change is discarded. Completed
+//! leases retain a bounded receipt for five minutes: a replay by the same
+//! token and generation changes nothing; a stale or foreign lease gets 409.
 //!
 //! | Outcome | Kinds | What happens |
 //! |---|---|---|
@@ -77,9 +80,10 @@ use utoipa::ToSchema;
 use crate::control::uploads::UploadPurpose;
 use crate::error::ApiError;
 use crate::events::model::ChangeReason;
+use crate::ids::new_ulid;
 use crate::jobs::archive::select::{FetchRow, Slot};
 use crate::jobs::archive::store::{self, Committed, StoreContext};
-use crate::jobs::archive::{self, ITEM_BACKOFF, RESERVE_BYTES};
+use crate::jobs::archive::{self, ITEM_BACKOFF};
 use crate::library::{self, Change};
 use crate::quota;
 use crate::routes::uploads::{self, ClaimError, Claimed};
@@ -585,6 +589,9 @@ fn facts(post: &PostRow) -> PostFacts {
 struct Lease {
     holder: String,
     until: i64,
+    id: String,
+    task: Task,
+    completed: bool,
 }
 
 /// The process's leases of tasks and the wake-ups of waiting polls (see the
@@ -614,7 +621,7 @@ impl TaskBoard {
         tasks: &'a [Task],
         limit: usize,
         now: i64,
-    ) -> Vec<(&'a Task, i64)> {
+    ) -> Vec<(&'a Task, i64, String)> {
         let until = now.saturating_add(crate::auth::millis(LEASE));
         let mut leases = lock(&self.leases);
         let user = leases.entry(user_id.to_owned()).or_default();
@@ -625,16 +632,27 @@ impl TaskBoard {
                 break;
             }
             let id = task.id.to_string();
-            let free = user.get(&id).is_none_or(|lease| lease.holder == holder);
+            let free = user.get(&id).is_none_or(|lease| {
+                lease.completed || lease.holder == holder || lease.task != *task
+            });
             if free {
+                let generation = user
+                    .get(&id)
+                    .filter(|lease| {
+                        !lease.completed && lease.holder == holder && lease.task == *task
+                    })
+                    .map_or_else(new_ulid, |lease| lease.id.clone());
                 user.insert(
                     id,
                     Lease {
                         holder: holder.to_owned(),
                         until,
+                        id: generation.clone(),
+                        task: task.clone(),
+                        completed: false,
                     },
                 );
-                leased.push((task, until));
+                leased.push((task, until, generation));
             }
         }
         if user.is_empty() {
@@ -643,13 +661,74 @@ impl TaskBoard {
         leased
     }
 
-    /// Ends the lease of `user_id`'s task `id`, whoever holds it.
-    pub fn release(&self, user_id: &str, id: &str) {
+    /// Checks a completion's token and generation. Completed receipts are
+    /// kept briefly so a replay is a no-op, even while the item is backed off.
+    fn authorize(
+        &self,
+        user_id: &str,
+        holder: &str,
+        id: &str,
+        generation: &str,
+        now: i64,
+    ) -> Result<Option<Lease>, ApiError> {
+        let leases = lock(&self.leases);
+        let lease = leases
+            .get(user_id)
+            .and_then(|user| user.get(id))
+            .filter(|lease| lease.holder == holder && lease.id == generation && lease.until > now)
+            .ok_or_else(|| {
+                ApiError::new(crate::error::ErrorCode::Conflict)
+                    .with_detail("task lease is no longer current; poll again")
+            })?;
+        Ok((!lease.completed).then(|| lease.clone()))
+    }
+
+    /// Holds the lease lock for the library mutation: expiry/reassignment
+    /// cannot overtake the final check between validation and attaching bytes.
+    fn with_lease<T>(
+        &self,
+        user_id: &str,
+        permit: &Lease,
+        now: i64,
+        write: impl FnOnce(&Task) -> Result<T, RepoError>,
+    ) -> Result<T, RepoError> {
+        let leases = lock(&self.leases);
+        let current = leases
+            .get(user_id)
+            .and_then(|user| user.get(&permit.task.id.to_string()))
+            .filter(|lease| {
+                !lease.completed
+                    && lease.holder == permit.holder
+                    && lease.id == permit.id
+                    && lease.until > now
+            })
+            .ok_or(RepoError::Conflict(
+                "task lease is no longer current; poll again",
+            ))?;
+        write(&current.task)
+    }
+
+    fn finish(&self, user_id: &str, permit: &Lease, now: i64) {
         let mut leases = lock(&self.leases);
         if let Some(user) = leases.get_mut(user_id) {
-            user.remove(id);
-            if user.is_empty() {
-                leases.remove(user_id);
+            if let Some(lease) = user.get_mut(&permit.task.id.to_string())
+                && lease.id == permit.id
+                && lease.holder == permit.holder
+            {
+                lease.completed = true;
+                lease.until = now.saturating_add(crate::auth::millis(LEASE));
+            }
+            // Receipts are bounded, expire with the leases and never outlive
+            // a replacement lease for the same task.
+            let mut receipts: Vec<_> = user
+                .iter()
+                .filter(|(_, lease)| lease.completed)
+                .map(|(id, lease)| (id.clone(), lease.until))
+                .collect();
+            receipts.sort_by_key(|(_, until)| *until);
+            let excess = receipts.len().saturating_sub(1024);
+            for (id, _) in receipts.into_iter().take(excess) {
+                user.remove(&id);
             }
         }
     }
@@ -688,9 +767,11 @@ impl TaskBoard {
     /// How many leases are held (tests, metrics).
     #[must_use]
     pub fn leased(&self, user_id: &str, now: i64) -> usize {
-        lock(&self.leases)
-            .get(user_id)
-            .map_or(0, |user| user.values().filter(|l| l.until > now).count())
+        lock(&self.leases).get(user_id).map_or(0, |user| {
+            user.values()
+                .filter(|l| !l.completed && l.until > now)
+                .count()
+        })
     }
 }
 
@@ -705,7 +786,7 @@ pub fn wake(state: &AppState, user_id: &str) {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Polled {
     /// The leased tasks, each with the end of its lease.
-    pub tasks: Vec<(Task, i64)>,
+    pub tasks: Vec<(Task, i64, String)>,
     /// Every task that waits, per platform.
     pub waiting: Waiting,
 }
@@ -753,7 +834,7 @@ pub async fn poll(
         let polled = Polled {
             tasks: leased
                 .into_iter()
-                .map(|(task, until)| (task.clone(), until))
+                .map(|(task, until, generation)| (task.clone(), until, generation))
                 .collect(),
             waiting: derived.waiting(),
         };
@@ -828,6 +909,19 @@ fn error_code(outcome: TaskOutcome, raw: Option<&str>) -> String {
     format!("ext_{code}")
 }
 
+/// The result of one leased task, echoed by the extension.
+#[derive(Clone, Copy, Debug)]
+pub struct Completion<'a> {
+    /// The opaque generation returned by polling.
+    pub generation: &'a str,
+    /// The task's outcome.
+    pub outcome: TaskOutcome,
+    /// The completed archive upload, when uploaded.
+    pub upload_id: Option<&'a str>,
+    /// A short failure code, when failed or skipped.
+    pub error: Option<&'a str>,
+}
+
 /// `POST /ingest/tasks/{id}/complete`: ends `user_id`'s task `id` with
 /// `outcome` (see the module docs).
 ///
@@ -836,15 +930,21 @@ fn error_code(outcome: TaskOutcome, raw: Option<&str>) -> String {
 /// 404 for a text that is not a task id; 422 for an outcome the task's kind
 /// cannot have, or `uploaded` without a usable `uploadId`; 409
 /// `upload_consumed` for an upload used before while the slot is still
-/// empty; the quota's refusals; the databases failed.
+/// empty, or `conflict` for a stale or foreign lease; quota refusals or
+/// database errors.
 pub async fn complete(
     state: &AppState,
     user_id: &str,
+    holder: &str,
     id: &str,
-    outcome: TaskOutcome,
-    upload_id: Option<&str>,
-    error: Option<&str>,
+    completion: Completion<'_>,
 ) -> Result<(), ApiError> {
+    let Completion {
+        generation,
+        outcome,
+        upload_id,
+        error,
+    } = completion;
     let task: TaskId = id
         .parse()
         .map_err(|BadTaskId| ApiError::not_found().with_detail("not a task id"))?;
@@ -858,74 +958,93 @@ pub async fn complete(
             ),
         ));
     }
-    state.extension().tasks().release(user_id, id);
+    let Some(permit) =
+        state
+            .extension()
+            .tasks()
+            .authorize(user_id, holder, id, generation, now(state))?
+    else {
+        return Ok(());
+    };
     if outcome == TaskOutcome::Uploaded {
         let upload_id = upload_id
             .filter(|id| !id.is_empty())
             .ok_or_else(|| ApiError::invalid_field("uploadId", "is required when uploaded"))?;
-        return complete_upload(state, user_id, &task, upload_id).await;
+        complete_upload(state, user_id, &task, &permit, upload_id).await?;
+        state
+            .extension()
+            .tasks()
+            .finish(user_id, &permit, now(state));
+        return Ok(());
     }
-    let (modes, now) = (archive::modes(state), now(state));
     let error = error_code(outcome, error);
+    let (guard_state, guard_user, guard_permit) =
+        (state.clone(), user_id.to_owned(), permit.clone());
     library::write(state, user_id, ChangeReason::Archive, move |tx| {
-        let assets = settings::read(tx)?.archive_asset_types;
-        let found = derive(tx, Some(&task.key), assets, modes, now)?
-            .tasks
-            .into_iter()
-            .find(|t| t.id == task);
-        let keys = Some(vec![task.key.clone()]);
-        let Some(found) = found else {
-            if outcome == TaskOutcome::Refreshed && task.kind == TaskKind::HydrateLink {
-                // Hydrated: the post's cover keeps no hydration tries.
-                tx.execute(
-                    "UPDATE posts SET cover_fetch_attempts = 0, cover_fetch_next_at = NULL,
-                                      cover_fetch_error = NULL
-                     WHERE key = ?1 AND cover_fetch_error LIKE 'ext\\_%' ESCAPE '\\'",
-                    [&task.key],
-                )?;
-            }
-            return Ok(Change { value: (), keys });
-        };
-        let hydration = task.kind == TaskKind::HydrateLink;
-        let fail_post = |tx: &Connection| -> Result<(), RepoError> {
-            tx.execute(
-                "UPDATE posts SET archive_state = 'failed' WHERE id = ?1",
-                [found.post_id],
-            )?;
-            Ok(())
-        };
-        match outcome {
-            TaskOutcome::Gone => {
-                for (row, attempts) in &found.rows {
-                    set_tries(tx, found.post_id, *row, *attempts, None, FETCH_ERROR_GONE)?;
+        guard_state.extension().tasks().with_lease(
+            &guard_user,
+            &guard_permit,
+            now(&guard_state),
+            |leased| {
+                let (modes, at) = (archive::modes(&guard_state), now(&guard_state));
+                let assets = settings::read(tx)?.archive_asset_types;
+                let found = derive(tx, Some(&task.key), assets, modes, at)?
+                    .tasks
+                    .into_iter()
+                    .find(|t| t.id == task);
+                let keys = Some(vec![task.key.clone()]);
+                let Some(found) = found.filter(|found| found == leased) else {
+                    return Ok(Change { value: (), keys });
+                };
+                let hydration = task.kind == TaskKind::HydrateLink;
+                let fail_post = |tx: &Connection| -> Result<(), RepoError> {
+                    tx.execute(
+                        "UPDATE posts SET archive_state = 'failed' WHERE id = ?1",
+                        [found.post_id],
+                    )?;
+                    Ok(())
+                };
+                match outcome {
+                    TaskOutcome::Gone => {
+                        for (row, attempts) in &found.rows {
+                            set_tries(tx, found.post_id, *row, *attempts, None, FETCH_ERROR_GONE)?;
+                        }
+                        if hydration {
+                            fail_post(tx)?;
+                        }
+                    }
+                    TaskOutcome::Failed | TaskOutcome::Skipped | TaskOutcome::Refreshed => {
+                        let mut out_of_tries = false;
+                        for (row, attempts) in &found.rows {
+                            let attempts = attempts.saturating_add(1);
+                            let next_at = (attempts < FETCH_TRIES).then(|| {
+                                let failures = u32::try_from(attempts).unwrap_or(u32::MAX);
+                                let delay =
+                                    ITEM_BACKOFF.jittered(failures, seed(found.post_id, *row));
+                                at.saturating_add(
+                                    i64::try_from(delay.as_millis()).unwrap_or(i64::MAX),
+                                )
+                            });
+                            out_of_tries |= next_at.is_none();
+                            set_tries(tx, found.post_id, *row, attempts, next_at, &error)?;
+                        }
+                        if hydration && out_of_tries {
+                            fail_post(tx)?;
+                        }
+                    }
+                    TaskOutcome::Uploaded => unreachable!("handled above"),
                 }
-                if hydration {
-                    fail_post(tx)?;
-                }
-            }
-            TaskOutcome::Failed | TaskOutcome::Skipped | TaskOutcome::Refreshed => {
-                let mut out_of_tries = false;
-                for (row, attempts) in &found.rows {
-                    let attempts = attempts.saturating_add(1);
-                    let next_at = (attempts < FETCH_TRIES).then(|| {
-                        let failures = u32::try_from(attempts).unwrap_or(u32::MAX);
-                        let delay = ITEM_BACKOFF.jittered(failures, seed(found.post_id, *row));
-                        now.saturating_add(i64::try_from(delay.as_millis()).unwrap_or(i64::MAX))
-                    });
-                    out_of_tries |= next_at.is_none();
-                    set_tries(tx, found.post_id, *row, attempts, next_at, &error)?;
-                }
-                if hydration && out_of_tries {
-                    fail_post(tx)?;
-                }
-            }
-            TaskOutcome::Uploaded => unreachable!("handled above"),
-        }
-        let policy = ArchivePolicy::read(tx, modes)?;
-        refresh_states(tx, Scope::Posts(&[found.post_id]), &policy, now)?;
-        Ok(Change { value: (), keys })
+                let policy = ArchivePolicy::read(tx, modes)?;
+                refresh_states(tx, Scope::Posts(&[found.post_id]), &policy, at)?;
+                Ok(Change { value: (), keys })
+            },
+        )
     })
     .await?;
+    state
+        .extension()
+        .tasks()
+        .finish(user_id, &permit, now(state));
     Ok(())
 }
 
@@ -1002,6 +1121,7 @@ async fn complete_upload(
     state: &AppState,
     user_id: &str,
     task: &TaskId,
+    permit: &Lease,
     upload_id: &str,
 ) -> Result<(), ApiError> {
     let slot = match task.slot {
@@ -1025,7 +1145,7 @@ async fn complete_upload(
         }
         Err(err) => return Err(err.into()),
     };
-    match store_claimed(state, user_id, task, slot, &claimed).await {
+    match store_claimed(state, user_id, task, permit, slot, &claimed).await {
         Ok(()) => {
             uploads::discard(state, user_id, &ids).await?;
             Ok(())
@@ -1045,15 +1165,33 @@ async fn store_claimed(
     state: &AppState,
     user_id: &str,
     task: &TaskId,
+    permit: &Lease,
     slot: Slot,
     claimed: &Claimed,
 ) -> Result<(), StoreError> {
     let retry = StoreError::Retry;
     let db = state.user_db(user_id).await.map_err(retry)?;
-    let key = task.key.clone();
-    let target = blocking(move || db.read(|conn| store::target_of(conn, &key, slot)))
-        .await
-        .map_err(retry)?;
+    let (key, expected, modes, at) = (
+        task.key.clone(),
+        permit.task.clone(),
+        archive::modes(state),
+        now(state),
+    );
+    let target = blocking(move || {
+        db.read(|conn| {
+            let assets = settings::read(conn)?.archive_asset_types;
+            if !derive(conn, Some(&key), assets, modes, at)?
+                .tasks
+                .iter()
+                .any(|task| task == &expected)
+            {
+                return Ok(None);
+            }
+            store::target_of(conn, &key, slot)
+        })
+    })
+    .await
+    .map_err(retry)?;
     // The post is gone, or the slot is not one the archive fills.
     let Some(target) = target else {
         return Ok(());
@@ -1078,28 +1216,6 @@ async fn store_claimed(
         Err(err) => return Err(StoreError::Spent(unusable(&err.to_string()))),
     };
 
-    let reservation = match quota::reserve(state, user_id, RESERVE_BYTES).await {
-        Ok(reservation) => reservation,
-        Err(err) if quota::is_refused(&err) => {
-            // As for a server fetch (L13): metadata only.
-            let post_id = target.post_id;
-            library::write(state, user_id, ChangeReason::Archive, move |tx| {
-                tx.execute(
-                    "UPDATE posts SET archive_state = 'link_only' WHERE id = ?1",
-                    [post_id],
-                )?;
-                Ok::<_, RepoError>(Change {
-                    value: (),
-                    keys: Some(vec![task_key(tx, post_id)?]),
-                })
-            })
-            .await
-            .map_err(retry)?;
-            return Err(StoreError::Spent(err));
-        }
-        Err(err) => return Err(retry(err)),
-    };
-
     let (pool_media, pool_target) = (media.clone(), target.clone());
     let prepared = match ImagePool::shared()
         .run(move || store::prepare(&pool_media, staged, &pool_target))
@@ -1110,24 +1226,97 @@ async fn store_claimed(
         Err(_) => return Err(StoreError::Spent(unusable("its image cannot be read"))),
     };
 
-    let (modes, now) = (archive::modes(state), now(state));
+    let reservation = match quota::reserve(state, user_id, prepared.size()).await {
+        Ok(reservation) => reservation,
+        Err(err) if quota::is_refused(&err) => {
+            // As for a server fetch (L13): metadata only.
+            let (post_id, expected, guard_state, guard_user, guard_permit) = (
+                target.post_id,
+                permit.task.clone(),
+                state.clone(),
+                user_id.to_owned(),
+                permit.clone(),
+            );
+            library::write(state, user_id, ChangeReason::Archive, move |tx| {
+                guard_state.extension().tasks().with_lease(
+                    &guard_user,
+                    &guard_permit,
+                    now(&guard_state),
+                    |_| {
+                        let assets = settings::read(tx)?.archive_asset_types;
+                        if !derive(
+                            tx,
+                            Some(&expected.id.key),
+                            assets,
+                            archive::modes(&guard_state),
+                            now(&guard_state),
+                        )?
+                        .tasks
+                        .iter()
+                        .any(|task| task == &expected)
+                        {
+                            return Ok(Change {
+                                value: (),
+                                keys: Some(Vec::new()),
+                            });
+                        }
+                        tx.execute(
+                            "UPDATE posts SET archive_state = 'link_only' WHERE id = ?1",
+                            [post_id],
+                        )?;
+                        Ok::<_, RepoError>(Change {
+                            value: (),
+                            keys: Some(vec![task_key(tx, post_id)?]),
+                        })
+                    },
+                )
+            })
+            .await
+            .map_err(retry)?;
+            return Err(StoreError::Spent(err));
+        }
+        Err(err) => return Err(retry(err)),
+    };
+
+    let (guard_state, guard_user, guard_permit) =
+        (state.clone(), user_id.to_owned(), permit.clone());
     let key = target.key.clone();
     library::write(state, user_id, ChangeReason::Archive, move |tx| {
-        let policy = ArchivePolicy::read(tx, modes)?;
-        let cx = StoreContext {
-            media: &media,
-            origin: Origin::Extension,
-            policy: &policy,
-            now,
-        };
-        let committed = store::commit(tx, &cx, &target, prepared, reservation)?;
-        Ok::<_, RepoError>(Change {
-            keys: match committed {
-                Committed::Stored { .. } => Some(vec![key]),
-                Committed::Unwanted => Some(Vec::new()),
+        guard_state.extension().tasks().with_lease(
+            &guard_user,
+            &guard_permit,
+            now(&guard_state),
+            |leased| {
+                let (modes, at) = (archive::modes(&guard_state), now(&guard_state));
+                let assets = settings::read(tx)?.archive_asset_types;
+                if !derive(tx, Some(&key), assets, modes, at)?
+                    .tasks
+                    .iter()
+                    .any(|task| task == leased)
+                    || store::target_of(tx, &key, slot)?.as_ref() != Some(&target)
+                {
+                    return Ok(Change {
+                        value: Committed::Unwanted,
+                        keys: Some(Vec::new()),
+                    });
+                }
+                let policy = ArchivePolicy::read(tx, modes)?;
+                let cx = StoreContext {
+                    media: &media,
+                    origin: Origin::Extension,
+                    policy: &policy,
+                    now: at,
+                };
+                let committed = store::commit(tx, &cx, &target, prepared, reservation)?;
+                Ok::<_, RepoError>(Change {
+                    keys: match committed {
+                        Committed::Stored { .. } => Some(vec![key]),
+                        Committed::Unwanted => Some(Vec::new()),
+                    },
+                    value: committed,
+                })
             },
-            value: committed,
-        })
+        )
     })
     .await
     .map_err(retry)?;
@@ -1246,8 +1435,8 @@ mod tests {
         let board = TaskBoard::default();
         let tasks: Vec<Task> = (1..=3).map(task).collect();
         let lease = crate::auth::millis(LEASE);
-        let ids = |leased: Vec<(&Task, i64)>| -> Vec<i64> {
-            leased.into_iter().map(|(t, _)| t.post_id).collect()
+        let ids = |leased: Vec<(&Task, i64, String)>| -> Vec<i64> {
+            leased.into_iter().map(|(t, _, _)| t.post_id).collect()
         };
         assert_eq!(ids(board.lease("U", "A", &tasks, 2, 0)), [1, 2]);
         assert_eq!(ids(board.lease("U", "B", &tasks, 20, 1)), [3], "exclusive");
@@ -1262,7 +1451,8 @@ mod tests {
             [1, 2, 3],
             "per user"
         );
-        board.release("U", "upload_media.x_1.cover");
+        let held = lock(&board.leases)["U"]["upload_media.x_1.cover"].clone();
+        board.finish("U", &held, 4);
         assert_eq!(ids(board.lease("U", "B", &tasks, 20, 4)), [1, 3]);
         // A's lease of task 2 ends a lease after its renewal at 2.
         assert!(ids(board.lease("U", "C", &tasks, 20, lease + 1)).is_empty());
@@ -1270,6 +1460,184 @@ mod tests {
         assert_eq!(board.leased("U", lease + 2), 3);
         board.sweep(10 * lease);
         assert_eq!(board.leased("U", 0), 0);
+    }
+
+    #[test]
+    fn generations_fence_expiry_reassignment_and_changed_work() {
+        let board = TaskBoard::default();
+        let tasks = [task(1)];
+        let lease = crate::auth::millis(LEASE);
+        let first = board.lease("U", "A", &tasks, 1, 0)[0].2.clone();
+        let permit = board
+            .authorize("U", "A", &tasks[0].id.to_string(), &first, 1)
+            .unwrap()
+            .unwrap();
+        assert!(
+            board
+                .authorize("U", "B", &tasks[0].id.to_string(), &first, 1)
+                .is_err()
+        );
+        assert!(
+            board
+                .authorize("U", "A", &tasks[0].id.to_string(), &first, lease)
+                .is_err()
+        );
+        let second = board.lease("U", "B", &tasks, 1, lease)[0].2.clone();
+        assert_ne!(first, second);
+        assert!(board.with_lease("U", &permit, lease, |_| Ok(())).is_err());
+        let mut changed = tasks;
+        changed[0].url = Some("https://pbs.twimg.com/media/new.jpg".to_owned());
+        let third = board.lease("U", "B", &changed, 1, lease + 1)[0].2.clone();
+        assert_ne!(
+            second, third,
+            "new work rotates even the same holder's generation"
+        );
+        assert!(
+            board
+                .authorize("U", "B", &changed[0].id.to_string(), &second, lease + 1)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn receipts_allow_replay_until_expiry_and_are_bounded() {
+        let board = TaskBoard::default();
+        let tasks: Vec<Task> = (1..=1025).map(task).collect();
+        let leased = board.lease("U", "A", &tasks, tasks.len(), 0);
+        for (index, (task, _, generation)) in leased.iter().enumerate() {
+            let completed_at = 2 + i64::try_from(index).unwrap();
+            let permit = board
+                .authorize("U", "A", &task.id.to_string(), generation, 1)
+                .unwrap()
+                .unwrap();
+            board.finish("U", &permit, completed_at);
+            assert!(
+                board
+                    .authorize("U", "A", &task.id.to_string(), generation, completed_at + 1)
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                board
+                    .with_lease("U", &permit, completed_at + 1, |_| Ok(()))
+                    .is_err()
+            );
+        }
+        assert_eq!(lock(&board.leases)["U"].len(), 1024);
+        let (task, _, generation) = &leased[1024];
+        assert!(
+            board
+                .authorize(
+                    "U",
+                    "A",
+                    &task.id.to_string(),
+                    generation,
+                    1026 + crate::auth::millis(LEASE)
+                )
+                .is_err()
+        );
+        board.sweep(1026 + crate::auth::millis(LEASE));
+        assert!(lock(&board.leases).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_lost_final_fence_releases_the_upload_and_quota_reservation() {
+        use crate::config::{Config, DataDir};
+        use crate::control::uploads as upload_rows;
+        use crate::error::ErrorCode;
+        use image::{RgbImage, codecs::jpeg::JpegEncoder};
+        use shelfy_core::ingest::archive::ArchiveMode;
+        use shelfy_core::repo::posts::{self, NewPost};
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config::with_data_dir(DataDir::new(dir.path()).unwrap());
+        config.archive.modes.twitter = ArchiveMode::Client;
+        let state = AppState::open(config).unwrap();
+        let user = new_ulid();
+        state.control().write(|tx| -> Result<(), RepoError> {
+            tx.execute("INSERT INTO users (id, email, role, quota_bytes, created_at) VALUES (?1, 'fixture@example.test', 'member', 0, ?2)", params![user, now(&state)])?;
+            Ok(())
+        }).unwrap();
+        let db = state.user_db(&user).await.unwrap();
+        let mut post = NewPost::new("x_1", Platform::Twitter, "1", "image", now(&state));
+        post.archive_state = Some("client".to_owned());
+        post.cover_url = Some("https://pbs.twimg.com/media/old.jpg".to_owned());
+        db.write(|tx| posts::insert(tx, &post, now(&state)))
+            .unwrap();
+        let leased = poll(&state, &user, "A", Duration::ZERO, 1).await.unwrap();
+        let (task, _, generation) = &leased.tasks[0];
+        let permit = state
+            .extension()
+            .tasks()
+            .authorize(&user, "A", &task.id.to_string(), generation, now(&state))
+            .unwrap()
+            .unwrap();
+        // Model reassignment after authorization but before the asynchronous
+        // consumer's final transaction: the content and task still match.
+        state
+            .extension()
+            .tasks()
+            .sweep(now(&state) + crate::auth::millis(LEASE));
+        let reassigned = poll(&state, &user, "B", Duration::ZERO, 1).await.unwrap();
+        assert_ne!(reassigned.tasks[0].2, *generation);
+
+        let mut bytes = Vec::new();
+        JpegEncoder::new(&mut bytes)
+            .encode_image(&RgbImage::new(64, 48))
+            .unwrap();
+        let meta = upload_rows::UploadMeta {
+            sha256: shelfy_media::Digest::of(&bytes).to_string(),
+            ext: Some("jpg".to_owned()),
+            ..upload_rows::UploadMeta::default()
+        };
+        let upload_id = new_ulid();
+        let path = upload_rows::file_path(&state.config().data_dir.uploads_dir(), &upload_id, true);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        state
+            .control()
+            .write(|tx| -> Result<(), RepoError> {
+                upload_rows::insert(
+                    tx,
+                    &upload_rows::NewUpload {
+                        id: &upload_id,
+                        user_id: &user,
+                        purpose: UploadPurpose::ARCHIVE_OBJECT,
+                        length: i64::try_from(bytes.len()).unwrap(),
+                        meta: &meta,
+                        expires_at: now(&state) + 86_400_000,
+                    },
+                    now(&state),
+                )?;
+                upload_rows::complete(tx, &upload_id, &meta, now(&state))?;
+                Ok(())
+            })
+            .unwrap();
+        let err = complete_upload(&state, &user, &task.id, &permit, &upload_id)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), ErrorCode::Conflict);
+        let claimed = state
+            .control()
+            .read(|conn| upload_rows::get(conn, &user, &upload_id))
+            .unwrap()
+            .unwrap();
+        assert!(
+            !claimed.is_consumed(),
+            "the late attempt gives its claim back"
+        );
+        assert!(
+            path.exists(),
+            "the current holder can reuse the finished bytes"
+        );
+        assert_eq!(state.quota().reserved(&user), 0);
+        assert_eq!(
+            db.read(|conn| -> Result<i64, RepoError> {
+                Ok(conn.query_row("SELECT count(*) FROM media_objects", [], |row| row.get(0))?)
+            })
+            .unwrap(),
+            0
+        );
     }
 
     #[tokio::test]

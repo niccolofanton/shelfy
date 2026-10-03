@@ -20,6 +20,8 @@
 
 mod support;
 
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -29,12 +31,14 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use image::RgbImage;
 use image::codecs::jpeg::JpegEncoder;
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension as _, params};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use shelfy_core::ingest::archive::{ArchiveMode, FETCH_TRIES};
 use shelfy_core::repo::Platform;
 use shelfy_core::repo::posts::{self, NewMedia, NewPost};
+use shelfy_core::repo::settings::{self, ArchiveAssetTypes, SettingsChange};
+use shelfy_server::control::uploads as upload_rows;
 use shelfy_server::error::ErrorCode;
 use shelfy_server::events::Delivery;
 use shelfy_server::events::model::EventTopic;
@@ -44,6 +48,12 @@ use shelfy_server::tokens::{SecretToken, hash_token};
 use support::auth::{sign_in, spa};
 use support::library::{ALICE, BOB};
 use support::{TestState, get, json, post_json, problem, send};
+
+type LeaseCache = HashMap<(String, String), String>;
+static LEASES: OnceLock<Mutex<LeaseCache>> = OnceLock::new();
+fn leases() -> &'static Mutex<LeaseCache> {
+    LEASES.get_or_init(Mutex::default)
+}
 
 const VERSION: &str = "0.2.0";
 const X_CDN: &str = "https://pbs.twimg.com/media";
@@ -115,7 +125,14 @@ async fn poll(app: &Router, token: &str, query: &str) -> Value {
     )
     .await;
     assert_eq!(response.status(), StatusCode::OK, "poll {query}");
-    json(response).await
+    let body = json(response).await;
+    for task in body["tasks"].as_array().unwrap() {
+        leases().lock().unwrap().insert(
+            (token.to_owned(), task["id"].as_str().unwrap().to_owned()),
+            task["leaseId"].as_str().unwrap().to_owned(),
+        );
+    }
+    body
 }
 
 fn ids(polled: &Value) -> Vec<String> {
@@ -132,8 +149,21 @@ async fn complete(
     app: &Router,
     token: &str,
     id: &str,
-    body: Value,
+    mut body: Value,
 ) -> axum::response::Response<Body> {
+    if body.get("leaseId").is_none() {
+        let key = (token.to_owned(), id.to_owned());
+        if !leases().lock().unwrap().contains_key(&key) {
+            poll(app, token, "").await;
+        }
+        body["leaseId"] = leases()
+            .lock()
+            .unwrap()
+            .get(&key)
+            .cloned()
+            .unwrap_or_default()
+            .into();
+    }
     let uri = format!("/api/v1/ingest/tasks/{id}/complete");
     send(app, ext(json_request(Method::POST, &uri, &body), token)).await
 }
@@ -329,7 +359,11 @@ async fn tasks_are_derived_from_the_posts_handed_to_the_extension() {
         .unwrap();
     let other = ext_token(&t, ALICE);
     let polled = poll(&app, &other, "").await;
-    assert!(ids(&polled).is_empty(), "every task is leased to the first");
+    assert_eq!(
+        ids(&polled),
+        ["refresh_media.ig_2.post"],
+        "the narrowed refresh has new work; unchanged tasks remain leased"
+    );
     assert_eq!(
         polled["waiting"],
         json!({"instagram": 2, "twitter": 1, "pinterest": 0})
@@ -549,7 +583,9 @@ fn objects(t: &TestState, key: &str) -> (Option<i64>, Option<i64>, Option<i64>) 
             params![key, position],
             |r| r.get(0),
         )
+        .optional()
         .unwrap()
+        .flatten()
     };
     let cover = conn
         .query_row(
@@ -778,6 +814,7 @@ async fn failures_use_a_try_with_backoff_and_gone_fails_for_good() {
     // The last try fails the item; the post stays the extension's for the rest.
     for _ in 1..FETCH_TRIES {
         make_due(&t);
+        poll(&app, &token, "").await;
         complete_ok(&app, &token, "upload_media.x_1.1", failed.clone()).await;
     }
     assert_eq!(
@@ -822,6 +859,7 @@ async fn failures_use_a_try_with_backoff_and_gone_fails_for_good() {
     assert_eq!(state_of(&t, "ig_3"), "failed");
     for _ in 0..FETCH_TRIES {
         make_due(&t);
+        poll(&app, &token, "").await;
         complete_ok(
             &app,
             &token,
@@ -872,13 +910,13 @@ async fn a_refresh_that_brought_new_data_ends_its_task() {
     // and media for the hydrated post.
     let conn = library(&t, ALICE);
     conn.execute(
-        "UPDATE post_media SET source_url = ?1, source_url_expires_at = NULL
+        "UPDATE post_media SET source_url = ?1, source_url_expires_at = NULL, fetch_attempts = 0, fetch_next_at = NULL, fetch_error = NULL
          WHERE post_id = (SELECT id FROM posts WHERE key = 'ig_2')",
         [ig_url("s2new", 86_400)],
     )
     .unwrap();
     conn.execute(
-        "UPDATE posts SET cover_url = ?1, cover_url_expires_at = NULL WHERE key IN ('ig_2', 'ig_3')",
+        "UPDATE posts SET cover_url = ?1, cover_url_expires_at = NULL, cover_fetch_attempts = 0, cover_fetch_next_at = NULL, cover_fetch_error = NULL WHERE key IN ('ig_2', 'ig_3')",
         [ig_url("c-new", 86_400)],
     )
     .unwrap();
@@ -1026,7 +1064,224 @@ async fn one_users_tasks_never_reach_another() {
     let bob = ext_token(&t, BOB);
     assert!(ids(&poll(&app, &bob, "").await).is_empty());
     // Bob naming Alice's task changes nothing in her library.
-    complete_ok(&app, &bob, "upload_media.x_1.1", json!({"outcome": "gone"})).await;
+    problem(
+        complete(&app, &bob, "upload_media.x_1.1", json!({"outcome": "gone"})).await,
+        StatusCode::CONFLICT,
+    )
+    .await;
     assert_eq!(tries(&t, "x_1", 1), (0, false, None));
     assert_eq!(ids(&poll(&app, &alice, "").await).len(), 3);
+}
+
+#[tokio::test]
+async fn forged_tasks_cannot_attach_an_upload_to_manual_web_or_unleased_posts() {
+    let t = bench();
+    seed(
+        &t,
+        ALICE,
+        vec![
+            x_carousel("x_1", "client"),
+            post("manual_1", Platform::Manual, "image", "link_only"),
+            post("web_1", Platform::Web, "website", "link_only"),
+            x_carousel("x_2", "pending"),
+        ],
+    )
+    .await;
+    let app = t.app();
+    let token = ext_token(&t, ALICE);
+    let polled = poll(&app, &token, "").await;
+    let generation = polled["tasks"][0]["leaseId"].as_str().unwrap();
+    let bytes = jpeg(7);
+    let (upload_id, _) = upload(&app, &token, &bytes, &sha256_hex(&bytes)).await;
+    for key in ["manual_1", "web_1", "x_2"] {
+        let id = format!("upload_media.{key}.cover");
+        problem(
+            complete(
+                &app,
+                &token,
+                &id,
+                json!({"outcome":"uploaded", "uploadId": upload_id, "leaseId": generation}),
+            )
+            .await,
+            StatusCode::CONFLICT,
+        )
+        .await;
+        assert_eq!(objects(&t, key).0, None);
+    }
+    let consumed = upload_rows::get(&t.control(), ALICE, &upload_id)
+        .unwrap()
+        .unwrap()
+        .is_consumed();
+    assert!(!consumed, "invalid lease never claims the upload");
+}
+
+#[tokio::test]
+async fn a_user_change_or_new_url_invalidates_an_in_flight_upload() {
+    for change in ["trash", "policy", "removed", "url"] {
+        let t = bench();
+        seed(&t, ALICE, vec![x_carousel("x_1", "client")]).await;
+        let app = t.app();
+        let token = ext_token(&t, ALICE);
+        poll(&app, &token, "").await;
+        let bytes = jpeg(8);
+        let (upload_id, _) = upload(&app, &token, &bytes, &sha256_hex(&bytes)).await;
+        let conn = library(&t, ALICE);
+        match change {
+            "trash" => {
+                conn.execute(
+                    "UPDATE posts SET deleted_at = ?1 WHERE key = 'x_1'",
+                    [now_ms()],
+                )
+                .unwrap();
+            }
+            "policy" => {
+                settings::update(
+                    &conn,
+                    &SettingsChange {
+                        archive_asset_types: Some(ArchiveAssetTypes {
+                            thumbnail: false,
+                            image: false,
+                            video: false,
+                        }),
+                        ..SettingsChange::default()
+                    },
+                    now_ms(),
+                )
+                .unwrap();
+            }
+            "removed" => {
+                conn.execute(
+                    "UPDATE posts SET archive_state = 'link_only' WHERE key = 'x_1'",
+                    [],
+                )
+                .unwrap();
+            }
+            "url" => {
+                conn.execute("UPDATE post_media SET source_url = 'https://pbs.twimg.com/media/new.jpg' WHERE position = 0", []).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        complete_ok(
+            &app,
+            &token,
+            "upload_media.x_1.cover",
+            json!({"outcome":"uploaded","uploadId":upload_id}),
+        )
+        .await;
+        assert_eq!(objects(&t, "x_1").0, None, "{change} wins");
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM media_objects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "{change} leaves no recorded object");
+        let consumed = upload_rows::get(&t.control(), ALICE, &upload_id)
+            .unwrap()
+            .unwrap()
+            .is_consumed();
+        assert!(consumed, "obsolete upload discarded");
+        assert!(!t.data_dir().uploads_dir().join(&upload_id).exists());
+        assert_eq!(t.state.quota().reserved(ALICE), 0);
+    }
+}
+
+#[tokio::test]
+async fn only_the_current_holder_and_generation_can_complete_any_outcome() {
+    let t = bench();
+    seed(&t, ALICE, vec![x_carousel("x_1", "client")]).await;
+    let app = t.app();
+    let first = ext_token(&t, ALICE);
+    let second = ext_token(&t, ALICE);
+    let old = poll(&app, &first, "").await;
+    let task = "upload_media.x_1.cover";
+    let old_id = old["tasks"][0]["leaseId"].as_str().unwrap();
+    assert_eq!(
+        old["tasks"][0]["leaseId"],
+        poll(&app, &first, "").await["tasks"][0]["leaseId"],
+        "renewal keeps generation"
+    );
+    let bytes = jpeg(9);
+    let (upload_id, _) = upload(&app, &first, &bytes, &sha256_hex(&bytes)).await;
+    for outcome in ["uploaded", "gone", "failed", "skipped"] {
+        problem(
+            complete(
+                &app,
+                &second,
+                task,
+                json!({"outcome":outcome,"leaseId":old_id,"uploadId":upload_id}),
+            )
+            .await,
+            StatusCode::CONFLICT,
+        )
+        .await;
+    }
+    assert_eq!(tries(&t, "x_1", 0).0, 0);
+    t.state.extension().tasks().sweep(now_ms() + 6 * 60_000);
+    let new = poll(&app, &second, "").await;
+    assert_ne!(old["tasks"][0]["leaseId"], new["tasks"][0]["leaseId"]);
+    for outcome in ["uploaded", "gone", "failed", "skipped"] {
+        problem(
+            complete(
+                &app,
+                &first,
+                task,
+                json!({"outcome":outcome,"leaseId":old_id,"uploadId":upload_id}),
+            )
+            .await,
+            StatusCode::CONFLICT,
+        )
+        .await;
+    }
+    assert_eq!(objects(&t, "x_1").0, None);
+    complete_ok(
+        &app,
+        &second,
+        task,
+        json!({"outcome":"uploaded","uploadId":upload_id}),
+    )
+    .await;
+    assert!(objects(&t, "x_1").0.is_some());
+}
+
+#[tokio::test]
+async fn completion_reserves_the_prepared_bytes_and_discards_quota_refusals() {
+    for allowed in [true, false] {
+        let t = bench();
+        seed(&t, ALICE, vec![x_carousel("x_1", "client")]).await;
+        let app = t.app();
+        let token = ext_token(&t, ALICE);
+        poll(&app, &token, "").await;
+        let bytes = jpeg(10);
+        let (upload_id, _) = upload(&app, &token, &bytes, &sha256_hex(&bytes)).await;
+        t.state.quota().record_count(ALICE, 0, 0).unwrap();
+        t.control()
+            .execute(
+                "UPDATE users SET quota_bytes = ?1 WHERE id = ?2",
+                params![if allowed { 1024 * 1024 } else { 1 }, ALICE],
+            )
+            .unwrap();
+        let result = complete(
+            &app,
+            &token,
+            "upload_media.x_1.cover",
+            json!({"outcome":"uploaded","uploadId":upload_id}),
+        )
+        .await;
+        if allowed {
+            assert_eq!(result.status(), StatusCode::NO_CONTENT);
+            assert!(objects(&t, "x_1").0.is_some());
+        } else {
+            assert_eq!(
+                problem(result, StatusCode::FORBIDDEN).await.code,
+                ErrorCode::QuotaExceeded
+            );
+            assert_eq!(objects(&t, "x_1").0, None);
+            assert_eq!(state_of(&t, "x_1"), "link_only");
+        }
+        let consumed = upload_rows::get(&t.control(), ALICE, &upload_id)
+            .unwrap()
+            .unwrap()
+            .is_consumed();
+        assert!(consumed);
+        assert!(!t.data_dir().uploads_dir().join(&upload_id).exists());
+        assert_eq!(t.state.quota().reserved(ALICE), 0);
+    }
 }

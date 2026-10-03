@@ -603,8 +603,9 @@ export interface paths {
     put?: never;
     /**
      * Ends one of the extension's tasks (contract C6).
-     * @description A `tasks` token. Idempotent: an outcome for a task that no longer exists
-     *     changes nothing. `uploaded` stores the upload `uploadId` (purpose
+     * @description A `tasks` token and its current `leaseId`. A stale or foreign lease gets
+     *     409 `conflict`; a repeat by the holder is a no-op for five minutes after
+     *     completion. `uploaded` stores the upload `uploadId` (purpose
      *     `archive-object`) in the task's slot; 422 when the upload is not a
      *     complete one of the user, 409 `upload_consumed` when it was used before
      *     and the slot is still empty. 422 for an outcome the task's kind does not
@@ -2448,6 +2449,8 @@ export interface components {
       id: string;
       /** @description What to do. */
       kind: components['schemas']['TaskKind'];
+      /** @description Opaque generation of this token's lease; echo it on completion. */
+      leaseId: string;
       /**
        * Format: int64
        * @description Until when the task is this poller's, unix ms.
@@ -4572,6 +4575,8 @@ export interface components {
        *     `no_instagram_tab`); kept with the item's tries.
        */
       errorCode?: string | null;
+      /** @description The `leaseId` returned with the task, bound to this token. */
+      leaseId: string;
       /** @description The outcome. */
       outcome: components['schemas']['TaskOutcome'];
       /** @description `uploaded`: the complete `archive-object` upload holding the bytes. */
@@ -5518,8 +5523,15 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Done. */
+      /** @description Done, obsolete or replayed by the lease holder. */
       204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The lease is stale or belongs to another token, or the upload was consumed. */
+      409: {
         headers: {
           [name: string]: unknown;
         };

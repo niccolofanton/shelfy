@@ -70,10 +70,12 @@ pub struct ExtensionTask {
     pub expires_at: Option<i64>,
     /// Until when the task is this poller's, unix ms.
     pub lease_until: i64,
+    /// Opaque generation of this token's lease; echo it on completion.
+    pub lease_id: String,
 }
 
 impl ExtensionTask {
-    fn of(task: &Task, lease_until: i64) -> Self {
+    fn of(task: &Task, lease_until: i64, lease_id: &str) -> Self {
         Self {
             id: task.id.to_string(),
             kind: task.id.kind,
@@ -86,6 +88,7 @@ impl ExtensionTask {
             url: task.url.clone(),
             expires_at: task.expires_at,
             lease_until,
+            lease_id: lease_id.to_owned(),
         }
     }
 }
@@ -104,6 +107,8 @@ pub struct ExtensionTasks {
 #[derive(Clone, Debug, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskCompletion {
+    /// The `leaseId` returned with the task, bound to this token.
+    pub lease_id: String,
     /// The outcome.
     pub outcome: TaskOutcome,
     /// `uploaded`: the complete `archive-object` upload holding the bytes.
@@ -163,7 +168,7 @@ pub async fn list_extension_tasks(
         tasks: polled
             .tasks
             .iter()
-            .map(|(task, until)| ExtensionTask::of(task, *until))
+            .map(|(task, until, lease)| ExtensionTask::of(task, *until, lease))
             .collect(),
         waiting: polled.waiting,
     }))
@@ -171,8 +176,9 @@ pub async fn list_extension_tasks(
 
 /// Ends one of the extension's tasks (contract C6).
 ///
-/// A `tasks` token. Idempotent: an outcome for a task that no longer exists
-/// changes nothing. `uploaded` stores the upload `uploadId` (purpose
+/// A `tasks` token and its current `leaseId`. A stale or foreign lease gets
+/// 409 `conflict`; a repeat by the holder is a no-op for five minutes after
+/// completion. `uploaded` stores the upload `uploadId` (purpose
 /// `archive-object`) in the task's slot; 422 when the upload is not a
 /// complete one of the user, 409 `upload_consumed` when it was used before
 /// and the slot is still empty. 422 for an outcome the task's kind does not
@@ -188,7 +194,10 @@ pub async fn list_extension_tasks(
         ExtensionHeaders,
     ),
     request_body = TaskCompletion,
-    responses((status = NO_CONTENT, description = "Done.")),
+    responses(
+        (status = NO_CONTENT, description = "Done, obsolete or replayed by the lease holder."),
+        (status = CONFLICT, description = "The lease is stale or belongs to another token, or the upload was consumed."),
+    ),
 )]
 pub async fn complete_extension_task(
     State(state): State<AppState>,
@@ -199,10 +208,14 @@ pub async fn complete_extension_task(
     tasks::complete(
         &state,
         token.id(),
+        token.token_id(),
         &id,
-        body.outcome,
-        body.upload_id.as_deref(),
-        body.error_code.as_deref(),
+        tasks::Completion {
+            generation: &body.lease_id,
+            outcome: body.outcome,
+            upload_id: body.upload_id.as_deref(),
+            error: body.error_code.as_deref(),
+        },
     )
     .await?;
     Ok(StatusCode::NO_CONTENT)
