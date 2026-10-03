@@ -46,6 +46,8 @@ export interface RelayDeps {
   maxAttempts?: number;
   retryDelayMs?: number;
   observer?: RelayObserver;
+  /** A worker-authorized task may collect a refresh instead of passive ingest. */
+  consume?(message: InterceptMessage, capture: CaptureSource): boolean;
 }
 
 /**
@@ -117,6 +119,7 @@ export function createRelay(win: Window, deps: RelayDeps): RelayListener {
     const intercept = parseInterceptMessage(data);
     if (intercept) {
       const capture = scopes.current();
+      if (deps.consume?.(intercept, capture)) return;
       forward(
         toCaptureMessage(intercept, {
           pageUrl: deps.pageUrl(),

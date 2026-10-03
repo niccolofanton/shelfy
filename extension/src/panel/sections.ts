@@ -8,6 +8,7 @@ import { connectionSection } from './sections/connection';
 import { debugSection } from './sections/debug';
 import { queueSection } from './sections/queue';
 import { plannerSection } from './sections/planner';
+import { tasksSection } from './sections/tasks';
 import { syncSection } from './sections/sync';
 import { selectSection } from './sections/select';
 
@@ -17,6 +18,7 @@ export const SECTIONS: readonly PanelSection[] = [
   syncSection,
   plannerSection,
   selectSection,
+  tasksSection,
   captureSection,
   queueSection,
   debugSection,

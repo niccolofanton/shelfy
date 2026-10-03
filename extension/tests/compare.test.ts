@@ -218,7 +218,7 @@ function extensionExport(items: ExportItem[]): ExportFile {
         batches: 1,
         itemsReceived: 1,
         uniqueItems: 1,
-        bySource: { passive: 0, replay: 0, ssr: 0, dom: 0 },
+        bySource: { passive: 0, replay: 0, ssr: 0, dom: 0, refresh: 0 },
         endOfFeedSeen: true,
         lastHasNextPage: false,
       };

@@ -58,6 +58,8 @@ export interface Batch {
 export type RunState = 'open' | 'ended';
 
 export interface Run {
+  /** Pairing owning a run; an old account's queued captures must never migrate. */
+  accountTokenId?: string;
   id: string;
   /** The server's run id, once `POST /sync-runs` answered. */
   serverId: string | null;

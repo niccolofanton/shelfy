@@ -132,9 +132,11 @@ export class Uploader {
       await queue.refuse(batch.id);
       return 'next';
     }
+    const pairing = await this.accountFor(run);
+    if (!pairing) return 'stop';
     let serverId = run.serverId;
     if (!serverId) {
-      const created = await this.createRun(run);
+      const created = await this.createRun(run, pairing);
       if ('step' in created) return created.step;
       serverId = created.serverId;
     }
@@ -152,7 +154,12 @@ export class Uploader {
       auth: 'token',
       idempotencyKey: prepared.key,
       timeoutMs: INGEST_TIMEOUT_MS,
+      expectedToken: pairing.token,
     });
+    if (!(await this.samePairing(pairing))) {
+      await this.accountFor(run);
+      return 'stop';
+    }
     if (response.ok) {
       await queue.complete(batch.id, parseIngestResult(response.data), now());
       await this.succeeded();
@@ -191,7 +198,10 @@ export class Uploader {
   }
 
   /** Opens the run on the server: its id, or how to go on when that failed. */
-  private async createRun(run: Run): Promise<{ serverId: string } | { step: Step }> {
+  private async createRun(
+    run: Run,
+    pairing: { token: string; tokenId: string },
+  ): Promise<{ serverId: string } | { step: Step }> {
     const { queue, api } = this.deps;
     const response = await api.post(
       API.syncRuns,
@@ -201,8 +211,12 @@ export class Uploader {
         listing: run.listing,
         collection: run.collection,
       },
-      { auth: 'token' },
+      { auth: 'token', expectedToken: pairing.token },
     );
+    if (!(await this.samePairing(pairing))) {
+      await this.accountFor(run);
+      return { step: 'stop' };
+    }
     if (response.ok) {
       const created = parseSyncRunCreated(response.data);
       if (created) {
@@ -239,13 +253,20 @@ export class Uploader {
 
   private async closeRun(run: Run): Promise<Step> {
     const { api } = this.deps;
+    const pairing = await this.accountFor(run);
+    if (!pairing) return 'stop';
     if (!run.serverId) {
       await this.forget(run);
       return 'next';
     }
     const response = await api.patch(API.syncRun(run.serverId), closingPatch(run), {
       auth: 'token',
+      expectedToken: pairing.token,
     });
+    if (!(await this.samePairing(pairing))) {
+      await this.accountFor(run);
+      return 'stop';
+    }
     if (response.ok) {
       await this.forget(run);
       return 'next';
@@ -263,6 +284,18 @@ export class Uploader {
   private async forget(run: Run): Promise<void> {
     await this.deps.queue.forgetRun(run.id);
     await this.deps.closed?.(run);
+  }
+  private async accountFor(run: Run) {
+    const pairing = await this.deps.store.pairing();
+    if (pairing && run.accountTokenId && pairing.tokenId !== run.accountTokenId) {
+      await this.deps.queue.dropRun(run.id);
+      return null;
+    }
+    return pairing;
+  }
+  private async samePairing(expected: { token: string; tokenId: string }): Promise<boolean> {
+    const pairing = await this.deps.store.pairing();
+    return pairing?.tokenId === expected.tokenId && pairing.token === expected.token;
   }
 
   private async succeeded(): Promise<void> {

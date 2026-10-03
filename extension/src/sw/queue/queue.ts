@@ -50,6 +50,7 @@ export const QUEUE_LIMITS = {
 } as const;
 
 export interface RunSpec {
+  accountTokenId?: string;
   platform: Platform;
   trigger: Trigger;
   listing: WireListing;

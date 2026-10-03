@@ -39,6 +39,7 @@ export interface RequestOptions {
   idempotencyKey?: string;
   etag?: string | null;
   timeoutMs?: number;
+  signal?: AbortSignal;
   /** Leave the Access service-token headers out (the cookie-only probe of "Check connection"). */
   omitAccessHeaders?: boolean;
 }
@@ -189,6 +190,9 @@ export class ApiClient {
       this.deps.version,
     );
     const controller = new AbortController();
+    const cancel = () => controller.abort();
+    options.signal?.addEventListener('abort', cancel, { once: true });
+    if (options.signal?.aborted) cancel();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     try {
       const response = await this.deps.fetch(url, { ...init, signal: controller.signal });
@@ -198,6 +202,7 @@ export class ApiClient {
       return { ok: false, failure: { kind: 'network', detail: detail.slice(0, 200) } };
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', cancel);
     }
   }
 

@@ -160,6 +160,7 @@ export class FakeServer {
       path,
       headers,
       body: chunks.length ? Buffer.concat(chunks).toString('utf8') : null,
+      bytes: chunks.length ? Buffer.concat(chunks) : undefined,
     });
     res.writeHead(result.status, result.headers).end(result.body);
   }

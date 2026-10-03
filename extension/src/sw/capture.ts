@@ -79,6 +79,8 @@ export async function handleCapture(
   };
 
   if (!checkCaptureSender(sender, message.platform, message.pageUrl).ok) return discard('sender');
+  // Refresh ingest is owned by the leased task worker, never by page-declared scopes.
+  if (message.capture === 'refresh') return discard('out_of_scope');
   const sync = await syncRunOf(deps, sender.tabId, message.docId);
   if (sync) {
     const outcome = await captureForSync(message, sync, deps, discard);
@@ -109,6 +111,7 @@ export async function handleCapture(
   const result = await deps.queue.capturePassive(
     {
       platform: message.platform,
+      accountTokenId: pairing.tokenId,
       trigger: 'passive',
       listing: scope.wire,
       collection,
@@ -171,6 +174,7 @@ async function captureForSync(
   ]);
   if (!pairing) return discard('unpaired');
   if (status.outdated) return discard('outdated');
+  if (run.accountTokenId && run.accountTokenId !== pairing.tokenId) return discard('unpaired');
   if (classifyListing(message.platform, message.pageUrl)?.key !== run.listingKey)
     return discard('out_of_scope');
   const source: WireSource = message.capture === 'replay' ? 'replay' : 'scroll';

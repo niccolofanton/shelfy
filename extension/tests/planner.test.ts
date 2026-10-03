@@ -14,6 +14,7 @@ import {
   PlannerService,
   STEP_TIMEOUT_MS,
   type PlannerBrowser,
+  type PlannerDeps,
 } from '../src/sw/planner/service';
 import { PlannerScheduler, registerTaskPollHandler } from '../src/sw/planner/scheduler';
 import type { StartRequest } from '../src/sw/sync/service';
@@ -111,7 +112,7 @@ function fixture() {
   };
   const eligibility = vi.fn(async (): Promise<string | null> => null);
   const readSources = vi.fn(async () => sources);
-  const service = new PlannerService({
+  const deps: PlannerDeps = {
     storage,
     browser,
     sync,
@@ -123,9 +124,11 @@ function fixture() {
     },
     changed: vi.fn(),
     log: vi.fn(),
-  });
+  };
+  const service = new PlannerService(deps);
   return {
     service,
+    deps,
     browser,
     sync,
     eligibility,
@@ -259,7 +262,7 @@ describe('source planner and boundaries', () => {
     expect((await f.service.snapshot()).jobs).toMatchObject([
       { status: 'stopped', code: 'worker_restarted' },
     ]);
-    expect(f.sync.stopPlatform).toHaveBeenCalledWith('instagram');
+    expect(f.sync.stopPlatform).toHaveBeenCalledWith('instagram', undefined);
     expect(f.browser.open).not.toHaveBeenCalled();
   });
   it('caps a running step at 35 minutes, stops it and skips it', async () => {
@@ -269,7 +272,7 @@ describe('source planner and boundaries', () => {
     expect(await finished(f.service)).toMatchObject([
       { status: 'done', skipped: 1, code: 'step_timeout' },
     ]);
-    expect(f.sync.stopPlatform).toHaveBeenCalledWith('twitter');
+    expect(f.sync.stopPlatform).toHaveBeenCalledWith('twitter', undefined);
     expect(STEP_TIMEOUT_MS).toBe(35 * 60_000);
   });
   it('runs a full IG backlog at most once a day using only the supplied existing tab', async () => {
@@ -319,6 +322,82 @@ describe('source planner and boundaries', () => {
     release();
     expect(await finished(f.service)).toMatchObject([{ status: 'stopped', code: 'cancelled' }]);
     expect(f.sync.start).not.toHaveBeenCalled();
+  });
+  it('discards sources A after re-pair B, including a coincident collection id', async () => {
+    const f = fixture();
+    const a = { token: 'token-A', tokenId: 'A', scopes: [], pairedAt: 0 };
+    const b = { ...a, token: 'token-B', tokenId: 'B' };
+    let current = a;
+    f.deps.pairing = async () => current;
+    let release!: (value: ExtensionSource[]) => void;
+    f.readSources.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const pending = f.service.start({ platform: 'instagram', collectionId: 1 });
+    for (let i = 0; i < 100 && !release; i++) await Promise.resolve();
+    current = b;
+    release(sources);
+    expect(await pending).toEqual({ ok: false, code: 'cancelled' });
+    expect(f.sync.start).not.toHaveBeenCalled();
+    expect(f.browser.open).not.toHaveBeenCalled();
+    f.readSources.mockResolvedValue([
+      { ...sources[0], listing: { kind: 'ig_collection', externalId: '999', name: 'Account B' } },
+    ]);
+    vi.mocked(f.browser.folderLinks).mockResolvedValue([
+      'https://www.instagram.com/someone/saved/b/999/',
+    ]);
+    expect(await f.service.start({ platform: 'instagram', collectionId: 1 })).toEqual({ ok: true });
+    await finished(f.service);
+    expect(f.sync.start).toHaveBeenCalledTimes(1);
+    expect(f.sync.start).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedPairing: b, collection: { mode: 'existing', id: 1 } }),
+    );
+    expect(f.browser.navigate).not.toHaveBeenCalledWith(expect.anything(), FOLDER);
+  });
+  it('aborts account A while navigation awaits and never invokes the controller under B', async () => {
+    const f = fixture();
+    const a = { token: 'token-A', tokenId: 'A', scopes: [], pairedAt: 0 };
+    let current = a;
+    f.deps.pairing = async () => current;
+    let release!: () => void;
+    vi.mocked(f.browser.navigate).mockImplementationOnce(
+      async () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await f.service.start({ platform: 'instagram' });
+    for (let i = 0; i < 100 && !release; i++) await Promise.resolve();
+    current = { ...a, token: 'token-B', tokenId: 'B' };
+    release();
+    for (let i = 0; i < 100; i++) await Promise.resolve();
+    expect(f.sync.start).not.toHaveBeenCalled();
+    expect((await f.service.snapshot()).jobs).toEqual([]);
+    expect((await f.service.syncing()).instagram).toBe(false);
+    expect(f.sync.stopPlatform).toHaveBeenCalledWith('instagram', 'A');
+  });
+  it('binds the once-daily watermark to the pairing and writes it only for an accepted start', async () => {
+    const f = fixture();
+    let key = 'A';
+    f.deps.accountKey = async () => key;
+    f.eligibility.mockResolvedValueOnce('not_paired');
+    expect((await f.service.requestInstagramBacklogSync({ backlog: 200, tabId: 9 })).ok).toBe(
+      false,
+    );
+    expect(
+      (await f.storage.get(INSTAGRAM_BACKLOG_DAY_KEY))[INSTAGRAM_BACKLOG_DAY_KEY],
+    ).toBeUndefined();
+    expect((await f.service.requestInstagramBacklogSync({ backlog: 200, tabId: 9 })).ok).toBe(true);
+    await finished(f.service);
+    key = 'B';
+    expect((await f.service.requestInstagramBacklogSync({ backlog: 200, tabId: 9 })).ok).toBe(true);
+    await finished(f.service);
+    expect(
+      (await f.storage.get(INSTAGRAM_BACKLOG_DAY_KEY))[INSTAGRAM_BACKLOG_DAY_KEY],
+    ).toMatchObject({ accountKey: 'B' });
   });
 });
 

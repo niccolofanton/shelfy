@@ -5,7 +5,8 @@
 // `fetchHandler()` wraps it as a fetch function (vitest) and smoke.ts serves it over HTTP.
 // Tokens and pairing codes are random per run and never printed.
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import type { ExtensionTask } from '../src/sw/tasks/contracts';
 import { canonicalIdentity } from '../src/shared/identity';
 import { isPlatform, isRecord, type Platform } from '../src/shared/protocol';
 import { compareVersions } from '../src/shared/version';
@@ -16,6 +17,7 @@ export interface FakeRequest {
   path: string;
   headers: Record<string, string>;
   body: string | null;
+  bytes?: Uint8Array;
 }
 
 export interface FakeResponse {
@@ -102,6 +104,14 @@ export class FakeShelfyApi {
   readonly batchItems = new Map<string, unknown[]>();
   readonly lookups: Array<{ platform: Platform; keys: string[] }> = [];
   readonly patches: Array<{ id: string; body: unknown }> = [];
+  readonly tasks = new Map<string, ExtensionTask>();
+  readonly taskCompletions: Array<{ id: string; body: unknown; status: number }> = [];
+  readonly uploads = new Map<
+    string,
+    { length: number; bytes: Uint8Array; metadata: Record<string, string> }
+  >();
+  staleLeaseOnce = false;
+  waitingOverride: Record<Platform, number> | null = null;
   minVersion: string;
   /** Platforms whose passive source is killed (409 source_disabled). */
   readonly killed = new Set<Platform>();
@@ -224,7 +234,7 @@ export class FakeShelfyApi {
         this.failWith.retryAfter ? { 'retry-after': this.failWith.retryAfter } : {},
       );
     let body: unknown = null;
-    if (request.body) {
+    if (request.body && header('content-type') !== 'application/offset+octet-stream') {
       try {
         body = JSON.parse(request.body);
       } catch {
@@ -271,6 +281,74 @@ export class FakeShelfyApi {
             : [];
         }),
       });
+    }
+    if (request.method === 'GET' && path === '/api/v1/ingest/tasks') {
+      const waiting = this.waitingOverride ?? { instagram: 0, twitter: 0, pinterest: 0 };
+      if (!this.waitingOverride) for (const task of this.tasks.values()) waiting[task.platform]++;
+      return json(200, { tasks: [...this.tasks.values()].slice(0, 20), waiting });
+    }
+    const completion = /^\/api\/v1\/ingest\/tasks\/([^/]+)\/complete$/.exec(path);
+    if (request.method === 'POST' && completion) {
+      const id = decodeURIComponent(completion[1]);
+      const task = this.tasks.get(id);
+      if (this.staleLeaseOnce && task) {
+        this.staleLeaseOnce = false;
+        task.leaseId += '-new';
+      }
+      const status = task && isRecord(body) && body.leaseId === task.leaseId ? 204 : 409;
+      this.taskCompletions.push({ id, body, status });
+      if (status === 409) return problem(409, 'conflict');
+      if (!isRecord(body)) return problem(422, 'validation_failed');
+      if (body.outcome === 'uploaded') {
+        const upload = typeof body.uploadId === 'string' ? this.uploads.get(body.uploadId) : null;
+        if (!upload || upload.bytes.length !== upload.length) return problem(422, 'invalid_upload');
+      }
+      this.tasks.delete(id);
+      return { status: 204, headers: {}, body: '' };
+    }
+    if (request.method === 'POST' && path === '/api/v1/uploads') {
+      const length = Number(header('upload-length'));
+      const metadata: Record<string, string> = {};
+      for (const pair of (header('upload-metadata') ?? '').split(',')) {
+        const [key, encoded] = pair.trim().split(' ');
+        metadata[key] = Buffer.from(encoded ?? '', 'base64').toString('utf8');
+      }
+      if (
+        header('tus-resumable') !== '1.0.0' ||
+        !Number.isSafeInteger(length) ||
+        length <= 0 ||
+        length > 15 * 1024 * 1024 ||
+        metadata.purpose !== 'archive-object' ||
+        !/^[a-f0-9]{64}$/.test(metadata.sha256 ?? '') ||
+        !['jpg', 'png', 'webp', 'gif', 'avif'].includes(metadata.ext)
+      )
+        return problem(422, 'invalid_upload');
+      const id = `upload-${this.uploads.size + 1}`;
+      this.uploads.set(id, { length, metadata, bytes: new Uint8Array() });
+      return { status: 201, headers: { location: `/api/v1/uploads/${id}` }, body: '' };
+    }
+    const uploadPath = /^\/api\/v1\/uploads\/([^/]+)$/.exec(path);
+    if (uploadPath) {
+      const upload = this.uploads.get(uploadPath[1]);
+      if (!upload) return problem(404, 'not_found');
+      if (request.method === 'HEAD')
+        return { status: 200, headers: { 'upload-offset': String(upload.bytes.length) }, body: '' };
+      if (request.method === 'PATCH') {
+        if (Number(header('upload-offset')) !== upload.bytes.length)
+          return problem(409, 'conflict');
+        const bytes = request.bytes ?? new Uint8Array();
+        const merged = new Uint8Array(upload.bytes.length + bytes.length);
+        merged.set(upload.bytes);
+        merged.set(bytes, upload.bytes.length);
+        if (
+          merged.length > upload.length ||
+          (merged.length === upload.length &&
+            createHash('sha256').update(merged).digest('hex') !== upload.metadata.sha256)
+        )
+          return problem(422, 'hash_mismatch');
+        upload.bytes = merged;
+        return { status: 204, headers: { 'upload-offset': String(merged.length) }, body: '' };
+      }
     }
     if (request.method === 'POST' && path === '/api/v1/sync-runs') return this.createRun(body);
     const patch = /^\/api\/v1\/sync-runs\/([^/]+)$/.exec(path);
@@ -435,6 +513,7 @@ export class FakeShelfyApi {
         path: url.pathname + url.search,
         headers,
         body: typeof init.body === 'string' ? init.body : null,
+        bytes: init.body instanceof Uint8Array ? init.body : undefined,
       });
       if (REDIRECTS.has(result.status) && init.redirect === 'manual') return opaqueRedirect();
       return new Response(result.status === 304 ? null : result.body || null, {

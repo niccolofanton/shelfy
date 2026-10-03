@@ -10,6 +10,7 @@ import { createRelay } from './relay';
 import { createViewerReader } from './scoping';
 import { SyncController } from './sync/controller';
 import { selectionRelay } from './select/bridge';
+import { RefreshCollector } from './tasks/collector';
 
 function randomHex(bytes: number): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), (byte) =>
@@ -18,6 +19,7 @@ function randomHex(bytes: number): string {
 }
 
 const docId = randomHex(12);
+const refreshCollector = new RefreshCollector();
 const initialHref = window.location.href;
 const readViewer = createViewerReader(document);
 const warn = (message: string): void => console.warn('[shelfy]', message);
@@ -60,6 +62,7 @@ const relay = createRelay(window, {
   docId,
   viewer: (platform) => (platform === 'pinterest' ? readViewer() : null),
   observer: controller,
+  consume: (message, capture) => refreshCollector.consume(message, capture),
 });
 
 window.addEventListener('message', relay);
@@ -69,6 +72,28 @@ window.addEventListener('message', selectionRelay);
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !isRecord(message)) return false;
   switch (message.kind) {
+    case MSG.taskPrepare:
+      if (
+        platformForUrl(location.href) !== 'instagram' ||
+        controller.runId ||
+        typeof message.requestId !== 'string' ||
+        message.requestId.length > 128 ||
+        typeof message.nativeId !== 'string' ||
+        !/^\d{1,32}$/.test(message.nativeId)
+      ) {
+        sendResponse({ ok: false });
+      } else
+        sendResponse({ ok: refreshCollector.prepare(message.requestId, message.nativeId), docId });
+      return false;
+    case MSG.taskCollect:
+      if (typeof message.requestId !== 'string') {
+        sendResponse({ ok: false });
+        return false;
+      }
+      void refreshCollector
+        .take(message.requestId, message.discard === true)
+        .then((items) => sendResponse({ ok: true, docId, items }));
+      return true;
     case MSG.bridgePing: {
       // The side panel pings the active tab to tell a live bridge from a tab that was loaded
       // before the extension was installed or reloaded (content scripts are only injected on

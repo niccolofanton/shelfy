@@ -95,6 +95,7 @@ export interface SyncDeps {
 }
 
 export interface StartRequest {
+  expectedPairing?: { token: string; tokenId: string };
   /** P2-15/P2-17: a deliberate full walk ignores server incremental/resume hints. */
   full?: boolean;
   tabId: number;
@@ -139,8 +140,16 @@ export class SyncService {
       config.current(),
     ]);
     if (!pairing) return no('not_paired');
+    if (
+      request.expectedPairing &&
+      (request.expectedPairing.token !== pairing.token ||
+        request.expectedPairing.tokenId !== pairing.tokenId)
+    )
+      return no('not_paired');
+    const same = () => this.samePairing(pairing);
     if (status.outdated) return no('outdated');
     const tab = await tabs.get(request.tabId).catch(() => null);
+    if (!(await same())) return no('not_paired');
     const url = tab?.url ?? '';
     const platform = platformForUrl(url);
     const listing = platform ? syncTarget(platform, url) : null;
@@ -149,6 +158,7 @@ export class SyncService {
     const pong = await tabs
       .sendMessage<BridgePong>(request.tabId, { kind: MSG.bridgePing }, { frameId: 0 })
       .catch(() => null);
+    if (!(await same())) return no('not_paired');
     if (!pong?.ok) return no('reload_tab');
     if (pong.syncing) return no('busy');
     if (platform === 'pinterest') {
@@ -160,6 +170,7 @@ export class SyncService {
     const replay = platform === 'instagram' && settings.replay;
     if (!replay && !settings.scroll) return no('disabled');
     const open = (await queue.runs()).filter((run) => run.state === 'open');
+    if (!(await same())) return no('not_paired');
     if (open.some((run) => isControllerRun(run) && run.platform === platform)) return no('busy');
 
     // The tab's passive run ends: from now on its captures belong to the sync.
@@ -168,11 +179,13 @@ export class SyncService {
       'user',
       now(),
     );
+    if (!(await same())) return no('not_paired');
     const collection = collectionMode(request.collection, wire.externalId);
     const name =
       wire.externalId === null ? null : (request.name ?? pong.heading ?? wire.name ?? null);
     const trigger = request.trigger ?? 'manual';
     const spec = {
+      accountTokenId: pairing.tokenId,
       platform,
       trigger,
       listing: { ...wire, name },
@@ -182,9 +195,17 @@ export class SyncService {
       listingKey: listing.key,
     };
     let run = await queue.openRun(spec, now());
+    if (!(await same())) {
+      await queue.dropRun(run.id);
+      return no('not_paired');
+    }
 
     // C4: open the run on the server first: the walk depends on its answer.
-    const opened = await this.openOnServer(spec);
+    const opened = await this.openOnServer(spec, pairing);
+    if (!(await same())) {
+      await queue.dropRun(run.id);
+      return no('not_paired');
+    }
     if ('refused' in opened) {
       await queue.forgetRun(run.id);
       this.deps.changed();
@@ -200,6 +221,10 @@ export class SyncService {
         r.collectionId = created?.collectionId ?? null;
         r.phase = 'starting';
       })) ?? run;
+    if (!(await same())) {
+      await queue.dropRun(run.id);
+      return no('not_paired');
+    }
 
     const plan: SyncRunMessage = {
       kind: MSG.syncRun,
@@ -218,6 +243,13 @@ export class SyncService {
     const answer = await tabs
       .sendMessage<{ ok?: boolean; code?: string }>(request.tabId, plan, { frameId: 0 })
       .catch(() => null);
+    if (!(await same())) {
+      await tabs
+        .sendMessage(request.tabId, { kind: MSG.syncAbort }, { frameId: 0 })
+        .catch(() => null);
+      await queue.dropRun(run.id);
+      return no('not_paired');
+    }
     if (!answer?.ok) {
       await this.endRun(run.id, 'error', { errorCode: 'controller_unreachable' });
       return no(answer?.code === 'busy' ? 'busy' : 'reload_tab');
@@ -226,12 +258,15 @@ export class SyncService {
     return { ok: true, runId: run.id };
   }
 
-  private async openOnServer(spec: {
-    platform: Platform;
-    trigger: Trigger;
-    listing: unknown;
-    collection: CollectionMode;
-  }): Promise<{ created: SyncRunCreated | null } | { refused: string }> {
+  private async openOnServer(
+    spec: {
+      platform: Platform;
+      trigger: Trigger;
+      listing: unknown;
+      collection: CollectionMode;
+    },
+    pairing: { token: string; tokenId: string },
+  ): Promise<{ created: SyncRunCreated | null } | { refused: string }> {
     const response = await this.deps.api.post(
       API.syncRuns,
       {
@@ -240,8 +275,9 @@ export class SyncService {
         listing: spec.listing,
         collection: spec.collection,
       },
-      { auth: 'token' },
+      { auth: 'token', expectedToken: pairing.token },
     );
+    if (!(await this.samePairing(pairing))) return { refused: 'not_paired' };
     if (response.ok) return { created: parseSyncRunCreated(response.data) };
     const action = classifyFailure(response.failure);
     switch (action.action) {
@@ -274,9 +310,14 @@ export class SyncService {
   }
 
   /** Stops the sync of a platform (C9 `shelfy.sync.stop`, P2-15). */
-  async stopPlatform(platform: Platform): Promise<{ ok: boolean }> {
+  async stopPlatform(platform: Platform, accountTokenId?: string): Promise<{ ok: boolean }> {
     for (const run of await this.openRuns())
-      if (run.platform === platform && run.tabId !== null) await this.stop(run.tabId);
+      if (
+        run.platform === platform &&
+        run.tabId !== null &&
+        (!accountTokenId || run.accountTokenId === accountTokenId)
+      )
+        await this.stop(run.tabId);
     return { ok: true };
   }
 
@@ -423,6 +464,8 @@ export class SyncService {
 
   /** The uploader closed a run (sent its PATCH, or found nothing to send). */
   async closed(run: Run): Promise<void> {
+    if (run.accountTokenId && (await this.deps.store.pairing())?.tokenId !== run.accountTokenId)
+      return;
     if (isControllerRun(run)) await this.history.add(viewOf(run), this.deps.now());
   }
 
@@ -443,7 +486,15 @@ export class SyncService {
     const run = await this.deps.queue.getRun(runId);
     if (!run || run.state !== 'open' || !isControllerRun(run)) return null;
     if (sender.tab?.id !== run.tabId || sender.frameId !== 0) return null;
+    if (run.accountTokenId && (await this.deps.store.pairing())?.tokenId !== run.accountTokenId) {
+      await this.deps.queue.dropRun(run.id);
+      return null;
+    }
     return run;
+  }
+  private async samePairing(expected: { token: string; tokenId: string }): Promise<boolean> {
+    const current = await this.deps.store.pairing();
+    return current?.tokenId === expected.tokenId && current.token === expected.token;
   }
 
   private async endRun(

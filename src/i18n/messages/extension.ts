@@ -10,6 +10,27 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    'tasks.title': 'Recupero media',
+    'tasks.waitingInstagram': '{count} elementi in attesa — apri Instagram',
+    'tasks.waiting': '{count} elementi in attesa',
+    'tasks.check': 'Controlla ora',
+    'tasks.running': 'Recupero immagini e poster in corso…',
+    'tasks.hint':
+      'Le immagini vengono archiviate quando il browser è aperto. Instagram usa una scheda già aperta.',
+    'tasks.requestFailed': 'Impossibile controllare i media. Riprova.',
+    'tasks.code.no_instagram_tab':
+      'Apri Instagram e ricarica la scheda per consentire il recupero.',
+    'tasks.code.session_limit':
+      'Limite della sessione raggiunto. Chiudi e riapri Instagram per continuare.',
+    'tasks.code.full_sync':
+      'Sincronizzazione completa di Instagram in corso, prima del recupero dei singoli post.',
+    'tasks.code.rate_limited':
+      'Instagram ha limitato le richieste. Recupero sospeso per questa sessione.',
+    'tasks.code.checkpoint':
+      'Instagram richiede una verifica. Completa la verifica e riapri la scheda.',
+    'tasks.code.login_required': 'Accedi a Instagram e riapri la scheda per continuare.',
+    'tasks.code.reload_tab': 'Ricarica Instagram per collegare il recupero media.',
+    'tasks.code.disabled': 'Recupero media disattivato dal server.',
     'planner.title': 'Sincronizza tutto e programma',
     'planner.hint':
       'Sincronizza i salvati e le cartelle o bacheche native in una finestra visibile del browser.',
@@ -216,6 +237,22 @@ export default {
     'sync.refused.not_syncing': 'Nessuna sincronizzazione in corso in questa scheda.',
   },
   en: {
+    'tasks.title': 'Media recovery',
+    'tasks.waitingInstagram': '{count} items waiting — open Instagram',
+    'tasks.waiting': '{count} items waiting',
+    'tasks.check': 'Check now',
+    'tasks.running': 'Recovering images and posters…',
+    'tasks.hint':
+      'Images are archived while the browser is open. Instagram uses an already-open tab.',
+    'tasks.requestFailed': 'Could not check media. Try again.',
+    'tasks.code.no_instagram_tab': 'Open Instagram and reload the tab to allow recovery.',
+    'tasks.code.session_limit': 'Session limit reached. Close and reopen Instagram to continue.',
+    'tasks.code.full_sync': 'Running a full Instagram sync before recovering individual posts.',
+    'tasks.code.rate_limited': 'Instagram limited requests. Recovery is paused for this session.',
+    'tasks.code.checkpoint': 'Instagram requires verification. Complete it and reopen the tab.',
+    'tasks.code.login_required': 'Sign in to Instagram and reopen the tab to continue.',
+    'tasks.code.reload_tab': 'Reload Instagram to connect media recovery.',
+    'tasks.code.disabled': 'Media recovery is disabled by the server.',
     'planner.title': 'Sync all and schedule',
     'planner.hint': 'Sync saved posts and native folders or boards in a visible browser window.',
     'planner.syncAll': 'Sync all',

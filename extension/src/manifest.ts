@@ -265,7 +265,12 @@ export function validateBundles(
   const problems: string[] = [];
   const hook = readFile(FILES.hook) ?? '';
   // Markers proving electron/webview-injected.ts was bundled into the MAIN-world script.
-  for (const marker of [INTERCEPT_MESSAGE, '__ssReplayPinterest', '__ssScanTwitterBookmarks'])
+  for (const marker of [
+    INTERCEPT_MESSAGE,
+    '__ssReplayPinterest',
+    '__ssScanTwitterBookmarks',
+    '__ssEmitInstagramRest',
+  ])
     if (!hook.includes(marker)) problems.push(`${FILES.hook} does not contain "${marker}"`);
   // The request census is in debug builds only.
   if (options.debug && !hook.includes(CENSUS_MESSAGE))

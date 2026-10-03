@@ -17,6 +17,7 @@ import {
   type SettingsPatch,
 } from '../shared/protocol';
 import { DEFAULT_CONFIG, parseConfig, type ExtensionConfig } from './contracts';
+import { ACCOUNT_STATE_KEYS } from './account-state';
 
 export const KEYS = {
   install: 'shelfy.install',
@@ -185,6 +186,9 @@ export class SettingsStore {
   }
 
   async setPairing(pairing: Pairing | null): Promise<void> {
+    const previous = await this.pairing();
+    if (!pairing || previous?.tokenId !== pairing.tokenId)
+      await this.area.remove([...ACCOUNT_STATE_KEYS]);
     if (pairing) await this.area.set({ [KEYS.pairing]: pairing });
     else await this.area.remove(KEYS.pairing);
   }

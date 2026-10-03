@@ -6,7 +6,10 @@
 import { createPlannerBrowser } from './planner/browser';
 import { parseSchedule, parseSources } from './planner/model';
 import { PlannerService, PLANNER_ALARM } from './planner/service';
-import { PlannerScheduler, pollTasks } from './planner/scheduler';
+import { PlannerScheduler, pollTasks, registerTaskPollHandler } from './planner/scheduler';
+import { TasksService } from './tasks/service';
+import { createTaskInstagram } from './tasks/instagram';
+import { createUlid } from '../shared/ulid';
 import { SelectionService } from '../content/select/service';
 import { BUILD } from '../shared/build-info';
 import {
@@ -181,8 +184,14 @@ const planner = new PlannerService({
     const modes = current.platforms[platform];
     return !modes.scroll && !(platform === 'instagram' && modes.replay) ? 'disabled' : null;
   },
-  async sources() {
-    const response = await api.get('/api/v1/extension/sources', { auth: 'token' });
+  accountKey: async () => (await store.pairing())?.tokenId ?? null,
+  pairing: () => store.pairing(),
+  afterSync: pollTasks,
+  async sources(pairing) {
+    const response = await api.get('/api/v1/extension/sources', {
+      auth: 'token',
+      expectedToken: pairing?.token,
+    });
     if (!response.ok) throw new Error('sources_unavailable');
     return parseSources(response.data);
   },
@@ -215,6 +224,43 @@ const selection = new SelectionService({
   client: { ext: EXTENSION_VERSION, parser: BUILD.parser },
   changed,
 });
+const taskId = createUlid(now);
+const taskCredentials = async (pairing: { token: string; tokenId: string }) => ({
+  token: (await store.pairing())?.tokenId === pairing.tokenId ? pairing.token : null,
+  access: (await store.settings()).access,
+});
+const tasks = new TasksService({
+  store,
+  session: chrome.storage.session,
+  config: () => config.current(),
+  apiFor: (pairing) =>
+    new ApiClient({
+      origin,
+      version: EXTENSION_VERSION,
+      fetch: (input, init) => fetch(input, init),
+      now,
+      credentials: () => taskCredentials(pairing),
+    }),
+  uploadDeps: (pairing) => ({
+    origin,
+    version: EXTENSION_VERSION,
+    fetch: (input, init) => fetch(input, init),
+    credentials: () => taskCredentials(pairing),
+  }),
+  instagram: createTaskInstagram(),
+  planner,
+  now,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  id: taskId,
+  changed,
+  failure: async (failure) => {
+    const action = classifyFailure(failure);
+    if (action.action === 'disable_source') await config.refresh(true);
+    await uploader.block(failure, action);
+  },
+  client: { ext: EXTENSION_VERSION, parser: BUILD.parser },
+});
+registerTaskPollHandler(() => tasks.poll());
 
 // ── Runs, config and start-up ───────────────────────────────────────────────
 
@@ -377,8 +423,18 @@ const router = new Router(chrome.runtime.id, origin, log)
     return { ok: true };
   })
   .internal(MSG.pairingForget, 'page', async () => {
+    await tasks.reset();
     await forgetPairing(store);
     changed();
+    return { ok: true };
+  })
+  .internal(MSG.tasksGet, 'page', () => tasks.snapshot())
+  .internal(MSG.tasksPoll, 'page', async () => {
+    await tasks.poll();
+    return { ok: true };
+  })
+  .external(EXTERNAL.tasksPoll, async () => {
+    void tasks.poll().catch((error: unknown) => log('tasks', error));
     return { ok: true };
   })
   // P2-13: explicit syncs. The panel starts and stops them; the tab's controller reports.
@@ -439,6 +495,7 @@ const router = new Router(chrome.runtime.id, origin, log)
       : { ok: false, code: 'bad_request' },
   )
   .external(EXTERNAL.ping, async () => {
+    void tasks.poll().catch((error: unknown) => log('tasks', error));
     const [pairing, status] = await Promise.all([store.pairing(), store.status()]);
     const answer: PingAnswer = {
       ok: true,
@@ -486,6 +543,7 @@ chrome.notifications.onButtonClicked.addListener((id, index) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  void tasks.tabRemoved(tabId).catch((error: unknown) => log('tasks tab', error));
   queue
     .endRuns((run) => run.tabId === tabId, 'user', now())
     .then((ended) => {
@@ -526,4 +584,5 @@ void (async () => {
   await sync.endStale(tabExists).catch((err: unknown) => log('syncs', err));
   await refreshConfig().catch((err: unknown) => log('config', err));
   await uploader.flush();
+  await tasks.poll();
 })().catch((err: unknown) => log('start-up', err));

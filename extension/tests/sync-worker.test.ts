@@ -6,6 +6,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MSG, type BridgePong, type CaptureMessage } from '../src/shared/protocol';
 import { handleCapture } from '../src/sw/capture';
+import { API } from '../src/sw/contracts';
 import { prefilterBatch } from '../src/sw/prefilter';
 import type { RunSpec } from '../src/sw/queue/queue';
 import { RUN_KEYS_TTL_MS, normalizeRun, type Run } from '../src/sw/queue/types';
@@ -33,6 +34,62 @@ const wire = (from: number, count: number) =>
     Array.from({ length: count }, (_, i) => igItem(from + i)),
     'instagram',
   ).items;
+
+describe('account binding of planner controller and queued captures', () => {
+  it('never posts account A collection to B when pairing changes inside the API credential await', async () => {
+    const h = harness();
+    await h.pairNow();
+    const pairingA = (await h.store.pairing())!;
+    const s = service(h);
+    const actualPost = h.client.post.bind(h.client);
+    let release!: () => void;
+    vi.spyOn(h.client, 'post').mockImplementation(async (path, body, options) => {
+      if (path === API.syncRuns)
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      return actualPost(path, body, options);
+    });
+    const pending = s.sync.start({
+      tabId: TAB,
+      trigger: 'web',
+      collection: { mode: 'existing', id: 7 },
+      expectedPairing: pairingA,
+    });
+    for (let i = 0; i < 200 && !release; i++) await Promise.resolve();
+    const tokenB = h.api.mintToken();
+    await h.store.setPairing({ ...pairingA, token: tokenB, tokenId: 'account-B' });
+    release();
+    expect(await pending).toEqual({ ok: false, code: 'not_paired' });
+    expect(h.api.log.filter((request) => request.path === API.syncRuns)).toEqual([]);
+    expect(await h.queue.runs()).toEqual([]);
+    expect((await h.store.pairing())?.token).toBe(tokenB);
+    expect(s.toTab.some((message) => (message as { kind: string }).kind === MSG.syncRun)).toBe(
+      false,
+    );
+  });
+  it('drops bound captures from A instead of recreating their run on B', async () => {
+    const h = harness();
+    await h.pairNow();
+    const pairingA = (await h.store.pairing())!;
+    const run = await h.queue.openRun(
+      spec({ accountTokenId: pairingA.tokenId, collection: { mode: 'existing', id: 7 } }),
+      T0,
+    );
+    await h.queue.captureToRun(run.id, {
+      source: 'replay',
+      hasNextPage: null,
+      items: wire(1, 1),
+      at: T0,
+      messageId: null,
+    });
+    await h.store.setPairing({ ...pairingA, token: h.api.mintToken(), tokenId: 'account-B' });
+    await h.uploader.flush();
+    expect(h.api.log).toEqual([]);
+    expect(await h.queue.getRun(run.id)).toBeNull();
+    expect(h.api.ingests).toHaveLength(0);
+  });
+});
 
 describe('explicit runs in the queue', () => {
   it('appends to an open explicit run, seals its group at once, and refuses an ended one', async () => {

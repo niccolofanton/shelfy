@@ -8,7 +8,7 @@ import {
   type Platform,
   type SyncTarget,
 } from '../../shared/protocol';
-import type { StorageArea } from '../settings';
+import type { StorageArea, Pairing } from '../settings';
 import type { SyncService } from '../sync/service';
 import {
   DEFAULT_SCHEDULE,
@@ -33,6 +33,7 @@ export const NAVIGATION_TIMEOUT_MS = 45_000;
 export const BRIDGE_TIMEOUT_MS = 20_000;
 export const REMINDER_NOTIFICATION = 'shelfy.sync.now';
 export interface PlannerJob {
+  accountKey?: string;
   platform: Platform;
   status: 'navigating' | 'syncing' | 'done' | 'stopped' | 'error';
   step: number;
@@ -62,18 +63,21 @@ export interface PlannerDeps {
   browser: PlannerBrowser;
   sync: Pick<SyncService, 'start' | 'stopPlatform' | 'syncing' | 'views'>;
   eligibility(platform: Platform): Promise<string | null>;
-  sources(): Promise<ExtensionSource[]>;
+  sources(pairing?: Pairing): Promise<ExtensionSource[]>;
   now(): number;
   sleep(ms: number): Promise<void>;
   changed(): void;
   log(where: string, error: unknown): void;
   afterSync?(): Promise<void>;
+  accountKey?(): Promise<string | null>;
+  pairing?(): Promise<Pairing | null>;
 }
 interface RunHandle {
   stopped: boolean;
   full: boolean;
   existingTabId?: number;
   minimized: boolean;
+  pairing?: Pairing;
 }
 export class PlannerService {
   private active = new Map<Platform, RunHandle>();
@@ -99,8 +103,13 @@ export class PlannerService {
   }
   async snapshot(): Promise<{ jobs: PlannerJob[]; schedule: ScheduleSettings }> {
     await this.load();
+    const pairing = await this.deps.pairing?.();
     return {
-      jobs: PLATFORMS.flatMap((p) => (this.jobs[p] ? [this.jobs[p]!] : [])),
+      jobs: PLATFORMS.flatMap((p) =>
+        this.jobs[p] && (!this.deps.pairing || this.jobs[p]?.accountKey === pairing?.tokenId)
+          ? [this.jobs[p]!]
+          : [],
+      ),
       schedule: await this.schedule(),
     };
   }
@@ -140,17 +149,31 @@ export class PlannerService {
     };
     this.active.set(platform, handle);
     try {
+      if (this.deps.pairing) {
+        const pairing = await this.deps.pairing();
+        if (!pairing) {
+          this.active.delete(platform);
+          return { ok: false, code: 'not_paired' };
+        }
+        handle.pairing = pairing;
+      }
       await this.load();
+      await this.check(handle);
       const refused = await this.deps.eligibility(platform);
+      await this.check(handle);
       if (refused) {
         this.active.delete(platform);
         return { ok: false, code: refused };
       }
-      if ((await this.deps.sync.syncing())[platform]) {
+      const syncing = await this.deps.sync.syncing();
+      await this.check(handle);
+      if (syncing[platform]) {
         this.active.delete(platform);
         return { ok: false, code: 'busy' };
       }
-      const steps = buildSyncSteps(target, await this.deps.sources());
+      const sources = await this.deps.sources(handle.pairing);
+      await this.check(handle);
+      const steps = buildSyncSteps(target, sources);
       if (!steps.length) {
         this.active.delete(platform);
         return { ok: false, code: 'no_sources' };
@@ -162,6 +185,7 @@ export class PlannerService {
       const previousWindowId = this.jobs[platform]?.windowId ?? null;
       this.jobs[platform] = {
         platform,
+        accountKey: handle.pairing?.tokenId,
         status: 'navigating',
         step: 0,
         total: steps.length,
@@ -172,6 +196,7 @@ export class PlannerService {
         startedAt: this.deps.now(),
       };
       await this.patch(platform, {});
+      await this.check(handle);
       void this.run(platform, steps, handle, options.trigger ?? 'web').catch((err: unknown) =>
         this.deps.log('planner', err),
       );
@@ -179,7 +204,7 @@ export class PlannerService {
     } catch (error) {
       this.active.delete(platform);
       this.deps.log('planner start', error);
-      return { ok: false, code: 'sources_unavailable' };
+      return { ok: false, code: error instanceof StepError ? error.code : 'sources_unavailable' };
     }
   }
   async stop(platform: Platform): Promise<ExternalAnswer> {
@@ -214,13 +239,26 @@ export class PlannerService {
     if (!tab?.url || platformForUrl(tab.url) !== 'instagram')
       return { ok: false, code: 'no_instagram_tab' };
     const day = new Date(this.deps.now()).toDateString();
-    if ((await this.deps.storage.get(INSTAGRAM_BACKLOG_DAY_KEY))[INSTAGRAM_BACKLOG_DAY_KEY] === day)
+    const accountKey = (await this.deps.accountKey?.()) ?? null;
+    if (this.deps.accountKey && !accountKey) return { ok: false, code: 'not_paired' };
+    const previous = (await this.deps.storage.get(INSTAGRAM_BACKLOG_DAY_KEY))[
+      INSTAGRAM_BACKLOG_DAY_KEY
+    ];
+    if (
+      typeof previous === 'object' &&
+      previous !== null &&
+      'accountKey' in previous &&
+      previous.accountKey === accountKey &&
+      'day' in previous &&
+      previous.day === day
+    )
       return { ok: false, code: 'daily_limit' };
     const answer = await this.start(
       { platform: 'instagram' },
       { trigger: 'scheduled', full: true, existingTabId: tabId },
     );
-    if (answer.ok) await this.deps.storage.set({ [INSTAGRAM_BACKLOG_DAY_KEY]: day });
+    if (answer.ok && (!this.deps.accountKey || (await this.deps.accountKey()) === accountKey))
+      await this.deps.storage.set({ [INSTAGRAM_BACKLOG_DAY_KEY]: { accountKey, day } });
     return answer;
   }
   /** Worker restart: an interrupted plan never resumes an unattended walk. */
@@ -229,13 +267,22 @@ export class PlannerService {
     for (const platform of PLATFORMS) {
       const job = this.jobs[platform];
       if (job && ['navigating', 'syncing'].includes(job.status) && !this.active.has(platform)) {
-        await this.deps.sync.stopPlatform(platform);
+        await this.deps.sync.stopPlatform(platform, job.accountKey);
         await this.patch(platform, { status: 'stopped', code: 'worker_restarted' });
       }
     }
   }
-  private check(handle: RunHandle): void {
+  private async check(handle: RunHandle): Promise<void> {
     if (handle.stopped) throw new StepError('cancelled');
+    if (handle.pairing && this.deps.pairing) {
+      const current = await this.deps.pairing();
+      if (
+        !current ||
+        current.tokenId !== handle.pairing.tokenId ||
+        current.token !== handle.pairing.token
+      )
+        throw new StepError('cancelled');
+    }
   }
   private async until<T>(
     handle: RunHandle,
@@ -244,9 +291,9 @@ export class PlannerService {
   ): Promise<T | null> {
     const start = this.deps.now();
     for (;;) {
-      this.check(handle);
+      await this.check(handle);
       const result = await read();
-      this.check(handle);
+      await this.check(handle);
       if (result) return result;
       if (this.deps.now() - start >= timeout) return null;
       await this.deps.sleep(500);
@@ -258,6 +305,7 @@ export class PlannerService {
     url: string,
     handle: RunHandle,
   ): Promise<void> {
+    await this.check(handle);
     await this.deps.browser.navigate(tabId, url).catch(() => undefined);
     const settled = await this.until(handle, NAVIGATION_TIMEOUT_MS, async () => {
       const tab = await this.deps.browser.get(tabId).catch(() => null);
@@ -271,13 +319,17 @@ export class PlannerService {
     for (let attempt = 0; attempt < 2; attempt++) {
       const ready = await this.until(handle, BRIDGE_TIMEOUT_MS, async () => {
         const tab = await this.deps.browser.get(tabId);
+        await this.check(handle);
         if (tab.url && LOGIN_PATTERNS[platform].test(tab.url))
           throw new StepError('login_required');
         const pong = await this.deps.browser.ping(tabId).catch(() => null);
         return pong?.ok === true ? pong : null;
       });
       if (ready?.ok) return;
-      if (attempt === 0) await this.deps.browser.reload(tabId);
+      if (attempt === 0) {
+        await this.check(handle);
+        await this.deps.browser.reload(tabId);
+      }
     }
     throw new StepError('bridge');
   }
@@ -288,7 +340,7 @@ export class PlannerService {
     trigger: 'web' | 'scheduled',
   ): Promise<void> {
     try {
-      this.check(handle);
+      await this.check(handle);
       const window =
         handle.existingTabId !== undefined
           ? await this.deps.browser.existing(handle.existingTabId)
@@ -297,14 +349,16 @@ export class PlannerService {
               this.jobs[platform]?.windowId ?? null,
               handle.minimized,
             );
-      this.check(handle);
+      await this.check(handle);
       await this.patch(platform, { ...window });
+      await this.check(handle);
       const tabId = window.tabId;
       let username = '';
       let folders: string[] = [];
       if (platform === 'instagram') {
         await this.navigate(platform, tabId, 'https://www.instagram.com/', handle);
         const viewer = await this.deps.browser.instagramUsername(tabId);
+        await this.check(handle);
         if (viewer.login) throw new StepError('login_required');
         if (!viewer.username) throw new StepError('navigation');
         username = viewer.username;
@@ -316,8 +370,9 @@ export class PlannerService {
             handle,
           );
           for (let attempt = 0; attempt < 12; attempt++) {
-            this.check(handle);
+            await this.check(handle);
             folders = await this.deps.browser.folderLinks(tabId);
+            await this.check(handle);
             if (
               steps
                 .filter((step) => step.kind === 'ig-folder')
@@ -333,12 +388,13 @@ export class PlannerService {
         }
       }
       for (let i = 0; i < steps.length; i++) {
-        this.check(handle);
+        await this.check(handle);
         const stepStartedAt = this.deps.now();
         const step = steps[i];
         await this.patch(platform, { step: i + 1, status: 'navigating', code: null });
         try {
           const refused = await this.deps.eligibility(platform);
+          await this.check(handle);
           if (refused) {
             await this.patch(platform, { status: 'error', code: refused });
             return;
@@ -358,13 +414,16 @@ export class PlannerService {
           if (!url) throw new StepError('folder_missing');
           await this.navigate(platform, tabId, url, handle);
           await this.bridge(platform, tabId, handle);
+          await this.check(handle);
           const started = await this.deps.sync.start({
             tabId,
             trigger,
             collection: step.collection,
             name: step.name,
             full: handle.full,
+            expectedPairing: handle.pairing,
           });
+          await this.check(handle);
           if (!started.ok) {
             if (['not_paired', 'disabled', 'outdated', 'busy'].includes(started.code)) {
               await this.patch(platform, { status: 'error', code: started.code });
@@ -381,7 +440,7 @@ export class PlannerService {
             return view?.state === 'ended' ? view : null;
           });
           if (!ended) {
-            await this.deps.sync.stopPlatform(platform);
+            await this.deps.sync.stopPlatform(platform, handle.pairing?.tokenId);
             throw new StepError('step_timeout');
           }
           if (ended.stopReason === 'login_required' || ended.errorCode === 'login_required')
@@ -397,7 +456,7 @@ export class PlannerService {
       await this.patch(platform, { status: 'done' });
     } catch (error) {
       const code = error instanceof StepError ? error.code : 'navigation';
-      await this.deps.sync.stopPlatform(platform).catch(() => undefined);
+      await this.deps.sync.stopPlatform(platform, handle.pairing?.tokenId).catch(() => undefined);
       await this.patch(platform, { status: code === 'cancelled' ? 'stopped' : 'error', code });
     } finally {
       this.active.delete(platform);

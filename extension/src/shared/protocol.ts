@@ -25,7 +25,7 @@ export type Platform = (typeof PLATFORMS)[number];
  * - `ssr`: Pinterest's server-rendered first page, read from inline JSON;
  * - `dom`: X bookmark cards read from the rendered DOM (the desktop's fallback scan).
  */
-export const CAPTURE_SOURCES = ['passive', 'replay', 'ssr', 'dom'] as const;
+export const CAPTURE_SOURCES = ['passive', 'replay', 'ssr', 'dom', 'refresh'] as const;
 export type CaptureSource = (typeof CAPTURE_SOURCES)[number];
 
 /** `source` of an ingest batch (contract C5). */
@@ -157,6 +157,10 @@ export const MSG = {
   census: 'shelfy/census',
   /** panel → bridge (chrome.tabs.sendMessage): only a live bridge answers. */
   bridgePing: 'shelfy/bridge.ping',
+  taskPrepare: 'shelfy/tasks.prepare',
+  taskCollect: 'shelfy/tasks.collect',
+  tasksGet: 'shelfy/tasks.get',
+  tasksPoll: 'shelfy/tasks.poll',
   /** panel → worker. */
   stateGet: 'shelfy/state.get',
   settingsSet: 'shelfy/settings.set',

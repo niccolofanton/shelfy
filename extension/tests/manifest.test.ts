@@ -25,7 +25,7 @@ const exists = (path: string): boolean => allFiles.has(path);
 
 const goodBundles: Record<string, string> = {
   [FILES.hook]:
-    '(() => { const MSG_TYPE = "SOCIAL_SAVED_INTERCEPT"; window.__ssReplayPinterest = 1; window.__ssScanTwitterBookmarks = 1; })();',
+    '(() => { const MSG_TYPE = "SOCIAL_SAVED_INTERCEPT"; window.__ssReplayPinterest = 1; window.__ssScanTwitterBookmarks = 1; window.__ssEmitInstagramRest = 1; })();',
   [FILES.select]: '(() => { window.__ssSelect = {}; })();',
   [FILES.bridge]: '(() => { window.addEventListener("message", () => {}); })();',
   [FILES.serviceWorker]: 'chrome.runtime.onMessage.addListener(() => false);',
@@ -261,6 +261,7 @@ describe('validateBundles', () => {
       'hook.main.js does not contain "SOCIAL_SAVED_INTERCEPT"',
       'hook.main.js does not contain "__ssReplayPinterest"',
       'hook.main.js does not contain "__ssScanTwitterBookmarks"',
+      'hook.main.js does not contain "__ssEmitInstagramRest"',
       'bridge.js uses eval/new Function',
       'sw.js loads code at runtime (import/importScripts)',
       'panel.js contains __name() (keepNames)',
