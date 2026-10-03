@@ -36,6 +36,7 @@ export default tseslint.config(
       'extension/e2e-results/**',
       'web/dist/**',
       'capture/dist/**',
+      'mcp/dist/**',
       'release/**',
       'out/**',
       'coverage/**',
@@ -171,6 +172,7 @@ export default tseslint.config(
   {
     files: [
       'scripts/**/*.{mjs,ts}',
+      'mcp/**/*.{mjs,ts}',
       'build/**/*.{mjs,ts}',
       '__mocks__/**/*.ts',
       '*.config.{js,ts}',
