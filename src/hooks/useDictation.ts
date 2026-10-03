@@ -3,6 +3,7 @@ import { DictationRecorder } from '../lib/dictation/recorder';
 import { translate, getInitialLang } from '../i18n';
 import { useShelfy } from '../api/ShelfyProvider';
 import type { AiDictationApi } from '../api/ai';
+import { useWebDictation } from './useWebDictation';
 
 // User-facing error messages surfaced via `error` (rendered in the AiSearch
 // composer). Resolved against the persisted language; the whisper `language`
@@ -73,6 +74,10 @@ export interface UseDictationResult {
   start: () => Promise<void>;
   stop: (opts?: { silent?: boolean }) => Promise<string>;
   toggle: () => void;
+  cancel?: () => void;
+  interimNoticeRequired?: boolean;
+  acceptInterimNotice?: () => Promise<void>;
+  dismissInterimNotice?: () => void;
 }
 
 export function useDictation({
@@ -80,10 +85,12 @@ export function useDictation({
   language = 'it',
 }: UseDictationOpts = {}): UseDictationResult {
   const { ai } = useShelfy();
+  const web = ai?.dictation?.mode === 'web';
+  const webResult = useWebDictation(web ? ai?.dictation : undefined, { onResult, language });
   // `dictation` is only absent on a client with no AI seam yet (the web,
   // before P3-17) — the dictation mic button is desktop-only reachable today.
   const dictationRef = useRef<AiDictationApi | undefined>(ai?.dictation);
-  dictationRef.current = ai?.dictation;
+  dictationRef.current = web ? undefined : ai?.dictation;
 
   const [status, setStatus] = useState<DictationStatus>('idle');
   const [liveText, setLiveText] = useState('');
@@ -312,6 +319,7 @@ export function useDictation({
 
   const isActive = status === 'requesting' || status === 'recording' || status === 'transcribing';
 
+  if (web) return webResult;
   return {
     status,
     isActive,

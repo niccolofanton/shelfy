@@ -38,6 +38,9 @@ export function isApiError(err: unknown, code?: ApiError['code']): err is ApiErr
 type UnsafeMethod = 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export interface SendOptions {
+  // Binary requests still use cookie/CSRF/error handling.
+  rawBody?: BodyInit;
+  contentType?: string;
   signal?: AbortSignal;
   reauthenticate?: boolean;
   // Let the request outlive the page (fetch `keepalive`): crash reports.
@@ -132,6 +135,8 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
     init: {
       query?: URLSearchParams;
       body?: unknown;
+      rawBody?: BodyInit;
+      contentType?: string;
       signal?: AbortSignal;
       keepalive?: boolean;
       idempotencyKey?: string;
@@ -145,13 +150,15 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
     const headers: Record<string, string> = { Accept: 'application/json', ...init.headers };
     if (method !== 'GET') headers[CLIENT_HEADER] = CLIENT_WEB;
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (init.rawBody !== undefined)
+      headers['Content-Type'] = init.contentType ?? 'application/octet-stream';
     if (init.idempotencyKey) headers['Idempotency-Key'] = init.idempotencyKey;
     let res: Response;
     try {
       res = await doFetch(qs ? `${path}?${qs}` : path, {
         method,
         headers,
-        body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+        body: init.rawBody ?? (init.body !== undefined ? JSON.stringify(init.body) : undefined),
         credentials: 'same-origin',
         signal: init.signal,
         ...(init.keepalive ? { keepalive: true } : {}),
@@ -192,6 +199,9 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
     send: (method, path, body, options) =>
       request(method, path, {
         body,
+        rawBody: options?.rawBody,
+        contentType: options?.contentType,
+        signal: options?.signal,
         keepalive: options?.keepalive,
         idempotencyKey: options?.idempotencyKey,
         headers: options?.headers,

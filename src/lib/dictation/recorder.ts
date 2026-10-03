@@ -12,7 +12,6 @@ import pcmWorkletUrl from './pcm-worklet.ts?worker&url';
 
 export const SAMPLE_RATE = 16000;
 const MAX_SECONDS = 60;
-const MAX_SAMPLES = SAMPLE_RATE * MAX_SECONDS;
 
 // Encodes Float32 mono samples [-1,1] into a 16-bit PCM WAV ArrayBuffer.
 export function encodeWav(samples: Float32Array, sampleRate: number = SAMPLE_RATE): ArrayBuffer {
@@ -55,7 +54,7 @@ export class DictationRecorder {
   private _node: AudioWorkletNode | null;
   private _gain: GainNode | null;
 
-  constructor() {
+  constructor(private options: { maxSeconds?: number; rolling?: boolean } = {}) {
     this._chunks = [];
     this._total = 0;
     this._level = 0;
@@ -66,6 +65,15 @@ export class DictationRecorder {
   }
 
   async start(): Promise<void> {
+    try {
+      await this._start();
+    } catch (cause) {
+      this.stop();
+      throw cause;
+    }
+  }
+
+  private async _start(): Promise<void> {
     this._stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
     });
@@ -86,6 +94,11 @@ export class DictationRecorder {
   }
 
   private _onSamples(samples: Float32Array): void {
+    const maxSamples = SAMPLE_RATE * (this.options.maxSeconds ?? MAX_SECONDS);
+    if (this.options.rolling === false) {
+      samples = samples.subarray(0, Math.max(0, maxSamples - this._total));
+      if (!samples.length) return;
+    }
     this._chunks.push(samples);
     this._total += samples.length;
 
@@ -94,7 +107,7 @@ export class DictationRecorder {
     this._level = Math.sqrt(sum / samples.length);
 
     // Rolling cap: drop the oldest chunks once past MAX_SAMPLES.
-    while (this._total > MAX_SAMPLES && this._chunks.length > 1) {
+    while (this._total > maxSamples && this._chunks.length > 1) {
       this._total -= (this._chunks.shift() as Float32Array).length;
     }
   }

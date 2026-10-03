@@ -14,6 +14,16 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 export default {
   it: {
     errorGeneric: 'Errore di dettatura.',
+    interimTitle: 'Trascrizione provvisoria del browser',
+    interimNotice:
+      'Per mostrare il testo mentre parli, il servizio vocale del browser riceverà il tuo audio. La trascrizione finale usa il provider configurato in Shelfy.',
+    interimAccept: 'Consenti per questa registrazione',
+    interimCancel: 'Annulla',
+    permissionDeniedWeb:
+      'Permesso microfono negato. Consenti l’accesso nelle impostazioni del sito nel browser.',
+    microphoneMissing: 'Nessun microfono disponibile.',
+    microphoneBusy: 'Il microfono è occupato o non disponibile.',
+    emptyRecording: 'La registrazione è troppo breve. Riprova.',
     binaryMissing: 'Binario vocale (whisper-server) non trovato. Vedi le istruzioni di setup.',
     modelNotReady: 'Modello vocale non ancora pronto. Scaricalo prima di dettare.',
     permissionDenied: 'Permesso microfono negato. Abilitalo nelle impostazioni di sistema.',
@@ -21,6 +31,16 @@ export default {
   },
   en: {
     errorGeneric: 'Dictation error.',
+    interimTitle: 'Browser interim transcription',
+    interimNotice:
+      'To show text while you speak, the browser speech service will receive your audio. The final transcription uses the provider configured in Shelfy.',
+    interimAccept: 'Allow for this recording',
+    interimCancel: 'Cancel',
+    permissionDeniedWeb:
+      'Microphone permission denied. Allow access in your browser’s site settings.',
+    microphoneMissing: 'No microphone is available.',
+    microphoneBusy: 'The microphone is busy or unavailable.',
+    emptyRecording: 'The recording is too short. Try again.',
     binaryMissing: 'Voice binary (whisper-server) not found. See the setup instructions.',
     modelNotReady: 'Voice model not ready yet. Download it before dictating.',
     permissionDenied: 'Microphone permission denied. Enable it in your system settings.',

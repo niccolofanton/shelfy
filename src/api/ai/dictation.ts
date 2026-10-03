@@ -5,6 +5,8 @@
 // readiness/download lifecycle below is desktop-only — a BYOK/operator STT
 // route on the web is always "ready").
 export interface AiDictationApi {
+  mode?: 'web';
+  interimEnabled?(): Promise<boolean>;
   // The local model's readiness (desktop: whisper.cpp's model + binary state).
   status(): Promise<unknown>;
   onModelProgress(cb: (progress: unknown) => void): () => void;
@@ -15,6 +17,6 @@ export interface AiDictationApi {
   // One recording in, `{text}` out.
   transcribe(
     wav: ArrayBuffer | ArrayBufferView,
-    opts?: { language?: string },
+    opts?: { language?: string; signal?: AbortSignal },
   ): Promise<{ text?: string; error?: string }>;
 }
