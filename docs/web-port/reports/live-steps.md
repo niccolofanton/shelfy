@@ -49,11 +49,15 @@ Additional gates and recovery, recorded on 2026-10-03:
 - Match the evaluated input profile: `deep=true` gives still images at 1024; the owner Instagram library currently has no stored video objects, so this does not imply frame extraction. Use poster/slide plus weak caption evidence; do not download all videos or run STT implicitly.
 - Admin helper `24a3368` can recover 81 existing poster files from the verified private bundle. After backup, perform its live default dry-run first. Stop only Shelfy API, apply with `--server-stopped --apply`, restart and recount readiness. Do not substitute the local mirror dry-run for a live check.
 - Remaining expired URLs need P2-17 refresh through the already authenticated Instagram tab. Its synthetic tests pass and independent review closed legacy queue account binding in integrated `3e44bef`; deployment and live verification remain. No automated live social action has run yet.
-- P3-18 settings and P3-16 taxonomy jobs are integrated; P3-20 queue UI and BYOK remain separate tracked work. The owner first run must still verify persisted tags and progress on production.
-- Record the exact release commit, CI run, image digest, backup evidence and unchanged Hermes health/restart count. CI `37144780896` on `85c37a8` has all blocking jobs green. The newer `37146987723` on `970959a` failed live-browser setup because its AI stub was not built; fix `56d82ee` is integrated, awaiting publication and rerun. Lighthouse F18 remains open. No new release tag exists after rc.5 yet.
+- P3-18 settings and P3-16 taxonomy jobs are integrated; P3-20 queue UI and P3-26 BYOK UI are now integrated (c365289 and 1815524). The owner first run must still verify persisted tags and progress on production.
+- Record the exact release commit, CI run, image digest, backup evidence and unchanged Hermes health/restart count. CI `37144780896` on `85c37a8` has all blocking jobs green. The newer `37146987723` on `970959a` failed live-browser setup because its AI stub was not built; fix `56d82ee` was published and CI `37148276122` on `f033002` passed all blocking jobs. Later integrations still require a fresh candidate run. Lighthouse F18 remains open. No new release tag exists after rc.5 yet.
 
 ## P2-13: the first real syncs (owner, P2-23)
 
 The sync controller only ran against synthetic pages. On the owner's real accounts, check that the replay gate works on live Instagram, that a signed-out replay really answers 401/403 (it maps to `login_required`), and how folder names taken from the page `h1` come out. On Instagram the scroll after a full replay adds nothing today (SPIKE-3) and can take up to 30 minutes: `shelfy-server admin flags extension.instagram.scroll=false` turns it off (it is on by default, as the card asks); decide after the first real sync.
 
 Status: todo (owner).
+
+## Candidate hardening: durable job identity
+
+Integrated `c246490`: control schema 7 prevents cleared/pruned job IDs from being reused and binds taxonomy/import checkpoints to job incarnation (imports also to upload). Older readers below version 7 are refused; do not attempt a binary-only rollback after migration. Legacy unbound import checkpoints return `import_checkpoint_unbound`; a new upload recovery was tested. Lane evidence: 62 post-rebase tests and Clippy pass; full new-candidate Rust/CI remain pending. The paired-extension `accountId` OpenAPI/client schemas were regenerated.
