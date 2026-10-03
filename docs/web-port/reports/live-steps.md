@@ -29,7 +29,7 @@ The cloud lanes (E16) cannot reach the osn VPS, refs, the owner's AI node or the
 2. On the VPS: `shelfy-server admin snapshot` first; stop `shelfy-api` (a running server's ETags and caches do not see another process's writes); `sqlite3 users/<owner id>/library.sqlite`, then `BEGIN;`, `.read f12-backfill.sql`, `SELECT changes();` (expect 1), `COMMIT;`; start the service and check the site's `webCapture.palette` through the API. No search index depends on these columns.
 3. Repeat for the mock account's library if its site capture was migrated before F12.
 
-Status: todo.
+Status: database backfill applied on 2026-10-03 at 21:55 CEST to owner and mock (one capture each, four fields populated), after a successful fresh shelfy-db-snapshot.service. The lead first tested the exact SQL on in-memory copies of both live libraries and verified idempotency/preservation locally. Only Shelfy API was stopped for the writes; it restarted healthy at 19:55:27 UTC. Hermes start time and restart count remained unchanged. Authenticated API verification remains pending.
 
 ## P3-13 deploy and the first Instagram run (E15)
 
