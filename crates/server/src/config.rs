@@ -23,6 +23,7 @@
 //! | `SHELFY_WEB_DIR` | none | the built web app (`web/dist`) to serve; `/app/web` in the image. Unset: the API only |
 //! | `SHELFY_EGRESS_PROXY` | none | the egress proxy every outbound request goes through; unset: direct, with the resolver's address check |
 //! | `SHELFY_EGRESS_ALLOW_ORIGINS` | none | exact origins of the operator's AI node, reachable at a private address (L15) |
+//! | `SHELFY_MASTER_KEY`, `SHELFY_MASTER_KEY_PREVIOUS` | none | base64 of 32 bytes; current seals BYOK keys, previous reads old rows during rotation; never in backups |
 //! | `SHELFY_CAPTURE_URL` | none | the capture service, the only origin of the internal client |
 //! | `SHELFY_ARCHIVE_RATE_INSTAGRAM`, `…_X`, `…_PINTEREST` | `2` | CDN requests per second per host group |
 //! | `SHELFY_ARCHIVE_MODE_INSTAGRAM`, `…_X`, `…_PINTEREST` | `server` | who archives the platform's media: `server` or `auto` (the server; its breaker hands over to the extension while open) or `client` (the extension) |
@@ -33,7 +34,7 @@
 //! | `SHELFY_MEDIA_BUDGET_GB` | `30` | the media budget of every user library together, in GiB: stores that would pass it are refused with `storage_full` ([`crate::quota`]); 0 turns it off |
 //!
 //! [`crate::mail`] validates the email settings and [`crate::outbound`] the
-//! outbound ones. Later tasks add their variables here (master key).
+//! outbound ones. Master keys are validated by [`KeyVault`].
 
 use std::fmt;
 use std::io;
@@ -42,10 +43,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, ValueEnum};
+use secrecy::SecretString;
 use shelfy_core::db::{ControlDbConfig, LIBRARY_FILE_NAME, UserDbCacheConfig, UserDbConfig};
 use shelfy_media::video::{DEFAULT_FFMPEG_BIN, DEFAULT_YTDLP_BIN, ToolPaths};
 use url::Url;
 
+use crate::ai::vault::KeyVault;
 use crate::ai::{OperatorArgs, OperatorConfig};
 use crate::auth::AuthConfig;
 use crate::extension::ExtensionSettings;
@@ -199,6 +202,9 @@ pub struct ServeArgs {
     #[command(flatten)]
     pub operator: OperatorArgs,
 
+    #[command(flatten)]
+    pub vault: VaultArgs,
+
     /// The media budget of every user library together, in GiB (2^30
     /// bytes): a store that would take the `users` area of the data
     /// directory past it is refused with `storage_full`, for every user.
@@ -211,6 +217,28 @@ pub struct ServeArgs {
         value_parser = parse_media_budget
     )]
     pub media_budget_gb: u64,
+}
+
+/// The BYOK master keys. Parse as secrets first: clap errors and Debug cannot
+/// echo a malformed key. Validation happens in Config before logging starts.
+#[derive(Clone, Debug, Default, Args)]
+pub struct VaultArgs {
+    /// Base64 of exactly 32 random bytes. Empty/unset disables BYOK storage.
+    #[arg(long, env = "SHELFY_MASTER_KEY", hide_env_values = true, value_parser = parse_secret)]
+    pub master_key: Option<SecretString>,
+    /// Previous master key while rotating, in the same base64 format.
+    #[arg(long, env = "SHELFY_MASTER_KEY_PREVIOUS", hide_env_values = true, value_parser = parse_secret)]
+    pub master_key_previous: Option<SecretString>,
+}
+
+impl VaultArgs {
+    pub fn into_vault(self) -> Result<KeyVault, String> {
+        KeyVault::new(self.master_key, self.master_key_previous)
+    }
+}
+
+fn parse_secret(raw: &str) -> Result<SecretString, std::convert::Infallible> {
+    Ok(SecretString::from(raw.to_owned()))
 }
 
 /// The binaries of the video tools (P4-06, plan §2.13).
@@ -334,6 +362,8 @@ pub struct Config {
     pub archive: ArchiveConfig,
     /// The operator AI provider, from the environment (L15, L16; P3-09).
     pub operator: OperatorConfig,
+    /// Sealed BYOK storage, disabled without the current master key.
+    pub vault: KeyVault,
 }
 
 impl Config {
@@ -364,7 +394,9 @@ impl Config {
             .ok_or(ConfigError::MediaBudget(args.media_budget_gb))?;
         let operator = OperatorConfig::from_args(args.operator, &outbound.allow_origins)
             .map_err(ConfigError::Operator)?;
+        let vault = args.vault.into_vault().map_err(ConfigError::Vault)?;
         Ok(Self {
+            vault,
             listen: args.listen,
             metrics_listen: args.metrics_listen,
             public_url,
@@ -408,6 +440,7 @@ impl Config {
             extension: ExtensionSettings::default(),
             archive: ArchiveConfig::default(),
             operator: OperatorConfig::default(),
+            vault: KeyVault::default(),
         }
     }
 }
@@ -449,6 +482,9 @@ pub enum ConfigError {
     /// The operator AI settings are inconsistent (P3-09).
     #[error("{0}")]
     Operator(String),
+    /// Invalid master-key configuration, with values always redacted.
+    #[error("{0}")]
+    Vault(String),
 }
 
 /// The public origin of the web app: `http(s)://host[:port]`, no trailing slash.

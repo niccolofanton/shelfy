@@ -18,6 +18,7 @@ pub mod jobs;
 pub mod magic_links;
 pub mod pairing;
 pub mod passkeys;
+pub mod provider_keys;
 pub mod sessions;
 pub mod uploads;
 pub mod usage_daily;

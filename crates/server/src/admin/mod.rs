@@ -38,6 +38,7 @@ pub mod invite;
 pub mod login_link;
 pub mod migrate_token;
 pub mod owner;
+pub mod rekey;
 pub mod snapshot;
 pub mod synth;
 pub mod user;
@@ -109,6 +110,8 @@ pub enum AdminCommand {
     AiProbe(ai_probe::ProbeArgs),
     /// Aggregate state, due age and orphaned analyses.
     AiStatus(ai_status::AiStatusArgs),
+    /// Re-seal BYOK credentials under the current master key; counts only.
+    Rekey(rekey::RekeyArgs),
 }
 
 /// Runs an admin command, writing its output to stdout.
@@ -133,6 +136,7 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
         AdminCommand::Synth(args) => synth::run(&data, &args, &mut out),
         AdminCommand::Bench(args) => bench::run(&data, &args, &mut out),
         AdminCommand::Flags(args) => flags::run(&data, &args, &mut out),
+        AdminCommand::Rekey(args) => rekey::run(&data, args, &mut out),
         AdminCommand::AiProbe(args) => ai_probe::run(&data, args, &mut out),
         AdminCommand::AiStatus(args) => ai_status::run(&data, &args, &mut out),
     }?;

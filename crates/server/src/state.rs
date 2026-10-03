@@ -30,6 +30,14 @@ pub struct AppState {
     inner: Arc<Inner>,
 }
 
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("vault", self.vault())
+            .finish_non_exhaustive()
+    }
+}
+
 struct Inner {
     config: Config,
     control: Arc<ControlDb>,
@@ -118,6 +126,11 @@ impl AppState {
             pinterest = config.archive.modes.pinterest.as_str(),
             "archive modes"
         );
+        tracing::info!(
+            enabled = config.vault.enabled(),
+            key_version = config.vault.key_version(),
+            "provider key vault"
+        );
         // The AI service and the operator provider (P3-09). The start fails if
         // the operator endpoints are set but not allowlisted; its key is never
         // logged.
@@ -125,7 +138,7 @@ impl AppState {
             &config.operator,
             &config.outbound.allow_origins,
             &outbound,
-            false,
+            config.vault.enabled(),
         )
         .context("cannot set up the AI service")?;
         tracing::info!(
@@ -237,6 +250,12 @@ impl AppState {
     #[must_use]
     pub fn ai(&self) -> &AiService {
         &self.inner.ai
+    }
+
+    /// BYOK key sealing; operator credentials never enter this vault.
+    #[must_use]
+    pub fn vault(&self) -> &crate::ai::vault::KeyVault {
+        &self.inner.config.vault
     }
 
     /// The browser extension's flags and presence ([`crate::extension`]).

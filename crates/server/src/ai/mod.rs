@@ -15,13 +15,14 @@
 //! | [`service`] | [`AiService`]: routing, consent, limits, breaker, usage, metrics, status |
 //! | `breaker` | the BYOK circuit breaker and the operator's reachability machine |
 //!
-//! The vault and BYOK provider routes are P3-02 and P3-19; this task reads
+//! [`vault`] seals BYOK keys (P3-02). Provider routes are P3-19; the service reads
 //! their records through [`service::AiService`]'s seam, which returns nothing
 //! until they land, so the operator provider is the only live one.
 
 pub mod operator;
 pub mod queue;
 pub mod service;
+pub mod vault;
 
 mod breaker;
 

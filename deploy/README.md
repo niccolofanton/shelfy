@@ -56,6 +56,8 @@ validated at start: a bad one stops the process with a message.
 | `SHELFY_EGRESS_PROXY` | none | The egress proxy (§3.2: `http://shelfy-egress:4750`, from P4). Set: every outbound request goes through it, and the proxy resolves names and refuses private destinations. Unset: the server connects directly, and its own resolver refuses loopback, private, link-local (169.254.169.254 included), CGNAT, ULA, multicast and IPv4-mapped addresses. In both modes only http(s) on ports 80 and 443 is allowed, with at most 5 redirects, each checked again |
 | `SHELFY_EGRESS_ALLOW_ORIGINS` | none | Exact origins `scheme://host:port`, comma-separated, of the operator's own AI node (L15), reached directly even at a private address (a Tailscale `100.64.0.0/10` address). Only the operator's AI integration uses them; URLs a user enters keep the strict rules. Never put a user-reachable service here |
 | `SHELFY_CAPTURE_URL` | none | The capture service (§3.2: `http://shelfy-capture:8080`, P4): the only origin the internal client reaches, without the proxy |
+| `SHELFY_MASTER_KEY` | none | Base64 of exactly 32 random bytes; seals BYOK credentials with per-user HKDF-SHA256 and XChaCha20-Poly1305. Invalid values stop startup without echoing them. Empty/unset disables the vault; the operator provider remains available. Keep in SOPS/container environment and the operator password manager, never in backup directories |
+| `SHELFY_MASTER_KEY_PREVIOUS` | none | Previous master key during rotation, in the same format. Reads old rows while new writes use the current key. Remove only after `admin rekey` succeeds; never backed up |
 | `SHELFY_OPERATOR_AI_URL` | none | The operator's own AI node (L15): an OpenAI-compatible base URL used verbatim plus the suffix (`http://<node>:8080/v1`). Its origin must also be in `SHELFY_EGRESS_ALLOW_ORIGINS`, or the start fails. Unset: the operator provider is off, and cloud keys (BYOK) are the only AI. From osn SOPS in production |
 | `SHELFY_OPERATOR_AI_KEY` | none | The node's Bearer key. A secret (osn SOPS); never logged, returned or stored in a vault |
 | `SHELFY_OPERATOR_AI_MODEL` | none | The text model id (`ornith-1.5-35b-a3b`). Required when `SHELFY_OPERATOR_AI_URL` is set |
@@ -76,9 +78,9 @@ validated at start: a bad one stops the process with a message.
 | `SHELFY_MEDIA_BUDGET_GB` | `30` | The media budget of every user library together, in GiB (§3.1): a store that would take the `users` area of the data directory past it is refused with 507 `storage_full`, for every user. 0 turns it off. See [Quotas and limits](#quotas-and-limits) |
 
 Empty values count as unset, so a compose file may pass `SHELFY_SMTP_HOST=` when email is off.
-Later tasks add the master key (§3.2, §3.4). The operator commands
+The operator commands
 (`shelfy-server admin create-owner | invite | login-link | snapshot | verify | user |
-install-snapshots | migrate-token | synth | bench | flags`) use `SHELFY_DATA_DIR` too and print
+install-snapshots | migrate-token | synth | bench | flags | rekey`) use `SHELFY_DATA_DIR` too and print
 their results on stdout, never to the logs.
 
 To sign in, create the owner once, then mint a one-time link (valid 15 minutes):
@@ -116,6 +118,25 @@ It prints `<SHELFY_PUBLIC_URL>/login/reauth#<token>`, valid 15 minutes, once.
 
 Every route needs a signed-in session unless it is listed as public (or open to API tokens) in
 `crates/server/src/routes/mod.rs`.
+
+
+## Master-key rotation
+
+Set `SHELFY_MASTER_KEY` to the new key and `SHELFY_MASTER_KEY_PREVIOUS` to the old key in
+SOPS/container environment, then restart the server. Keys never belong in the data directory
+or snapshot output. New writes use the current version; both versions can read existing rows.
+
+```sh
+shelfy-server admin rekey --dry-run
+shelfy-server admin rekey
+```
+
+The command prints counts only. Each row commits independently, so a stopped run can resume;
+unchanged rows are authenticated and skipped. Failed rows stay intact and produce a nonzero
+exit; concurrently replaced credentials are not overwritten and require another run. Once
+`rekey` succeeds with no failed or skipped rows, remove `SHELFY_MASTER_KEY_PREVIOUS` and
+restart every process that may still hold the old key. SQLite snapshots contain sealed rows
+only; restoring them also requires the corresponding master key from the password manager.
 
 ## The browser extension
 
