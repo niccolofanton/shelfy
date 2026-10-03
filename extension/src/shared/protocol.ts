@@ -165,6 +165,10 @@ export const MSG = {
   // P2-13, the sync controller (content/sync/, sw/sync/). Parsers in the "Sync controller"
   // block at the end of this file.
   /** panel → worker: sync the listing of a tab now (trigger `manual`). */
+  plannerGet: 'shelfy/planner.get',
+  plannerStartAll: 'shelfy/planner.start-all',
+  plannerStop: 'shelfy/planner.stop',
+  plannerSchedule: 'shelfy/planner.schedule',
   syncStart: 'shelfy/sync.start',
   /** panel → worker: stop the sync running in a tab. */
   syncStop: 'shelfy/sync.stop',

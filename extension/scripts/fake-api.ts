@@ -88,6 +88,12 @@ export class FakeShelfyApi {
     status: number;
   }> = [];
   readonly runs = new Map<string, FakeRun>();
+  /** P2-15 native listings returned by the source planner endpoint. */
+  sources: Array<{
+    platform: Platform;
+    listing: { kind: string; externalId: string | null; name: string | null };
+    collectionId: number | null;
+  }> = [];
   /** Ingest requests the server acted on (a replay is listed with `replayed: true`). */
   readonly ingests: IngestRecord[] = [];
   /** Canonical keys of every post ingested, with how many times each was ingested. */
@@ -240,6 +246,8 @@ export class FakeShelfyApi {
       if (header('if-none-match') === etag) return { status: 304, headers: { etag }, body: '' };
       return json(200, this.config(), { etag });
     }
+    if (request.method === 'GET' && path === '/api/v1/extension/sources')
+      return json(200, { items: this.sources });
     if (request.method === 'POST' && path === '/api/v1/sync-runs') return this.createRun(body);
     const patch = /^\/api\/v1\/sync-runs\/([^/]+)$/.exec(path);
     if (request.method === 'PATCH' && patch)

@@ -3,11 +3,16 @@
 // that matters in memory: MV3 stops an idle worker after ~30 s, so the queue is in IndexedDB,
 // the rest in chrome.storage, and every event simply wakes the worker again.
 
+import { createPlannerBrowser } from './planner/browser';
+import { parseSchedule, parseSources } from './planner/model';
+import { PlannerService, PLANNER_ALARM } from './planner/service';
+import { PlannerScheduler, pollTasks } from './planner/scheduler';
 import { BUILD } from '../shared/build-info';
 import {
   EXTERNAL,
   MSG,
   parseCaptureMessage,
+  isPlatform,
   parseCensusRuntimeMessage,
   parseSettingsPatch,
   parseSyncEndMessage,
@@ -125,7 +130,10 @@ const uploader = new Uploader({
   random: Math.random,
   wakeAt,
   changed,
-  closed: (run): Promise<void> => sync.closed(run),
+  closed: async (run): Promise<void> => {
+    await sync.closed(run);
+    if (run.trigger !== 'passive') await pollTasks();
+  },
 });
 
 function flush(force = false): void {
@@ -150,6 +158,51 @@ const sync = new SyncService({
   block: (failure, action): Promise<void> => uploader.block(failure, action),
   changed,
   log,
+});
+
+// P2-15 source planner: a window per platform, the existing P2-13 controller.
+const planner = new PlannerService({
+  storage: chrome.storage.local,
+  browser: createPlannerBrowser(),
+  sync,
+  now,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  changed,
+  log,
+  async eligibility(platform) {
+    const [pairing, status, current] = await Promise.all([
+      store.pairing(),
+      store.status(),
+      config.current(),
+    ]);
+    if (!pairing) return 'not_paired';
+    if (status.outdated) return 'outdated';
+    const modes = current.platforms[platform];
+    return !modes.scroll && !(platform === 'instagram' && modes.replay) ? 'disabled' : null;
+  },
+  async sources() {
+    const response = await api.get('/api/v1/extension/sources', { auth: 'token' });
+    if (!response.ok) throw new Error('sources_unavailable');
+    return parseSources(response.data);
+  },
+});
+const plannerScheduler = new PlannerScheduler({
+  planner,
+  now,
+  languages: navigator.languages,
+  alarms: chrome.alarms,
+  async notify(id, options) {
+    await chrome.notifications.create(id, {
+      type: 'basic',
+      iconUrl: 'icon.png',
+      title: options.title,
+      message: options.message,
+      buttons: [{ title: options.button }],
+    });
+  },
+  async clearNotification(id) {
+    await chrome.notifications.clear(id);
+  },
 });
 
 // ── Runs, config and start-up ───────────────────────────────────────────────
@@ -323,6 +376,32 @@ const router = new Router(chrome.runtime.id, origin, log)
     const end = parseSyncEndMessage(message);
     return end ? sync.end(end, sender) : { ok: false };
   })
+  .internal(MSG.plannerGet, 'page', async () => planner.snapshot())
+  .internal(MSG.plannerStartAll, 'page', async () => ({
+    ok: true,
+    results: await planner.startAll(),
+  }))
+  .internal(MSG.plannerStop, 'page', async (message) =>
+    isPlatform(message.platform)
+      ? planner.stop(message.platform)
+      : { ok: false, code: 'bad_request' },
+  )
+  .internal(MSG.plannerSchedule, 'page', async (message) => {
+    const schedule = parseSchedule(message.schedule);
+    if (!schedule) return { ok: false, code: 'bad_request' };
+    await plannerScheduler.setSchedule(schedule);
+    return { ok: true };
+  })
+  .external(EXTERNAL.syncStart, async (request) =>
+    request.type === EXTERNAL.syncStart
+      ? planner.start(request.target)
+      : { ok: false, code: 'bad_request' },
+  )
+  .external(EXTERNAL.syncStop, async (request) =>
+    request.type === EXTERNAL.syncStop
+      ? planner.stop(request.platform)
+      : { ok: false, code: 'bad_request' },
+  )
   .external(EXTERNAL.ping, async () => {
     const [pairing, status] = await Promise.all([store.pairing(), store.status()]);
     const answer: PingAnswer = {
@@ -330,7 +409,7 @@ const router = new Router(chrome.runtime.id, origin, log)
       version: EXTENSION_VERSION,
       paired: pairing !== null,
       outdated: status.outdated,
-      syncing: await sync.syncing(),
+      syncing: await planner.syncing(),
     };
     return answer;
   })
@@ -358,6 +437,16 @@ chrome.runtime.onMessageExternal.addListener(router.onMessageExternal);
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === ALARM.maintenance) void maintenance().catch((err) => log('maintenance', err));
   else if (alarm.name === ALARM.flush) flush();
+  else if (alarm.name === PLANNER_ALARM.reminder || alarm.name === PLANNER_ALARM.taskPoll)
+    void plannerScheduler.alarm(alarm.name).catch((error: unknown) => log('planner alarm', error));
+});
+
+chrome.notifications.onClicked.addListener((id) => {
+  void plannerScheduler.clicked(id).catch((error: unknown) => log('reminder click', error));
+});
+chrome.notifications.onButtonClicked.addListener((id, index) => {
+  if (index === 0)
+    void plannerScheduler.clicked(id).catch((error: unknown) => log('reminder click', error));
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -394,6 +483,8 @@ self.addEventListener('online', () => {
 // Every start of the worker (install, browser start, any wake-up after suspension).
 enablePanelOnActionClick().catch((err: unknown) => log('side panel', err));
 void (async () => {
+  await planner.recover().catch((error: unknown) => log('planner recovery', error));
+  await plannerScheduler.ensure().catch((error: unknown) => log('planner schedule', error));
   await ensureMaintenanceAlarm().catch((err: unknown) => log('alarm', err));
   await endStaleRuns().catch((err: unknown) => log('runs', err));
   await sync.endStale(tabExists).catch((err: unknown) => log('syncs', err));

@@ -294,6 +294,19 @@ function service(h: Harness, tab: Partial<FakeTab> = {}) {
 }
 
 describe('SyncService.start', () => {
+  it('forces a full planner walk without an incremental stop or resume cursor', async () => {
+    const h = harness();
+    await h.pairNow();
+    h.api.nextRunAnswer = { incremental: true, stopAfterKnown: 3, resumeCursor: 'old-cursor' };
+    const s = service(h);
+    expect(
+      await s.sync.start({ tabId: TAB, collection: 'auto', trigger: 'scheduled', full: true }),
+    ).toMatchObject({ ok: true });
+    expect(s.toTab.find((m) => (m as { kind: string }).kind === MSG.syncRun)).toMatchObject({
+      incremental: false,
+      resumeCursor: null,
+    });
+  });
   it('refuses what it cannot sync', async () => {
     const h = harness();
     expect(await service(h).sync.start({ tabId: TAB, collection: 'auto' })).toEqual({

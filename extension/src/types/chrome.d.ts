@@ -58,9 +58,13 @@ declare namespace chrome {
       id?: number;
       windowId: number;
       active: boolean;
+      status?: string;
       // Present only with the "tabs" permission or a host permission for the tab's URL.
       url?: string;
     }
+
+    function update(tabId: number, properties: { url?: string; active?: boolean }): Promise<Tab>;
+    function reload(tabId: number): Promise<void>;
 
     function query(queryInfo: { active?: boolean; currentWindow?: boolean }): Promise<Tab[]>;
 
@@ -91,6 +95,43 @@ declare namespace chrome {
     };
   }
 
+  namespace windows {
+    interface Window {
+      id?: number;
+      type?: string;
+      state?: string;
+      tabs?: chrome.tabs.Tab[];
+    }
+    function create(options: {
+      url: string;
+      type: 'normal';
+      state: 'normal' | 'minimized';
+      focused: boolean;
+    }): Promise<Window>;
+    function get(id: number, options: { populate: boolean }): Promise<Window>;
+    function update(
+      id: number,
+      options: { state: 'normal' | 'minimized'; focused: boolean },
+    ): Promise<Window>;
+  }
+  namespace notifications {
+    function create(
+      id: string,
+      options: {
+        type: 'basic';
+        iconUrl: string;
+        title: string;
+        message: string;
+        buttons: { title: string }[];
+      },
+    ): Promise<string>;
+    function clear(id: string): Promise<boolean>;
+    const onClicked: { addListener(callback: (id: string) => void): void };
+    const onButtonClicked: {
+      addListener(callback: (id: string, buttonIndex: number) => void): void;
+    };
+  }
+
   namespace alarms {
     interface Alarm {
       name: string;
@@ -105,6 +146,7 @@ declare namespace chrome {
     ): Promise<void>;
 
     function get(name: string): Promise<Alarm | undefined>;
+    function clear(name: string): Promise<boolean>;
 
     const onAlarm: { addListener(callback: (alarm: Alarm) => void): void };
   }

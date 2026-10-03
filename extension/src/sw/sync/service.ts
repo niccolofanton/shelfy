@@ -95,6 +95,8 @@ export interface SyncDeps {
 }
 
 export interface StartRequest {
+  /** P2-15/P2-17: a deliberate full walk ignores server incremental/resume hints. */
+  full?: boolean;
   tabId: number;
   trigger?: Extract<Trigger, 'manual' | 'web' | 'scheduled'>;
   /** The panel's chooser, or a mapping P2-15 already knows (`existing`). */
@@ -193,7 +195,7 @@ export class SyncService {
     run =
       (await queue.updateRun(run.id, (r) => {
         r.serverId = created?.id ?? null;
-        r.incremental = created?.incremental ?? false;
+        r.incremental = request.full ? false : (created?.incremental ?? false);
         r.stopAfterKnown = stopAfterKnown;
         r.collectionId = created?.collectionId ?? null;
         r.phase = 'starting';
@@ -206,7 +208,7 @@ export class SyncService {
       listingKey: listing.key,
       incremental: run.incremental,
       stopAfterKnown,
-      resumeCursor: created?.resumeCursor ?? null,
+      resumeCursor: request.full ? null : (created?.resumeCursor ?? null),
       replay,
       scroll: settings.scroll,
       scrollSettleMs: settings.scrollSettleMs,
