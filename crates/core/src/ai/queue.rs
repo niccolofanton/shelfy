@@ -38,7 +38,8 @@ use crate::selector::Selector;
 /// web catalog (plan §1.2 #7) through P3-27's path. Files need an image preview.
 ///
 /// On the `posts` alias `p`.
-const SOCIAL: &str = "p.platform <> 'web' AND p.media_type <> 'website'";
+const CATALOGS: &str = "((p.platform <> 'web' AND p.media_type <> 'website') OR EXISTS
+    (SELECT 1 FROM web_captures c WHERE c.id=p.current_capture_id AND c.post_id=p.id))";
 
 /// Media types that need a stored frame to catalog (image and video posts);
 /// a `text` post is cataloged from its caption alone.
@@ -201,7 +202,7 @@ pub fn scope_counts(
     let scope = selector.sql(conn)?;
     let count = |extra: &str| -> Result<u64> {
         let sql = format!(
-            "SELECT count(*) FROM posts p WHERE {SOCIAL} AND p.deleted_at IS NULL \
+            "SELECT count(*) FROM posts p WHERE {CATALOGS} AND p.deleted_at IS NULL \
              AND ({}) AND {extra}",
             scope.condition
         );
@@ -233,7 +234,7 @@ pub fn state_counts(conn: &Connection) -> Result<StateCounts> {
     let mut counts = StateCounts::default();
     let mut stmt = conn.prepare_cached(&format!(
         "SELECT p.ai_status, count(*) FROM posts p \
-         WHERE {SOCIAL} AND p.deleted_at IS NULL GROUP BY p.ai_status"
+         WHERE {CATALOGS} AND p.deleted_at IS NULL GROUP BY p.ai_status"
     ))?;
     let rows = stmt.query_map([], |r| {
         Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?))
@@ -263,7 +264,7 @@ pub fn next_pending_at(conn: &Connection) -> Result<Option<i64>> {
     let at: Option<Option<i64>> = conn
         .prepare_cached(&format!(
             "SELECT min(coalesce(p.ai_next_at, 0)) FROM posts p \
-             WHERE p.ai_status = 'pending' AND p.deleted_at IS NULL AND {SOCIAL}"
+             WHERE p.ai_status = 'pending' AND p.deleted_at IS NULL AND {CATALOGS}"
         ))?
         .query_row([], |r| r.get(0))
         .optional()?;
@@ -280,7 +281,7 @@ pub fn oldest_due_pending(conn: &Connection, now: i64) -> Result<Option<(i64, u6
     let row = conn
         .prepare_cached(&format!(
             "SELECT min(coalesce(p.ai_next_at, 0)), count(*) FROM posts p \
-             WHERE p.ai_status = 'pending' AND p.deleted_at IS NULL AND {SOCIAL} \
+             WHERE p.ai_status = 'pending' AND p.deleted_at IS NULL AND {CATALOGS} \
              AND coalesce(p.ai_next_at, 0) <= ?1"
         ))?
         .query_row(params![now], |r| {
@@ -326,7 +327,7 @@ pub fn list(
     let limit = limit.clamp(1, 200);
     let mut sql = format!(
         "SELECT p.id, p.key, p.ai_status, p.ai_attempts, p.ai_next_at, p.ai_error FROM posts p \
-         WHERE p.ai_status IS NOT NULL AND p.deleted_at IS NULL AND {SOCIAL}"
+         WHERE p.ai_status IS NOT NULL AND p.deleted_at IS NULL AND {CATALOGS}"
     );
     let mut params: Vec<Value> = Vec::new();
     if let Some(status) = status {
@@ -365,7 +366,7 @@ pub fn list(
 pub fn errors_by_code(conn: &Connection) -> Result<Vec<(String, u64)>> {
     let mut stmt = conn.prepare_cached(&format!(
         "SELECT coalesce(p.ai_error, 'unknown'), count(*) FROM posts p \
-         WHERE p.ai_status = 'error' AND p.deleted_at IS NULL AND {SOCIAL} \
+         WHERE p.ai_status = 'error' AND p.deleted_at IS NULL AND {CATALOGS} \
          GROUP BY p.ai_error ORDER BY count(*) DESC, p.ai_error"
     ))?;
     let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
@@ -389,7 +390,7 @@ pub fn mark_pending(conn: &Connection, selector: &Selector, mode: Mode, now: i64
     let scope = selector.sql(conn)?;
     let sql = format!(
         "UPDATE posts AS p SET ai_status = 'pending', ai_next_at = ?1, ai_attempts = 0, ai_error = NULL \
-         WHERE id IN (SELECT p.id FROM posts p WHERE {SOCIAL} AND p.deleted_at IS NULL \
+         WHERE id IN (SELECT p.id FROM posts p WHERE {CATALOGS} AND p.deleted_at IS NULL \
              AND ({}) AND {} AND {HAS_INPUTS})",
         scope.condition,
         mode.enqueue_condition()
@@ -436,7 +437,7 @@ pub fn claim_due(conn: &Connection, now: i64) -> Result<Option<Claim>> {
     let candidate = conn
         .prepare_cached(&format!(
             "SELECT p.id, p.key, p.ai_attempts, p.platform, p.media_type FROM posts p \
-             WHERE p.ai_status = 'pending' AND p.deleted_at IS NULL AND {SOCIAL} \
+             WHERE p.ai_status = 'pending' AND p.deleted_at IS NULL AND {CATALOGS} \
              AND coalesce(p.ai_next_at, 0) <= ?1 \
              ORDER BY coalesce(p.ai_next_at, 0) ASC, p.id ASC LIMIT 1"
         ))?
@@ -465,7 +466,7 @@ pub fn claim_due(conn: &Connection, now: i64) -> Result<Option<Claim>> {
     }
     let key_hash = post_id.to_be_bytes();
     conn.execute("INSERT OR IGNORE INTO ai_cache(kind,key_hash,value_json,created_at) VALUES ('catalog.queue',?1,'{\"deep\":false}',?2)", params![key_hash.as_slice(), now])?;
-    conn.execute("UPDATE ai_cache SET value_json = json_set(value_json, '$.claim', lower(hex(randomblob(16)))) WHERE kind='catalog.queue' AND key_hash=?1", params![key_hash.as_slice()])?;
+    conn.execute("UPDATE ai_cache SET value_json = json_set(value_json, '$.claim', lower(hex(randomblob(16))), '$.captureId', (SELECT current_capture_id FROM posts WHERE id=?2)) WHERE kind='catalog.queue' AND key_hash=?1", params![key_hash.as_slice(),post_id])?;
     let (token, deep) = conn.query_row("SELECT json_extract(value_json,'$.claim'), coalesce(json_extract(value_json,'$.deep'),0) FROM ai_cache WHERE kind='catalog.queue' AND key_hash=?1", params![key_hash.as_slice()], |r| Ok((r.get(0)?,r.get(1)?)))?;
     Ok(Some(Claim {
         post_id,
@@ -483,11 +484,46 @@ fn is_current(conn: &Connection, post_id: i64, attempt: i64, token: &str) -> Res
     let held = conn
         .prepare_cached(
             "SELECT 1 FROM posts WHERE id = ?1 AND ai_status = 'analyzing' \
-             AND ai_attempts = ?2 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM ai_cache WHERE kind='catalog.queue' AND key_hash=?3 AND json_extract(value_json,'$.claim')=?4)",
+             AND ai_attempts = ?2 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM ai_cache WHERE kind='catalog.queue' AND key_hash=?3 AND json_extract(value_json,'$.claim')=?4 AND (json_extract(value_json,'$.captureId') IS NULL OR json_extract(value_json,'$.captureId')=posts.current_capture_id))",
         )?
         .query_row(params![post_id, attempt, post_id.to_be_bytes().as_slice(), token], |_| Ok(()))
         .optional()?;
     Ok(held.is_some())
+}
+
+/// Retires only the old capture's still-owned claim. A new claim/nonce, a
+/// manual edit and a promoted version's completed AI layer remain untouched.
+fn retire_stale_capture(conn: &Connection, post_id: i64, attempt: i64, token: &str) -> Result<()> {
+    conn.execute("UPDATE posts SET ai_status=CASE WHEN ai_analyzed_at IS NOT NULL THEN 'done' ELSE NULL END,
+        ai_next_at=NULL,ai_attempts=0,ai_error=NULL WHERE id=?1 AND ai_status='analyzing' AND ai_attempts=?2
+        AND EXISTS(SELECT 1 FROM ai_cache WHERE kind='catalog.queue' AND key_hash=?3 AND json_extract(value_json,'$.claim')=?4
+            AND json_extract(value_json,'$.captureId') IS NOT NULL
+            AND json_extract(value_json,'$.captureId') IS NOT posts.current_capture_id)",
+        params![post_id,attempt,post_id.to_be_bytes().as_slice(),token])?;
+    Ok(())
+}
+
+/// Capture-specific enqueue; repeated recovery of the same capture is inert.
+/// A recapture replaces an older pending claim, so its response cannot land.
+pub fn set_web_pending(conn: &Connection, key: &str, capture_id: i64, now: i64) -> Result<u64> {
+    let id = conn
+        .query_row(
+            "SELECT id FROM posts WHERE key=?1 AND deleted_at IS NULL
+        AND current_capture_id=?2 AND (platform='web' OR media_type='website')",
+            params![key, capture_id],
+            |r| r.get::<_, i64>(0),
+        )
+        .optional()?;
+    let Some(id) = id else { return Ok(0) };
+    let hash = id.to_be_bytes();
+    let attempted:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM ai_cache WHERE kind IN ('catalog.queue','catalog.web.done') AND key_hash=?1 AND json_extract(value_json,'$.captureId')=?2)",params![hash.as_slice(),capture_id],|r|r.get(0))?;
+    if attempted {
+        return Ok(0);
+    }
+    conn.execute("INSERT INTO ai_cache(kind,key_hash,value_json,created_at) VALUES('catalog.queue',?1,json_object('deep',0,'captureId',?2),?3)
+        ON CONFLICT(kind,key_hash) DO UPDATE SET value_json=excluded.value_json,created_at=excluded.created_at",params![hash.as_slice(),capture_id,now])?;
+    conn.execute("UPDATE posts SET ai_status='pending',ai_next_at=?2,ai_attempts=0,ai_error=NULL WHERE id=?1",params![id,now])?;
+    Ok(1)
 }
 
 /// Applies a finished analysis through [`posts::update_ai`], but only while
@@ -507,9 +543,15 @@ pub fn apply(
     now: i64,
 ) -> Result<Guarded> {
     if !is_current(conn, post_id, attempt, token)? {
+        retire_stale_capture(conn, post_id, attempt, token)?;
         return Ok(Guarded::Dropped);
     }
     posts::update_ai(conn, post_id, patch, now)?;
+    conn.execute("INSERT INTO ai_cache(kind,key_hash,value_json,created_at)
+        SELECT 'catalog.web.done',?1,json_object('captureId',current_capture_id),?2 FROM posts
+        WHERE id=?3 AND current_capture_id IS NOT NULL
+        ON CONFLICT(kind,key_hash) DO UPDATE SET value_json=excluded.value_json,created_at=excluded.created_at",
+        params![post_id.to_be_bytes().as_slice(),now,post_id])?;
     conn.execute(
         "DELETE FROM ai_cache WHERE kind='catalog.queue' AND key_hash=?1",
         [post_id.to_be_bytes().as_slice()],
@@ -532,6 +574,7 @@ pub fn backoff(
     error: &str,
 ) -> Result<Guarded> {
     if !is_current(conn, post_id, attempt, token)? {
+        retire_stale_capture(conn, post_id, attempt, token)?;
         return Ok(Guarded::Dropped);
     }
     let changed = conn
@@ -558,6 +601,7 @@ pub fn fail(
     now: i64,
 ) -> Result<Guarded> {
     if !is_current(conn, post_id, attempt, token)? {
+        retire_stale_capture(conn, post_id, attempt, token)?;
         return Ok(Guarded::Dropped);
     }
     let changed = conn
@@ -585,6 +629,7 @@ pub fn release(
     next_at: i64,
 ) -> Result<Guarded> {
     if !is_current(conn, post_id, attempt, token)? {
+        retire_stale_capture(conn, post_id, attempt, token)?;
         return Ok(Guarded::Dropped);
     }
     let changed = conn
@@ -609,13 +654,13 @@ pub fn recover_interrupted(conn: &Connection, max_attempts: u32, now: i64) -> Re
     let failed = conn
         .prepare_cached(&format!(
             "UPDATE posts AS p SET ai_status = 'error', ai_error = 'interrupted', updated_at = ?2 \
-             WHERE ai_status = 'analyzing' AND deleted_at IS NULL AND {SOCIAL} AND ai_attempts >= ?1"
+             WHERE ai_status = 'analyzing' AND deleted_at IS NULL AND {CATALOGS} AND ai_attempts >= ?1"
         ))?
         .execute(params![max, now])?;
     let requeued = conn
         .prepare_cached(&format!(
             "UPDATE posts AS p SET ai_status = 'pending', ai_next_at = ?1 \
-             WHERE ai_status = 'analyzing' AND deleted_at IS NULL AND {SOCIAL}"
+             WHERE ai_status = 'analyzing' AND deleted_at IS NULL AND {CATALOGS}"
         ))?
         .execute(params![now])?;
     Ok(Recovered {
@@ -640,7 +685,7 @@ pub fn cancel(conn: &Connection, reach: &Reach, now: i64) -> Result<u64> {
         Reach::All => conn
             .prepare_cached(&format!(
                 "UPDATE posts AS p SET {set} WHERE ai_status IN ('pending','analyzing') \
-                 AND deleted_at IS NULL AND {SOCIAL}"
+                 AND deleted_at IS NULL AND {CATALOGS}"
             ))?
             .execute([])?,
         Reach::Keys(keys) => {
@@ -670,7 +715,7 @@ pub fn retry(conn: &Connection, reach: &Reach, now: i64) -> Result<u64> {
     let n = match reach {
         Reach::All => conn
             .prepare_cached(&format!(
-                "UPDATE posts AS p SET {set} WHERE ai_status = 'error' AND deleted_at IS NULL AND {SOCIAL}"
+                "UPDATE posts AS p SET {set} WHERE ai_status = 'error' AND deleted_at IS NULL AND {CATALOGS}"
             ))?
             .execute(params![now])?,
         Reach::Keys(keys) => {
@@ -691,7 +736,7 @@ pub fn retry(conn: &Connection, reach: &Reach, now: i64) -> Result<u64> {
 /// Exact eligible IDs at estimate time; confirmation cannot grow its selection.
 pub fn eligible_ids(conn: &Connection, selector: &Selector, mode: Mode) -> Result<Vec<i64>> {
     let scope = selector.sql(conn)?;
-    let mut stmt = conn.prepare(&format!("SELECT p.id FROM posts p WHERE {SOCIAL} AND p.deleted_at IS NULL AND ({}) AND {} AND {HAS_INPUTS} ORDER BY p.id", scope.condition, mode.enqueue_condition()))?;
+    let mut stmt = conn.prepare(&format!("SELECT p.id FROM posts p WHERE {CATALOGS} AND p.deleted_at IS NULL AND ({}) AND {} AND {HAS_INPUTS} ORDER BY p.id", scope.condition, mode.enqueue_condition()))?;
     Ok(stmt
         .query_map(params_from_iter(scope.params.iter()), |r| r.get(0))?
         .collect::<rusqlite::Result<_>>()?)

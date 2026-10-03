@@ -307,3 +307,16 @@ async fn the_shared_pool_renders_without_blocking_the_runtime() {
         other => panic!("expected Unsupported, got {other:?}"),
     }
 }
+
+#[test]
+fn qc_crops_the_top_square_before_fitting() {
+    let source = image::RgbImage::from_fn(1000, 2000, |_, y| {
+        image::Rgb(if y < 1000 { RED } else { BLUE })
+    });
+    let out =
+        render::jpeg_top_square_bytes(&png(&DynamicImage::ImageRgb8(source)), 768, 90).unwrap();
+    let decoded = image::load_from_memory(&out).unwrap();
+    assert_eq!(decoded.dimensions(), (768, 768));
+    assert_near(&rgb_at(&decoded, 384, 700), &RED, 8, "top square");
+    assert!(render::jpeg_top_square_bytes(b"corrupt", 768, 90).is_err());
+}

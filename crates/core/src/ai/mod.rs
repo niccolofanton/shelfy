@@ -31,3 +31,5 @@ pub mod template;
 pub mod chat;
 
 pub mod chat_prompt;
+pub mod sanitize;
+pub mod web_inputs;

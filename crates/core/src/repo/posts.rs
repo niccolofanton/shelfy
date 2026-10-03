@@ -672,6 +672,8 @@ pub struct AiPatch {
     pub language: Option<Option<String>>,
     /// Why the post was saved.
     pub save_reason: Option<Option<String>>,
+    /// Structured website catalog; only a website analysis writes this field.
+    pub web: Option<Option<serde_json::Value>>,
     /// When the analysis finished, as given.
     pub analyzed_at: Option<Option<i64>>,
 }
@@ -1186,6 +1188,13 @@ pub fn update_ai(conn: &Connection, post_id: i64, patch: &AiPatch, now: i64) -> 
         if let Some(value) = value {
             columns.push((column, list(value)));
         }
+    }
+    if let Some(web) = &patch.web {
+        columns.push((
+            "ai_web_json",
+            web.as_ref()
+                .map_or(Value::Null, |v| Value::Text(v.to_string())),
+        ));
     }
     let int = |v: Option<i64>| v.map_or(Value::Null, Value::Integer);
     if let Some(version) = patch.schema_version {

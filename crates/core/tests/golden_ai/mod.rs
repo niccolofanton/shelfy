@@ -121,6 +121,7 @@ fn earlier(fields: AiFields) -> AiPatch {
         keywords: fields.keywords,
         language: fields.language,
         save_reason: fields.save_reason,
+        web: None,
         analyzed_at: fields.analyzed_at,
     }
 }

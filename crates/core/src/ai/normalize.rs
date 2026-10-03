@@ -231,6 +231,7 @@ impl Catalog {
             language: Some(Some(self.language)),
             save_reason: Some(Some(self.save_reason)),
             analyzed_at: None,
+            web: None,
         }
     }
 }

@@ -259,3 +259,5 @@ mod tests {
 }
 
 pub mod chat;
+pub mod qc;
+pub mod web_catalog;

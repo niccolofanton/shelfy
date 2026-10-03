@@ -255,6 +255,24 @@ pub fn jpeg<R: BufRead + Seek>(
     encode_jpeg(&small, quality)
 }
 
+/// JPEG of the top square, for screenshot loading-state QC. Crop before
+/// scaling, preserving the top's detail even on a long page screenshot.
+/// Uses the same source/decode limits and EXIF handling as the image pipeline.
+pub fn jpeg_top_square_bytes(
+    bytes: &[u8],
+    max_side: u32,
+    quality: u8,
+) -> Result<Vec<u8>, RenderError> {
+    let Decoded { image, .. } = decode_and_fit(Cursor::new(bytes), MAX_SIDE)?;
+    let side = image.width().min(image.height());
+    let top = image.crop_imm(0, 0, side, side).to_rgb8();
+    let size = fit(side, side, max_side);
+    let pixels = resize(top.into_raw(), PixelType::U8x3, (side, side), size)?;
+    let small = RgbImage::from_raw(size.0, size.1, pixels)
+        .ok_or_else(|| RenderError::Output("resized QC buffer of the wrong size".into()))?;
+    encode_jpeg(&DynamicImage::from(small), quality)
+}
+
 /// A decoded image, resized and oriented, with its displayed source size.
 struct Decoded {
     image: DynamicImage,

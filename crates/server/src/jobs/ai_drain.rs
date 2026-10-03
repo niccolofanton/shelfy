@@ -347,6 +347,15 @@ async fn catalog_item(
     claim: &queue::Claim,
     vocabulary: &tokio::sync::Mutex<(Option<shelfy_core::generation::Generation>, Vec<String>)>,
 ) -> Result<shelfy_core::repo::posts::AiPatch, ItemError> {
+    if claim.kind == catalog::CatalogKind::Web {
+        return crate::ai::web_catalog::catalog(ctx, claim.post_id, caller)
+            .await
+            .map_err(|error| match error {
+                crate::ai::web_catalog::CatalogError::Provider(error) => ItemError::Provider(error),
+                crate::ai::web_catalog::CatalogError::Media => ItemError::Media,
+                crate::ai::web_catalog::CatalogError::Schema => ItemError::Schema,
+            });
+    }
     let route = ctx
         .state()
         .ai()

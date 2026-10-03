@@ -13,6 +13,7 @@ mod golden_tag_search;
 mod golden_tags;
 mod golden_taxonomy;
 mod golden_taxonomy_prompt;
+mod golden_web_sanitize;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -42,6 +43,7 @@ const CHECKED: &[&str] = &[
     "ai/chat/",
     "ai/taxonomy-prompts/",
     "ai/tags/",
+    "ai/web-sanitize",
     "edits",
     "extract-content-terms",
     "hosts",
@@ -448,6 +450,7 @@ fn edits_match_the_desktop() {
                         keywords: f.keywords,
                         language: f.language,
                         save_reason: f.save_reason,
+                        web: None,
                         analyzed_at: f.analyzed_at,
                     };
                     posts::update_ai(&conn, id, &patch, NOW_MS).unwrap();

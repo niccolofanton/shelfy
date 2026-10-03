@@ -346,6 +346,57 @@ pub async fn enqueue(state: &AppState, user_id: &str, post_ids: Vec<i64>) -> Res
     Ok(written.value)
 }
 
+/// Auto-analysis after a committed capture (and capture recovery). The current
+/// version, feature preference, vision route and capture dedupe are checked here.
+pub async fn enqueue_web(
+    state: &AppState,
+    user_id: &str,
+    key: &str,
+    capture_id: i64,
+) -> Result<u64, ApiError> {
+    let enabled = read(state, user_id, |conn| {
+        Ok(shelfy_core::repo::settings::read(conn)?)
+    })
+    .await?
+    .ai
+    .auto_analyze_websites;
+    if !enabled {
+        return Ok(0);
+    }
+    let owner = crate::jobs::ai_drain::is_owner(state, user_id).await?;
+    if state
+        .ai()
+        .route(
+            state,
+            super::Caller::new(user_id, owner),
+            super::Task::Catalog,
+        )
+        .await
+        .is_err()
+    {
+        return Ok(0);
+    }
+    let key = key.to_owned();
+    let now = state.jobs().clock().now_ms();
+    let written = library::write(state, user_id, ChangeReason::Ai, move |tx| {
+        let n = core_queue::set_web_pending(tx, &key, capture_id, now)?;
+        Ok(Change {
+            value: n,
+            keys: Some(vec![key]),
+        })
+    })
+    .await?;
+    // Wake an already-pending row too: recover the library/control commit gap.
+    let pending = read(state, user_id, |conn| {
+        Ok(core_queue::next_pending_at(conn)?)
+    })
+    .await?;
+    if pending.is_some() {
+        crate::jobs::ai_drain::enqueue(state.jobs(), user_id).await?;
+    }
+    Ok(written.value)
+}
+
 // ── Cancel and retry ──────────────────────────────────────────────────────────
 
 /// Cancels queued work (plan §2.9, G3-6): resets `pending`/`analyzing` posts,
