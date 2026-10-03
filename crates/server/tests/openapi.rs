@@ -99,7 +99,7 @@ fn the_document_is_internally_consistent() {
     let mut ids = BTreeSet::new();
     for (path, item) in doc["paths"].as_object().unwrap() {
         assert!(
-            path == "/health" || path.starts_with("/api/v1/"),
+            matches!(path.as_str(), "/health" | "/health/capture") || path.starts_with("/api/v1/"),
             "{path} is outside /api/v1"
         );
         for (method, operation) in item.as_object().unwrap() {

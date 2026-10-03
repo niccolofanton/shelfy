@@ -169,6 +169,12 @@ impl EventBus {
             .publish_live(EventTopic::AiStream, &event, Instant::now());
     }
 
+    /// Capture details reach only opted-in live subscriptions.
+    pub fn capture_event(&self, user_id: &str, event: &model::CaptureEvent) {
+        self.user(user_id)
+            .publish_live(EventTopic::CaptureEvent, event, Instant::now());
+    }
+
     /// A sync run of `user_id` advanced. Throttled to one event a second per
     /// run (contract C8); the latest progress wins.
     pub fn sync_progress(&self, user_id: &str, event: SyncProgressEvent) {

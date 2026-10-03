@@ -50,6 +50,7 @@ pub mod admin;
 pub mod ai;
 pub mod app;
 pub mod auth;
+pub mod capture;
 pub mod cli;
 pub mod conditional;
 pub mod config;

@@ -114,6 +114,7 @@ pub mod reauth;
 pub mod search;
 pub mod search_chat;
 pub mod selector;
+pub mod sites;
 pub mod stats;
 pub mod sync_runs;
 pub mod tag_aliases;
@@ -233,6 +234,7 @@ pub struct ApiDoc;
 /// that this list and the document agree.
 pub const PUBLIC_ROUTES: &[(Method, &str)] = &[
     (Method::GET, "/health"),
+    (Method::GET, "/health/capture"),
     (Method::GET, "/api/v1/openapi.json"),
     (Method::GET, "/api/v1/auth/methods"),
     (Method::POST, "/api/v1/auth/magic-links"),
@@ -457,6 +459,16 @@ pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
 pub const IDEMPOTENT_ROUTES: &[IdempotentRoute] = &[
     IdempotentRoute {
         method: Method::POST,
+        path: "/api/v1/sites",
+        body_bytes: RouteLimits::STANDARD.body_bytes,
+    },
+    IdempotentRoute {
+        method: Method::POST,
+        path: "/api/v1/sites/{key}/recapture",
+        body_bytes: RouteLimits::STANDARD.body_bytes,
+    },
+    IdempotentRoute {
+        method: Method::POST,
         path: "/api/v1/tag-clusters/regenerate",
         body_bytes: RouteLimits::STANDARD.body_bytes,
     },
@@ -538,6 +550,9 @@ pub fn access() -> AccessPolicy {
 pub fn router() -> OpenApiRouter<AppState> {
     let standard = OpenApiRouter::default()
         .routes(routes!(health::health))
+        .routes(routes!(health::capture_health))
+        .routes(routes!(sites::capture::create_site))
+        .routes(routes!(sites::capture::recapture))
         .routes(routes!(ai::analyze))
         .routes(routes!(search_chat::cancel_search_chat))
         .routes(routes!(ai::get_queue))

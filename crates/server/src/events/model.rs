@@ -46,6 +46,9 @@ pub enum EventTopic {
     /// [`TopicSet::ALL`]; a stream carries it only by asking for it.
     #[serde(rename = "ai.stream")]
     AiStream,
+    /// Capture progress details, live-only and explicitly requested.
+    #[serde(rename = "capture.event")]
+    CaptureEvent,
 }
 
 impl EventTopic {
@@ -73,6 +76,7 @@ impl EventTopic {
             Self::ProviderStatus => "provider.status",
             Self::SyncProgress => "sync.progress",
             Self::AiStream => "ai.stream",
+            Self::CaptureEvent => "capture.event",
         }
     }
 
@@ -360,6 +364,17 @@ pub struct AiStreamEvent {
     pub text: String,
 }
 
+/// One validated capture service event for the user's active job.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureEvent {
+    pub job_id: i64,
+    pub post_key: String,
+    pub kind: String,
+    pub code: String,
+    pub params: BTreeMap<String, serde_json::Value>,
+}
+
 /// The listing a sync run walks, in a `sync.progress` event (contract C4).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -437,6 +452,8 @@ pub enum ServerEvent {
     /// The model's partial catalog text for a post (live only).
     #[serde(rename = "ai.stream")]
     AiStream(AiStreamEvent),
+    #[serde(rename = "capture.event")]
+    Capture(CaptureEvent),
 }
 
 #[cfg(test)]

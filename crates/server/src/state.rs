@@ -39,6 +39,7 @@ impl std::fmt::Debug for AppState {
 }
 
 struct Inner {
+    capture: crate::capture::CaptureService,
     config: Config,
     control: Arc<ControlDb>,
     user_dbs: Arc<UserDbCache>,
@@ -157,6 +158,7 @@ impl AppState {
         );
         Ok(Self {
             inner: Arc::new(Inner {
+                capture: crate::capture::CaptureService::default(),
                 config,
                 control,
                 user_dbs: Arc::new(user_dbs),
@@ -181,6 +183,11 @@ impl AppState {
     #[must_use]
     pub fn config(&self) -> &Config {
         &self.inner.config
+    }
+
+    /// Capture enqueue/cancellation coordination.
+    pub fn capture(&self) -> &crate::capture::CaptureService {
+        &self.inner.capture
     }
 
     /// The control database. Its API is blocking: use [`blocking`].

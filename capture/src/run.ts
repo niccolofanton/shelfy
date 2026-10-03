@@ -9,7 +9,7 @@ import { captureSite, BlockedError, PageError } from '../../electron/webcap/capt
 import type { SiteCapture, CapturedPage, CaptureEvent } from '../../electron/webcap/capture';
 import { assembleSite, pickIcon } from '../../electron/webcap/assemble';
 import type { SiteAssembly } from '../../electron/webcap/assemble';
-import { fetchImageToWebp } from '../../electron/webcap/sitefetch';
+import { fetchImage, blockedFallback } from './fetched';
 import { cancelBrowserIdle, armBrowserIdleClose } from '../../electron/webcap/browser';
 import { ENV, type CaptureEnv } from './env';
 import {
@@ -54,7 +54,7 @@ function relocate(
   const dest = path.join(workDir, file);
   try {
     if (!fs.existsSync(srcPath)) return null;
-    fs.renameSync(srcPath, dest);
+    if (path.resolve(srcPath) !== path.resolve(dest)) fs.renameSync(srcPath, dest);
   } catch {
     try {
       fs.copyFileSync(srcPath, dest);
@@ -190,6 +190,8 @@ export async function runCapture(req: CaptureRequest, ctx: RunContext): Promise<
     armBrowserIdleClose();
     if (ctx.signal.aborted) return; // client closed the stream → stay silent
     if ((err as Error)?.name === 'AbortError') return;
+    if (err instanceof BlockedError) await blockedFallback(req, workDir, ctx.signal, T0, peakRss);
+    if (ctx.signal.aborted) return;
     emit({ type: 'failed', code: failureFor(err, ctx.signal.aborted) });
     return;
   }
@@ -200,22 +202,12 @@ export async function runCapture(req: CaptureRequest, ctx: RunContext): Promise<
     const head = (primary.probe.head || {}) as ProbeHead;
 
     // og:image + favicon through the proxy; path-free in the manifest (role file).
-    const stamp = Math.floor(Date.now() / 1000);
     const ogPath = head.ogImage
-      ? await fetchImageToWebp(head.ogImage, {
-          pageUrl: finalUrl,
-          stamp,
-          signal: ctx.signal,
-        }).catch(() => null)
+      ? await fetchImage(head.ogImage, finalUrl, workDir, 'og', ctx.signal)
       : null;
     const iconUrl = pickIcon(head.icons || [], finalUrl);
     const favPath = iconUrl
-      ? await fetchImageToWebp(iconUrl, {
-          pageUrl: finalUrl,
-          stamp,
-          quality: 92,
-          signal: ctx.signal,
-        }).catch(() => null)
+      ? await fetchImage(iconUrl, finalUrl, workDir, 'favicon', ctx.signal)
       : null;
 
     const assembly: SiteAssembly = await assembleSite(site, {

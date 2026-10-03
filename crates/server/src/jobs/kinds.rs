@@ -38,7 +38,13 @@ use super::{Registry, ai_drain, ai_run, archive, bulk, gc, hydrate, migrate, pur
 /// Every kind this server runs.
 #[must_use]
 pub fn registry() -> Registry {
+    registry_with_capture_parallel(1)
+}
+
+/// Registry with capture's operator-selected global concurrency (1–2).
+pub fn registry_with_capture_parallel(parallel: u8) -> Registry {
     Registry::new()
+        .register(super::capture::kind(parallel))
         .register(ai_drain::kind())
         .register(ai_run::kind())
         .register(usage::kind())

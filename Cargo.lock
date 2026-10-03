@@ -2845,6 +2845,7 @@ dependencies = [
  "image",
  "jsonschema",
  "lettre",
+ "libc",
  "metrics",
  "metrics-exporter-prometheus",
  "moka",

@@ -2,7 +2,11 @@
   "version": 1,
   "note": "Stable snake_case codes for capture events, stages and failures (P4 lane rule 10). The capture service streams codes + scalar params only (never UI prose); the desktop and the SPA render the it/en strings, interpolating {param} placeholders. Shared by electron/webcap/codes.ts (desktop) and the web app (P4-09/P4-14).",
   "events": {
-    "site.opening": { "kind": "read", "it": "Apertura di {url}", "en": "Opening {url}" },
+    "site.opening": {
+      "kind": "read",
+      "it": "Apertura di {url}",
+      "en": "Opening {url}"
+    },
     "antibot.waiting": {
       "kind": "info",
       "it": "Verifica anti-bot ({vendor}) su {path}: attendo che si risolva…",
@@ -70,14 +74,30 @@
     }
   },
   "stages": {
-    "discovering": { "it": "Apertura del sito…", "en": "Opening the site…" },
-    "primary": { "it": "Cattura della pagina principale…", "en": "Capturing the main page…" },
-    "pages": { "it": "Cattura delle pagine interne…", "en": "Capturing inner pages…" },
+    "discovering": {
+      "it": "Apertura del sito…",
+      "en": "Opening the site…"
+    },
+    "primary": {
+      "it": "Cattura della pagina principale…",
+      "en": "Capturing the main page…"
+    },
+    "pages": {
+      "it": "Cattura delle pagine interne…",
+      "en": "Capturing inner pages…"
+    },
     "extracting": {
       "it": "Analisi di colori, font e tecnologie…",
       "en": "Analysing colours, fonts and tech…"
     },
-    "analyzing": { "it": "Analisi AI in coda…", "en": "AI analysis queued…" }
+    "analyzing": {
+      "it": "Analisi AI in coda…",
+      "en": "AI analysis queued…"
+    },
+    "waiting_capture": {
+      "it": "Servizio di cattura occupato: attendo…",
+      "en": "Capture service busy: waiting…"
+    }
   },
   "failures": {
     "capture_blocked": {
@@ -103,9 +123,48 @@
     "partial": {
       "it": "Cattura parziale (budget del sito esaurito)",
       "en": "Partial capture (site budget exhausted)"
+    },
+    "capture_unavailable": {
+      "it": "Servizio di cattura non disponibile",
+      "en": "Capture service unavailable"
+    },
+    "capture_daily_limit": {
+      "it": "Limite giornaliero di catture raggiunto",
+      "en": "Daily capture limit reached"
+    },
+    "capture_invalid_output": {
+      "it": "Artefatti della cattura non validi",
+      "en": "Invalid capture artifacts"
+    },
+    "capture_empty": {
+      "it": "Nessuna immagine prodotta",
+      "en": "No image produced"
+    },
+    "capture_timeout": {
+      "it": "Tempo di cattura scaduto",
+      "en": "Capture timed out"
+    },
+    "capture_navigation": {
+      "it": "Pagina non raggiungibile",
+      "en": "Page unreachable"
+    },
+    "capture_internal": {
+      "it": "Errore interno della cattura",
+      "en": "Internal capture error"
+    },
+    "capture_stream_broken": {
+      "it": "Connessione alla cattura interrotta",
+      "en": "Capture stream interrupted"
+    },
+    "capture_storage": {
+      "it": "Archivio della cattura non disponibile",
+      "en": "Capture storage unavailable"
     }
   },
   "skipReasons": {
-    "budget_exceeded": { "it": "budget del sito esaurito", "en": "site budget exhausted" }
+    "budget_exceeded": {
+      "it": "budget del sito esaurito",
+      "en": "site budget exhausted"
+    }
   }
 }

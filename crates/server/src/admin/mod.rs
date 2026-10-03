@@ -34,6 +34,7 @@ pub mod ai_probe;
 pub mod ai_status;
 pub mod backfill_covers;
 pub mod bench;
+pub mod capture_eval;
 pub mod create_user;
 pub mod flags;
 pub mod gc;
@@ -114,6 +115,8 @@ pub enum AdminCommand {
     /// Probe an AI endpoint: the operator node (health, models with the key),
     /// or a preset/URL with a keyless call as proof of egress (P3-09).
     AiProbe(ai_probe::ProbeArgs),
+    /// Evaluate a website corpus through the capture service, aggregate-only.
+    CaptureEval(capture_eval::EvalArgs),
     /// Aggregate state, due age and orphaned analyses.
     AiStatus(ai_status::AiStatusArgs),
     /// Re-seal BYOK credentials under the current master key; counts only.
@@ -148,6 +151,7 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
         AdminCommand::Flags(args) => flags::run(&data, &args, &mut out),
         AdminCommand::Rekey(args) => rekey::run(&data, args, &mut out),
         AdminCommand::AiProbe(args) => ai_probe::run(&data, args, &mut out),
+        AdminCommand::CaptureEval(args) => capture_eval::run(&data, &args, &mut out),
         AdminCommand::AiStatus(args) => ai_status::run(&data, &args, &mut out),
         AdminCommand::BackfillCovers(args) => backfill_covers::run(&data, &args, &mut out),
     }?;

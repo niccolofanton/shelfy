@@ -116,6 +116,10 @@ pub enum ErrorCode {
     ConfirmTokenInvalid,
     /// 422: the egress policy or the site refused the capture.
     CaptureBlocked,
+    /// Capture service is not configured or unavailable.
+    CaptureUnavailable,
+    /// Daily website capture allowance is exhausted.
+    CaptureDailyLimit,
     /// 422: the shared link is not one Shelfy saves: not http(s), with
     /// credentials, a port other than 80 and 443, an address or a local
     /// name, over 4,096 characters, a platform post URL without a valid id,
@@ -182,12 +186,13 @@ impl ErrorCode {
             Self::AiConsentRequired => StatusCode::FORBIDDEN,
             Self::UserLocked => StatusCode::LOCKED,
             Self::ExtensionOutdated => StatusCode::UPGRADE_REQUIRED,
-            Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            Self::RateLimited | Self::CaptureDailyLimit => StatusCode::TOO_MANY_REQUESTS,
             Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             Self::StorageFull => StatusCode::INSUFFICIENT_STORAGE,
-            Self::Unavailable | Self::ProviderOffline | Self::ProviderUnavailable => {
-                StatusCode::SERVICE_UNAVAILABLE
-            }
+            Self::Unavailable
+            | Self::ProviderOffline
+            | Self::ProviderUnavailable
+            | Self::CaptureUnavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::Timeout => StatusCode::GATEWAY_TIMEOUT,
         }
     }
@@ -253,6 +258,8 @@ impl ErrorCode {
             Self::ProviderQuotaExhausted => "provider_quota_exhausted",
             Self::ConfirmTokenInvalid => "confirm_token_invalid",
             Self::CaptureBlocked => "capture_blocked",
+            Self::CaptureUnavailable => "capture_unavailable",
+            Self::CaptureDailyLimit => "capture_daily_limit",
             Self::UnsupportedLink => "unsupported_link",
             Self::NotAvailable => "not_available",
             Self::UserLocked => "user_locked",
@@ -616,6 +623,8 @@ mod tests {
             ErrorCode::ProviderQuotaExhausted,
             ErrorCode::ConfirmTokenInvalid,
             ErrorCode::CaptureBlocked,
+            ErrorCode::CaptureUnavailable,
+            ErrorCode::CaptureDailyLimit,
             ErrorCode::UnsupportedLink,
             ErrorCode::NotAvailable,
             ErrorCode::UserLocked,

@@ -135,7 +135,7 @@ impl Capabilities {
             email_link: state.mailer().is_enabled(),
             extension: true,
             ai_tasks: state.ai().is_configured(),
-            capture: false,
+            capture: crate::capture::configured(state),
             video_on_demand: false,
         }
     }

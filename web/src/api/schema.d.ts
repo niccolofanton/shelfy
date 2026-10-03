@@ -1658,6 +1658,38 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/sites': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['createSite'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sites/{key}/recapture': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post: operations['recaptureSite'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/stats': {
     parameters: {
       query?: never;
@@ -2156,6 +2188,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/health/capture': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public capture readiness, with no service or configuration details. */
+    get: operations['getCaptureHealth'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2586,6 +2635,17 @@ export interface components {
       /** @description Videos fetched on demand (P4). */
       'video.onDemand': boolean;
     };
+    /** @description One validated capture service event for the user's active job. */
+    CaptureEvent: {
+      code: string;
+      /** Format: int64 */
+      jobId: number;
+      kind: string;
+      params: {
+        [key: string]: unknown;
+      };
+      postKey: string;
+    };
     CategoryCount: {
       category: string;
       /** Format: int64 */
@@ -2813,6 +2873,15 @@ export interface components {
       /** Format: int64 */
       count: number;
     };
+    CreateSite: {
+      /**
+       * Format: int32
+       * @default 6
+       */
+      maxPages: number | null;
+      singlePage?: boolean;
+      url: string;
+    };
     /** @description A new API token. */
     CreatedApiToken: {
       /** @description The token as the list shows it. */
@@ -2950,7 +3019,9 @@ export interface components {
       | 'internal'
       | 'storage_full'
       | 'unavailable'
-      | 'timeout';
+      | 'timeout'
+      | 'capture_unavailable'
+      | 'capture_daily_limit';
     ErrorEvent: {
       code: string;
     };
@@ -2968,7 +3039,8 @@ export interface components {
       | 'extension.status'
       | 'provider.status'
       | 'sync.progress'
-      | 'ai.stream';
+      | 'ai.stream'
+      | 'capture.event';
     /** @description A live export and its worker, polled through the jobs API. */
     Export: {
       /**
@@ -4962,6 +5034,14 @@ export interface components {
       /** @description How. */
       method: components['schemas']['ReauthMethod'];
     };
+    Recapture: {
+      /**
+       * Format: int32
+       * @default 6
+       */
+      maxPages: number | null;
+      singlePage?: boolean | null;
+    };
     /** @description Body of `POST /api/v1/auth/magic-links/redeem`. */
     RedeemRequest: {
       /** @description The link's token: what follows `#` in its URL. */
@@ -5186,6 +5266,11 @@ export interface components {
           data: components['schemas']['AiStreamEvent'];
           /** @enum {string} */
           event: 'ai.stream';
+        }
+      | {
+          data: components['schemas']['CaptureEvent'];
+          /** @enum {string} */
+          event: 'capture.event';
         };
     /** @description A signed-in session of the account. */
     Session: {
@@ -5269,6 +5354,10 @@ export interface components {
       archiveAssetTypes?: components['schemas']['ArchiveAssetTypes'];
       /** @description The interface language. */
       language?: components['schemas']['Language'];
+    };
+    SiteQueued: {
+      job: components['schemas']['Job'];
+      key: string;
     };
     /** @description A distribution of sizes, in bytes. */
     SizeStats: {
@@ -8381,6 +8470,88 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  createSite: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateSite'];
+      };
+    };
+    responses: {
+      /** @description The site's active capture. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SiteQueued'];
+        };
+      };
+      /** @description Website capture queued. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SiteQueued'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  recaptureSite: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+      };
+      path: {
+        /** @description Website key. */
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['Recapture'];
+      };
+    };
+    responses: {
+      /** @description A new capture version queued. */
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SiteQueued'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   getStats: {
     parameters: {
       query?: never;
@@ -9364,6 +9535,32 @@ export interface operations {
         content: {
           'application/json': components['schemas']['Health'];
         };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getCaptureHealth: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Capture service responds. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Capture service unavailable. */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       default: components['responses']['Problem'];
     };

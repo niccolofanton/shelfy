@@ -20,6 +20,8 @@ futures-util.workspace = true
 fs2 = "0.4.3"
 getrandom.workspace = true
 httpdate.workspace = true
+jsonschema.workspace = true
+libc = "0.2.189"
 lettre.workspace = true
 metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
@@ -80,7 +82,6 @@ rusqlite = { workspace = true, features = ["functions"] }
 http-body-util.workspace = true
 # Decodable synthetic images for the migration tests.
 image = { workspace = true, features = ["jpeg", "png"] }
-jsonschema.workspace = true
 proptest.workspace = true
 # The test AI provider, behind the outbound client in the AI transport tests.
 shelfy-ai = { path = "../ai", features = ["stub"] }

@@ -101,3 +101,26 @@ async fn check_control_db(state: &AppState) -> CheckStatus {
         }
     }
 }
+
+/// Public capture readiness, with no service or configuration details.
+#[utoipa::path(get,path="/health/capture",tag="platform",operation_id="getCaptureHealth",security(()),responses((status=OK,description="Capture service responds."),(status=SERVICE_UNAVAILABLE,description="Capture service unavailable.")))]
+pub async fn capture_health(State(state): State<AppState>) -> Response {
+    let status = if crate::capture::configured(&state)
+        && crate::capture::client::health(&state).await.is_ok()
+    {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    };
+    let mut response = status.into_response();
+    // A typed empty body prevents the generic bare-error normalizer from
+    // attaching a problem document to this status-only probe.
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}

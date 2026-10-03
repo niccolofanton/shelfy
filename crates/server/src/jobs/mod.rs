@@ -69,6 +69,7 @@ pub mod ai_drain;
 pub mod ai_run;
 pub mod archive;
 pub mod bulk;
+pub mod capture;
 mod clock;
 mod context;
 pub mod gc;

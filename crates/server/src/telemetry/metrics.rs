@@ -367,6 +367,21 @@ fn describe() {
         metrics::Unit::Bytes,
         "Bytes of collected object rows."
     );
+    metrics::describe_histogram!(
+        "shelfy_capture_duration_seconds",
+        metrics::Unit::Seconds,
+        "Capture service duration, by closed outcome."
+    );
+    metrics::describe_histogram!(
+        "shelfy_capture_peak_rss_bytes",
+        metrics::Unit::Bytes,
+        "Capture service peak RSS, clamped to two GiB."
+    );
+    metrics::describe_histogram!(
+        "shelfy_capture_bytes",
+        metrics::Unit::Bytes,
+        "Capture service artifact bytes, clamped to eighty MiB."
+    );
     metrics::describe_counter!(
         HTTP_REQUESTS_TOTAL,
         "HTTP requests by route template, method and status."
@@ -690,6 +705,22 @@ fn method_label(method: &Method) -> &'static str {
         Method::OPTIONS => "OPTIONS",
         _ => "OTHER",
     }
+}
+
+/// Capture metrics contain only aggregate, clamped service reports.
+pub fn capture_report(outcome: &'static str, duration_ms: f64, peak_rss: f64, bytes: f64) {
+    fn bounded(value: f64, max: f64) -> f64 {
+        if value.is_finite() {
+            value.clamp(0.0, max)
+        } else {
+            0.0
+        }
+    }
+    metrics::histogram!("shelfy_capture_duration_seconds","outcome"=>outcome)
+        .record(bounded(duration_ms, 660_000.0) / 1000.0);
+    metrics::histogram!("shelfy_capture_peak_rss_bytes")
+        .record(bounded(peak_rss, 2.0 * 1024.0 * 1024.0 * 1024.0));
+    metrics::histogram!("shelfy_capture_bytes").record(bounded(bytes, 80.0 * 1024.0 * 1024.0));
 }
 
 #[cfg(test)]

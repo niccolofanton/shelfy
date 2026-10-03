@@ -122,6 +122,8 @@ pub struct PublicUrlArg {
 #[derive(Clone, Debug, Args)]
 pub struct ServeArgs {
     #[command(flatten)]
+    pub capture: crate::capture::CaptureArgs,
+    #[command(flatten)]
     pub data: DataDirArg,
 
     #[command(flatten)]
@@ -324,6 +326,8 @@ pub enum LogFormat {
 /// Validated settings of `serve`.
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// Capture authentication and bounded site concurrency.
+    pub capture: crate::capture::CaptureConfig,
     /// Data directory (absolute).
     pub data_dir: DataDir,
     /// API listener.
@@ -411,7 +415,14 @@ impl Config {
         if args.ai_allow_loopback && !public_url_is_loopback(&public_url) {
             return Err(ConfigError::AiLoopback);
         }
+        let capture = crate::capture::CaptureConfig::from(args.capture);
+        let jobs = JobsConfig {
+            registry: crate::jobs::kinds::registry_with_capture_parallel(capture.sites_parallel),
+            ..JobsConfig::default()
+        };
         Ok(Self {
+            capture,
+            jobs,
             vault,
             ai_allow_loopback: args.ai_allow_loopback,
             listen: args.listen,
@@ -436,6 +447,7 @@ impl Config {
     #[must_use]
     pub fn with_data_dir(data_dir: DataDir) -> Self {
         Self {
+            capture: crate::capture::CaptureConfig::default(),
             data_dir,
             listen: DEFAULT_LISTEN_ADDR.parse().expect("valid default address"),
             metrics_listen: DEFAULT_METRICS_ADDR.parse().expect("valid default address"),

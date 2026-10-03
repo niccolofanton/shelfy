@@ -338,6 +338,7 @@ async fn maintenance(state: AppState, metrics: PrometheusHandle, token: Cancella
             _ = housekeeping.tick() => {
                 crate::migrations::housekeeping::sweep(&state, crate::ids::now_ms()).await;
                 crate::exports::sweep(&state, crate::ids::now_ms()).await;
+                crate::jobs::capture::sweep(&state,std::time::SystemTime::now()).await;
             }
         }
     }

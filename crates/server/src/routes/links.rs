@@ -225,8 +225,18 @@ pub async fn create_link(
         // The post is saved; sharing the link again enqueues the hydration.
         tracing::warn!(error = %err, "cannot enqueue a link hydration");
     }
-    // P2-G13 seam: a new web post stays `link_only` here; P4-14 enqueues its
-    // `capture.site` job at this point (`!social && saved.created`).
+    if !social && crate::capture::configured(&state) {
+        let Link::Web(web) = &link else {
+            unreachable!("web placeholder")
+        };
+        crate::capture::enqueue_site(
+            &state,
+            user.id(),
+            &web.url,
+            crate::capture::Options::default(),
+        )
+        .await?;
+    }
     let status = if saved.created {
         StatusCode::CREATED
     } else {
