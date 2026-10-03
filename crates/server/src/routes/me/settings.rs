@@ -1,8 +1,11 @@
 //! `GET,PUT /api/v1/me/settings` (plan §2.9 Account, §4.2): the account's
 //! settings, kept in the user's library (`settings`,
 //! [`shelfy_core::repo::settings`]). Only the allowlisted keys exist: the UI
-//! language and the asset types to archive. The desktop's other preferences
+//! language, asset types to archive, and AI routing/preferences. Provider
+//! secrets are handled by the separate provider routes. The desktop's other preferences
 //! are desktop-only.
+
+use std::collections::BTreeMap;
 
 use axum::extract::State;
 use axum::response::{IntoResponse as _, Response};
@@ -92,7 +95,7 @@ impl From<ArchiveAssetTypes> for settings::ArchiveAssetTypes {
 }
 
 /// The account's settings, defaults filled in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     /// The interface language; `null` until chosen, when the app follows
@@ -101,6 +104,18 @@ pub struct Settings {
     pub language: Option<Language>,
     /// The asset types to archive; all of them by default.
     pub archive_asset_types: ArchiveAssetTypes,
+    /// Explicit task routes; absent tasks use the provider default.
+    pub ai_routing: BTreeMap<String, String>,
+    /// Maximum simultaneous BYOK calls (1–8); the operator stays serial.
+    pub ai_concurrency: u8,
+    /// Generate search suggestions.
+    pub ai_suggestions: bool,
+    /// Run the vision quality check.
+    pub ai_vision_qc: bool,
+    /// Analyze imported websites automatically.
+    pub ai_auto_analyze_websites: bool,
+    /// Return interim dictation results.
+    pub ai_dictation_interim: bool,
 }
 
 impl From<settings::Settings> for Settings {
@@ -108,13 +123,19 @@ impl From<settings::Settings> for Settings {
         Self {
             language: stored.language.map(Language::from),
             archive_asset_types: stored.archive_asset_types.into(),
+            ai_routing: stored.ai.routing.0,
+            ai_concurrency: stored.ai.concurrency,
+            ai_suggestions: stored.ai.suggestions,
+            ai_vision_qc: stored.ai.vision_qc,
+            ai_auto_analyze_websites: stored.ai.auto_analyze_websites,
+            ai_dictation_interim: stored.ai.dictation_interim,
         }
     }
 }
 
 /// Body of `PUT /api/v1/me/settings`: the settings to change; the others
 /// keep their values. Other keys are refused (422).
-#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, ToSchema)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, ToSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct SettingsUpdate {
     /// The interface language.
@@ -125,6 +146,30 @@ pub struct SettingsUpdate {
     #[serde(default)]
     #[schema(nullable = false)]
     pub archive_asset_types: Option<ArchiveAssetTypes>,
+    /// Explicit task routes. Empty map restores defaults.
+    #[serde(default)]
+    #[schema(nullable = false)]
+    pub ai_routing: Option<BTreeMap<String, String>>,
+    /// Maximum simultaneous BYOK calls, between 1 and 8.
+    #[serde(default)]
+    #[schema(nullable = false)]
+    pub ai_concurrency: Option<u8>,
+    /// Generate search suggestions.
+    #[serde(default)]
+    #[schema(nullable = false)]
+    pub ai_suggestions: Option<bool>,
+    /// Run the vision quality check.
+    #[serde(default)]
+    #[schema(nullable = false)]
+    pub ai_vision_qc: Option<bool>,
+    /// Analyze imported websites automatically.
+    #[serde(default)]
+    #[schema(nullable = false)]
+    pub ai_auto_analyze_websites: Option<bool>,
+    /// Return interim dictation results.
+    #[serde(default)]
+    #[schema(nullable = false)]
+    pub ai_dictation_interim: Option<bool>,
 }
 
 /// The account's settings.
@@ -163,9 +208,42 @@ pub async fn put_settings(
     user: CurrentUser,
     Json(update): Json<SettingsUpdate>,
 ) -> Result<Response, ApiError> {
+    if update
+        .ai_concurrency
+        .is_some_and(|value| !(1..=8).contains(&value))
+    {
+        return Err(ApiError::invalid_field(
+            "aiConcurrency",
+            "must be between 1 and 8",
+        ));
+    }
+    if let Some(routes) = &update.ai_routing {
+        for (task, provider) in routes {
+            if !crate::ai::Task::ALL
+                .iter()
+                .any(|known| known.as_str() == task)
+            {
+                return Err(ApiError::invalid_field("aiRouting", "unknown task"));
+            }
+            if provider.is_empty()
+                || provider.len() > 128
+                || !provider
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            {
+                return Err(ApiError::invalid_field("aiRouting", "invalid provider id"));
+            }
+        }
+    }
     let change = SettingsChange {
         language: update.language.map(Into::into),
         archive_asset_types: update.archive_asset_types.map(Into::into),
+        ai_routing: update.ai_routing.map(settings::AiRouting),
+        ai_concurrency: update.ai_concurrency,
+        ai_suggestions: update.ai_suggestions,
+        ai_vision_qc: update.ai_vision_qc,
+        ai_auto_analyze_websites: update.ai_auto_analyze_websites,
+        ai_dictation_interim: update.ai_dictation_interim,
         ..SettingsChange::default()
     };
     let db = state.user_db(user.id()).await?;

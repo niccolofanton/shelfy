@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useRef, Suspense, lazy } from 'react';
 import {
   Trash2,
   AlertTriangle,
@@ -2256,6 +2256,8 @@ function SectionFallback(): React.JSX.Element {
 
 // The AI section: the remote providers and suggestions wherever AI runs, the
 // local models only where they run on this machine.
+const WebAiSection = lazy(withMessages(() => import('./settings/Ai'), 'aiProviders'));
+
 function AiSection(): React.JSX.Element {
   const t = useT('settings');
   const caps = useCapabilities();
@@ -2402,7 +2404,14 @@ function useSections({ onDataCleared }: SettingsProps): SettingsSection[] {
       content: <ConnectionsSection account={account} />,
     },
     { id: 'language', title: tl('section'), delay: '20ms', content: <LanguageCard /> },
-    caps.ai && { id: 'ai', title: t('sectionAi'), delay: '40ms', content: <AiSection /> },
+    client.aiProviders
+      ? {
+          id: 'ai',
+          title: t('sectionAi'),
+          delay: '40ms',
+          content: <WebAiSection api={client.aiProviders} />,
+        }
+      : caps.ai && { id: 'ai', title: t('sectionAi'), delay: '40ms', content: <AiSection /> },
     caps.localFiles && {
       id: 'data',
       title: t('sectionData'),

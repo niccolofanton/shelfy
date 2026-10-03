@@ -21,6 +21,7 @@ import type {
   ViewErrorReport,
 } from '@ui/api/ShelfyClient';
 import { createAccountApi } from './account';
+import { createAiProvidersApi } from './aiProviders';
 import { createEventStream, type EventStream } from './events';
 import { isApiError, type Http } from './http';
 import { createJobsApi } from './jobs';
@@ -183,6 +184,9 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
     ...(me
       ? {
           account: createAccountApi(http, me, { events }),
+          ...(me.capabilities['ai.tasks']
+            ? { aiProviders: createAiProvidersApi(http, events) }
+            : {}),
           links: createLinksApi(http),
           jobs: createJobsApi(http, { events }),
           activity: createActivityApi(http, events),

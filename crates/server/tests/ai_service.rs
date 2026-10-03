@@ -567,3 +567,25 @@ async fn each_fault_reaches_the_caller_as_the_kind_it_acts_on() {
         assert_eq!(ApiError::from(err).code(), code, "{name}");
     }
 }
+
+#[tokio::test]
+async fn listing_observes_health_without_running_ai_and_recovers_after_offline() {
+    let stub = stub().await;
+    let t = TestState::with_config(|c| configure(c, &stub, 1, Duration::from_secs(30)));
+    let owner_id = owner(&t);
+    let svc = t.state.ai();
+    svc.list_providers(&t.state, Caller::new(&owner_id, true))
+        .await
+        .unwrap();
+    stub.set_offline(true).await.unwrap();
+    svc.operator_probe_once(&t.state).await;
+    assert_eq!(svc.operator_state(), Some(ProviderState::Offline));
+    stub.set_offline(false).await.unwrap();
+    svc.operator_probe_once(&t.state).await;
+    assert_eq!(svc.operator_state(), Some(ProviderState::Ok));
+    assert!(
+        stub.requests()
+            .iter()
+            .all(|request| !request.path.contains("chat/completions"))
+    );
+}

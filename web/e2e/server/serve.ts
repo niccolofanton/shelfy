@@ -7,6 +7,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { E2E } from './env';
+import { startAiStub } from './aiStub';
 
 mkdirSync(E2E.dataDir, { recursive: true });
 const env = { ...process.env, ...E2E.serverEnv };
@@ -41,8 +42,10 @@ execFileSync(
   { env, stdio: ['ignore', 'ignore', 'inherit'] },
 );
 
+const stopStub = await startAiStub();
 const server = spawn(E2E.serverBin, ['serve'], { env, stdio: 'inherit' });
 const stop = (): void => {
+  stopStub();
   if (server.exitCode === null) server.kill('SIGTERM');
 };
 process.on('SIGTERM', stop);

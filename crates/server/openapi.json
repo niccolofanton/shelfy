@@ -9258,8 +9258,49 @@
       "Settings": {
         "type": "object",
         "description": "The account's settings, defaults filled in.",
-        "required": ["language", "archiveAssetTypes"],
+        "required": [
+          "language",
+          "archiveAssetTypes",
+          "aiRouting",
+          "aiConcurrency",
+          "aiSuggestions",
+          "aiVisionQc",
+          "aiAutoAnalyzeWebsites",
+          "aiDictationInterim"
+        ],
         "properties": {
+          "aiAutoAnalyzeWebsites": {
+            "type": "boolean",
+            "description": "Analyze imported websites automatically."
+          },
+          "aiConcurrency": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum simultaneous BYOK calls (1–8); the operator stays serial.",
+            "minimum": 0
+          },
+          "aiDictationInterim": {
+            "type": "boolean",
+            "description": "Return interim dictation results."
+          },
+          "aiRouting": {
+            "type": "object",
+            "description": "Explicit task routes; absent tasks use the provider default.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "aiSuggestions": {
+            "type": "boolean",
+            "description": "Generate search suggestions."
+          },
+          "aiVisionQc": {
+            "type": "boolean",
+            "description": "Run the vision quality check."
+          },
           "archiveAssetTypes": {
             "$ref": "#/components/schemas/ArchiveAssetTypes",
             "description": "The asset types to archive; all of them by default."
@@ -9281,6 +9322,38 @@
         "type": "object",
         "description": "Body of `PUT /api/v1/me/settings`: the settings to change; the others\nkeep their values. Other keys are refused (422).",
         "properties": {
+          "aiAutoAnalyzeWebsites": {
+            "type": "boolean",
+            "description": "Analyze imported websites automatically."
+          },
+          "aiConcurrency": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Maximum simultaneous BYOK calls, between 1 and 8.",
+            "minimum": 0
+          },
+          "aiDictationInterim": {
+            "type": "boolean",
+            "description": "Return interim dictation results."
+          },
+          "aiRouting": {
+            "type": "object",
+            "description": "Explicit task routes. Empty map restores defaults.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "aiSuggestions": {
+            "type": "boolean",
+            "description": "Generate search suggestions."
+          },
+          "aiVisionQc": {
+            "type": "boolean",
+            "description": "Run the vision quality check."
+          },
           "archiveAssetTypes": {
             "$ref": "#/components/schemas/ArchiveAssetTypes",
             "description": "The asset types to archive, all three."

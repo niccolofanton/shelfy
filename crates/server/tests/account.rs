@@ -154,18 +154,23 @@ async fn settings_take_the_allowlisted_keys_only() {
     let defaults = json!({
         "language": null,
         "archiveAssetTypes": { "thumbnail": true, "image": true, "video": true },
+        "aiRouting": {}, "aiConcurrency": 4, "aiSuggestions": true,
+        "aiVisionQc": false, "aiAutoAnalyzeWebsites": false, "aiDictationInterim": false,
     });
     assert_eq!(read(&app, "/api/v1/me/settings", &cookie).await, defaults);
 
+    let mut expected = defaults.clone();
+    expected["language"] = json!("en");
     let put = |body: Value| spa_json(&t, Method::PUT, "/api/v1/me/settings", &body, &cookie);
     let response = send(&app, put(json!({ "language": "en" }))).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(json(response).await["language"], "en");
     let types = json!({ "thumbnail": true, "image": false, "video": false });
+    expected["archiveAssetTypes"] = types.clone();
     let response = send(&app, put(json!({ "archiveAssetTypes": types }))).await;
     assert_eq!(
         json(response).await,
-        json!({ "language": "en", "archiveAssetTypes": types }),
+        expected,
         "a change keeps the other setting"
     );
     let response = send(&app, put(json!({}))).await;
@@ -173,6 +178,11 @@ async fn settings_take_the_allowlisted_keys_only() {
 
     for refused in [
         json!({ "theme": "dark" }),
+        json!({ "aiProviders": [] }),
+        json!({ "aiConcurrency": 0 }),
+        json!({ "aiConcurrency": 9 }),
+        json!({ "aiRouting": { "unknown": "operator" } }),
+        json!({ "aiRouting": { "chat": "" } }),
         json!({ "language": "fr" }),
         json!({ "archiveAssetTypes": { "thumbnail": true } }),
         json!({ "archiveAssetTypes": { "thumbnail": true, "image": true, "video": true, "pdf": true } }),
@@ -181,10 +191,18 @@ async fn settings_take_the_allowlisted_keys_only() {
         let problem = problem(response, StatusCode::UNPROCESSABLE_ENTITY).await;
         assert_eq!(problem.code, ErrorCode::ValidationFailed, "{refused}");
     }
-    assert_eq!(
-        read(&app, "/api/v1/me/settings", &cookie).await,
-        json!({ "language": "en", "archiveAssetTypes": types })
-    );
+    assert_eq!(read(&app, "/api/v1/me/settings", &cookie).await, expected);
+
+    let ai = json!({ "aiRouting": { "chat": "operator", "catalog": "byok-1" },
+        "aiConcurrency": 8, "aiSuggestions": false, "aiVisionQc": true,
+        "aiAutoAnalyzeWebsites": true, "aiDictationInterim": true });
+    let response = send(&app, put(ai.clone())).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    for (key, value) in ai.as_object().unwrap() {
+        expected[key] = value.clone();
+    }
+    assert_eq!(json(response).await, expected);
+    assert_eq!(read(&app, "/api/v1/me/settings", &cookie).await, expected);
 
     // Kept in the user's library, in the form the migration writes.
     let owner_id = owner(&t);

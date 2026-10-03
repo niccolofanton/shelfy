@@ -10,6 +10,7 @@
 import type { ActivityApi } from './activity';
 import type { AccountApi } from './account';
 import type { AiApi } from './ai';
+import type { AiProvidersApi } from './aiProviders';
 import type { JobsApi } from './jobs';
 import type { LinksApi } from './links';
 
@@ -313,6 +314,7 @@ export interface ShelfyClient {
   // The signed-in account (src/api/account.ts), when the backend has one: the
   // web client's. The desktop has none.
   readonly account?: AccountApi;
+  readonly aiProviders?: AiProvidersApi;
   // Turning a URL into a post (src/api/links.ts), when the backend has one:
   // the web client's, once signed in. The desktop has none.
   readonly links?: LinksApi;

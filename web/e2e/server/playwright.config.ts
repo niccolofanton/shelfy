@@ -18,6 +18,12 @@ import { E2E } from './env';
 // The servers and the workers inherit this run's data directory.
 process.env.SHELFY_E2E_DATA_DIR = E2E.dataDir;
 
+if (!existsSync(E2E.stubBin)) {
+  throw new Error(
+    'Build the test provider with cargo build --release -p shelfy-ai --features stub --bin shelfy-ai-stub, or set SHELFY_E2E_STUB_BIN',
+  );
+}
+
 if (!existsSync(E2E.serverBin)) {
   throw new Error(
     `no shelfy-server at ${E2E.serverBin}: run \`cargo build --release -p shelfy-server\`, or set SHELFY_E2E_SERVER_BIN`,

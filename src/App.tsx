@@ -86,6 +86,9 @@ const AddBookmarkModal = lazy(
 const CollectionModal = lazy(
   withMessages(() => import('./components/CollectionModal'), 'collectionModal'),
 );
+const ProviderStatusBanner = lazy(
+  withMessages(() => import('./components/ai/ProviderStatusBanner'), 'aiProviders'),
+);
 const RemoteAiBanner = lazy(withMessages(() => import('./components/RemoteAiBanner'), 'remoteAi'));
 
 // Suspense fallback for the lazy views above: a view only takes a beat to
@@ -1117,10 +1120,16 @@ function AppInner(): React.JSX.Element {
           </div>
         )}
         <main ref={mainRef} className="flex-1 narrow:min-h-0 overflow-hidden relative">
-          {caps.ai && (
+          {client.aiProviders ? (
             <Suspense fallback={null}>
-              <RemoteAiBanner />
+              <ProviderStatusBanner api={client.aiProviders} />
             </Suspense>
+          ) : (
+            caps.ai && (
+              <Suspense fallback={null}>
+                <RemoteAiBanner />
+              </Suspense>
+            )
           )}
           {/* Browser is always mounted so its webviews keep syncing in the background,
             even when another view is on screen; an opaque overlay covers it meanwhile.

@@ -4748,6 +4748,23 @@ export interface components {
     };
     /** @description The account's settings, defaults filled in. */
     Settings: {
+      /** @description Analyze imported websites automatically. */
+      aiAutoAnalyzeWebsites: boolean;
+      /**
+       * Format: int32
+       * @description Maximum simultaneous BYOK calls (1–8); the operator stays serial.
+       */
+      aiConcurrency: number;
+      /** @description Return interim dictation results. */
+      aiDictationInterim: boolean;
+      /** @description Explicit task routes; absent tasks use the provider default. */
+      aiRouting: {
+        [key: string]: string;
+      };
+      /** @description Generate search suggestions. */
+      aiSuggestions: boolean;
+      /** @description Run the vision quality check. */
+      aiVisionQc: boolean;
       /** @description The asset types to archive; all of them by default. */
       archiveAssetTypes: components['schemas']['ArchiveAssetTypes'];
       language: components['schemas']['Language'] | null;
@@ -4757,6 +4774,23 @@ export interface components {
      *     keep their values. Other keys are refused (422).
      */
     SettingsUpdate: {
+      /** @description Analyze imported websites automatically. */
+      aiAutoAnalyzeWebsites?: boolean;
+      /**
+       * Format: int32
+       * @description Maximum simultaneous BYOK calls, between 1 and 8.
+       */
+      aiConcurrency?: number;
+      /** @description Return interim dictation results. */
+      aiDictationInterim?: boolean;
+      /** @description Explicit task routes. Empty map restores defaults. */
+      aiRouting?: {
+        [key: string]: string;
+      };
+      /** @description Generate search suggestions. */
+      aiSuggestions?: boolean;
+      /** @description Run the vision quality check. */
+      aiVisionQc?: boolean;
       /** @description The asset types to archive, all three. */
       archiveAssetTypes?: components['schemas']['ArchiveAssetTypes'];
       /** @description The interface language. */

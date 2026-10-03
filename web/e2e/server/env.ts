@@ -20,6 +20,7 @@
 // `localhost` — never a plain `http://127.0.0.1` one, even on the loopback
 // (found by P1-21's sse-latency.spec.ts: every `page.request` call 401ed).
 import { tmpdir } from 'node:os';
+import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,6 +28,11 @@ const repoRoot = fileURLToPath(new URL('../../..', import.meta.url));
 const webPort = Number(process.env.SHELFY_E2E_WEB_PORT || 18200);
 const apiPort = Number(process.env.SHELFY_E2E_API_PORT || 18201);
 const metricsPort = apiPort + 90;
+const stubPort = apiPort + 1;
+const stubControlPort = apiPort + 2;
+// Generate once in the runner; its child servers and workers inherit the values.
+process.env.SHELFY_E2E_MASTER_KEY ||= randomBytes(32).toString('base64');
+process.env.SHELFY_E2E_STUB_KEY ||= randomBytes(32).toString('base64');
 const dataDir =
   process.env.SHELFY_E2E_DATA_DIR ||
   join(process.env.SHELFY_E2E_DATA_ROOT || tmpdir(), `shelfy-e2e-${Date.now()}`);
@@ -36,6 +42,11 @@ export const E2E = {
   repoRoot,
   webPort,
   apiPort,
+  stubPort,
+  stubUrl: `http://127.0.0.1:${stubPort}`,
+  stubControlUrl: `http://127.0.0.1:${stubControlPort}`,
+  stubControlPort,
+  stubBin: resolve(repoRoot, process.env.SHELFY_E2E_STUB_BIN || 'target/release/shelfy-ai-stub'),
   origin,
   apiUrl: `http://localhost:${apiPort}`,
   dataDir,
@@ -67,6 +78,14 @@ export const E2E = {
   // re-authentication dialog offers it too.
   serverEnv: {
     SHELFY_DATA_DIR: dataDir,
+    SHELFY_MASTER_KEY: process.env.SHELFY_E2E_MASTER_KEY,
+    SHELFY_OPERATOR_AI_URL: `http://127.0.0.1:${stubPort}/v1`,
+    SHELFY_OPERATOR_AI_KEY: process.env.SHELFY_E2E_STUB_KEY,
+    SHELFY_OPERATOR_AI_MODEL: 'stub-text',
+    SHELFY_OPERATOR_AI_VISION_MODEL: 'stub-vision',
+    SHELFY_OPERATOR_AI_EMBED_MODEL: 'stub-embed',
+    SHELFY_OPERATOR_AI_LABEL: 'E2E AI node',
+    SHELFY_EGRESS_ALLOW_ORIGINS: `http://127.0.0.1:${stubPort}`,
     SHELFY_LISTEN_ADDR: `127.0.0.1:${apiPort}`,
     SHELFY_METRICS_ADDR: `127.0.0.1:${metricsPort}`,
     SHELFY_PUBLIC_URL: origin,

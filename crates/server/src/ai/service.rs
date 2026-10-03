@@ -353,6 +353,7 @@ impl AiService {
     ) -> Result<Vec<ProviderSummary>, ApiError> {
         let mut out = Vec::new();
         if let (true, Some(op)) = (caller.owner, self.inner.operator.as_ref()) {
+            self.inner.operator_breaker.observe(caller.id);
             out.push(ProviderSummary {
                 id: OPERATOR_PROVIDER_ID.to_owned(),
                 kind: "operator".to_owned(),
@@ -761,10 +762,13 @@ impl AiService {
         }
     }
 
-    /// Re-probes an offline or key-refused operator node, no more than once a
-    /// minute; brings it back when it answers. Called by the maintenance timer.
+    /// Checks an observed operator node, no more than once a minute. Health
+    /// never generates content or wakes the node. Called by maintenance.
     pub async fn maintain(&self, state: &AppState) {
-        if self.inner.operator.is_none() || !self.inner.operator_breaker.is_blocked() {
+        if self.inner.operator.is_none()
+            || (!self.inner.operator_breaker.is_blocked()
+                && self.inner.operator_breaker.observers().is_empty())
+        {
             return;
         }
         {
@@ -787,12 +791,22 @@ impl AiService {
         };
         let options = CallOptions::new(Timeouts::new(CONNECT_TIMEOUT, Duration::from_secs(10)))
             .with_retry(RetryPolicy::NONE);
-        let recovered = match self.inner.operator_breaker.state() {
-            ProviderState::Offline => op.chat.health(&options).await.is_ok(),
-            ProviderState::InvalidKey => op.chat.models(&options).await.is_ok(),
-            _ => return,
+        let result = match self.inner.operator_breaker.state() {
+            ProviderState::InvalidKey => op.chat.models(&options).await.map(|_| ()),
+            _ => op.chat.health(&options).await,
         };
-        if recovered {
+        if let Err(error) = result {
+            // A health probe has no caller to pause, so only reachability failures
+            // affect the breaker. Key refusal is learned by a real call/models probe.
+            if matches!(
+                error.kind(),
+                ErrorKind::Offline | ErrorKind::Transient | ErrorKind::RateLimited
+            ) && let Transition::Changed(status) =
+                self.inner.operator_breaker.failed(error.kind(), "")
+            {
+                self.publish_operator_status(state, status);
+            }
+        } else {
             let (transition, resumed) = self.inner.operator_breaker.reachable();
             if let Transition::Changed(now) = transition {
                 self.publish_operator_status(state, now);
