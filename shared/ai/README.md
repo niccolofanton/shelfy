@@ -20,7 +20,8 @@ the desktop app and the web server so that both products catalog the same way.
 | `template.ts` | the template renderer |
 | `prompts.ts` | the tasks: rendered prompts, response schemas, sampling |
 | `catalog.ts` | the catalog prompts and the normalization of their answers |
-| `fixtures/` | synthetic posts and answers for offline tests (`posts.json`, `answers.json`, `invalid-answers.json`) |
+| `score.ts` | per-field scores of catalog answers against a gold file |
+| `fixtures/` | synthetic posts, answers and gold for offline tests (`posts.json`, `answers.json`, `invalid-answers.json`, `gold.json`) |
 
 A prompt or schema file that the manifest does not name fails the generator.
 
@@ -85,6 +86,28 @@ syntax, so untrusted text cannot inject any. An unknown variable (in any
 branch), an unbalanced section or a directive that is not alone on its line is
 an error, so a typo fails the tests instead of reaching a model.
 `template.ts` and `crates/core/src/ai/template.rs` implement these rules.
+
+## Scoring a run against a gold file
+
+```sh
+pnpm exec tsx scripts/ai-eval/score.ts --gold=<gold.json> --answers=<answers.json> [--json=<report.json>]
+```
+
+- **gold.json**: `{"posts": {"<id>": {"kind": "social" | "web", "mediaType"?, "catalog": {…}}}}`,
+  where `catalog` is the answer a perfect model would give, in the task's schema.
+  A tag may be a list of acceptable alternatives: `["walnut", ["walnut wood", "walnut veneer"]]`.
+- **answers.json**: `{"<id>": <the model's answer: the JSON object, its raw text, or null>}`.
+
+Each answer is checked against its schema (off the schema scores 0, as the web
+server would store nothing), normalized like the products do, then scored per
+field: tag lists by F1 of matched terms (plurals, case, `#`, `-` and spacing
+ignored; no partial matches, so list the alternatives in the gold), entities
+by F1, keywords by a soft token F1, description and save reason by content-word
+F1, language, purpose and industry exactly. The report gives the mean per field,
+a weighted composite (`WEIGHTS` in `score.ts`), the composite per media type,
+the worst posts, and the digest of the catalog prompts the run should have used.
+`fixtures/gold.json` shows the format. Real gold and answers are owner data:
+keep them in `../shelfy-web-local/ref/`, never in the repo.
 
 ## Changing a prompt or a schema
 

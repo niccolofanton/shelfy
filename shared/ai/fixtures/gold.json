@@ -1,0 +1,85 @@
+{
+  "about": "A synthetic gold for the fixture posts: the format of the gold files scripts/ai-eval/score.ts reads (see shared/ai/score.ts). A tag may be a list of acceptable alternatives.",
+  "posts": {
+    "lamp": {
+      "kind": "social",
+      "mediaType": "image",
+      "catalog": {
+        "description": "A walnut desk lamp with a brass dome shade on a white desk, product shot.",
+        "general_tags": ["design", "lighting"],
+        "specific_tags": ["desk lamp", ["walnut", "walnut wood"], "brass", "product photography"],
+        "entities": ["Studio Lumen"],
+        "search_keywords": ["walnut desk lamp", "brass dome lamp"],
+        "save_reason": "Reference for warm materials in lighting design.",
+        "language": "en"
+      }
+    },
+    "typeface": {
+      "kind": "social",
+      "mediaType": "carousel",
+      "catalog": {
+        "description": "Type specimen of a variable grotesque sans with nine weights and italics.",
+        "general_tags": ["typography", "design"],
+        "specific_tags": ["type specimen", "variable font", "grotesque", "italic"],
+        "entities": ["Kestrel Grotesk"],
+        "search_keywords": ["variable grotesque specimen"],
+        "save_reason": "Shows a variable sans across its weights.",
+        "language": "en"
+      }
+    },
+    "stairs": {
+      "kind": "social",
+      "mediaType": "video",
+      "catalog": {
+        "description": "Walking down the concrete stairs of the Barbican estate at dusk.",
+        "general_tags": ["architecture", "brutalism"],
+        "specific_tags": ["concrete stairs", "Barbican", "dusk", "stairwell"],
+        "entities": [["Barbican Estate", "Barbican"]],
+        "search_keywords": ["barbican stairs", "brutalist stairwell"],
+        "save_reason": "Atmosphere of brutalist circulation spaces.",
+        "language": "en"
+      }
+    },
+    "quote": {
+      "kind": "social",
+      "mediaType": "text",
+      "catalog": {
+        "description": "A quote on design restraint.",
+        "general_tags": ["design"],
+        "specific_tags": ["design quote", "minimalism"],
+        "entities": [],
+        "search_keywords": ["good design quote"],
+        "save_reason": "A design principle.",
+        "language": "en"
+      }
+    },
+    "studio-site": {
+      "kind": "web",
+      "mediaType": "website",
+      "catalog": {
+        "description": "Portfolio site of an architecture and interiors studio for small hotels: off-white palette, serif headlines, full-bleed photography.",
+        "purpose": "portfolio",
+        "industry": "architecture",
+        "general_tags": ["architecture", "web design"],
+        "specific_tags": ["serif headlines", "full-bleed photography", "off-white palette"],
+        "entities": ["Halden Studio", "Next.js", "GSAP", "Vercel"],
+        "search_keywords": ["architecture studio portfolio"],
+        "save_reason": "A calm, photography-led portfolio layout.",
+        "language": "en"
+      }
+    },
+    "unanswered": {
+      "kind": "social",
+      "mediaType": "image",
+      "catalog": {
+        "description": "A post the run did not answer.",
+        "general_tags": ["design"],
+        "specific_tags": ["chair"],
+        "entities": [],
+        "search_keywords": ["chair"],
+        "save_reason": "Scores 0 when missing.",
+        "language": "en"
+      }
+    }
+  }
+}
