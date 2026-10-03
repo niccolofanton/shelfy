@@ -20,6 +20,7 @@ pub mod notifications;
 pub mod posts;
 pub mod settings;
 pub mod stats;
+pub mod sync;
 pub(crate) mod tags;
 
 use std::fmt;

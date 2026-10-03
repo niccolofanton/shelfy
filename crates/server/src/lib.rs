@@ -61,6 +61,7 @@ pub mod extension;
 pub mod extract;
 pub mod healthcheck;
 pub mod ids;
+pub mod ingest;
 pub mod jobs;
 pub mod library;
 pub mod limits;

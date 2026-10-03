@@ -103,6 +103,10 @@ const LIBRARY_MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/library/0003_cover_fetch.sql"),
         comment: "library schema v3: the fetch state of a cover without slides",
     },
+    Migration {
+        sql: include_str!("../../migrations/library/0004_sync.sql"),
+        comment: "library schema v4: sync-run and sync-source columns",
+    },
 ];
 
 const CONTROL_MIGRATIONS: &[Migration] = &[

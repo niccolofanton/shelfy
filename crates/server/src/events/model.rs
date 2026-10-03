@@ -37,17 +37,21 @@ pub enum EventTopic {
     /// An AI provider's state changed (P3-09).
     #[serde(rename = "provider.status")]
     ProviderStatus,
+    /// A sync run advanced.
+    #[serde(rename = "sync.progress")]
+    SyncProgress,
 }
 
 impl EventTopic {
     /// Every topic, in a stable order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::PostsChanged,
         Self::StatsChanged,
         Self::JobUpdated,
         Self::Notification,
         Self::ExtensionStatus,
         Self::ProviderStatus,
+        Self::SyncProgress,
     ];
 
     /// The event name.
@@ -60,6 +64,7 @@ impl EventTopic {
             Self::Notification => "notification",
             Self::ExtensionStatus => "extension.status",
             Self::ProviderStatus => "provider.status",
+            Self::SyncProgress => "sync.progress",
         }
     }
 
@@ -68,15 +73,16 @@ impl EventTopic {
     }
 }
 
-/// The topics a stream carries. A `u16` leaves room for the topics P2–P4 add
-/// (P3-09's assumption); `ai.stream` (P3-13) is live-only and never a bit here.
+/// The topics a stream carries. A `u16` bitmask (P2-G11): P2 added
+/// `extension.status` and `sync.progress`, P3 `provider.status`, and more may
+/// follow; `ai.stream` (P3-13) is live-only and never a bit here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TopicSet(u16);
 
 impl TopicSet {
     /// Every topic: the stream of a client that names none. Opt-in topics
     /// (`ai.stream`, P3) will stay out of it.
-    pub const ALL: Self = Self(0b11_1111);
+    pub const ALL: Self = Self(0b111_1111);
 
     /// The topics named in `topics`, or [`TopicSet::ALL`] when it is empty.
     #[must_use]
@@ -333,6 +339,47 @@ pub struct ProviderStatusEvent {
     pub state: ProviderState,
 }
 
+/// The listing a sync run walks, in a `sync.progress` event (contract C4).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncListing {
+    /// `ig_saved`, `ig_collection`, `x_bookmarks` or `pin_board`.
+    pub kind: String,
+    /// The folder or board id, when the listing names one.
+    #[schema(required = true)]
+    pub external_id: Option<String>,
+    /// The folder or board name as the page showed it.
+    #[schema(required = true)]
+    pub name: Option<String>,
+}
+
+/// `sync.progress`: a sync run advanced (plan §2.10, contract C8), sent at
+/// most once a second per run. The counters are the run's running totals.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncProgressEvent {
+    /// The run's id.
+    pub run_id: String,
+    /// The platform (`instagram`, `twitter`, `pinterest`).
+    pub platform: String,
+    /// The listing it walks.
+    pub listing: SyncListing,
+    /// What started the run.
+    pub trigger: String,
+    /// Items scanned so far.
+    pub scanned: i64,
+    /// New posts so far.
+    pub inserted: i64,
+    /// Known posts that changed so far.
+    pub updated: i64,
+    /// Known posts so far.
+    pub known: i64,
+    /// Pages scanned, as the last patch reported.
+    pub pages: i64,
+    /// The run's state (`running`, `done`, `stopped`, `failed`).
+    pub state: String,
+}
+
 /// Every event of `GET /api/v1/events`: `event` is the SSE event name and
 /// `data` the JSON of its `data:` line. A type for clients; no response sends
 /// this object as such.
@@ -363,6 +410,9 @@ pub enum ServerEvent {
     /// An AI provider changed state.
     #[serde(rename = "provider.status")]
     ProviderStatus(ProviderStatusEvent),
+    /// A sync run advanced.
+    #[serde(rename = "sync.progress")]
+    SyncProgress(SyncProgressEvent),
 }
 
 #[cfg(test)]

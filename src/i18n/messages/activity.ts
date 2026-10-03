@@ -55,6 +55,11 @@ export default {
     syncErrorSub: 'Pagina dei salvati non raggiungibile.',
     syncOpenBrowser: 'Apri browser',
 
+    // ── end-of-run notification codes (server `sync.*`, P2-09) ──
+    'notif.sync.done': 'Sincronizzazione completata: {inserted} nuovi post.',
+    'notif.sync.failed': 'Sincronizzazione non riuscita.',
+    'notif.sync.login_required': 'Accesso richiesto per sincronizzare.',
+
     // ── action labels (buildActivities) ──
     actionResume: 'Riprendi',
     actionPause: 'Pausa',
@@ -180,6 +185,11 @@ export default {
     syncErrorTitle: '{platform} sync failed',
     syncErrorSub: 'Could not reach the saved page.',
     syncOpenBrowser: 'Open browser',
+
+    // ── end-of-run notification codes (server `sync.*`, P2-09) ──
+    'notif.sync.done': 'Sync finished: {inserted} new posts.',
+    'notif.sync.failed': 'Sync failed.',
+    'notif.sync.login_required': 'Sign-in needed to sync.',
 
     // ── action labels (buildActivities) ──
     actionResume: 'Resume',

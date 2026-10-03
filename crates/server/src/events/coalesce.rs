@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-use super::model::{JobUpdatedEvent, StatsChangedEvent};
+use super::model::{JobUpdatedEvent, StatsChangedEvent, SyncProgressEvent};
 
 /// Most keys a `posts.changed` event lists; past it, `keys` is `null`
 /// ("reload the view"). Also the size of `POST /posts/batch-get` (§2.9).
@@ -146,6 +146,13 @@ impl Merge for StatsChangedEvent {
 
 /// Only the latest state of a job matters.
 impl Merge for JobUpdatedEvent {
+    fn merge(&mut self, later: Self) {
+        *self = later;
+    }
+}
+
+/// Only the latest progress of a run matters (the counters only grow).
+impl Merge for SyncProgressEvent {
     fn merge(&mut self, later: Self) {
         *self = later;
     }

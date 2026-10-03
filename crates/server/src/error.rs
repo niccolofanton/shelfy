@@ -64,10 +64,16 @@ pub enum ErrorCode {
     QuotaExceeded,
     /// 404: no such resource for this user.
     NotFound,
+    /// 404: the sync run an ingest batch names is unknown, or belongs to
+    /// another user (`POST /ingest/batches`).
+    SyncRunNotFound,
     /// 405: the route exists, the method does not (see `Allow`).
     MethodNotAllowed,
     /// 409: the change clashes with existing data.
     Conflict,
+    /// 409: the capture mode an ingest batch used is turned off for its
+    /// platform (a kill switch); stop that mode and sync again.
+    SourceDisabled,
     /// 409: the upload was used already (a bookmark, an import): each
     /// complete upload is used once. Upload the file again.
     UploadConsumed,
@@ -145,9 +151,9 @@ impl ErrorCode {
             Self::Forbidden | Self::CsrfFailed | Self::ReauthRequired | Self::QuotaExceeded => {
                 StatusCode::FORBIDDEN
             }
-            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::SyncRunNotFound => StatusCode::NOT_FOUND,
             Self::MethodNotAllowed => StatusCode::METHOD_NOT_ALLOWED,
-            Self::Conflict | Self::UploadConsumed => StatusCode::CONFLICT,
+            Self::Conflict | Self::UploadConsumed | Self::SourceDisabled => StatusCode::CONFLICT,
             Self::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::UnsupportedMediaType => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             Self::ValidationFailed
@@ -212,8 +218,10 @@ impl ErrorCode {
             Self::ReauthRequired => "reauth_required",
             Self::QuotaExceeded => "quota_exceeded",
             Self::NotFound => "not_found",
+            Self::SyncRunNotFound => "sync_run_not_found",
             Self::MethodNotAllowed => "method_not_allowed",
             Self::Conflict => "conflict",
+            Self::SourceDisabled => "source_disabled",
             Self::UploadConsumed => "upload_consumed",
             Self::PayloadTooLarge => "payload_too_large",
             Self::UnsupportedMediaType => "unsupported_media_type",
@@ -567,8 +575,10 @@ mod tests {
             ErrorCode::ReauthRequired,
             ErrorCode::QuotaExceeded,
             ErrorCode::NotFound,
+            ErrorCode::SyncRunNotFound,
             ErrorCode::MethodNotAllowed,
             ErrorCode::Conflict,
+            ErrorCode::SourceDisabled,
             ErrorCode::UploadConsumed,
             ErrorCode::PayloadTooLarge,
             ErrorCode::UnsupportedMediaType,

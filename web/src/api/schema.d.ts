@@ -506,6 +506,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/extension/sources': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The listings the extension has synced (contract C4). An `ingest` token. */
+    get: operations['listExtensionSources'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/extension/status': {
     parameters: {
       query?: never;
@@ -523,6 +540,29 @@ export interface paths {
     get: operations['getExtensionStatus'];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/ingest/batches': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Ingests a capture batch (contract C5).
+     * @description An `ingest` token (the browser extension). 409 `source_disabled` when the
+     *     batch's capture mode is turned off for its platform; 404
+     *     `sync_run_not_found` when its run is unknown; 422 when the batch platform
+     *     differs from the run's, or a batch holds more than 500 items.
+     */
+    post: operations['ingestBatch'];
     delete?: never;
     options?: never;
     head?: never;
@@ -1318,6 +1358,41 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/sync-runs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Lists the user's runs, newest first (contract C4). A session. */
+    get: operations['listSyncRuns'];
+    put?: never;
+    /** Opens a sync run (contract C4). An `ingest` token. */
+    post: operations['openSyncRun'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/sync-runs/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Ends or updates a run (contract C4). An `ingest` token. */
+    patch: operations['updateSyncRun'];
+    trace?: never;
+  };
   '/api/v1/trash': {
     parameters: {
       query?: never;
@@ -1716,6 +1791,13 @@ export interface components {
       /** @description `required`: the authenticator verifies the user. */
       userVerification: string;
     };
+    /** @description The extension's build, carried for parity reports (C5); informational. */
+    BatchClient: {
+      /** @description The extension's manifest version. */
+      ext: string;
+      /** @description The desktop hook's build id. */
+      parser: string;
+    };
     /** @description The posts to fetch. */
     BatchGetRequest: {
       /** @description The posts' keys, at most 200. */
@@ -1926,6 +2008,11 @@ export interface components {
       /** @description The collections. */
       items: components['schemas']['Collection'][];
     };
+    /**
+     * @description How a run maps its posts into a collection.
+     * @enum {string}
+     */
+    CollectionMode: 'auto' | 'existing' | 'none';
     /** @description The outcome of taking a post out of a collection. */
     CollectionPostRemoved: {
       /** @description The collection, with its new count. */
@@ -1943,6 +2030,16 @@ export interface components {
       added: number;
       /** @description The collection, with its new count. */
       collection: components['schemas']['Collection'];
+    };
+    /** @description Where a run maps its posts (contract C4). */
+    CollectionTarget: {
+      /**
+       * Format: int64
+       * @description The collection, for `existing`.
+       */
+      id: number | null;
+      /** @description The mapping mode. */
+      mode: components['schemas']['CollectionMode'];
     };
     /** @description Changes to a collection; absent fields are left alone. */
     CollectionUpdate: {
@@ -2086,8 +2183,10 @@ export interface components {
       | 'reauth_required'
       | 'quota_exceeded'
       | 'not_found'
+      | 'sync_run_not_found'
       | 'method_not_allowed'
       | 'conflict'
+      | 'source_disabled'
       | 'upload_consumed'
       | 'payload_too_large'
       | 'unsupported_media_type'
@@ -2120,7 +2219,8 @@ export interface components {
       | 'job.updated'
       | 'notification'
       | 'extension.status'
-      | 'provider.status';
+      | 'provider.status'
+      | 'sync.progress';
     /**
      * @description What `GET /api/v1/extension/config` answers: the extension's minimum
      *     version, kill switches, pacing and stop thresholds (contract C3). Data
@@ -2236,6 +2336,33 @@ export interface components {
       pinterest: components['schemas']['ExtensionPlatform'];
       /** @description X. */
       twitter: components['schemas']['ExtensionPlatform'];
+    };
+    /** @description A listing the extension has synced (contract C4, `GET /extension/sources`). */
+    ExtensionSource: {
+      /**
+       * Format: int64
+       * @description The collection it maps into.
+       */
+      collectionId: number | null;
+      /**
+       * Format: int64
+       * @description When its last full walk reached the end of the feed, unix ms.
+       */
+      lastFullAt: number | null;
+      /**
+       * Format: int64
+       * @description When a run of it last ran, unix ms.
+       */
+      lastRunAt: number | null;
+      /** @description The listing. */
+      listing: components['schemas']['Listing'];
+      /** @description Its platform. */
+      platform: components['schemas']['Platform'];
+    };
+    /** @description The sources (contract C4). */
+    ExtensionSources: {
+      /** @description The listings, newest run first. */
+      items: components['schemas']['ExtensionSource'][];
     };
     /**
      * @description `extension.status`: whether the user's browser extension is connected
@@ -2375,6 +2502,47 @@ export interface components {
       version: string;
     };
     /**
+     * @description A capture batch (contract C5). Items are untrusted JSON for the sanitizer;
+     *     a batch holds at most 500.
+     */
+    IngestBatch: {
+      /** @description The extension and parser build. */
+      client?: components['schemas']['BatchClient'];
+      /**
+       * @description Whether the listing has a next page, as the walker saw it;
+       *     informational (the run's `PATCH` is authoritative).
+       */
+      hasNextPage: boolean | null;
+      /** @description The intercepted items, as the desktop hook shapes them. */
+      items: unknown[];
+      /** @description The platform the batch was read on; must match the run's. */
+      platform: components['schemas']['Platform'];
+      /** @description What produced it. */
+      source: components['schemas']['IngestSource'];
+      /** @description The run the batch belongs to. */
+      syncRunId: string;
+    };
+    /** @description What a batch did (contract C5). */
+    IngestResult: {
+      /** @description New posts. */
+      inserted: number;
+      /** @description Known posts (changed or not). */
+      known: number;
+      /** @description The rejected items, in batch order. */
+      rejected: components['schemas']['RejectedItem'][];
+      /** @description One entry per accepted item, in batch order. */
+      results: components['schemas']['ItemResult'][];
+      /** @description Known posts that changed. */
+      updated: number;
+    };
+    /**
+     * @description What produced a batch (contract C5). A kill switch can turn `passive`,
+     *     `replay` or `scroll` off for a platform; `selection` and `refresh` are the
+     *     user's own doing and always run.
+     * @enum {string}
+     */
+    IngestSource: 'passive' | 'replay' | 'scroll' | 'selection' | 'refresh';
+    /**
      * @description How the bundle joined the web library.
      * @enum {string}
      */
@@ -2463,6 +2631,25 @@ export interface components {
        * @default 0
        */
       total: number;
+    };
+    /**
+     * @description Whether an accepted item was new or already saved (contract C5).
+     * @enum {string}
+     */
+    ItemOutcome: 'inserted' | 'known';
+    /** @description One accepted item's result (contract C5). */
+    ItemResult: {
+      /**
+       * @description Whether a known post's stored data changed (always `true` for a new
+       *     one).
+       */
+      changed: boolean;
+      /** @description Its index in the request batch. */
+      index: number;
+      /** @description Its canonical key. */
+      key: string;
+      /** @description New or known. */
+      outcome: components['schemas']['ItemOutcome'];
     };
     /** @description A background job. */
     Job: {
@@ -2596,6 +2783,20 @@ export interface components {
       /** @description Its platform. */
       platform: components['schemas']['Platform'];
     };
+    /** @description The listing a run walks (contract C4). */
+    Listing: {
+      /** @description The folder or board id, for `ig_collection` and `pin_board`. */
+      externalId: string | null;
+      /** @description Its kind. */
+      kind: components['schemas']['ListingKind'];
+      /** @description The folder or board name as the page shows it. */
+      name: string | null;
+    };
+    /**
+     * @description The kind of listing a run walks.
+     * @enum {string}
+     */
+    ListingKind: 'ig_saved' | 'ig_collection' | 'x_bookmarks' | 'pin_board';
     /** @description A saved post found by `POST /posts/lookup`. */
     LookupMatch: {
       /** @description The id as asked for. */
@@ -3774,6 +3975,18 @@ export interface components {
       /** @description `public-key`. */
       type: string;
     };
+    /**
+     * @description Why the sanitizer rejected an item (contract C5).
+     * @enum {string}
+     */
+    RejectReason: 'bad_item' | 'bad_id';
+    /** @description An item the sanitizer rejected (contract C5). */
+    RejectedItem: {
+      /** @description Why. */
+      code: components['schemas']['RejectReason'];
+      /** @description Its index in the request batch. */
+      index: number;
+    };
     /** @description The `g480` renditions and ThumbHashes of the install. */
     RenditionCounts: {
       /**
@@ -3852,6 +4065,11 @@ export interface components {
      * @enum {string}
      */
     ResyncReason: 'expired' | 'unknown' | 'lagged';
+    /**
+     * @description The state of a run.
+     * @enum {string}
+     */
+    RunState: 'running' | 'done' | 'stopped' | 'failed';
     /** @description One page of `GET /api/v1/search`. */
     SearchPage: {
       /** @description The results of this page, best match first. */
@@ -3923,6 +4141,12 @@ export interface components {
           data: components['schemas']['ProviderStatusEvent'];
           /** @enum {string} */
           event: 'provider.status';
+        }
+      | {
+          /** @description A sync run advanced. */
+          data: components['schemas']['SyncProgressEvent'];
+          /** @enum {string} */
+          event: 'sync.progress';
         };
     /** @description A signed-in session of the account. */
     Session: {
@@ -4039,6 +4263,19 @@ export interface components {
     };
     /** @description `stats.changed`: reload `GET /stats`. No payload: `{}`. */
     StatsChangedEvent: Record<string, never>;
+    /**
+     * @description Why a run stopped.
+     * @enum {string}
+     */
+    StopReason:
+      | 'end_of_feed'
+      | 'known_run'
+      | 'page_cap'
+      | 'time_cap'
+      | 'user'
+      | 'login_required'
+      | 'error'
+      | 'idle';
     /** @description Posts with a stored object of each kind. */
     StoredByKind: {
       /**
@@ -4056,6 +4293,181 @@ export interface components {
        * @description At least one kept video.
        */
       videos: number;
+    };
+    /** @description The listing a sync run walks, in a `sync.progress` event (contract C4). */
+    SyncListing: {
+      /** @description The folder or board id, when the listing names one. */
+      externalId: string | null;
+      /** @description `ig_saved`, `ig_collection`, `x_bookmarks` or `pin_board`. */
+      kind: string;
+      /** @description The folder or board name as the page showed it. */
+      name: string | null;
+    };
+    /**
+     * @description `sync.progress`: a sync run advanced (plan §2.10, contract C8), sent at
+     *     most once a second per run. The counters are the run's running totals.
+     */
+    SyncProgressEvent: {
+      /**
+       * Format: int64
+       * @description New posts so far.
+       */
+      inserted: number;
+      /**
+       * Format: int64
+       * @description Known posts so far.
+       */
+      known: number;
+      /** @description The listing it walks. */
+      listing: components['schemas']['SyncListing'];
+      /**
+       * Format: int64
+       * @description Pages scanned, as the last patch reported.
+       */
+      pages: number;
+      /** @description The platform (`instagram`, `twitter`, `pinterest`). */
+      platform: string;
+      /** @description The run's id. */
+      runId: string;
+      /**
+       * Format: int64
+       * @description Items scanned so far.
+       */
+      scanned: number;
+      /** @description The run's state (`running`, `done`, `stopped`, `failed`). */
+      state: string;
+      /** @description What started the run. */
+      trigger: string;
+      /**
+       * Format: int64
+       * @description Known posts that changed so far.
+       */
+      updated: number;
+    };
+    /** @description A sync run (contract C4). */
+    SyncRun: {
+      /**
+       * Format: int64
+       * @description The collection it maps into.
+       */
+      collectionId: number | null;
+      /** @description The error code. */
+      errorCode: string | null;
+      /**
+       * Format: int64
+       * @description When it ended, unix ms.
+       */
+      finishedAt: number | null;
+      /** @description Its id. */
+      id: string;
+      /** @description Whether it ran incrementally. */
+      incremental: boolean;
+      /**
+       * Format: int64
+       * @description New posts.
+       */
+      inserted: number;
+      /**
+       * Format: int64
+       * @description Known posts.
+       */
+      known: number;
+      /** @description The listing it walks. */
+      listing: components['schemas']['Listing'];
+      /**
+       * Format: int64
+       * @description Pages scanned.
+       */
+      pages: number;
+      /** @description The platform. */
+      platform: components['schemas']['Platform'];
+      /** @description The cursor it left. */
+      resumeCursor: string | null;
+      /**
+       * Format: int64
+       * @description Items scanned.
+       */
+      scanned: number;
+      /**
+       * Format: int64
+       * @description When it started, unix ms.
+       */
+      startedAt: number;
+      /** @description Its state. */
+      state: components['schemas']['RunState'];
+      /**
+       * Format: int64
+       * @description The consecutive-known threshold.
+       */
+      stopAfterKnown: number;
+      stopReason: components['schemas']['StopReason'] | null;
+      /** @description What started it. */
+      trigger: components['schemas']['Trigger'];
+      /**
+       * Format: int64
+       * @description Known posts that changed.
+       */
+      updated: number;
+    };
+    /** @description Opens a sync run (contract C4). */
+    SyncRunCreate: {
+      /** @description Where it maps its posts. */
+      collection: components['schemas']['CollectionTarget'];
+      /** @description The listing it walks. */
+      listing: components['schemas']['Listing'];
+      /** @description The platform. */
+      platform: components['schemas']['Platform'];
+      /** @description What started it. */
+      trigger: components['schemas']['Trigger'];
+    };
+    /** @description The answer to opening a run (contract C4). */
+    SyncRunOpened: {
+      /**
+       * Format: int64
+       * @description The collection the run maps into, when it maps into one.
+       */
+      collectionId: number | null;
+      /** @description The run's id. */
+      id: string;
+      /**
+       * @description Whether a known-run stop applies (the source's last full walk reached
+       *     the end of the feed).
+       */
+      incremental: boolean;
+      /** @description The cursor a previous capped walk left, to resume from. */
+      resumeCursor: string | null;
+      /**
+       * Format: int64
+       * @description The consecutive-known threshold for an incremental stop.
+       */
+      stopAfterKnown: number;
+    };
+    /** @description A page of runs (contract C4). */
+    SyncRunPage: {
+      /** @description The runs, newest first. */
+      items: components['schemas']['SyncRun'][];
+      /** @description The cursor to the next page, if any. */
+      nextCursor: string | null;
+    };
+    /** @description Updates or ends a run (contract C4). Absent counters keep theirs. */
+    SyncRunUpdate: {
+      /** @description The error code, when it failed. */
+      errorCode: string | null;
+      /**
+       * Format: int64
+       * @description Pages scanned, absolute.
+       */
+      pages: number | null;
+      /** @description The cursor to resume from. */
+      resumeCursor: string | null;
+      /**
+       * Format: int64
+       * @description Items scanned, absolute.
+       */
+      scanned: number | null;
+      /** @description The new state. */
+      state: components['schemas']['RunState'];
+      stopReason: components['schemas']['StopReason'] | null;
     };
     /**
      * @description Origin of a tag.
@@ -4104,6 +4516,11 @@ export interface components {
        */
       total: number;
     };
+    /**
+     * @description What started a run.
+     * @enum {string}
+     */
+    Trigger: 'manual' | 'web' | 'scheduled' | 'passive' | 'selection' | 'refresh';
     /** @description An upload, as `POST /uploads` answers it. */
     UploadCreated: {
       /** @description Upload id (ULID); the upload's URL is `/api/v1/uploads/{id}`. */
@@ -4824,6 +5241,34 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  listExtensionSources: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description The extension's manifest version (`0.2.0`). An extension token's
+         *     request without it, or below `minVersion`, gets 426
+         *     `extension_outdated`, except `GET /extension/config`.
+         */
+        'X-Shelfy-Extension'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The sources. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ExtensionSources'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   getExtensionStatus: {
     parameters: {
       query?: never;
@@ -4840,6 +5285,47 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['ExtensionStatusEvent'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  ingestBatch: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description A key you choose for this request, 1–255 visible ASCII characters
+         *     (a UUID works). Sending the same request again with the same key
+         *     within 24 hours returns the first response, marked
+         *     `Idempotent-Replayed: true`, instead of acting twice. Reusing a key
+         *     for another request answers 422 `validation_failed`; while the first
+         *     request is still running, 409 `conflict`.
+         */
+        'Idempotency-Key'?: string;
+        /**
+         * @description The extension's manifest version (`0.2.0`). An extension token's
+         *     request without it, or below `minVersion`, gets 426
+         *     `extension_outdated`, except `GET /extension/config`.
+         */
+        'X-Shelfy-Extension'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['IngestBatch'];
+      };
+    };
+    responses: {
+      /** @description What the batch did. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['IngestResult'];
         };
       };
       default: components['responses']['Problem'];
@@ -6137,6 +6623,103 @@ export interface operations {
           [name: string]: unknown;
         };
         content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  listSyncRuns: {
+    parameters: {
+      query?: {
+        /** @description Only this platform. */
+        platform?: components['schemas']['Platform'];
+        /** @description Only this state. */
+        state?: components['schemas']['RunState'];
+        /** @description The page cursor from a previous answer. */
+        cursor?: string;
+        /** @description Page size (1–100). */
+        limit?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description A page of runs. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SyncRunPage'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  openSyncRun: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description The extension's manifest version (`0.2.0`). An extension token's
+         *     request without it, or below `minVersion`, gets 426
+         *     `extension_outdated`, except `GET /extension/config`.
+         */
+        'X-Shelfy-Extension'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SyncRunCreate'];
+      };
+    };
+    responses: {
+      /** @description The run. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SyncRunOpened'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  updateSyncRun: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description The extension's manifest version (`0.2.0`). An extension token's
+         *     request without it, or below `minVersion`, gets 426
+         *     `extension_outdated`, except `GET /extension/config`.
+         */
+        'X-Shelfy-Extension'?: string;
+      };
+      path: {
+        /** @description The run's id. */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SyncRunUpdate'];
+      };
+    };
+    responses: {
+      /** @description The run. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SyncRun'];
+        };
       };
       default: components['responses']['Problem'];
     };

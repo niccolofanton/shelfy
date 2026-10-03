@@ -26,6 +26,8 @@
 //! | `shelfy_breaker_open` | gauge, 0 or 1 | `host_group` ([`crate::outbound::HostGroup`]: the three CDNs and `instagram_web`, `x_web`, `pinterest_web`) | whether a host group's breaker is open (or half-open); 0 from the start |
 //! | `shelfy_archive_cover_latency_seconds` | histogram, [`COVER_LATENCY_BUCKETS`] | `platform` (`instagram`, `twitter`, `pinterest`) | from a post's insert to its cover stored by the archive, for posts inserted in the last 7 days ([`crate::jobs::archive`]) |
 //! | `shelfy_archive_backlog` | gauge | `platform` | items left to the server's archive, as the drains last counted them |
+//! | `shelfy_ingest_items_total` | counter | `platform`, `outcome` ([`ingest_outcome`]) | items of ingest batches (P2-09) |
+//! | `shelfy_sync_run_pages` | histogram, [`SYNC_RUN_PAGES_BUCKETS`] | `platform`, `trigger` | pages a finished sync run scanned (P2-09) |
 //! | `shelfy_build_info` | gauge, always 1 | `version` | the build |
 //!
 //! `route` is a route template (`/api/v1/posts/{key}`), [`super::http::SPA_ROUTE`]
@@ -87,6 +89,10 @@ pub const AI_TOKENS_TOTAL: &str = "shelfy_ai_tokens_total";
 pub const MEDIA_FETCH_TOTAL: &str = "shelfy_media_fetch_total";
 /// Gauge: 1 while a host group's breaker is open or half-open.
 pub const BREAKER_OPEN: &str = "shelfy_breaker_open";
+/// Counter of ingested items by platform and [`ingest_outcome`].
+pub const INGEST_ITEMS_TOTAL: &str = "shelfy_ingest_items_total";
+/// Histogram of the pages a finished sync run scanned, by platform and trigger.
+pub const SYNC_RUN_PAGES: &str = "shelfy_sync_run_pages";
 /// Constant 1, labelled with the build version.
 pub const BUILD_INFO: &str = "shelfy_build_info";
 
@@ -125,6 +131,10 @@ pub const COVER_LATENCY_BUCKETS: &[f64] = &[
     5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1_800.0, 3_600.0, 7_200.0, 21_600.0,
     86_400.0, 604_800.0,
 ];
+
+/// Histogram buckets of the pages a sync run scanned, with a bound at the P2
+/// exit's "≤ 2 pages per incremental run".
+pub const SYNC_RUN_PAGES_BUCKETS: &[f64] = &[1.0, 2.0, 3.0, 5.0, 10.0, 25.0, 50.0, 100.0];
 
 /// The `state` values of [`JOBS`].
 pub mod job_state {
@@ -276,6 +286,21 @@ pub mod ai_direction {
     pub const ALL: [&str; 2] = [INPUT, OUTPUT];
 }
 
+/// The `outcome` values of [`INGEST_ITEMS_TOTAL`]: what became of each item
+/// of an ingest batch (contract C5).
+pub mod ingest_outcome {
+    /// A new post.
+    pub const INSERTED: &str = "inserted";
+    /// A known post that changed.
+    pub const UPDATED: &str = "updated";
+    /// A known post.
+    pub const KNOWN: &str = "known";
+    /// An item the sanitizer rejected.
+    pub const REJECTED: &str = "rejected";
+    /// Every value.
+    pub const ALL: [&str; 4] = [INSERTED, UPDATED, KNOWN, REJECTED];
+}
+
 /// The `area` values of [`DISK_BYTES`] with their directory: the top-level
 /// directories of the data directory (plan §2.5).
 pub const DISK_AREAS: &[(&str, &str)] = &[
@@ -301,6 +326,7 @@ pub fn install() -> PrometheusHandle {
                 (JOB_DURATION_SECONDS, JOB_DURATION_BUCKETS),
                 (RENDITION_BYTES, RENDITION_BUCKETS),
                 (ARCHIVE_COVER_LATENCY_SECONDS, COVER_LATENCY_BUCKETS),
+                (SYNC_RUN_PAGES, SYNC_RUN_PAGES_BUCKETS),
             ];
             let recorder = buckets
                 .into_iter()
@@ -389,6 +415,14 @@ fn describe() {
     metrics::describe_gauge!(
         ARCHIVE_BACKLOG,
         "Items left to the server's archive, by platform, as the drains last counted them."
+    );
+    metrics::describe_counter!(
+        INGEST_ITEMS_TOTAL,
+        "Items of ingest batches, by platform and outcome (inserted, updated, known, rejected)."
+    );
+    metrics::describe_histogram!(
+        SYNC_RUN_PAGES,
+        "Pages a finished sync run scanned, by platform and trigger."
     );
     metrics::describe_gauge!(BUILD_INFO, "Always 1; the label carries the version.");
 }

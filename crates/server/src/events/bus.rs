@@ -17,9 +17,11 @@ use tokio::time::Instant;
 use super::coalesce::{Offer, PostKeys, Throttle};
 use super::model::{
     ChangeReason, EventTopic, JobUpdatedEvent, PostsChangedEvent, ResyncReason, StatsChangedEvent,
+    SyncProgressEvent,
 };
 use super::{
     CHANNEL_CAPACITY, JOB_WINDOW, POSTS_WINDOW, REPLAY_EVENTS, REPLAY_WINDOW, STATS_WINDOW,
+    SYNC_WINDOW,
 };
 
 /// A published event, shared by the ring and every subscriber.
@@ -38,11 +40,12 @@ pub struct Published {
 }
 
 /// Which held change a flush sends.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum FlushKey {
     Posts(ChangeReason),
     Stats,
     Job(i64),
+    Sync(Box<str>),
 }
 
 struct State {
@@ -54,6 +57,7 @@ struct State {
     posts: HashMap<ChangeReason, Throttle<PostKeys>>,
     stats: Throttle<StatsChangedEvent>,
     jobs: HashMap<i64, Throttle<JobUpdatedEvent>>,
+    syncs: HashMap<Box<str>, Throttle<SyncProgressEvent>>,
     /// Last publish, subscription or disconnection.
     last_active: Instant,
 }
@@ -77,6 +81,7 @@ impl UserBus {
                 posts: HashMap::new(),
                 stats: Throttle::new(STATS_WINDOW),
                 jobs: HashMap::new(),
+                syncs: HashMap::new(),
                 last_active: now,
             }),
         }
@@ -174,6 +179,24 @@ impl UserBus {
         })
     }
 
+    /// Offers a `sync.progress`; returns when to flush, if it is held.
+    pub(super) fn offer_sync(&self, event: SyncProgressEvent, now: Instant) -> Option<Instant> {
+        let mut state = self.lock();
+        let run: Box<str> = event.run_id.as_str().into();
+        if !state.syncs.contains_key(&run) {
+            // Forget runs whose throttle has nothing left to do.
+            state.syncs.retain(|_, throttle| !throttle.is_idle(now));
+        }
+        let offer = state
+            .syncs
+            .entry(run)
+            .or_insert_with(|| Throttle::new(SYNC_WINDOW))
+            .offer(event, now);
+        self.settle(&mut state, offer, now, |event| {
+            (EventTopic::SyncProgress, to_json(&event))
+        })
+    }
+
     /// Sends what the throttle released, or reports when to flush.
     fn settle<P>(
         &self,
@@ -211,6 +234,11 @@ impl UserBus {
                 .get_mut(&id)
                 .and_then(|t| t.flush(now))
                 .map(|job| (EventTopic::JobUpdated, to_json(&job))),
+            FlushKey::Sync(run) => state
+                .syncs
+                .get_mut(&run)
+                .and_then(|t| t.flush(now))
+                .map(|event| (EventTopic::SyncProgress, to_json(&event))),
         };
         if let Some((topic, data)) = released {
             self.emit(&mut state, topic, data, now);
@@ -281,6 +309,7 @@ impl UserBus {
         let mut state = self.lock();
         prune_ring(&mut state.ring, now);
         state.jobs.retain(|_, throttle| !throttle.is_idle(now));
+        state.syncs.retain(|_, throttle| !throttle.is_idle(now));
     }
 
     /// Whether the bus can be dropped at `now`: no change held, and nothing
@@ -292,6 +321,7 @@ impl UserBus {
             && !state.stats.is_holding()
             && state.posts.values().all(|t| !t.is_holding())
             && state.jobs.values().all(|t| !t.is_holding())
+            && state.syncs.values().all(|t| !t.is_holding())
     }
 
     fn touch(&self, now: Instant) {

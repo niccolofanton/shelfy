@@ -51,7 +51,7 @@ pub use bus::{Delivery, Published, Subscription};
 pub use coalesce::MAX_EVENT_KEYS;
 use model::{
     ChangeReason, EventTopic, ExtensionStatusEvent, JobUpdatedEvent, Notification,
-    ProviderStatusEvent,
+    ProviderStatusEvent, SyncProgressEvent,
 };
 
 use crate::error::ApiError;
@@ -73,6 +73,8 @@ pub const POSTS_WINDOW: Duration = Duration::from_secs(2);
 pub const STATS_WINDOW: Duration = Duration::from_secs(1);
 /// Throttle window of `job.updated`, per job.
 pub const JOB_WINDOW: Duration = Duration::from_millis(250);
+/// Throttle window of `sync.progress`, per run (contract C8: 1 s per run).
+pub const SYNC_WINDOW: Duration = Duration::from_secs(1);
 
 /// The buses of every user. Cheap to clone.
 #[derive(Clone, Default)]
@@ -152,6 +154,16 @@ impl EventBus {
     pub fn provider_status(&self, user_id: &str, status: &ProviderStatusEvent) {
         self.user(user_id)
             .publish(EventTopic::ProviderStatus, status, Instant::now());
+    }
+
+    /// A sync run of `user_id` advanced. Throttled to one event a second per
+    /// run (contract C8); the latest progress wins.
+    pub fn sync_progress(&self, user_id: &str, event: SyncProgressEvent) {
+        let bus = self.user(user_id);
+        let run: Box<str> = event.run_id.as_str().into();
+        if let Some(at) = bus.offer_sync(event, Instant::now()) {
+            schedule(bus, FlushKey::Sync(run), at);
+        }
     }
 
     /// Opens a subscription to `user_id`'s events, resuming after the event

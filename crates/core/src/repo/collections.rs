@@ -107,6 +107,25 @@ pub fn get(conn: &Connection, id: i64) -> Result<Option<Collection>> {
         .optional()?)
 }
 
+/// The collection linked to a platform folder or board, by `(platform,
+/// external_id)` (the schema's UNIQUE key); `None` when none is. Sync's `auto`
+/// folder mapping finds it or creates one (P2-09), keeping a user's rename.
+///
+/// # Errors
+///
+/// Database errors.
+pub fn find_linked(
+    conn: &Connection,
+    platform: Platform,
+    external_id: &str,
+) -> Result<Option<Collection>> {
+    let sql = format!("{SELECT} WHERE c.platform = ?1 AND c.external_id = ?2");
+    Ok(conn
+        .prepare_cached(&sql)?
+        .query_row(params![platform, external_id], from_row)
+        .optional()?)
+}
+
 /// Creates a collection.
 ///
 /// # Errors

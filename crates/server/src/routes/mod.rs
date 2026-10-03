@@ -84,6 +84,7 @@ pub mod docs;
 pub mod events;
 pub mod extension;
 pub mod health;
+pub mod ingest;
 pub mod jobs;
 pub mod links;
 pub mod listing;
@@ -99,6 +100,7 @@ pub mod reauth;
 pub mod search;
 pub mod selector;
 pub mod stats;
+pub mod sync_runs;
 pub mod trash;
 pub mod uploads;
 pub mod version;
@@ -161,6 +163,8 @@ const PROBLEM_RESPONSE: &str = "Problem";
         event::ExtensionStatusEvent,
         event::ProviderStatusEvent,
         event::ProviderState,
+        event::SyncProgressEvent,
+        event::SyncListing,
         listing::MatchMode,
         listing::PostSort,
         listing::YesNo,
@@ -243,8 +247,27 @@ pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
     (Method::POST, "/api/v1/posts/lookup", &[Scope::Lookup], true),
     (Method::POST, "/api/v1/links", &[Scope::LinksCreate], true),
     (
+        Method::POST,
+        "/api/v1/ingest/batches",
+        &[Scope::Ingest],
+        false,
+    ),
+    (Method::POST, "/api/v1/sync-runs", &[Scope::Ingest], false),
+    (
+        Method::PATCH,
+        "/api/v1/sync-runs/{id}",
+        &[Scope::Ingest],
+        false,
+    ),
+    (
         Method::GET,
         "/api/v1/extension/config",
+        &[Scope::Ingest],
+        false,
+    ),
+    (
+        Method::GET,
+        "/api/v1/extension/sources",
         &[Scope::Ingest],
         false,
     ),
@@ -299,6 +322,11 @@ pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
 /// `params(IdempotencyHeader)` in its `#[utoipa::path]`; a test checks that
 /// this list and the document agree. `body_bytes` is the route's body limit.
 pub const IDEMPOTENT_ROUTES: &[IdempotentRoute] = &[
+    IdempotentRoute {
+        method: Method::POST,
+        path: "/api/v1/ingest/batches",
+        body_bytes: RouteLimits::INGEST.body_bytes,
+    },
     IdempotentRoute {
         method: Method::POST,
         path: "/api/v1/jobs/{id}/retry",
@@ -368,6 +396,9 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(collections::remove_collection_post))
         .routes(routes!(collections::create_collection_from_query))
         .routes(routes!(links::create_link))
+        .routes(routes!(sync_runs::open_sync_run, sync_runs::list_sync_runs))
+        .routes(routes!(sync_runs::update_sync_run))
+        .routes(routes!(sync_runs::list_extension_sources))
         .routes(routes!(trash::list_trash))
         .routes(routes!(trash::restore_trash))
         .routes(routes!(trash::empty_trash))
@@ -391,10 +422,13 @@ pub fn router() -> OpenApiRouter<AppState> {
     // Streams end when the shutdown token fires instead of on a timer.
     let streams = OpenApiRouter::default().routes(routes!(events::stream_events));
     let upload_chunks = OpenApiRouter::default().routes(routes!(uploads::append_upload));
+    // Capture batches are larger (up to 8 MiB, ≤ 500 items).
+    let ingest = OpenApiRouter::default().routes(routes!(ingest::ingest_batch));
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .merge(RouteLimits::STANDARD.apply(standard))
         .merge(RouteLimits::STREAM.apply(streams))
         .merge(RouteLimits::UPLOAD_CHUNK.apply(upload_chunks))
+        .merge(RouteLimits::INGEST.apply(ingest))
         .merge(RouteLimits::STANDARD.apply(media::router()))
         .layer(Extension(Arc::new(uploads::UploadLocks::default())))
 }
