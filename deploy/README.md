@@ -160,6 +160,7 @@ names and labels: change them together.
 | --- | --- | --- | --- |
 | `shelfy_http_requests_total` | counter | `route`, `method`, `status` | Responses. `route` is the route template (`/api/v1/posts/{key}`), `spa` for the web app's files, or `unmatched` |
 | `shelfy_http_request_duration_seconds` | histogram | `route` | Time to the response headers, with bucket bounds at the §6.2 budgets |
+| `shelfy_media_request_duration_seconds` | histogram | `variant` (`g480`, `original`, `other`) | Time to the response headers of `GET /media/{file}`, by what the file name designates; the §6.2 rendition p95 reads `variant="g480"` |
 | `shelfy_sse_connections` | gauge | — | Open realtime streams (`GET /api/v1/events`) |
 | `shelfy_jobs` | gauge | `kind`, `state` | Jobs the scheduler holds: `ready` (due, paused queues included), `delayed`, `running` |
 | `shelfy_job_oldest_queued_seconds` | gauge | `kind` | How long the oldest due job of an unpaused queue has waited; 0 when none |

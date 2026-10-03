@@ -341,6 +341,41 @@ async fn every_job_outcome_is_recorded() {
     );
 }
 
+/// F8: the media route's latency is split by a bounded `variant`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn media_latency_is_split_by_variant() {
+    let _turn = TURN.lock().await;
+    let handle = metrics::install();
+    let t = TestState::new();
+    let app = t.app();
+    let cookie = sign_in(&app, &t).await;
+    let hex = "ab".repeat(32);
+    let count = |variant: &str| {
+        let (_, all) = rendered(&handle);
+        value(
+            &all,
+            "shelfy_media_request_duration_seconds_count",
+            &[("variant", variant)],
+        )
+        .unwrap_or(0.0)
+    };
+    let before = ["g480", "original", "other"].map(count);
+    for path in [
+        format!("/media/{hex}.g480.webp"),
+        format!("/media/{hex}.jpg"),
+        "/media/planted-name-4242.png".to_owned(),
+        format!("/media/{hex}.g999.webp"),
+    ] {
+        send(&app, with_session(get(&path), &cookie)).await;
+    }
+    let after = ["g480", "original", "other"].map(count);
+    assert_eq!(after[0] - before[0], 1.0, "g480");
+    assert_eq!(after[1] - before[1], 1.0, "original");
+    assert_eq!(after[2] - before[2], 2.0, "other");
+    let (text, _) = rendered(&handle);
+    assert!(!text.contains("planted-name-4242"), "{text}");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn no_label_carries_a_per_user_value() {
     let _turn = TURN.lock().await;
@@ -452,7 +487,7 @@ async fn no_label_carries_a_per_user_value() {
                 "provider_kind" => ai_provider_kind::ALL.contains(&value.as_str()),
                 "task" => ai_task::ALL.contains(&value.as_str()),
                 "direction" => ai_direction::ALL.contains(&value.as_str()),
-                "variant" => value == "g480",
+                "variant" => ["g480", "original", "other"].contains(&value.as_str()),
                 "version" => value == shelfy_server::VERSION,
                 "le" | "quantile" => value == "+Inf" || value.parse::<f64>().is_ok(),
                 _ => false,

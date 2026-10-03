@@ -11,6 +11,7 @@
 //! |---|---|---|---|
 //! | `shelfy_http_requests_total` | counter | `route`, `method`, `status` | responses ([`super::http::observe`]) |
 //! | `shelfy_http_request_duration_seconds` | histogram, [`DURATION_BUCKETS`] | `route` | time to the response headers |
+//! | `shelfy_media_request_duration_seconds` | histogram, [`DURATION_BUCKETS`] | `variant` ([`media_variant`]) | time to the response headers of `GET /media/{file}`, by what the file name designates (F8) |
 //! | `shelfy_sse_connections` | gauge | — | open `GET /api/v1/events` streams |
 //! | `shelfy_jobs` | gauge | `kind`, `state` ([`job_state`]) | jobs the scheduler holds |
 //! | `shelfy_job_oldest_queued_seconds` | gauge | `kind` | how long the oldest due job of an unpaused queue has waited; 0 when none |
@@ -65,6 +66,11 @@ pub const ARCHIVE_BACKLOG: &str = "shelfy_archive_backlog";
 pub const HTTP_REQUESTS_TOTAL: &str = "shelfy_http_requests_total";
 /// Histogram of request handling time by route template, in seconds.
 pub const HTTP_REQUEST_DURATION_SECONDS: &str = "shelfy_http_request_duration_seconds";
+/// Histogram of `GET /media/{file}` handling time by [`media_variant`], in
+/// seconds: the §6.2 rendition budget (p95 ≤ 5 ms) reads its `g480` series.
+/// Kept apart from [`HTTP_REQUEST_DURATION_SECONDS`] so no other route pays
+/// for the label.
+pub const MEDIA_REQUEST_DURATION_SECONDS: &str = "shelfy_media_request_duration_seconds";
 /// Gauge of the open realtime streams.
 pub const SSE_CONNECTIONS: &str = "shelfy_sse_connections";
 /// Gauge of the jobs the scheduler holds, by kind and [`job_state`].
@@ -323,6 +329,7 @@ pub fn install() -> PrometheusHandle {
         .get_or_init(|| {
             let buckets = [
                 (HTTP_REQUEST_DURATION_SECONDS, DURATION_BUCKETS),
+                (MEDIA_REQUEST_DURATION_SECONDS, DURATION_BUCKETS),
                 (JOB_DURATION_SECONDS, JOB_DURATION_BUCKETS),
                 (RENDITION_BYTES, RENDITION_BUCKETS),
                 (ARCHIVE_COVER_LATENCY_SECONDS, COVER_LATENCY_BUCKETS),
@@ -356,6 +363,11 @@ fn describe() {
         HTTP_REQUEST_DURATION_SECONDS,
         metrics::Unit::Seconds,
         "Time from request to response headers, by route template."
+    );
+    metrics::describe_histogram!(
+        MEDIA_REQUEST_DURATION_SECONDS,
+        metrics::Unit::Seconds,
+        "Time from request to response headers of GET /media/{file}, by variant."
     );
     metrics::describe_gauge!(SSE_CONNECTIONS, "Open realtime event streams.");
     metrics::describe_gauge!(
@@ -448,6 +460,35 @@ pub fn record_http_request(route: &str, method: &Method, status: StatusCode, ela
     )
     .increment(1);
     metrics::histogram!(HTTP_REQUEST_DURATION_SECONDS, "route" => route.to_owned())
+        .record(elapsed.as_secs_f64());
+}
+
+/// The route template of the media route, whose latency [`record_media_request`] splits.
+pub const MEDIA_ROUTE: &str = "/media/{file}";
+/// `variant` of a media file that is not a valid object name.
+pub const OTHER_VARIANT: &str = "other";
+/// `variant` of a stored object's master.
+pub const ORIGINAL_VARIANT: &str = "original";
+
+/// The `variant` label of a request for `file`: a rendition's suffix
+/// (`g480`), [`ORIGINAL_VARIANT`] for a master, [`OTHER_VARIANT`] for any
+/// other name. A fixed set, so the raw name never reaches a label.
+#[must_use]
+pub fn media_variant(file: &str) -> &'static str {
+    use shelfy_media::ObjectName;
+    use shelfy_media::name::Variant;
+    match ObjectName::parse(file).map(|name| name.variant) {
+        Some(Variant::Rendition(rendition)) => rendition.suffix(),
+        Some(Variant::Original(_)) => ORIGINAL_VARIANT,
+        None => OTHER_VARIANT,
+    }
+}
+
+/// Records the latency of one `GET /media/{file}` request (called by
+/// [`super::http::observe`] with the request path).
+pub fn record_media_request(path: &str, elapsed: Duration) {
+    let file = path.rsplit('/').next().unwrap_or_default();
+    metrics::histogram!(MEDIA_REQUEST_DURATION_SECONDS, "variant" => media_variant(file))
         .record(elapsed.as_secs_f64());
 }
 
@@ -642,6 +683,15 @@ fn method_label(method: &Method) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_names_map_to_a_bounded_variant() {
+        let hex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        assert_eq!(media_variant(&format!("{hex}.g480.webp")), "g480");
+        assert_eq!(media_variant(&format!("{hex}.jpg")), ORIGINAL_VARIANT);
+        assert_eq!(media_variant(&format!("{hex}.g999.webp")), OTHER_VARIANT);
+        assert_eq!(media_variant("../etc/passwd"), OTHER_VARIANT);
+    }
 
     #[test]
     fn unknown_methods_share_one_label() {

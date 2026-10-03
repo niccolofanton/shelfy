@@ -8,7 +8,10 @@
 // 5, 15, 40, 60 and 100 ms: crates/server/src/telemetry/metrics.rs,
 // DURATION_BUCKETS). `route` is the exact axum route template — no
 // `method` label on this histogram (only the `_total` counter has one), so
-// never filter on method here. `g480` size comes from
+// never filter on method here. The media route's latency has its own
+// histogram, `shelfy_media_request_duration_seconds{variant}` (F8; variant
+// is `g480`, `original` or `other`), so the rendition p95 reads
+// `variant="g480"` instead of the whole route. `g480` size comes from
 // `shelfy_rendition_bytes_bucket{variant="g480"}` the same way.
 //
 // Usage:
@@ -40,7 +43,6 @@ const ROUTES = {
   list: '/api/v1/posts',
   search: '/api/v1/search',
   detail: '/api/v1/posts/{key}',
-  media: '/media/{file}',
 };
 
 /** One row of the table: an id (the fixture key), a label, the PromQL
@@ -84,12 +86,11 @@ const ROWS = [
   },
   {
     id: 'media_p95',
-    label: 'media rendition (`GET /media/{file}`) p95',
+    label: '`g480` rendition (`GET /media/{file}`) p95',
     unit: 'ms',
     budget: 0.005,
-    note: 'this route serves every media variant, not only `g480` — see "Gaps" in the README',
     query: (w) =>
-      quantileQuery('shelfy_http_request_duration_seconds', `{route="${ROUTES.media}"}`, 0.95, w),
+      quantileQuery('shelfy_media_request_duration_seconds', '{variant="g480"}', 0.95, w),
   },
   {
     id: 'g480_p50',
