@@ -1,0 +1,67 @@
+// UI strings for the Trash view (P1-11/P1-14): list, select, restore and
+// empty. No search here — trashed posts carry no FTS rows (review L6 on
+// P1-11), so a query would never match; the view offers only a plain,
+// newest-deleted-first list instead.
+// ── Types for this i18n namespace ──────────────────────────────────────────────
+// A translatable value is either a plain string or a { one, other } plural shape
+// (chosen by vars.count in translate()). Each supported language maps namespaced
+// keys to such values. `satisfies` keeps the literal key set while type-checking.
+type MessageValue = string | { one: string; other: string };
+type LangMessages = { it: Record<string, MessageValue>; en: Record<string, MessageValue> };
+
+export default {
+  it: {
+    title: 'Cestino',
+    postsCount: '{n} nel cestino',
+    retention: 'I post restano qui {days} giorni prima di essere eliminati per sempre.',
+    refreshTitle: 'Aggiorna il cestino',
+    select: 'Seleziona',
+    selectTitle: 'Seleziona più post per ripristinarli o eliminarli per sempre',
+    selectedCount: '{n} selezionati',
+    selectAll: 'Seleziona tutti',
+    selectAllN: 'Seleziona tutti i {n}',
+    deselectAll: 'Deseleziona tutti',
+    exitSelectionTitle: 'Esci dalla selezione',
+    restoreSelected: 'Ripristina',
+    restoreSelectedConfirm: 'Conferma: ripristina {n} post',
+    emptyTrash: 'Svuota cestino',
+    emptyTrashConfirm: 'Conferma: elimina per sempre tutto il cestino',
+    emptyTrashHint: 'Elimina per sempre tutti i post nel cestino. Azione irreversibile.',
+    fbRestored: '{n} post ripristinati',
+    fbRestoreError: 'Errore nel ripristino',
+    fbEmptyQueued: 'Svuotamento del cestino avviato',
+    fbEmptyError: 'Errore nello svuotamento del cestino',
+    jobRunning: 'Elaborazione in corso…',
+    jobProgress: 'Elaborazione in corso… {pct}%',
+    emptyStateTitle: 'Il cestino è vuoto.',
+    emptyStateHint: 'I post eliminati dalla libreria compaiono qui per 30 giorni.',
+    loadError: 'Caricamento del cestino non riuscito.',
+  },
+  en: {
+    title: 'Trash',
+    postsCount: '{n} in trash',
+    retention: 'Posts stay here {days} days before they are deleted for good.',
+    refreshTitle: 'Refresh the trash',
+    select: 'Select',
+    selectTitle: 'Select multiple posts to restore or delete them for good',
+    selectedCount: '{n} selected',
+    selectAll: 'Select all',
+    selectAllN: 'Select all {n}',
+    deselectAll: 'Deselect all',
+    exitSelectionTitle: 'Exit selection',
+    restoreSelected: 'Restore',
+    restoreSelectedConfirm: 'Confirm: restore {n} posts',
+    emptyTrash: 'Empty trash',
+    emptyTrashConfirm: 'Confirm: permanently delete the whole trash',
+    emptyTrashHint: 'Permanently deletes every post in the trash. This action is irreversible.',
+    fbRestored: '{n} posts restored',
+    fbRestoreError: 'Error restoring posts',
+    fbEmptyQueued: 'Emptying the trash',
+    fbEmptyError: 'Error emptying the trash',
+    jobRunning: 'Processing…',
+    jobProgress: 'Processing… {pct}%',
+    emptyStateTitle: 'The trash is empty.',
+    emptyStateHint: 'Posts deleted from the library stay here for 30 days.',
+    loadError: 'Could not load the trash.',
+  },
+} satisfies LangMessages;

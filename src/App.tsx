@@ -61,6 +61,7 @@ const DownloadsView = lazy(withMessages(() => import('./views/Downloads'), 'down
 // P4-09: the Jobs view is web-only (PG18), so it is always lazy — there is no
 // "ships in the initial bundle" baseline to improve on, unlike Downloads.
 const JobsView = lazy(withMessages(() => import('./views/Jobs'), 'jobs'));
+const TrashView = lazy(withMessages(() => import('./views/Trash'), 'trash'));
 
 // Modals and a banner that aren't on the first screen — opened from a toolbar
 // action, or (RemoteAiBanner) shown only once `caps.ai` arrives — so each is
@@ -258,6 +259,7 @@ function bottomNavTargetOfView(view: View): BottomNavTarget | null {
 // every coalesced progress flush, so each view must only reconcile when its own
 // (stabilized) props change. Sidebar and Downloads are also memoized at definition.
 const GalleryMemo = React.memo(Gallery);
+const TrashMemo = React.memo(TrashView);
 const BrowserMemo = React.memo(Browser);
 const AiTagsMemo = React.memo(AiTags);
 const AiTagsQueueMemo = React.memo(AiTagsQueue);
@@ -1084,8 +1086,17 @@ function AppInner(): React.JSX.Element {
                       ) : (
                         unavailablePanel
                       ))}
-                    {/* The trash view arrives with P1-14. */}
-                    {v === 'trash' && unavailablePanel}
+                    {v === 'trash' && (
+                      <Suspense fallback={<ViewLoading />}>
+                        <TrashMemo
+                          active={view === 'trash'}
+                          onLibraryChanged={() => {
+                            refreshStats();
+                            reloadCollections();
+                          }}
+                        />
+                      </Suspense>
+                    )}
                   </ErrorBoundary>
                 </div>
               );

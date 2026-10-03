@@ -72,6 +72,17 @@ function webClient(): MockClient {
     getPostsByIds: vi.fn(async (ids: string[]) => POSTS.filter((p) => ids.includes(p.id))),
     getStats: vi.fn().mockResolvedValue(STATS),
     listCollections: vi.fn().mockResolvedValue(FOLDERS),
+    countPosts: vi.fn().mockResolvedValue(0),
+    resolveAllIds: vi.fn().mockResolvedValue(null),
+    bulkAction: vi.fn(),
+    listTrash: vi.fn().mockResolvedValue({
+      posts: [],
+      total: 0,
+      retentionDays: 30,
+      nextCursor: null,
+    }),
+    restoreFromTrash: vi.fn(),
+    emptyTrash: vi.fn(),
     updatePost: vi.fn(),
     createCollection: vi.fn(),
     updateCollection: vi.fn(),
@@ -138,13 +149,15 @@ describe('deep links', () => {
     expect(window.location.pathname).toBe('/');
   });
 
-  it('says so for the pages this client cannot show yet', async () => {
+  it('/trash shows the real view since P1-14 (it used to be unavailable)', async () => {
     renderAt('/trash');
+    expect(await screen.findByTestId('trash-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('route-unavailable')).toBeNull();
+  });
+
+  it('says so for the pages this client cannot show yet (settings: no `settings` capability)', async () => {
+    renderAt('/settings/legal');
     expect(await screen.findByTestId('route-unavailable')).toBeInTheDocument();
-    act(() => window.history.pushState(null, '', '/settings/legal'));
-    await waitFor(() =>
-      expect(screen.getAllByTestId('route-unavailable').length).toBeGreaterThan(0),
-    );
     fireEvent.click(screen.getAllByTestId('route-back')[0]);
     expect(window.location.pathname).toBe('/');
   });
