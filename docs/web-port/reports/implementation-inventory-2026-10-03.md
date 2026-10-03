@@ -2,7 +2,7 @@
 
 ## Perimetro e significato degli stati
 
-- **Snapshot Git verificato:** `/Users/fant/work/experiments/shelfy-web-local/integration`, branch `web/foundations`, HEAD `3ef5b10`; include P2-14/F22 `30b4e97` e F20 `cc4f594`.
+- **Snapshot Git verificato:** `/Users/fant/work/experiments/shelfy-web-local/integration`, branch `web/foundations`, HEAD `e35eed6`; include P2-14/F22 `30b4e97` e F20 `cc4f594`.
 - **Perimetro:** tutte le **115 schede P1–P4**, più **F1–F22, UX-0–UX-10, X1–X7, P0 e P5** fuori conteggio. P6 storico è sostituito da X5 per E7/E10.
 - **Fonti:** [EXECUTION](../EXECUTION.md), schede [P1](../phases/P1.md), [P2](../phases/P2.md), [P3](../phases/P3.md), [P4](../phases/P4.md), [piano](../IMPLEMENTATION-PLAN.md), [continuazione](continuation-2026-10-03.md), [passi live](live-steps.md), [audit UX](../reviews/ux-audit.md), Git e worktree. Le tabelle storiche sono riconciliate con l’evidenza nuova.
 - **Integrata:** codice nel ramo comune, o azione operativa conclusa nel registro; P4-01 è assorbita da P2-04. Non implica distribuzione o accettazione finale.
@@ -21,19 +21,21 @@
 | Fase | Integrate | Pending in corso | Pending pronte | Pending prese in carico, da avviare | Da fare | Eliminate | Totale |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | P1 — Libreria web | 25 | 0 | 0 | 0 | 1 | 1 | 27 |
-| P2 — Ingest e sync | 18 | 1 | 0 | 0 | 6 | 0 | 25 |
+| P2 — Ingest e sync | 18 | 0 | 1 | 0 | 6 | 0 | 25 |
 | P3 — AI | 21 | 3 | 0 | 0 | 7 | 0 | 31 |
-| P4 — Capture, video e dati | 14 | 3 | 0 | 1 | 14 | 0 | 32 |
-| **Totale** | **78** | **7** | **0** | **1** | **28** | **1** | **115** |
+| P4 — Capture, video e dati | 14 | 7 | 1 | 1 | 9 | 0 | 32 |
+| **Totale** | **78** | **10** | **2** | **1** | **23** | **1** | **115** |
 
-- **Pending complessive: 8.** F21 integrata resta fuori dal conteggio delle fasi.
-- **Schede aperte: 36**, incluse 0 pronte da integrare. Il conteggio non misura lavoro pesato o accettazione live.
+- **Pending complessive: 13.** F21 integrata resta fuori dal conteggio delle fasi.
+- **Schede aperte: 36**, incluse 2 pronte da integrare. Il conteggio non misura lavoro pesato o accettazione live.
 - **Correzione al vecchio tracking:** P2-14/F22 integrate; P2-12/P2-13 e UX-4/UX-6 già integrate dai commit cloud. F20 integrato e verificato nella CI 37144780896; Lighthouse resta F18.
 
 
 - **Hardening job integrato c246490:** schema control 7, ID monotoni e checkpoint legati alla singola esecuzione logica; import legacy non associabili rifiutati con recupero tramite nuovo upload. Lane: 62/62 test post-rebase, 125 distinti complessivi e Clippy verdi; root: 82/82 test combinati queue/sync/tags/routes/sidebar. Nessuna verifica Rust complessiva sul nuovo candidato ancora dichiarata.
 
 - **Verifica combinata lead su0b9edb3:** 1845/1845 test JavaScript in139file, tutte7configurazioni TypeScript e build web verdi dopo correzioni registri/eventi/i18n in f2cef46. Non copre gli ultimi backend STT/TTL né sostituisce il batch Rust. VPS letto alle22:26CEST: Docker29.6, rc.5 healthy, Hermes Up34h; nessun deploy nuovo. Runbook osn42e06ae corregge la precedente promessa di rollback N-1: schema7 richiede reader7, quindi niente rollback solo binario a rc.5.
+
+- **Batch Rust lead su48c6d10:** 126 suite, 1747 test passati, 5 asserzioni fallite e 8 ignorati. Correzioni fixture/contratti in e35eed6 (tabelle control7, filtro lingua, accountId pairing e health capture); rerun mirato dei quattro target ancora in corso. OpenAPI/client rigenerati dal server. Nessun verde complessivo anticipato.
 
 ## P1 — Libreria web: tutte le schede
 
@@ -89,7 +91,7 @@
 | P2-16 | Overlay selezione post nell’estensione | Integrata | 1c98ee8 + 2d2cdc8; overlay e batch vincolati al pairing; review indipendente e verifica combinata 448 test + typecheck verdi. | P2-06, P2-09 |
 | P2-17 | Worker estensione: upload, refresh ed idratazione Instagram | Integrata | 3e44bef; refresh/upload poster, lease e vincolo account anche per queue legacy. Review indipendente chiusa; 313 test estensione e smoke sintetici verdi nella lane. Sync live resta aperta. | P2-05, P2-13, P2-14, P2-15 |
 | P2-18 | Controlli sync web ed attività di sincronizzazione | Integrata | 5de43ac; review indipendente approva binding account C9 e visibilità errori pre-C4. Root 69 test sync/sidebar/routes verdi. DTO C2 accountId richiede rigenerazione OpenAPI nel batch Rust. | P2-08, P2-09, P2-12, P2-15, P1-06, P1-14 |
-| P2-19 | E2E estensione in CI e strumenti parità | Pending — in corso | Lane Codex attiva: harness estensione/SPA/server e report parità. Esecuzione real-server attende binario aggiornato con accountId; nessuna sync reale dichiarata. | P2-09–P2-17, P1-21 |
+| P2-19 | E2E estensione in CI e strumenti parità | Pending — pronta | Candidato 9ab8df0: 323 test estensione, tipi e build verdi; E2E server reale 11 checkpoint, 51 s, zero retry. Review indipendente senza finding, 81 test rieseguiti. CI cloud e sync owner separate. | P2-09–P2-17, P1-21 |
 | P2-20 | Deploy P2 e configurazione VPS | Da fare | Parziale storico: rc.5 con archive/link; restano deploy P2 completi, config estensione/Access e prove live. | rc.1: P2-03, P2-09, P2-10 |
 | P2-21 | Completamento SPIKE-3 sugli account reali | Da fare | Parziale: IG folder 123/123 e primo campione X; restano X completo con baseline desktop e Pinterest se usato. | — |
 | P2-22 | Probe Access con estensione reale | Da fare | Probe client reale via Access ancora aperto. | P2-06 |
@@ -151,20 +153,20 @@
 | P4-12 | Garbage collection oggetti e risorse | Integrata | 99b0743; GC e retention con interlock export. Exact lane GC/export 18/18 verdi. Fix riuso ID job separato, in corso prima del deploy. | — |
 | P4-13 | Immagine capture, seccomp ed isolamento | Integrata | ffaa02d; immagine capture e guard sui listener integrati. Verifiche lane green; full compose Docker >=28 resta gate della nuova CI. | P4-02, P4-03 |
 | P4-14 | Job capture ed ingest artefatti | Integrata | f524017 + e81bc5c + 75d7d80; ingest/cancel/quote/receipt e hook AI. Review lead corregge deadline L21 a13min sopra service12. Lane12 capture verdi; root29 test JS combinati verdi; Rust complessivo/schema generato e VPS ancora da verificare. | P4-03, P4-04, P4-07 |
-| P4-15 | API siti web | Pending — in corso | Lane Codex avviata su API siti/versioni/facet/similar, synth e gate prestazionali della scheda; dipendenza capture ora integrata. | P4-04, P4-05; sequenza dopo P4-14 |
+| P4-15 | API siti web | Pending — pronta | Candidati 3156b72 + e4aac21: API siti/versioni/facet/similar, synth e ripristino ThumbHash. Solo controlli statici: compilazione, OpenAPI e p95 pendenti. | P4-04, P4-05; sequenza dopo P4-14 |
 | P4-16 | Video on demand: resolver, cache e conserva offline | Pending — in corso | Lane Codex avviata su resolver video, cache e conserva offline; quote/egress/SSRF e cancellazione da verificare. Nessun download della libreria owner avviato. | P4-01, P4-06, P4-07, P1-11 |
 | P4-17 | Rimozione copie archiviate e video conservati | Da fare | Quote liberate al GC; sequenza lead dopo P4-16. | P4-07, P1-11; sequenza dopo P4-16 |
 | P4-18 | API segnalibri manuali | Pending — in corso | Lane Codex ripresa dopo integrazione correzione ID job c246490; implementazione completa e verifiche della scheda ancora aperte. | P4-07, P4-08 |
-| P4-19 | Import v2 e round trip senza perdite | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P4-10, P4-11 |
-| P4-20 | Reset account/libreria nella zona pericolosa | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P4-12, P1-11 |
-| P4-21 | Impostazioni Dati: import ed export | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P4-10, P4-11 |
+| P4-19 | Import v2 e round trip senza perdite | Pending — in corso | Lane Codex attiva su import v2 e round trip completo; base48c6d10, schema7 e checkpoint fail-closed. Verifiche ancora aperte. | P4-10, P4-11 |
+| P4-20 | Reset account/libreria nella zona pericolosa | Pending — in corso | Lane Codex avviata sui reset account secondo scheda completa. Nessuna azione owner/live; implementazione e verifiche ancora aperte. | P4-12, P1-11 |
+| P4-21 | Impostazioni Dati: import ed export | Pending — in corso | Lane Codex avviata su Impostazioni Dati, import/export e integrazione contratti P4-19/P4-18. Verifiche ancora aperte. | P4-10, P4-11 |
 | P4-22 | Feedback tramite relay server | Pending — presa in carico, da avviare | Presa in carico E20; nessun risultato pubblicato recuperato.  Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P4-01 |
-| P4-23 | Interfaccia Siti web | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P4-14, P4-15, P1-06 |
+| P4-23 | Interfaccia Siti web | Pending — in corso | Lane Codex attiva su Siti web: adapter desktop, elenco, dettagli e versioni. Prime verifiche TS e 71 test verdi; gate server/fake capture ancora aperto. | P4-14, P4-15, P1-06 |
 | P4-24 | UI video: riproduci, conserva, rimuovi ed elenco offline | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P4-16, P4-17, P1-06, P1-14 |
 | P4-25 | Interfaccia segnalibri manuali | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P4-18, P4-21 (dipendenza tardiva), P1-06 |
 | P4-26 | Impostazioni Zona pericolosa | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P4-20 |
 | P4-27 | E2E capture in CI e baseline desktop | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P4-02, P4-13, P4-14 |
-| P4-28 | Seconda PR osn: preparazione capture/egress | Da fare | Seconda PR infrastruttura capture/egress ancora da preparare. | P4-02, P4-13, P4-14 |
+| P4-28 | Seconda PR osn: preparazione capture/egress | Pending — in corso | Lane Codex attiva su preparazione OSN capture/egress, base osn42e06ae, worktree isolato. Nessun apply o riavvio produzione. | P4-02, P4-13, P4-14 |
 | P4-29 | Condivisione file Android | Da fare | Nessuna chiusura integrata recuperata; completare implementazione e verifiche della scheda. | P4-25, P2-07 PWA/share target |
 | P4-30 | Seconda PR osn: deploy capture/egress/video | Da fare | Apply delle tre immagini, isolamento e rollback ancora da eseguire con baseline Hermes. | P4-28, P4-16, P4-22 |
 | P4-31 | Misure VPS catture, video ed isolamento | Da fare | Mancano misure corpus capture/video/isolation su VPS finale. | P4-30, P4-27 |
@@ -190,7 +192,7 @@
 | F14 | Recuperare margine del bundle caricando i18n per vista | Integrata | `5305c97`; 218,3 → 177,1 KB gzip nel registro; nuove UI devono mantenere lazy namespace e gate. |
 | F15 | Timeout connect AI per purpose e corretta classificazione nodo offline | Integrata | `e59998f`; operator connect 3 s, errore Connect/Offline, loopback solo test. Drain deve gestire pausa QuotaExhausted. |
 | F16 | Preservare ordine originale dei campi dello schema nelle richieste AI | Integrata | `d61e89e`; RawValue nei body OpenAI/Anthropic; P3-13 usa JsonOutput::from_raw. |
-| F17 | Eliminare cartelle oltre 500 post tramite job chunked con undo/idempotency | Pending — in corso | Lane Codex avviata su eliminazione cartelle oltre500 con job chunked, undo e idempotency. Contratti P1-11/F11 da preservare; verifica ancora aperta. |
+| F17 | Eliminare cartelle oltre 500 post tramite job chunked con undo/idempotency | Pending — pronta | Candidato 86e82b7: job chunked oltre500, dedupe, undo e replay. 37 test TS verdi; nove regressioni Rust e schema pendenti. |
 | F18 | Ridurre LCP Gallery sotto il budget sul cold load slow-4G | Pending — in corso | Audit Chrome DevTools attivo; cold/warm cache da distinguere. Budget Lighthouse 2,5 s ancora non chiuso. |
 | F19 | Refresh riepilogo coda dopo cancel/retry di un singolo job | Integrata | `d305f7d`; test real-server non più fixme e unit useJobs; verifica della release ancora da eseguire. |
 | F20 | Rendere deterministici readiness SSRF ed ordinamento cancellazione video in CI | Integrata | `cc4f594`; review lead e verifiche locali: **92/92 SSRF** (89 rifiuti + 3 positivi), **38/38 video**, **3/3 cold-start IPv6**, clippy media verde; nuova CI remota non ancora verificata. SSRF resta gate bloccante. |
@@ -226,7 +228,7 @@
 | X3 | Test di ogni funzione web sul mock, suite e pass interattivo in tutte le sezioni | Da fare | Dopo P2–P4 ed X1 run; scroll, tap, avvio di tutte le azioni e matrice rispetto a features/. Le suite parziali presenti non equivalgono all’accettazione finale. |
 | X4 | Audit design e migliorie web/mobile/desktop senza redesign | Pending — in corso complessivamente | Audit X4a `db7ef1a` concluso; UX-1…UX-6 integrate, UX-0 integrata, UX-7…UX-10 ancora da fare. |
 | X5 | Desktop solo client server: login, libreria remota, browser sync/download API, AI locale e mock e2e | Pending — in corso | Lane Codex avviata sul desktop solo server E7/E10: architettura e implementazione completa, browser sync/download e capacità AI, mockaccount. Pubblicazione resta owner; nessuna parità finale dichiarata. |
-| X6 | MCP locale stdio per ricerca, lettura/salvataggio post, cartelle e tag con token scoped | Pending — in corso | Lane Codex avviata su MCP locale stdio con token F21, tool libreria e test synthetic. Previsti credenziali private e supporto Access su origin vincolata; nessun server MCP completo ancora verificato. |
+| X6 | MCP locale stdio per ricerca, lettura/salvataggio post, cartelle e tag con token scoped | Pending — pronta | Candidati 0e84bf4 + 940bc2d: MCP stdio, 8 tool lettura e 8 scrittura opt-in, UI token TTL/scope. 11 test MCP e 32 UI verdi; review/integrazione e verifica live aperte. |
 | X7 | Test avversariale live di auth/scope/CSRF/rate limit/SSRF/upload/injection/IDOR/log leakage | Da fare | Dopo X3; non distruttivo inizialmente, modifiche distruttive solo sul mock, niente DoS/stress del VPS condiviso; report finding e correzioni. |
 
 ### Catena AI prioritaria dopo E22
