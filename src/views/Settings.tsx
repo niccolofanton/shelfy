@@ -2288,11 +2288,11 @@ function AiSection(): React.JSX.Element {
 }
 
 // Downloads and data on this machine: which asset types to download, and the
-// JSON import / export. The preferences stay a hook of Settings itself, where
-// they were before the sections: useDownloadPrefs writes localStorage inside
-// its state updater, then re-reads it on an event it sends at once, so a
-// toggle survives only when React runs that updater right away. Moved into
-// this section, the second toggle was lost (desktop e2e "asset types").
+// JSON import / export. The preferences stay a hook of Settings itself (where
+// they were before the sections existed) rather than of this section; nothing
+// below depends on that placement — useDownloadPrefs persists from an effect
+// now (F7), so a second quick toggle no longer races the first regardless of
+// which component holds the hook.
 function DataSection({
   onDataCleared,
   prefs,

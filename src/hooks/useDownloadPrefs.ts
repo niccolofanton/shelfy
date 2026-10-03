@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 
 const STORAGE_KEY = 'download:assetTypes';
 
@@ -29,11 +29,28 @@ export interface UseDownloadPrefs {
 // the Settings editor and the Downloads view. A custom event keeps mounted
 // instances in sync within the same window (the native `storage` event only
 // fires in other tabs/windows).
+//
+// The state updater below is pure — no localStorage access inside it. Two
+// toggles fired before React re-renders (e.g. two checkboxes clicked in quick
+// succession) must thread through the same setState queue and both land in the
+// next `prefs`; a side effect inside the updater risked that, because the
+// updater can run more than once for one commit (StrictMode double-invokes it)
+// and because `sync` below used to call the non-functional `setPrefs(read())`,
+// which reads a stale value when it races a just-queued, not-yet-applied
+// toggle. Persisting happens in its own effect, after `prefs` actually changes.
+// A ref of the last-persisted JSON stops that effect from re-triggering itself
+// through the event it dispatches (dispatch → this hook's own `sync` listener
+// → setPrefs → effect again).
 export function useDownloadPrefs(): UseDownloadPrefs {
   const [prefs, setPrefs] = useState<DownloadPrefs>(read);
+  const lastPersisted = useRef<string>(JSON.stringify(prefs));
 
   useEffect(() => {
-    const sync = (): void => setPrefs(read());
+    const sync = (): void => {
+      const fresh = read();
+      lastPersisted.current = JSON.stringify(fresh);
+      setPrefs(fresh);
+    };
     window.addEventListener('download-prefs-changed', sync);
     window.addEventListener('storage', sync);
     return () => {
@@ -42,23 +59,17 @@ export function useDownloadPrefs(): UseDownloadPrefs {
     };
   }, []);
 
-  const setType = useCallback(
-    (type: string, value: boolean): void => {
-      // The write happens here, synchronously, BEFORE the event below —
-      // not inside the setPrefs updater. React may defer invoking a
-      // functional updater until its next render pass (it only runs it
-      // eagerly, as an internal bail-out optimization, when there is no
-      // already-queued update for this state — not guaranteed); dispatching
-      // first would let every 'download-prefs-changed' listener's read()
-      // (including this hook's own, below) race the write and reapply the
-      // pre-toggle value right back over it.
-      const next = { ...prefs, [type]: value };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      setPrefs(next);
-      window.dispatchEvent(new Event('download-prefs-changed'));
-    },
-    [prefs],
-  );
+  useEffect(() => {
+    const json = JSON.stringify(prefs);
+    if (json === lastPersisted.current) return; // already on disk (mount, or echoed from `sync`)
+    lastPersisted.current = json;
+    localStorage.setItem(STORAGE_KEY, json);
+    window.dispatchEvent(new Event('download-prefs-changed'));
+  }, [prefs]);
+
+  const setType = useCallback((type: string, value: boolean): void => {
+    setPrefs((prev) => ({ ...prev, [type]: value }));
+  }, []);
 
   const selectedTypes = useCallback((): string[] => ALL_TYPES.filter((t) => prefs[t]), [prefs]);
 

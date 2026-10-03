@@ -1,28 +1,38 @@
+import React from 'react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useDownloadPrefs } from '../../src/hooks/useDownloadPrefs';
 
 const STORAGE_KEY = 'download:assetTypes';
 
-// setType must write localStorage synchronously, BEFORE it dispatches
-// 'download-prefs-changed' — found while splitting Settings into its own
-// chunk (P1-08): once that landed, a second mounted instance's listener
-// (itself included — see below) sometimes re-read localStorage before the
-// write had landed and reapplied the stale value right back over the
-// toggle, because the write used to happen inside the setPrefs updater,
-// whose timing React does not guarantee (it only runs a functional updater
-// eagerly, as an internal bail-out check, when no update is already queued).
+function stored(): unknown {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  return raw ? JSON.parse(raw) : null;
+}
+
 describe('useDownloadPrefs', () => {
   beforeEach(() => {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.clear();
   });
 
-  it('defaults every type to enabled with nothing stored', () => {
+  it('defaults every asset type to enabled', () => {
     const { result } = renderHook(() => useDownloadPrefs());
     expect(result.current.prefs).toEqual({ thumbnail: true, image: true, video: true });
-    expect(result.current.selectedTypes()).toEqual(['thumbnail', 'image', 'video']);
+    expect(result.current.selectedTypes().sort()).toEqual(['image', 'thumbnail', 'video']);
   });
 
+  it('setType flips one type and persists it', () => {
+    const { result } = renderHook(() => useDownloadPrefs());
+    act(() => result.current.setType('video', false));
+    expect(result.current.prefs).toEqual({ thumbnail: true, image: true, video: false });
+    expect(stored()).toEqual({ thumbnail: true, image: true, video: false });
+  });
+
+  // P1-08's regression (found while code-splitting Settings into its own chunk,
+  // which shifted timing enough to lose this reliably): the old hook wrote
+  // localStorage inside setType, then dispatched 'download-prefs-changed' right
+  // after. A listener reacting to that event — including this hook's own
+  // instance — could read localStorage before the write had actually landed.
   it('setType persists before dispatching: a listener reading localStorage mid-call sees the new value, not the stale one', () => {
     const { result } = renderHook(() => useDownloadPrefs());
     const seen: Array<string | null> = [];
@@ -37,6 +47,34 @@ describe('useDownloadPrefs', () => {
     expect(result.current.prefs.video).toBe(false);
   });
 
+  // The regression this guards: the old hook wrote localStorage as a side
+  // effect of its setState updater, so a second toggle queued before React
+  // flushed the first could be dropped from the hook's own `prefs` — even
+  // though, by coincidence, localStorage could still end up correct. Toggling
+  // two different types inside one `act()` reproduces "before React
+  // re-renders" without depending on real timers.
+  it('keeps both changes when two types are toggled in quick succession', () => {
+    const { result } = renderHook(() => useDownloadPrefs());
+    act(() => {
+      result.current.setType('thumbnail', false);
+      result.current.setType('video', false);
+    });
+    expect(result.current.prefs).toEqual({ thumbnail: false, image: true, video: false });
+    expect(stored()).toEqual({ thumbnail: false, image: true, video: false });
+  });
+
+  it('survives React StrictMode double-invoking the updater', () => {
+    const { result } = renderHook(() => useDownloadPrefs(), {
+      wrapper: ({ children }) => <React.StrictMode>{children}</React.StrictMode>,
+    });
+    act(() => {
+      result.current.setType('thumbnail', false);
+      result.current.setType('video', false);
+    });
+    expect(result.current.prefs).toEqual({ thumbnail: false, image: true, video: false });
+    expect(stored()).toEqual({ thumbnail: false, image: true, video: false });
+  });
+
   it('a toggle survives three back-to-back calls, in order (thumbnail, image, video)', () => {
     const { result } = renderHook(() => useDownloadPrefs());
     act(() => result.current.setType('thumbnail', false));
@@ -46,13 +84,23 @@ describe('useDownloadPrefs', () => {
     expect(result.current.selectedTypes()).toEqual([]);
   });
 
+  it('persists across a remount', () => {
+    const { result, unmount } = renderHook(() => useDownloadPrefs());
+    act(() => result.current.setType('image', false));
+    unmount();
+
+    const { result: reopened } = renderHook(() => useDownloadPrefs());
+    expect(reopened.current.prefs).toEqual({ thumbnail: true, image: false, video: true });
+    expect(reopened.current.selectedTypes().sort()).toEqual(['thumbnail', 'video']);
+  });
+
   it('keeps two mounted instances (e.g. Settings and Downloads) in sync via the shared event', () => {
-    const a = renderHook(() => useDownloadPrefs());
-    const b = renderHook(() => useDownloadPrefs());
+    const { result: a } = renderHook(() => useDownloadPrefs());
+    const { result: b } = renderHook(() => useDownloadPrefs());
 
-    act(() => a.result.current.setType('image', false));
+    act(() => a.current.setType('thumbnail', false));
 
-    expect(a.result.current.prefs.image).toBe(false);
-    expect(b.result.current.prefs.image).toBe(false);
+    expect(a.current.prefs.thumbnail).toBe(false);
+    expect(b.current.prefs).toEqual({ thumbnail: false, image: true, video: true });
   });
 });
