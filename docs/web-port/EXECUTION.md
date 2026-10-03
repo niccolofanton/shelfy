@@ -348,7 +348,7 @@ On 2026-10-03, with P1 at 20 of 27 tasks, the owner asked for maximum parallelis
 | P3-06 | Clusters and aliases: core and review API | running (Opus, cloud lane, E16) | `web/p3-06-clusters-aliases` |
 | P3-05 | Tag ranking in search | running (Opus, cloud lane, E16) | `web/p3-05-tag-ranking` |
 | P2-12 | Connections settings: pairing, status, Shortcut | running (Sonnet, cloud lane, E16) | `web/p2-12-connections-ui` |
-| UX-4 | Post cards | running (Sonnet, cloud lane, E16) | `web/ux-4-post-cards` |
+| UX-4 | Post cards | done (Sonnet): GAL-3 (a fallback tile no longer repeats the handle, no centered icon, muted "Media unavailable"), GAL-4 (the selected ring and tint are an overlay above the cover), GAL-8 (text excerpts fade instead of cutting a line), a 44 px quick-select hit area on narrow screens, alt text without the caption; `web/e2e/post-card.spec.ts`. The audit screenshots wait for UX-0 | `web/ux-4-post-cards` (9dc1450) |
 
 Nothing is held back by a decision any more: a task starts when its Needs have landed (wave plan below).
 
