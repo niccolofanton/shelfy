@@ -46,3 +46,5 @@ fake, recorded images and isolated temporary data. Node fetch tests use stubbed
 responses and exercise truncation, byte caps and redirect SSRF refusal without
 network or AI providers. Container isolation and the complete real-network
 Compose gate belong to P4-13/P4-27.
+
+The API capture deadline is 13 minutes, above the capture service default site budget of 12 minutes (L21). The worker lease is 20 minutes. If changing `CAPTURE_SITE_BUDGET_MS`, keep the API deadline above that budget so partial results can finish and be ingested.

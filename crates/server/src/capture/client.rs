@@ -16,7 +16,10 @@ use crate::jobs::JobError;
 use crate::outbound::EgressError;
 use crate::state::AppState;
 
-pub const DEADLINE: Duration = Duration::from_secs(11 * 60);
+// L21: the service keeps completed pages when its 12-minute site budget
+// expires. Allow another minute to serialize, deliver and validate that result.
+// Keep this above CAPTURE_SITE_BUDGET_MS when changing the deployment budget.
+pub const DEADLINE: Duration = Duration::from_secs(13 * 60);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
