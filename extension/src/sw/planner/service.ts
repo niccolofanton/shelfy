@@ -124,15 +124,21 @@ export class PlannerService {
     await this.deps.storage.set({ [SCHEDULE_KEY]: schedule });
     this.deps.changed();
   }
-  async syncing(): Promise<Record<Platform, boolean>> {
-    const running = await this.deps.sync.syncing();
+  async syncing(accountTokenId?: string): Promise<Record<Platform, boolean>> {
+    const running = await this.deps.sync.syncing(accountTokenId);
     return Object.fromEntries(
-      PLATFORMS.map((p) => [p, this.active.has(p) || running[p]]),
+      PLATFORMS.map((p) => [
+        p,
+        (this.active.has(p) &&
+          (!accountTokenId || this.active.get(p)?.pairing?.tokenId === accountTokenId)) ||
+          running[p],
+      ]),
     ) as Record<Platform, boolean>;
   }
   async start(
     target: SyncTarget,
     options: {
+      expectedPairing?: Pairing;
       trigger?: 'web' | 'scheduled';
       full?: boolean;
       existingTabId?: number;
@@ -154,6 +160,15 @@ export class PlannerService {
         if (!pairing) {
           this.active.delete(platform);
           return { ok: false, code: 'not_paired' };
+        }
+        if (
+          options.expectedPairing &&
+          (pairing.token !== options.expectedPairing.token ||
+            pairing.tokenId !== options.expectedPairing.tokenId ||
+            pairing.accountId !== options.expectedPairing.accountId)
+        ) {
+          this.active.delete(platform);
+          return { ok: false, code: 'account_mismatch' };
         }
         handle.pairing = pairing;
       }
@@ -207,10 +222,30 @@ export class PlannerService {
       return { ok: false, code: error instanceof StepError ? error.code : 'sources_unavailable' };
     }
   }
-  async stop(platform: Platform): Promise<ExternalAnswer> {
+  async stop(platform: Platform, expectedPairing?: Pairing): Promise<ExternalAnswer> {
+    if (expectedPairing) {
+      const current = await this.deps.pairing?.();
+      if (
+        !current ||
+        current.token !== expectedPairing.token ||
+        current.tokenId !== expectedPairing.tokenId ||
+        current.accountId !== expectedPairing.accountId
+      )
+        return { ok: false, code: 'account_mismatch' };
+    }
     const handle = this.active.get(platform);
-    if (handle) handle.stopped = true;
-    await this.deps.sync.stopPlatform(platform);
+    if (handle && (!expectedPairing || handle.pairing?.tokenId === expectedPairing.tokenId))
+      handle.stopped = true;
+    await this.deps.sync.stopPlatform(platform, expectedPairing?.tokenId);
+    if (expectedPairing) {
+      const current = await this.deps.pairing?.();
+      if (
+        !current ||
+        current.token !== expectedPairing.token ||
+        current.tokenId !== expectedPairing.tokenId
+      )
+        return { ok: false, code: 'account_mismatch' };
+    }
     return { ok: true };
   }
   async startAll(

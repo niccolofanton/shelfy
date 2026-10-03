@@ -128,7 +128,27 @@ export function createSyncExtension(
         for (const platform of ['instagram', 'twitter', 'pinterest'] as const)
           if (typeof value.syncing[platform] === 'boolean')
             syncing[platform] = value.syncing[platform];
+      const planner: import('@ui/api/sync').SyncPlannerJob[] = [];
+      if (Array.isArray(value.planner))
+        for (const job of value.planner) {
+          if (
+            !isRecord(job) ||
+            !['instagram', 'twitter', 'pinterest'].includes(String(job.platform)) ||
+            !['navigating', 'syncing', 'done', 'stopped', 'error'].includes(String(job.status)) ||
+            !Number.isSafeInteger(job.step) ||
+            Number(job.step) < 0 ||
+            !Number.isSafeInteger(job.total) ||
+            Number(job.total) < 1 ||
+            !Number.isFinite(job.startedAt) ||
+            (job.code !== null && typeof job.code !== 'string')
+          )
+            continue;
+          planner.push(job as unknown as import('@ui/api/sync').SyncPlannerJob);
+        }
       return {
+        accountId: typeof value.accountId === 'string' ? value.accountId : null,
+        tokenId: typeof value.tokenId === 'string' ? value.tokenId : null,
+        planner,
         extension: {
           state: 'ready',
           version: value.version,
@@ -138,7 +158,7 @@ export function createSyncExtension(
         syncing,
       };
     },
-    start: (target) => answer({ type: EXTERNAL.syncStart, target }),
-    stop: (platform) => answer({ type: EXTERNAL.syncStop, platform }),
+    start: (target, binding) => answer({ type: EXTERNAL.syncStart, target, ...binding }),
+    stop: (platform, binding) => answer({ type: EXTERNAL.syncStop, platform, ...binding }),
   };
 }

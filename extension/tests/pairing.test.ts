@@ -29,7 +29,11 @@ describe('pair', () => {
     ).toEqual({ ok: true });
     expect(pairedCalls).toBe(1);
     const pairing = await h.store.pairing();
-    expect(pairing).toMatchObject({ tokenId: 'tok-1', pairedAt: T0 });
+    expect(pairing).toMatchObject({
+      tokenId: 'tok-1',
+      accountId: 'account-synthetic',
+      pairedAt: T0,
+    });
     expect(pairing?.token).toMatch(/^shx_[A-Za-z0-9_-]{43}$/);
     expect(pairing?.scopes).toEqual(['ingest', 'tasks', 'uploads', 'lookup']);
     expect([...h.storage.data.keys()].sort()).toEqual(
@@ -170,5 +174,15 @@ describe('config', () => {
     expect(isBelowMinVersion('0.2.0', '0.2.1')).toBe(true);
     expect(isBelowMinVersion('0.2.0', null)).toBe(false);
     expect(isBelowMinVersion('0.2.0', 'garbage')).toBe(false);
+  });
+});
+
+it('rejects a new C2 response without stable account identity', async () => {
+  const { parsePairResponse } = await import('../src/sw/contracts');
+  const value = { token: `shx_${'A'.repeat(43)}`, tokenId: 'installation', scopes: ['ingest'] };
+  expect(parsePairResponse(value)).toBeNull();
+  expect(parsePairResponse({ ...value, accountId: '' })).toBeNull();
+  expect(parsePairResponse({ ...value, accountId: 'account-A' })).toMatchObject({
+    accountId: 'account-A',
   });
 });

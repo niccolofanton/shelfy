@@ -19,7 +19,7 @@ import {
   waitFor,
 } from './smoke-lib';
 import type { PlannerJob } from '../src/sw/planner/service';
-import { MSG } from '../src/shared/protocol';
+import { MSG, type PingAnswer } from '../src/shared/protocol';
 
 const { values } = parseArgs({
   options: { chrome: { type: 'string' }, headed: { type: 'boolean' }, port: { type: 'string' } },
@@ -104,6 +104,7 @@ async function main() {
         );
       return route.fulfill(htmlPage('<main>Fixture account page</main>'));
     });
+    let tokenId = 'tok-1';
     const worker = await extensionWorker(context);
     const spa = await context.newPage();
     await spa.goto(`${ORIGIN}/settings/connections`);
@@ -111,6 +112,8 @@ async function main() {
       JSON.stringify(
         await externalMessage(spa, {
           type: 'shelfy.sync.start',
+          expectedAccountId: 'account-synthetic',
+          expectedTokenId: tokenId,
           target: { platform: 'instagram' },
         }),
       ) === '{"ok":false,"code":"not_paired"}',
@@ -122,6 +125,35 @@ async function main() {
       ) === '{"ok":true}',
       'extension pairs with fake SPA',
     );
+    const pingA = (await externalMessage(spa, { type: 'shelfy.ping' })) as PingAnswer;
+    check(
+      pingA.accountId === 'account-synthetic' && pingA.tokenId === tokenId && !('token' in pingA),
+      'C9 exposes only opaque account and installation identities',
+    );
+    const mismatch = await externalMessage(spa, {
+      type: 'shelfy.sync.start',
+      expectedAccountId: 'account-B',
+      expectedTokenId: tokenId,
+      target: { platform: 'instagram', collectionId: 7 },
+    });
+    check(
+      JSON.stringify(mismatch) === '{"ok":false,"code":"account_mismatch"}' &&
+        server.api.runs.size === 0,
+      'page B cannot start extension A collection with coincident id',
+    );
+    await externalMessage(spa, { type: 'shelfy.pair', code: server.api.issuePairingCode() });
+    const stale = await externalMessage(spa, {
+      type: 'shelfy.sync.start',
+      expectedAccountId: pingA.accountId,
+      expectedTokenId: pingA.tokenId,
+      target: { platform: 'instagram' },
+    });
+    check(
+      JSON.stringify(stale) === '{"ok":false,"code":"account_mismatch"}' &&
+        server.api.runs.size === 0,
+      're-pair after ping rejects old installation identity',
+    );
+    tokenId = ((await externalMessage(spa, { type: 'shelfy.ping' })) as PingAnswer).tokenId!;
     const panel = await openPanel(context, errors);
     const snapshot = () =>
       panel.evaluate(
@@ -130,6 +162,8 @@ async function main() {
       );
     const started = await externalMessage(spa, {
       type: 'shelfy.sync.start',
+      expectedAccountId: 'account-synthetic',
+      expectedTokenId: tokenId,
       target: { platform: 'instagram' },
     });
     check(
@@ -141,6 +175,8 @@ async function main() {
       JSON.stringify(
         await externalMessage(spa, {
           type: 'shelfy.sync.start',
+          expectedAccountId: 'account-synthetic',
+          expectedTokenId: tokenId,
           target: { platform: 'instagram' },
         }),
       ) === '{"ok":false,"code":"busy"}',
@@ -195,7 +231,12 @@ async function main() {
     );
     login = true;
     const before = server.api.runs.size;
-    await externalMessage(spa, { type: 'shelfy.sync.start', target: { platform: 'instagram' } });
+    await externalMessage(spa, {
+      type: 'shelfy.sync.start',
+      expectedAccountId: 'account-synthetic',
+      expectedTokenId: tokenId,
+      target: { platform: 'instagram' },
+    });
     await waitFor(
       async () =>
         (await snapshot()).jobs.some(
@@ -211,6 +252,13 @@ async function main() {
       JSON.stringify(failed),
     );
     check(server.api.runs.size === before, 'the later native folder step never starts after login');
+    const terminal = (await externalMessage(spa, { type: 'shelfy.ping' })) as PingAnswer;
+    check(
+      terminal.planner.some((job) => job.status === 'error' && job.code === 'login_required') &&
+        !terminal.syncing.instagram &&
+        server.api.runs.size === before,
+      'C9 retains login error before C4 creates any new run',
+    );
     check(
       unexpected.length === 0,
       'no unexpected network or real social traffic',

@@ -35,6 +35,8 @@ export interface StorageArea {
 }
 
 export interface Pairing {
+  /** Missing on legacy pairings: web commands fail closed until paired again. */
+  accountId?: string;
   token: string;
   tokenId: string;
   scopes: string[];
@@ -111,6 +113,9 @@ function readPairing(value: unknown): Pairing | null {
   return {
     token: value.token,
     tokenId: value.tokenId,
+    ...(typeof value.accountId === 'string' && value.accountId.length > 0
+      ? { accountId: value.accountId }
+      : {}),
     scopes: Array.isArray(value.scopes) ? value.scopes.filter((s) => typeof s === 'string') : [],
     pairedAt: typeof value.pairedAt === 'number' ? value.pairedAt : 0,
   };

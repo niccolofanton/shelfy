@@ -30,44 +30,76 @@ async function enable(page: Page, ready = true) {
   await page.route('**/api/v1/me', (route) =>
     route.fulfill({ json: { ...OWNER, capabilities: { ...OWNER.capabilities, extension: true } } }),
   );
-  await page.addInitScript((ready) => {
-    const w = window as unknown as {
-      chrome: unknown;
-      __syncMessages: unknown[];
-      __syncing: Record<string, boolean>;
-    };
-    w.__syncMessages = [];
-    w.__syncing = {};
-    w.chrome = {
-      runtime: {
-        lastError: null,
-        sendMessage(
-          _id: string,
-          message: { type: string; target?: { platform: string }; platform?: string },
-          callback: (response: unknown) => void,
-        ) {
-          w.__syncMessages.push(message);
-          if (!ready) {
-            callback(null);
-            return;
-          }
-          if (message.type === 'shelfy.ping')
-            callback({
-              ok: true,
-              paired: true,
-              outdated: false,
-              version: '1',
-              syncing: w.__syncing,
-            });
-          else {
-            if (message.type === 'shelfy.sync.start') w.__syncing[message.target!.platform] = true;
-            if (message.type === 'shelfy.sync.stop') w.__syncing[message.platform!] = false;
-            callback({ ok: true });
-          }
+  await page.addInitScript(
+    ({ ready, accountId }) => {
+      const w = window as unknown as {
+        chrome: unknown;
+        __syncMessages: unknown[];
+        __syncing: Record<string, boolean>;
+        __planner: unknown[];
+        __accountId: string;
+        __tokenId: string;
+        __repairBeforeCommand?: boolean;
+      };
+      w.__syncMessages = [];
+      w.__syncing = {};
+      w.__planner = [];
+      w.__accountId = accountId;
+      w.__tokenId = 'tok-1';
+      w.chrome = {
+        runtime: {
+          lastError: null,
+          sendMessage(
+            _id: string,
+            message: {
+              type: string;
+              target?: { platform: string };
+              platform?: string;
+              expectedAccountId?: string;
+              expectedTokenId?: string;
+            },
+            callback: (response: unknown) => void,
+          ) {
+            w.__syncMessages.push(message);
+            if (!ready) {
+              callback(null);
+              return;
+            }
+            if (message.type === 'shelfy.ping')
+              callback({
+                ok: true,
+                paired: true,
+                accountId: w.__accountId,
+                tokenId: w.__tokenId,
+                planner: w.__planner,
+                outdated: false,
+                version: '1',
+                syncing: w.__syncing,
+              });
+            else {
+              if (w.__repairBeforeCommand) {
+                w.__tokenId = 'tok-repaired';
+                w.__repairBeforeCommand = false;
+              }
+              if (
+                message.type.startsWith('shelfy.sync.') &&
+                (message.expectedAccountId !== w.__accountId ||
+                  message.expectedTokenId !== w.__tokenId)
+              ) {
+                callback({ ok: false, code: 'account_mismatch' });
+                return;
+              }
+              if (message.type === 'shelfy.sync.start')
+                w.__syncing[message.target!.platform] = true;
+              if (message.type === 'shelfy.sync.stop') w.__syncing[message.platform!] = false;
+              callback({ ok: true });
+            }
+          },
         },
-      },
-    };
-  }, ready);
+      };
+    },
+    { ready, accountId: OWNER.id },
+  );
 }
 async function sent(page: Page) {
   return page.evaluate(() => (window as unknown as { __syncMessages: unknown[] }).__syncMessages);
@@ -84,7 +116,12 @@ test('Gallery and Connections start/stop sync with independent live SSE progress
   await page.getByTestId('gallery-sync-source').click();
   await expect
     .poll(() => sent(page))
-    .toContainEqual({ type: 'shelfy.sync.start', target: { platform: 'instagram' } });
+    .toContainEqual({
+      type: 'shelfy.sync.start',
+      target: { platform: 'instagram' },
+      expectedAccountId: OWNER.id,
+      expectedTokenId: 'tok-1',
+    });
   await expect(page.getByTestId('connection-syncing-instagram')).toBeVisible();
   const ig = run(),
     x = run('run-x', {
@@ -113,7 +150,12 @@ test('Gallery and Connections start/stop sync with independent live SSE progress
   await page.getByTestId('activity-sync-stop-instagram').click();
   await expect
     .poll(() => sent(page))
-    .toContainEqual({ type: 'shelfy.sync.stop', platform: 'instagram' });
+    .toContainEqual({
+      type: 'shelfy.sync.stop',
+      platform: 'instagram',
+      expectedAccountId: OWNER.id,
+      expectedTokenId: 'tok-1',
+    });
 });
 
 test('native-folder target, login-required open action and persisted sync result after reload', async ({
@@ -128,6 +170,8 @@ test('native-folder target, login-required open action and persisted sync result
     .toContainEqual({
       type: 'shelfy.sync.start',
       target: { platform: 'instagram', collectionId: 1 },
+      expectedAccountId: OWNER.id,
+      expectedTokenId: 'tok-1',
     });
   const failed = run('login', {
     state: 'failed',
@@ -197,4 +241,72 @@ test('phone explains desktop Chrome and maintains a 44px sync touch target', asy
     (await sent(page)).filter((value) => (value as { type: string }).type === 'shelfy.sync.start'),
   ).toEqual([]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('account B page refuses extension A even for a coincident collection id', async ({ page }) => {
+  await enable(page);
+  await page.goto('/c/1');
+  await page.evaluate(() => {
+    (window as unknown as { __accountId: string }).__accountId = 'other-account';
+  });
+  await page.getByTestId('gallery-sync-source').click();
+  await expect(page.getByTestId('sync-help')).toContainText('another account');
+  expect(
+    ((await sent(page)) as { type: string }[]).filter(
+      (message) => message.type === 'shelfy.sync.start',
+    ),
+  ).toEqual([]);
+});
+
+test('planner login failure before C4 survives reconnect and offers Open Instagram', async ({
+  page,
+  api,
+}) => {
+  await enable(page);
+  await page.goto('/');
+  await page.getByTestId('connection-sync-instagram').click();
+  await expect(page.getByTestId('connection-syncing-instagram')).toBeVisible();
+  await page.evaluate(() => {
+    const w = window as unknown as { __planner: unknown[]; __syncing: Record<string, boolean> };
+    w.__syncing.instagram = false;
+    w.__planner = [
+      {
+        platform: 'instagram',
+        status: 'error',
+        code: 'login_required',
+        step: 0,
+        total: 2,
+        startedAt: Date.now(),
+      },
+    ];
+  });
+  api.streams.push(HELLO);
+  await expect(page.getByTestId('connection-state-instagram')).toContainText('Last sync failed');
+  await page.getByTestId('activity-strip').click();
+  await expect(page.getByTestId('activity-sync-planner-error-instagram')).toContainText(
+    'Sign in to your social account',
+  );
+  await expect(page.getByTestId('activity-sync-open-instagram')).toHaveText('Open Instagram');
+  expect(api.syncRuns).toEqual([]);
+  api.streams.push(HELLO);
+  await expect(page.getByTestId('activity-sync-planner-error-instagram')).toBeVisible();
+});
+
+test('re-pair between ping and command refuses the old token identity without starting sync', async ({
+  page,
+  api,
+}) => {
+  await enable(page);
+  await page.goto('/c/1');
+  await page.evaluate(() => {
+    (window as unknown as { __repairBeforeCommand: boolean }).__repairBeforeCommand = true;
+  });
+  await page.getByTestId('gallery-sync-source').click();
+  await expect(page.getByTestId('sync-help')).toContainText('another account');
+  await expect(page.getByTestId('connection-syncing-instagram')).toHaveCount(0);
+  expect(api.syncRuns).toEqual([]);
+  const commands = (await sent(page)) as { type: string; expectedTokenId?: string }[];
+  expect(commands.find((message) => message.type === 'shelfy.sync.start')?.expectedTokenId).toBe(
+    'tok-1',
+  );
 });

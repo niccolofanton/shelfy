@@ -30,15 +30,31 @@ export interface SyncRun extends Omit<SyncProgress, 'runId'> {
   errorCode: string | null;
   collectionId: number | null;
 }
+export interface SyncBinding {
+  expectedAccountId: string;
+  expectedTokenId: string;
+}
+export interface SyncPlannerJob {
+  platform: SyncPlatform;
+  status: 'navigating' | 'syncing' | 'done' | 'stopped' | 'error';
+  step: number;
+  total: number;
+  code: string | null;
+  startedAt: number;
+}
 export interface SyncConnection {
+  accountId?: string | null;
+  tokenId?: string | null;
+  planner?: SyncPlannerJob[];
+  code?: string;
   extension: ExtensionProbe;
   syncing: Partial<Record<SyncPlatform, boolean>>;
 }
 export type SyncAnswer = { ok: true } | { ok: false; code: string };
 export interface SyncExtension {
   connection(): Promise<SyncConnection>;
-  start(target: SyncTarget): Promise<SyncAnswer>;
-  stop(platform: SyncPlatform): Promise<SyncAnswer>;
+  start(target: SyncTarget, binding: SyncBinding): Promise<SyncAnswer>;
+  stop(platform: SyncPlatform, binding: SyncBinding): Promise<SyncAnswer>;
 }
 export interface SyncApi extends SyncExtension {
   list(page?: {

@@ -16,7 +16,17 @@ export function WebConnections() {
       {SYNC_PLATFORMS.map((platform) => {
         const last = sync.latest[platform];
         const active = sync.active[platform];
-        const state = last ? t(`webSyncState_${last.state}`) : t('webSyncNever');
+        const failedPlan = sync.planner.find(
+          (job) =>
+            job.platform === platform &&
+            job.status === 'error' &&
+            (!last || job.startedAt >= last.startedAt),
+        );
+        const state = failedPlan
+          ? t('webSyncState_failed')
+          : last
+            ? t(`webSyncState_${last.state}`)
+            : t('webSyncNever');
         return (
           <div key={platform} className="mx-2 rounded-md py-1.5 pl-9 pr-3">
             <div className="flex items-center gap-2 text-sm text-primary">

@@ -357,11 +357,35 @@ const PAIRING_CODE = /^[A-Za-z0-9_-]{16,128}$/;
 
 export type SyncTarget = { platform: Platform } | { platform: Platform; collectionId: number };
 
+export interface SyncBinding {
+  expectedAccountId: string;
+  expectedTokenId: string;
+}
+function parseSyncBinding(value: Record<string, unknown>): SyncBinding | null {
+  const account = value.expectedAccountId,
+    token = value.expectedTokenId;
+  return typeof account === 'string' &&
+    account.length > 0 &&
+    account.length <= 128 &&
+    typeof token === 'string' &&
+    token.length > 0 &&
+    token.length <= 128
+    ? { expectedAccountId: account, expectedTokenId: token }
+    : null;
+}
+export interface PlannerSnapshot {
+  platform: Platform;
+  status: 'navigating' | 'syncing' | 'done' | 'stopped' | 'error';
+  step: number;
+  total: number;
+  code: string | null;
+  startedAt: number;
+}
 export type ExternalRequest =
   | { type: typeof EXTERNAL.ping }
   | { type: typeof EXTERNAL.pair; code: string }
-  | { type: typeof EXTERNAL.syncStart; target: SyncTarget }
-  | { type: typeof EXTERNAL.syncStop; platform: Platform }
+  | ({ type: typeof EXTERNAL.syncStart; target: SyncTarget } & SyncBinding)
+  | ({ type: typeof EXTERNAL.syncStop; platform: Platform } & SyncBinding)
   | { type: typeof EXTERNAL.tasksPoll };
 
 /** Parses a message from the SPA; null when it is malformed or unknown. */
@@ -375,19 +399,27 @@ export function parseExternalMessage(value: unknown): ExternalRequest | null {
         ? { type: EXTERNAL.pair, code: value.code }
         : null;
     case EXTERNAL.syncStart: {
+      const binding = parseSyncBinding(value);
+      if (!binding) return null;
       const target = value.target;
       if (!isRecord(target) || !isPlatform(target.platform)) return null;
       if (target.collectionId === undefined)
-        return { type: EXTERNAL.syncStart, target: { platform: target.platform } };
+        return { ...binding, type: EXTERNAL.syncStart, target: { platform: target.platform } };
       const id = target.collectionId;
       return typeof id === 'number' && Number.isSafeInteger(id) && id > 0
-        ? { type: EXTERNAL.syncStart, target: { platform: target.platform, collectionId: id } }
+        ? {
+            ...binding,
+            type: EXTERNAL.syncStart,
+            target: { platform: target.platform, collectionId: id },
+          }
         : null;
     }
-    case EXTERNAL.syncStop:
-      return isPlatform(value.platform)
-        ? { type: EXTERNAL.syncStop, platform: value.platform }
+    case EXTERNAL.syncStop: {
+      const binding = parseSyncBinding(value);
+      return binding && isPlatform(value.platform)
+        ? { ...binding, type: EXTERNAL.syncStop, platform: value.platform }
         : null;
+    }
     case EXTERNAL.tasksPoll:
       return { type: EXTERNAL.tasksPoll };
     default:
@@ -402,6 +434,9 @@ export interface PingAnswer {
   paired: boolean;
   outdated: boolean;
   syncing: Record<Platform, boolean>;
+  accountId: string | null;
+  tokenId: string | null;
+  planner: PlannerSnapshot[];
 }
 
 /** Answer of every other C9 message: `{ok: true}` or a code the SPA maps to its own message. */

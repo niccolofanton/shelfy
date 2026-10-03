@@ -127,7 +127,13 @@ export function harness(options: Partial<QueueOptions> = {}): Harness {
     network,
     async pairNow() {
       const token = api.mintToken();
-      await store.setPairing({ token, tokenId: 'tok-1', scopes: ['ingest'], pairedAt: clock.now });
+      await store.setPairing({
+        token,
+        tokenId: 'tok-1',
+        accountId: 'account-synthetic',
+        scopes: ['ingest'],
+        pairedAt: clock.now,
+      });
       return token;
     },
   };

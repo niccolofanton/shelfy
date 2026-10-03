@@ -1,3 +1,4 @@
+import { createWebSyncControls } from './web-sync';
 // Service worker entry (manifest background.service_worker, module). It wires the parts and
 // registers every listener synchronously at the top level, as MV3 requires. It keeps no state
 // that matters in memory: MV3 stops an idle worker after ~30 s, so the queue is in IndexedDB,
@@ -337,6 +338,8 @@ async function addCensus(counts: CensusCounts): Promise<void> {
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
+const webSync = createWebSyncControls(() => store.pairing(), planner);
+
 const router = new Router(chrome.runtime.id, origin, log)
   .internal(MSG.selectCommand, 'page', async (message) => {
     if (
@@ -486,23 +489,22 @@ const router = new Router(chrome.runtime.id, origin, log)
   })
   .external(EXTERNAL.syncStart, async (request) =>
     request.type === EXTERNAL.syncStart
-      ? planner.start(request.target)
+      ? webSync.start(request.target, request)
       : { ok: false, code: 'bad_request' },
   )
   .external(EXTERNAL.syncStop, async (request) =>
     request.type === EXTERNAL.syncStop
-      ? planner.stop(request.platform)
+      ? webSync.stop(request.platform, request)
       : { ok: false, code: 'bad_request' },
   )
   .external(EXTERNAL.ping, async () => {
     void tasks.poll().catch((error: unknown) => log('tasks', error));
-    const [pairing, status] = await Promise.all([store.pairing(), store.status()]);
+    const [connection, status] = await Promise.all([webSync.connection(), store.status()]);
     const answer: PingAnswer = {
       ok: true,
       version: EXTENSION_VERSION,
-      paired: pairing !== null,
+      ...connection,
       outdated: status.outdated,
-      syncing: await planner.syncing(),
     };
     return answer;
   })

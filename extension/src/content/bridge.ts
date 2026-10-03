@@ -116,6 +116,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     case MSG.syncAbort:
+      if (typeof message.runId === 'string' && message.runId !== controller.runId) {
+        sendResponse({ ok: false, running: false });
+        return false;
+      }
       controller.abort('user');
       sendResponse({ ok: true, running: controller.runId !== null });
       return false;

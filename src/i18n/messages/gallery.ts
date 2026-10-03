@@ -27,6 +27,8 @@ export default {
       'Le sincronizzazioni si eseguono in Chrome sul computer con l’estensione Shelfy. Apri Impostazioni → Connessioni per installarla e collegarla.',
     webSync_not_paired:
       'Collega l’estensione Shelfy a questo account in Impostazioni → Connessioni.',
+    webSync_account_mismatch:
+      'L’estensione è collegata a un altro account o deve essere associata di nuovo. Collegala a questo account in Impostazioni → Connessioni.',
     webSync_outdated: 'Aggiorna l’estensione Shelfy, poi controlla di nuovo la connessione.',
     webSync_unreachable: 'L’estensione non ha risposto. Controlla che sia attiva, poi riprova.',
     webSyncError: 'Sincronizzazione non avviata ({code}).',
@@ -143,6 +145,8 @@ export default {
     webSync_unsupported:
       'Syncs run in desktop Chrome with the Shelfy extension. Open Settings → Connections for installation and pairing.',
     webSync_not_paired: 'Pair the Shelfy extension with this account in Settings → Connections.',
+    webSync_account_mismatch:
+      'The extension is paired with another account or needs pairing again. Pair it with this account in Settings → Connections.',
     webSync_outdated: 'Update the Shelfy extension, then check the connection again.',
     webSync_unreachable: 'The extension did not respond. Check that it is enabled, then try again.',
     webSyncError: 'Sync could not start ({code}).',

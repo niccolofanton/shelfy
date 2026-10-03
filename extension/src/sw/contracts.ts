@@ -31,6 +31,7 @@ export interface PairRequest {
 }
 
 export interface PairResponse {
+  accountId: string;
   token: string;
   tokenId: string;
   scopes: string[];
@@ -42,9 +43,10 @@ const TOKEN = /^shx_[A-Za-z0-9_-]{16,256}$/;
 export function parsePairResponse(value: unknown): PairResponse | null {
   if (!isRecord(value) || typeof value.token !== 'string' || !TOKEN.test(value.token)) return null;
   const tokenId = boundedString(value.tokenId, 128);
-  if (!tokenId || !Array.isArray(value.scopes)) return null;
+  const accountId = boundedString(value.accountId, 128);
+  if (!tokenId || !accountId || !Array.isArray(value.scopes)) return null;
   const scopes = value.scopes.filter((s): s is string => typeof s === 'string' && s.length <= 64);
-  return { token: value.token, tokenId, scopes: scopes.slice(0, 16) };
+  return { token: value.token, tokenId, accountId, scopes: scopes.slice(0, 16) };
 }
 
 // ── C3 · Extension config ───────────────────────────────────────────────────

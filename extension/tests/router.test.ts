@@ -172,7 +172,16 @@ describe('Router', () => {
       response: { ok: false, code: 'bad_request' },
     });
     expect(
-      await external(r, { type: 'shelfy.sync.start', target: { platform: 'instagram' } }, spa),
+      await external(
+        r,
+        {
+          type: 'shelfy.sync.start',
+          target: { platform: 'instagram' },
+          expectedAccountId: 'A',
+          expectedTokenId: 'install-A',
+        },
+        spa,
+      ),
     ).toMatchObject({
       response: { ok: false, code: 'unsupported' },
     });

@@ -112,6 +112,7 @@ export default function WebActivityCenter({ onOpen }: { onOpen?: () => void }) {
           activity.jobs.length === 0 &&
           activity.notifications.length === 0 &&
           !Object.values(sync?.active ?? {}).some(Boolean) &&
+          !sync?.planner.some((job) => job.status === 'error') &&
           !Object.values(sync?.latest ?? {}).some((run) => run?.errorCode === 'login_required') && (
             <p className="p-4 text-sm text-secondary">{t('empty')}</p>
           )}

@@ -102,6 +102,7 @@ async fn paired(app: &Router, t: &TestState, install: &str) -> (String, String, 
     let cookie = sign_in(app, t).await;
     let code = code(app, t, &cookie).await;
     let answer = pair(app, &code, install).await;
+    assert_eq!(answer["accountId"], owner(t));
     let token = answer["token"].as_str().unwrap().to_owned();
     let id = answer["tokenId"].as_str().unwrap().to_owned();
     (cookie, token, id)

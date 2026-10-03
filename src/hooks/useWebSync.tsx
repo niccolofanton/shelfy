@@ -252,9 +252,20 @@ function useSyncState() {
       setConnection(status);
       const ext = status.extension;
       if (ext.state !== 'ready' || !ext.paired || ext.outdated) {
-        setHelp(ext.state !== 'ready' ? ext.state : ext.outdated ? 'outdated' : 'not_paired');
+        setHelp(
+          ext.state !== 'ready'
+            ? ext.state
+            : ext.outdated
+              ? 'outdated'
+              : (status.code ?? 'not_paired'),
+        );
         return;
       }
+      if (!status.accountId || !status.tokenId) {
+        setHelp('account_mismatch');
+        return;
+      }
+      const binding = { expectedAccountId: status.accountId, expectedTokenId: status.tokenId };
       if (steps === undefined) {
         const collections = await client.listCollections();
         if (epoch.current !== current) return;
@@ -272,7 +283,7 @@ function useSyncState() {
       }
       plans.current[target.platform] = { total: steps, ids: [] };
       setPending((old) => ({ ...old, [target.platform]: true }));
-      const answer = await api.start(target);
+      const answer = await api.start(target, binding);
       if (epoch.current !== current) return;
       if (!answer.ok) {
         setError(answer.code);
@@ -296,7 +307,23 @@ function useSyncState() {
     const current = epoch.current;
     begin(platform);
     try {
-      const answer = await api.stop(platform);
+      const status = await api.connection();
+      if (epoch.current !== current) return;
+      setConnection(status);
+      if (
+        status.extension.state !== 'ready' ||
+        !status.extension.paired ||
+        !status.accountId ||
+        !status.tokenId
+      ) {
+        setError(status.code ?? 'not_paired');
+        setHelp(status.code ?? 'not_paired');
+        return;
+      }
+      const answer = await api.stop(platform, {
+        expectedAccountId: status.accountId,
+        expectedTokenId: status.tokenId,
+      });
       if (epoch.current !== current) return;
       if (!answer.ok) setError(answer.code);
       else {
@@ -311,6 +338,13 @@ function useSyncState() {
     }
   };
   const step = (run: SyncRun) => {
+    const job = connection.planner?.find(
+      (job) =>
+        job.platform === run.platform &&
+        job.startedAt <= run.startedAt &&
+        ['navigating', 'syncing'].includes(job.status),
+    );
+    if (job) return { index: Math.max(1, job.step), total: job.total };
     const plan = plans.current[run.platform];
     return plan ? { index: Math.max(1, plan.ids.indexOf(run.id) + 1), total: plan.total } : null;
   };
@@ -322,6 +356,7 @@ function useSyncState() {
     busy,
     error,
     connection,
+    planner: connection.planner ?? [],
     start,
     stop,
     step,

@@ -453,3 +453,94 @@ describe('daily reminders and task alarm seam', () => {
     expect(alarms.clear).toHaveBeenCalledWith('shelfy.sync.reminder');
   });
 });
+
+describe('C9 account identity binding', () => {
+  const a = {
+    accountId: 'account-A',
+    tokenId: 'install-A',
+    token: 'secret-A',
+    scopes: [],
+    pairedAt: 0,
+  };
+  const b = { ...a, accountId: 'account-B', tokenId: 'install-B', token: 'secret-B' };
+  const binding = { expectedAccountId: a.accountId, expectedTokenId: a.tokenId };
+  it('rejects page B against extension A with the same numeric collection id, including stop and legacy pairing', async () => {
+    const f = fixture();
+    f.deps.pairing = async () => a;
+    const { createWebSyncControls } = await import('../src/sw/web-sync');
+    const controls = createWebSyncControls(() => f.deps.pairing!(), f.service);
+    const wrong = { expectedAccountId: b.accountId, expectedTokenId: a.tokenId };
+    expect(await controls.start({ platform: 'instagram', collectionId: 1 }, wrong)).toEqual({
+      ok: false,
+      code: 'account_mismatch',
+    });
+    expect(await controls.stop('instagram', wrong)).toEqual({
+      ok: false,
+      code: 'account_mismatch',
+    });
+    f.deps.pairing = async () => ({ ...a, accountId: undefined });
+    expect(await controls.start({ platform: 'instagram', collectionId: 1 }, binding)).toEqual({
+      ok: false,
+      code: 'account_mismatch',
+    });
+    expect((await controls.connection()).paired).toBe(false);
+    expect(f.readSources).not.toHaveBeenCalled();
+    expect(f.sync.start).not.toHaveBeenCalled();
+    expect(f.sync.stopPlatform).not.toHaveBeenCalled();
+  });
+  it('rejects re-pair after ping and between worker credential capture and planner start/stop', async () => {
+    const f = fixture();
+    let current = a;
+    f.deps.pairing = async () => current;
+    const { createWebSyncControls } = await import('../src/sw/web-sync');
+    const controls = createWebSyncControls(() => f.deps.pairing!(), f.service);
+    const ping = await controls.connection();
+    expect(ping).toMatchObject({ accountId: a.accountId, tokenId: a.tokenId });
+    expect(JSON.stringify(ping)).not.toContain(a.token);
+    current = b;
+    expect(await controls.start({ platform: 'instagram', collectionId: 1 }, binding)).toEqual({
+      ok: false,
+      code: 'account_mismatch',
+    });
+    // Freeze A in C9, then re-pair in the planner's next credentials await.
+    f.deps.pairing = vi.fn().mockResolvedValueOnce(a).mockResolvedValue(b);
+    expect(await controls.start({ platform: 'instagram', collectionId: 1 }, binding)).toEqual({
+      ok: false,
+      code: 'account_mismatch',
+    });
+    f.deps.pairing = vi.fn().mockResolvedValueOnce(a).mockResolvedValue(b);
+    expect(await controls.stop('instagram', binding)).toEqual({
+      ok: false,
+      code: 'account_mismatch',
+    });
+    expect(f.readSources).not.toHaveBeenCalled();
+    expect(f.sync.start).not.toHaveBeenCalled();
+    expect(f.sync.stopPlatform).not.toHaveBeenCalled();
+  });
+  it('keeps pre-C4 login errors in the account-bound snapshot and drops mixed-account snapshots', async () => {
+    const f = fixture();
+    let current = a;
+    f.deps.pairing = async () => current;
+    const { createWebSyncControls } = await import('../src/sw/web-sync');
+    const controls = createWebSyncControls(() => f.deps.pairing!(), f.service);
+    vi.mocked(f.browser.instagramUsername).mockResolvedValue({ username: null, login: true });
+    expect(await controls.start({ platform: 'instagram' }, binding)).toEqual({ ok: true });
+    await finished(f.service);
+    expect(f.sync.start).not.toHaveBeenCalled();
+    const ping = await controls.connection();
+    expect(ping.planner).toMatchObject([
+      { platform: 'instagram', status: 'error', code: 'login_required', total: 3 },
+    ]);
+    expect(JSON.stringify(ping)).not.toContain(a.token);
+    vi.spyOn(f.service, 'snapshot').mockImplementationOnce(async () => {
+      current = b;
+      return { jobs: [], schedule: { ...DEFAULT_SCHEDULE } };
+    });
+    expect(await controls.connection()).toMatchObject({
+      paired: false,
+      accountId: null,
+      tokenId: null,
+      planner: [],
+    });
+  });
+});

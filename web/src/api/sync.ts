@@ -13,9 +13,33 @@ export function createSyncApi(
   http: Http,
   events: Pick<EventStream, 'on'>,
   extension: SyncExtension = createSyncExtension(),
+  expectedAccountId?: string,
 ): SyncApi {
   return {
     ...extension,
+    async connection() {
+      const status = await extension.connection();
+      if (!expectedAccountId || status.accountId !== expectedAccountId || !status.tokenId)
+        return {
+          ...status,
+          syncing: {},
+          planner: [],
+          code: 'account_mismatch',
+          extension:
+            status.extension.state === 'ready'
+              ? { ...status.extension, paired: false }
+              : status.extension,
+        };
+      return status;
+    },
+    start: (target, binding) =>
+      !expectedAccountId || binding.expectedAccountId !== expectedAccountId
+        ? Promise.resolve({ ok: false, code: 'account_mismatch' })
+        : extension.start(target, binding),
+    stop: (platform, binding) =>
+      !expectedAccountId || binding.expectedAccountId !== expectedAccountId
+        ? Promise.resolve({ ok: false, code: 'account_mismatch' })
+        : extension.stop(platform, binding),
     list({ limit = 100, cursor, state, platform, signal } = {}) {
       const query = new URLSearchParams({ limit: String(Math.min(100, Math.max(1, limit))) });
       if (cursor) query.set('cursor', cursor);

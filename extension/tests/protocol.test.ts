@@ -202,6 +202,7 @@ describe('capture messages (bridge → worker)', () => {
 
 describe('external messages (SPA → worker, C9)', () => {
   it('parses the five C9 messages', () => {
+    const binding = { expectedAccountId: 'A', expectedTokenId: 'install-A' };
     const code = 'A'.repeat(43);
     expect(parseExternalMessage({ type: 'shelfy.ping' })).toEqual({ type: EXTERNAL.ping });
     expect(parseExternalMessage({ type: 'shelfy.pair', code })).toEqual({
@@ -209,15 +210,27 @@ describe('external messages (SPA → worker, C9)', () => {
       code,
     });
     expect(
-      parseExternalMessage({ type: 'shelfy.sync.start', target: { platform: 'instagram' } }),
-    ).toEqual({ type: EXTERNAL.syncStart, target: { platform: 'instagram' } });
+      parseExternalMessage({
+        ...binding,
+        type: 'shelfy.sync.start',
+        target: { platform: 'instagram' },
+      }),
+    ).toEqual({ ...binding, type: EXTERNAL.syncStart, target: { platform: 'instagram' } });
     expect(
       parseExternalMessage({
+        ...binding,
         type: 'shelfy.sync.start',
         target: { platform: 'pinterest', collectionId: 12 },
       }),
-    ).toEqual({ type: EXTERNAL.syncStart, target: { platform: 'pinterest', collectionId: 12 } });
-    expect(parseExternalMessage({ type: 'shelfy.sync.stop', platform: 'twitter' })).toEqual({
+    ).toEqual({
+      ...binding,
+      type: EXTERNAL.syncStart,
+      target: { platform: 'pinterest', collectionId: 12 },
+    });
+    expect(
+      parseExternalMessage({ ...binding, type: 'shelfy.sync.stop', platform: 'twitter' }),
+    ).toEqual({
+      ...binding,
       type: EXTERNAL.syncStop,
       platform: 'twitter',
     });

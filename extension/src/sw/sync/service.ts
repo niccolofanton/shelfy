@@ -245,7 +245,7 @@ export class SyncService {
       .catch(() => null);
     if (!(await same())) {
       await tabs
-        .sendMessage(request.tabId, { kind: MSG.syncAbort }, { frameId: 0 })
+        .sendMessage(request.tabId, { kind: MSG.syncAbort, runId: run.id }, { frameId: 0 })
         .catch(() => null);
       await queue.dropRun(run.id);
       return no('not_paired');
@@ -296,14 +296,22 @@ export class SyncService {
   }
 
   /** Stops the sync of a tab: the controller ends it, or the worker does when it is gone. */
-  async stop(tabId: number): Promise<{ ok: boolean; code?: string }> {
+  async stop(
+    tabId: number,
+    expectedRun?: { id: string; accountTokenId?: string },
+  ): Promise<{ ok: boolean; code?: string }> {
     const run = await this.openRunOfTab(tabId);
-    if (!run) return { ok: false, code: 'not_syncing' };
+    if (
+      !run ||
+      (expectedRun &&
+        (run.id !== expectedRun.id || run.accountTokenId !== expectedRun.accountTokenId))
+    )
+      return { ok: false, code: 'not_syncing' };
     const answer = await this.deps.tabs
       .sendMessage<{
         ok?: boolean;
         running?: boolean;
-      }>(tabId, { kind: MSG.syncAbort }, { frameId: 0 })
+      }>(tabId, { kind: MSG.syncAbort, runId: run.id }, { frameId: 0 })
       .catch(() => null);
     if (!answer?.running) await this.endRun(run.id, 'user');
     return { ok: true };
@@ -317,15 +325,21 @@ export class SyncService {
         run.tabId !== null &&
         (!accountTokenId || run.accountTokenId === accountTokenId)
       )
-        await this.stop(run.tabId);
+        await this.stop(run.tabId, run);
     return { ok: true };
   }
 
   /** Which platforms sync now (C9 `shelfy.ping`). */
-  async syncing(): Promise<Record<Platform, boolean>> {
+  async syncing(accountTokenId?: string): Promise<Record<Platform, boolean>> {
     const open = await this.openRuns();
     return Object.fromEntries(
-      PLATFORMS.map((platform) => [platform, open.some((run) => run.platform === platform)]),
+      PLATFORMS.map((platform) => [
+        platform,
+        open.some(
+          (run) =>
+            run.platform === platform && (!accountTokenId || run.accountTokenId === accountTokenId),
+        ),
+      ]),
     ) as Record<Platform, boolean>;
   }
 

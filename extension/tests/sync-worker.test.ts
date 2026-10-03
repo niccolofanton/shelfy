@@ -704,10 +704,23 @@ describe("SyncService and the controller's requests", () => {
     });
   });
 
+  it('never stops a replacement account run on the same tab after queue selection awaits', async () => {
+    const live = await started();
+    const owner = (await live.h.store.pairing())!.tokenId;
+    const runs = await live.h.queue.runs();
+    const old = runs.find((run) => run.id === live.runId)!;
+    vi.spyOn(live.h.queue, 'runs')
+      .mockResolvedValueOnce([old])
+      .mockResolvedValue([{ ...old, id: 'replacement-B', accountTokenId: 'install-B' }]);
+    live.s.toTab.length = 0;
+    await live.s.sync.stopPlatform('instagram', owner);
+    expect(live.s.toTab).toEqual([]);
+  });
+
   it('stops through the controller, or by itself when the controller is gone', async () => {
     const live = await started();
     expect(await live.s.sync.stop(TAB)).toEqual({ ok: true });
-    expect(live.s.toTab.at(-1)).toEqual({ kind: MSG.syncAbort });
+    expect(live.s.toTab.at(-1)).toEqual({ kind: MSG.syncAbort, runId: live.runId });
     expect((await live.h.queue.getRun(live.runId))?.state).toBe('open'); // the controller ends it
 
     const gone = await started();

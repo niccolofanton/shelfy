@@ -70,6 +70,8 @@ pub struct PairedExtension {
     pub token: String,
     /// Its id, as the account's token list names it.
     pub token_id: String,
+    /// Stable account identity for web/extension command binding; never a credential.
+    pub account_id: String,
     /// What it may do: `ingest`, `tasks`, `uploads`, `lookup`.
     pub scopes: Vec<Scope>,
 }
@@ -109,6 +111,7 @@ pub async fn pair_extension(
     let body = PairedExtension {
         token: paired.token.into_inner(),
         token_id: paired.token_id,
+        account_id: paired.user_id,
         scopes: paired.scopes,
     };
     Ok(no_store((StatusCode::CREATED, Json(body)).into_response()))

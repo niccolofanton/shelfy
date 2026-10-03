@@ -139,6 +139,7 @@ export class FakeShelfyApi {
   private readonly idempotency = new Map<string, { fingerprint: string; response: FakeResponse }>();
   private configVersion = 1;
   private runSeq = 0;
+  private tokenSeq = 0;
 
   constructor(options: FakeApiOptions = {}) {
     this.minVersion = options.minVersion ?? '0.2.0';
@@ -154,7 +155,7 @@ export class FakeShelfyApi {
   /** Mints a token directly (tests that start paired). */
   mintToken(installId = 'test-install'): string {
     const token = `shx_${random(32)}`;
-    this.tokens.set(token, { installId, tokenId: `tok-${this.tokens.size + 1}` });
+    this.tokens.set(token, { installId, tokenId: `tok-${++this.tokenSeq}` });
     return token;
   }
 
@@ -367,9 +368,14 @@ export class FakeShelfyApi {
     for (const [token, owner] of this.tokens)
       if (owner.installId === body.installId) this.tokens.delete(token);
     const token = `shx_${random(32)}`;
-    const tokenId = `tok-${this.tokens.size + 1}`;
+    const tokenId = `tok-${++this.tokenSeq}`;
     this.tokens.set(token, { installId: body.installId, tokenId });
-    return json(201, { token, tokenId, scopes: ['ingest', 'tasks', 'uploads', 'lookup'] });
+    return json(201, {
+      token,
+      tokenId,
+      accountId: 'account-synthetic',
+      scopes: ['ingest', 'tasks', 'uploads', 'lookup'],
+    });
   }
 
   private createRun(body: unknown): FakeResponse {

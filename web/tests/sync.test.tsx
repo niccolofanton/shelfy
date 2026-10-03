@@ -29,7 +29,11 @@ const run = (id = 'run-ig', overrides: Partial<SyncRun> = {}): SyncRun => ({
   ...overrides,
 });
 const event = (item: SyncRun): SyncProgress => ({ ...item, runId: item.id });
+const binding = { expectedAccountId: 'account-synthetic', expectedTokenId: 'tok-1' };
 const ready: SyncConnection = {
+  accountId: binding.expectedAccountId,
+  tokenId: binding.expectedTokenId,
+  planner: [],
   extension: { state: 'ready', paired: true, outdated: false, version: '1' },
   syncing: {},
 };
@@ -138,6 +142,8 @@ describe('sync seam and fixed-ID extension controls', () => {
                     ok: true,
                     version: '1',
                     paired: true,
+                    accountId: binding.expectedAccountId,
+                    tokenId: binding.expectedTokenId,
                     outdated: false,
                     syncing: { instagram: true, twitter: false },
                   }
@@ -148,12 +154,14 @@ describe('sync seam and fixed-ID extension controls', () => {
       },
     });
     expect((await extension.connection()).syncing).toEqual({ instagram: true, twitter: false });
-    expect(await extension.start({ platform: 'instagram', collectionId: 7 })).toEqual({ ok: true });
-    expect(await extension.stop('instagram')).toEqual({ ok: true });
+    expect(await extension.start({ platform: 'instagram', collectionId: 7 }, binding)).toEqual({
+      ok: true,
+    });
+    expect(await extension.stop('instagram', binding)).toEqual({ ok: true });
     expect(sent).toEqual([
       { type: 'shelfy.ping' },
-      { type: 'shelfy.sync.start', target: { platform: 'instagram', collectionId: 7 } },
-      { type: 'shelfy.sync.stop', platform: 'instagram' },
+      { type: 'shelfy.sync.start', target: { platform: 'instagram', collectionId: 7 }, ...binding },
+      { type: 'shelfy.sync.stop', platform: 'instagram', ...binding },
     ]);
   });
   it('returns unsupported/missing and bounds a silent extension timeout', async () => {
@@ -164,9 +172,12 @@ describe('sync seam and fixed-ID extension controls', () => {
       'missing',
     );
     vi.useFakeTimers();
-    const pending = createSyncExtension({ chrome: { runtime: { sendMessage() {} } } }).start({
-      platform: 'twitter',
-    });
+    const pending = createSyncExtension({ chrome: { runtime: { sendMessage() {} } } }).start(
+      {
+        platform: 'twitter',
+      },
+      binding,
+    );
     await vi.advanceTimersByTimeAsync(30_000);
     expect(await pending).toEqual({ ok: false, code: 'unreachable' });
   });
@@ -323,7 +334,7 @@ describe('web sync account lifecycle and parallel plans', () => {
       total: 2,
     });
     await act(() => h.result.current.stop('instagram'));
-    expect(h.api.stop).toHaveBeenCalledWith('instagram');
+    expect(h.api.stop).toHaveBeenCalledWith('instagram', binding);
   });
   it('does not apply a late extension response or old callback after an account switch', async () => {
     const h = harness();
@@ -361,5 +372,61 @@ describe('web sync account lifecycle and parallel plans', () => {
     await act(() => h.result.current.start({ platform: 'instagram' }));
     expect(h.result.current.help).toBe('mobile');
     expect(h.api.start).not.toHaveBeenCalled();
+  });
+});
+
+describe('account-bound C9 and pre-C4 terminal planner state', () => {
+  it('fails closed for another account and legacy pairing without sending a start/stop command', async () => {
+    const extension = {
+      connection: vi.fn().mockResolvedValue({ ...ready, accountId: 'account-A' }),
+      start: vi.fn(),
+      stop: vi.fn(),
+    };
+    const api = createSyncApi(
+      createHttp({ fetch: vi.fn() }),
+      { on: () => () => {} },
+      extension,
+      'account-B',
+    );
+    expect(await api.connection()).toMatchObject({
+      extension: { paired: false },
+      syncing: {},
+      planner: [],
+      code: 'account_mismatch',
+    });
+    expect(await api.start({ platform: 'instagram', collectionId: 7 }, binding)).toEqual({
+      ok: false,
+      code: 'account_mismatch',
+    });
+    expect(await api.stop('instagram', binding)).toEqual({ ok: false, code: 'account_mismatch' });
+    extension.connection.mockResolvedValue({ ...ready, accountId: undefined });
+    expect((await api.connection()).extension).toMatchObject({ paired: false });
+    expect(extension.start).not.toHaveBeenCalled();
+    expect(extension.stop).not.toHaveBeenCalled();
+  });
+  it('retains login_required after a successful start ack without any C4 run, including reconnect', async () => {
+    const h = harness();
+    await act(async () => {
+      await h.result.current.start({ platform: 'instagram' });
+    });
+    const failed = {
+      platform: 'instagram' as const,
+      status: 'error' as const,
+      step: 0,
+      total: 2,
+      code: 'login_required',
+      startedAt: 2000,
+    };
+    vi.mocked(h.api.connection).mockResolvedValue({ ...ready, planner: [failed] });
+    act(() => {
+      for (const listener of h.refresh) listener();
+    });
+    await waitFor(() => expect(h.result.current.planner).toEqual([failed]));
+    expect(h.result.current.runs).toEqual([]);
+    expect(h.result.current.active.instagram).toBe(false);
+    act(() => {
+      for (const listener of h.refresh) listener();
+    });
+    await waitFor(() => expect(h.result.current.planner).toEqual([failed]));
   });
 });

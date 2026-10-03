@@ -196,7 +196,9 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
           links: createLinksApi(http),
           jobs: createJobsApi(http, { events }),
           activity: createActivityApi(http, events),
-          ...(me.capabilities.extension ? { sync: createSyncApi(http, events) } : {}),
+          ...(me.capabilities.extension
+            ? { sync: createSyncApi(http, events, undefined, me.id) }
+            : {}),
         }
       : {}),
 

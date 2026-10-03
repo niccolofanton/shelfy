@@ -21,7 +21,12 @@ export function SyncActivity() {
   const awaiting = (Object.keys(sync.active) as SyncPlatform[]).filter(
     (platform) => sync.active[platform] && !runs.some((run) => run.platform === platform),
   );
-  if (!runs.length && !awaiting.length) return null;
+  const failedPlans = sync.planner.filter(
+    (job) =>
+      job.status === 'error' &&
+      !runs.some((run) => run.platform === job.platform && run.startedAt >= job.startedAt),
+  );
+  if (!runs.length && !awaiting.length && !failedPlans.length) return null;
   return (
     <section data-testid="activity-sync" className="border-b border-subtle p-3">
       <h3 className="mb-2 text-xs text-secondary">{t('syncKind')}</h3>
@@ -76,6 +81,33 @@ export function SyncActivity() {
           </div>
         );
       })}
+      {failedPlans.map((job) => (
+        <div
+          key={job.platform}
+          data-testid={`activity-sync-planner-error-${job.platform}`}
+          className="mb-3 flex flex-col gap-2 text-xs"
+        >
+          <span className="text-primary">{labels[job.platform]}</span>
+          <span className="text-secondary">
+            {t('syncStep', { step: Math.max(1, job.step), total: job.total })}
+          </span>
+          <span role="alert" className="text-warning">
+            {job.code === 'login_required'
+              ? t('syncLogin')
+              : t('syncError', { code: job.code ?? 'unknown' })}
+          </span>
+          {job.code === 'login_required' && (
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid={`activity-sync-open-${job.platform}`}
+              onClick={() => void client.openExternal(savedPage(job.platform))}
+            >
+              {t('syncOpen', { platform: labels[job.platform] })}
+            </Button>
+          )}
+        </div>
+      ))}
       {awaiting.map((platform) => (
         <div
           key={platform}
