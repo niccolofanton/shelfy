@@ -1,0 +1,16 @@
+{
+  "name": "shelfy-capture-harness",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SPIKE-11: capture v2 (electron/webcap) in plain Node, as the P4 capture service will run it",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@duckduckgo/autoconsent": "16.43.2",
+    "@ghostery/adblocker": "2.18.2",
+    "playwright-core": "1.60.0",
+    "tldts-experimental": "7.4.16"
+  }
+}

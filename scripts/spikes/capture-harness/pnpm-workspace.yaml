@@ -1,0 +1,3 @@
+# The harness installs on its own, outside the root workspace: its node_modules
+# is shipped next to the bundle, so keep it flat.
+nodeLinker: hoisted
