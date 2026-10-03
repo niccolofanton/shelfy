@@ -57,7 +57,7 @@ use crate::current_user::CurrentUser;
 use crate::error::ApiError;
 pub use crate::events::model::HelloEvent;
 use crate::events::model::{EventTopic, ResyncEvent, ResyncReason, TopicSet};
-use crate::events::{Delivery, Published, Subscription};
+use crate::events::{Delivery, LiveEvent, Published, Subscription};
 use crate::extract::Query;
 use crate::ids::now_ms;
 use crate::state::AppState;
@@ -240,7 +240,8 @@ async fn next_frame(subscription: &mut Subscription, topics: TopicSet) -> Event 
     loop {
         match subscription.next().await {
             Delivery::Event(event) if topics.contains(event.topic) => return frame(&event),
-            Delivery::Event(_) => {}
+            Delivery::Live(event) if topics.contains(event.topic) => return live_frame(&event),
+            Delivery::Event(_) | Delivery::Live(_) => {}
             Delivery::Resync { reason, id } => return resync(reason, &id),
         }
     }
@@ -250,6 +251,14 @@ fn frame(event: &Published) -> Event {
     Event::default()
         .event(event.topic.as_str())
         .id(&*event.id)
+        .data(&*event.data)
+}
+
+/// A live-only event (`ai.stream`): the name and data, no `id:` (it is not a
+/// resume point and never enters the ring, G3-7).
+fn live_frame(event: &LiveEvent) -> Event {
+    Event::default()
+        .event(event.topic.as_str())
         .data(&*event.data)
 }
 

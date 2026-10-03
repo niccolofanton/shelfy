@@ -171,6 +171,7 @@ const PROBLEM_RESPONSE: &str = "Problem";
         event::ProviderState,
         event::SyncProgressEvent,
         event::SyncListing,
+        event::AiStreamEvent,
         listing::MatchMode,
         listing::PostSort,
         listing::YesNo,

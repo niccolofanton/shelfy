@@ -40,10 +40,17 @@ pub enum EventTopic {
     /// A sync run advanced.
     #[serde(rename = "sync.progress")]
     SyncProgress,
+    /// The model's partial catalog text for a post (`ai.stream`, P3-13):
+    /// live-only and opt-in, never in the default set and never replayed
+    /// (G3-7), so it is not in [`EventTopic::ALL`] and not in
+    /// [`TopicSet::ALL`]; a stream carries it only by asking for it.
+    #[serde(rename = "ai.stream")]
+    AiStream,
 }
 
 impl EventTopic {
-    /// Every topic, in a stable order.
+    /// Every replayable topic, in a stable order. `ai.stream` is live-only, so
+    /// it is deliberately not here (it never enters the ring).
     pub const ALL: [Self; 7] = [
         Self::PostsChanged,
         Self::StatsChanged,
@@ -65,6 +72,7 @@ impl EventTopic {
             Self::ExtensionStatus => "extension.status",
             Self::ProviderStatus => "provider.status",
             Self::SyncProgress => "sync.progress",
+            Self::AiStream => "ai.stream",
         }
     }
 
@@ -339,6 +347,19 @@ pub struct ProviderStatusEvent {
     pub state: ProviderState,
 }
 
+/// `ai.stream`: the model's partial catalog text for one post while it is
+/// analyzed (P3-13, G3-7). Live only: never stored, never replayed, and sent
+/// at most 4 times a second per post. The web app shows it as a live preview;
+/// the saved result arrives as `posts.changed`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AiStreamEvent {
+    /// The post being analyzed.
+    pub post_key: String,
+    /// The answer text so far (the model's running JSON or prose).
+    pub text: String,
+}
+
 /// The listing a sync run walks, in a `sync.progress` event (contract C4).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -413,6 +434,9 @@ pub enum ServerEvent {
     /// A sync run advanced.
     #[serde(rename = "sync.progress")]
     SyncProgress(SyncProgressEvent),
+    /// The model's partial catalog text for a post (live only).
+    #[serde(rename = "ai.stream")]
+    AiStream(AiStreamEvent),
 }
 
 #[cfg(test)]

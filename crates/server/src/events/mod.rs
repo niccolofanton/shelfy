@@ -47,10 +47,10 @@ use std::time::Duration;
 use shelfy_core::repo::notifications::{self, NewNotification};
 use tokio::time::Instant;
 
-pub use bus::{Delivery, Published, Subscription};
+pub use bus::{Delivery, LiveEvent, Published, Subscription};
 pub use coalesce::MAX_EVENT_KEYS;
 use model::{
-    ChangeReason, EventTopic, ExtensionStatusEvent, JobUpdatedEvent, Notification,
+    AiStreamEvent, ChangeReason, EventTopic, ExtensionStatusEvent, JobUpdatedEvent, Notification,
     ProviderStatusEvent, SyncProgressEvent,
 };
 
@@ -156,6 +156,19 @@ impl EventBus {
             .publish(EventTopic::ProviderStatus, status, Instant::now());
     }
 
+    /// Streams the model's partial catalog text for one of `user_id`'s posts
+    /// (`ai.stream`, P3-13): live only, so it never enters the replay ring and
+    /// reaches only streams that asked for the topic (G3-7). The drain paces
+    /// it to at most 4 Hz per item.
+    pub fn ai_stream(&self, user_id: &str, post_key: &str, text: String) {
+        let event = AiStreamEvent {
+            post_key: post_key.to_owned(),
+            text,
+        };
+        self.user(user_id)
+            .publish_live(EventTopic::AiStream, &event, Instant::now());
+    }
+
     /// A sync run of `user_id` advanced. Throttled to one event a second per
     /// run (contract C8); the latest progress wins.
     pub fn sync_progress(&self, user_id: &str, event: SyncProgressEvent) {
@@ -254,9 +267,12 @@ mod tests {
     }
 
     async fn next_event(sub: &mut Subscription) -> Arc<Published> {
-        match sub.next().await {
-            Delivery::Event(event) => event,
-            Delivery::Resync { reason, .. } => panic!("unexpected resync: {reason:?}"),
+        loop {
+            match sub.next().await {
+                Delivery::Event(event) => return event,
+                Delivery::Live(_) => {}
+                Delivery::Resync { reason, .. } => panic!("unexpected resync: {reason:?}"),
+            }
         }
     }
 

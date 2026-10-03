@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::JobError;
-use super::context::{JobContext, JobResult, SweepContext};
+use super::context::{CancelContext, JobContext, JobResult, SweepContext};
 
 /// A boxed, sendable future: what workers and sweeps return.
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
@@ -207,12 +207,35 @@ where
     }
 }
 
-/// A registered kind: its spec, its worker and, for drains, its sweep.
+/// A kind's cancel hook (G3-6): run when its queue is cancelled (a per-job
+/// cancel, `cancel-all`, or the account's danger zone), after the jobs are
+/// cancelled. It resets the item work the kind keeps in the library — the
+/// `ai.drain` sends its `pending` posts back to `done` or unanalyzed — and
+/// returns how many items it changed. Like [`Worker`], any
+/// `Fn(CancelContext) -> impl Future` qualifies.
+pub trait CancelHook: Send + Sync + 'static {
+    /// Resets the item work of the user of `ctx`.
+    fn cancel(&self, ctx: CancelContext) -> BoxFuture<Result<u64, JobError>>;
+}
+
+impl<F, Fut> CancelHook for F
+where
+    F: Fn(CancelContext) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<u64, JobError>> + Send + 'static,
+{
+    fn cancel(&self, ctx: CancelContext) -> BoxFuture<Result<u64, JobError>> {
+        Box::pin(self(ctx))
+    }
+}
+
+/// A registered kind: its spec, its worker, and optionally a sweep (drains)
+/// and a cancel hook (item-work kinds).
 #[derive(Clone)]
 pub struct Kind {
     spec: KindSpec,
     worker: Arc<dyn Worker>,
     sweep: Option<Arc<dyn Sweep>>,
+    cancel_hook: Option<Arc<dyn CancelHook>>,
 }
 
 impl Kind {
@@ -223,6 +246,7 @@ impl Kind {
             spec,
             worker: Arc::new(worker),
             sweep: None,
+            cancel_hook: None,
         }
     }
 
@@ -230,6 +254,13 @@ impl Kind {
     #[must_use]
     pub fn with_sweep(mut self, sweep: impl Sweep) -> Self {
         self.sweep = Some(Arc::new(sweep));
+        self
+    }
+
+    /// Adds the cancel hook (G3-6).
+    #[must_use]
+    pub fn with_cancel_hook(mut self, hook: impl CancelHook) -> Self {
+        self.cancel_hook = Some(Arc::new(hook));
         self
     }
 
@@ -243,6 +274,12 @@ impl Kind {
     #[must_use]
     pub fn name(&self) -> &'static str {
         self.spec.name
+    }
+
+    /// The cancel hook, when the kind has one.
+    #[must_use]
+    pub fn cancel_hook(&self) -> Option<Arc<dyn CancelHook>> {
+        self.cancel_hook.clone()
     }
 
     pub(super) fn worker(&self) -> &Arc<dyn Worker> {
