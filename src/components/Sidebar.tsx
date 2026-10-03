@@ -479,15 +479,15 @@ function Sidebar({
       {/* Scrim: dims the view behind the open drawer and closes it on tap.
           The `hidden narrow:block` guard is a safety net in case the drawer was
           left open while narrow and the viewport later widened past 900px.
-          z-30 / z-40 below are the audit's `z-scrim` / `z-drawer` (§3.1), for
-          UX-2's z-index scale to take over. The trigger that used to float
+          `z-scrim` / `z-drawer` (30 / 40) come from the layering scale in
+          src/components/ui/tokens.ts (§3.1). The trigger that used to float
           here is MenuButton now, in each screen's top row (SH-1). */}
       {drawerOpen && (
         <div
           data-testid="sidebar-backdrop"
           aria-hidden
           onClick={onCloseDrawer}
-          className="hidden narrow:block fixed inset-0 z-30 bg-black/60 u-fade-in"
+          className="hidden narrow:block fixed inset-0 z-scrim bg-black/60 u-fade-in"
         />
       )}
       <aside
@@ -506,7 +506,7 @@ function Sidebar({
           // this reaches the desktop (or ≥900px web) layout above. Its own
           // padding keeps the header clear of the status bar and the footer
           // clear of the home indicator in the installed app (SH-3).
-          'narrow:fixed narrow:inset-y-0 narrow:left-0 narrow:z-40 narrow:shadow-2xl narrow:w-[min(85vw,320px)] narrow:min-w-0',
+          'narrow:fixed narrow:inset-y-0 narrow:left-0 narrow:z-drawer narrow:shadow-2xl narrow:w-[min(85vw,320px)] narrow:min-w-0',
           'narrow:pt-[env(safe-area-inset-top)] narrow:pb-[env(safe-area-inset-bottom)] narrow:pl-[env(safe-area-inset-left)]',
           // Closed, it is also `invisible` (out of the tab order and the
           // accessibility tree) once it has slid out: visibility switches at
