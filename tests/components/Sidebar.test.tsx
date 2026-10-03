@@ -106,13 +106,20 @@ describe('Sidebar', () => {
       expect(screen.getByTestId('add-source-btn')).toHaveTextContent('Nuova cartella');
     });
 
-    it('styles the action rows lighter than nav rows (text-gray-500)', () => {
+    it('styles the add rows lighter than nav rows (text-gray-500)', () => {
       setup();
-      for (const id of ['browser-tab-add-site', 'browser-tab-add-bookmark', 'add-source-btn']) {
+      for (const id of ['browser-tab-add-site', 'browser-tab-add-bookmark']) {
         expect(screen.getByTestId(id).className).toContain('text-gray-500');
       }
       // Nav destinations keep the regular gray-400 tone.
       expect(screen.getByTestId('browser-tab-instagram').className).toContain('text-gray-400');
+    });
+
+    it('styles "New folder" as an action, not a disabled row (UX audit SH-8)', () => {
+      setup();
+      const row = screen.getByTestId('add-source-btn');
+      expect(row.className).toContain('text-[color:var(--text-secondary)]');
+      expect(row.className).not.toContain('text-gray-500');
     });
 
     it('clicking the add-site row calls onAddSite', () => {
@@ -258,6 +265,84 @@ describe('Sidebar', () => {
       setup({ currentView: 'downloads' });
       const downloadsBtn = screen.getByRole('button', { name: /downloads/i });
       expect(downloadsBtn.className).toContain('bg-[#1e1e1e]');
+    });
+
+    it('a folder is a button marked as the current page when active (UX audit SH-5)', () => {
+      const collections = [
+        { id: 1, name: 'Ricette', color: '#e91e63', count: 12 },
+      ] as unknown as Shelfy.Collection[];
+      setup({ collections, activeSource: { type: 'collection', value: 1 } });
+      const folder = screen.getByRole('button', { name: 'Ricette' });
+      expect(folder).toHaveAttribute('aria-current', 'page');
+      expect(screen.getByTestId('source-collection-1')).toContainElement(folder);
+    });
+  });
+
+  // UX-1 (audit SH-4): under 900px the sidebar is a drawer that App opens; while
+  // open it is a modal dialog.
+  describe('drawer', () => {
+    it('is no dialog while closed', () => {
+      setup();
+      expect(screen.getByTestId('sidebar')).not.toHaveAttribute('role');
+      expect(screen.queryByTestId('sidebar-close')).toBeNull();
+      expect(screen.queryByTestId('sidebar-backdrop')).toBeNull();
+    });
+
+    it('open: a named modal dialog, with focus on its close button', () => {
+      setup({ drawerOpen: true, onCloseDrawer: vi.fn() });
+      const sidebar = screen.getByTestId('sidebar');
+      expect(sidebar).toHaveAttribute('role', 'dialog');
+      expect(sidebar).toHaveAttribute('aria-modal', 'true');
+      expect(sidebar).toHaveAttribute('aria-label', 'Menu');
+      expect(sidebar).toHaveAttribute('id', 'app-drawer');
+      expect(screen.getByTestId('sidebar-close')).toHaveFocus();
+    });
+
+    it('closes on Escape, the close button and the scrim', () => {
+      const onCloseDrawer = vi.fn();
+      setup({ drawerOpen: true, onCloseDrawer });
+      fireEvent.keyDown(document, { key: 'Escape' });
+      fireEvent.click(screen.getByTestId('sidebar-close'));
+      fireEvent.click(screen.getByTestId('sidebar-backdrop'));
+      expect(onCloseDrawer).toHaveBeenCalledTimes(3);
+    });
+
+    it('wraps Tab from the last control to the first', () => {
+      // jsdom has no layout: give every element a box, so every button counts
+      // as rendered (the trap skips controls with none).
+      const rects = vi
+        .spyOn(HTMLElement.prototype, 'getClientRects')
+        .mockReturnValue([{}] as unknown as DOMRectList);
+      setup({ drawerOpen: true, onCloseDrawer: vi.fn() });
+      const sidebar = screen.getByTestId('sidebar');
+      const buttons = Array.from(sidebar.querySelectorAll('button'));
+      buttons[buttons.length - 1].focus();
+      fireEvent.keyDown(document, { key: 'Tab' });
+      expect(screen.getByTestId('sidebar-close')).toHaveFocus();
+      fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+      expect(buttons[buttons.length - 1]).toHaveFocus();
+      rects.mockRestore();
+    });
+
+    it('returns focus to the trigger when it closes', () => {
+      const trigger = document.createElement('button');
+      document.body.appendChild(trigger);
+      const returnFocusRef = { current: trigger };
+      const { rerender } = setup({ drawerOpen: true, onCloseDrawer: vi.fn(), returnFocusRef });
+      expect(screen.getByTestId('sidebar-close')).toHaveFocus();
+      rerender(
+        <ActivityProvider>
+          <Sidebar
+            currentView="gallery"
+            onNavigate={vi.fn()}
+            stats={defaultStats}
+            drawerOpen={false}
+            returnFocusRef={returnFocusRef}
+          />
+        </ActivityProvider>,
+      );
+      expect(trigger).toHaveFocus();
+      trigger.remove();
     });
   });
 });

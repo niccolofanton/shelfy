@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import { Grid3X3, ListChecks, Search, Settings, Sparkles } from 'lucide-react';
 import { useT } from '../i18n';
 
@@ -24,6 +24,8 @@ interface BottomNavProps {
   // The Jobs tab: shown only when the client reports the `jobs` capability
   // (the web, once signed in) — mirrors the Sidebar's own Jobs row.
   jobsVisible?: boolean;
+  // Out of reach while the menu drawer is open (a modal dialog, UX-1).
+  inert?: boolean;
 }
 
 interface Tab {
@@ -45,8 +47,14 @@ function BottomNav({
   onNavigate,
   aiVisible = false,
   jobsVisible = false,
+  inert = false,
 }: BottomNavProps): React.JSX.Element {
   const t = useT('nav');
+  // React 18 has no `inert` prop: set the DOM property.
+  const navRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (navRef.current) navRef.current.inert = inert;
+  }, [inert]);
   const tabs = [
     ...TABS.slice(0, 2),
     ...(aiVisible ? [AI_TAB] : []),
@@ -56,7 +64,9 @@ function BottomNav({
 
   return (
     <nav
+      ref={navRef}
       data-testid="bottom-nav"
+      aria-label={t('navLabel')}
       className="hidden narrow:flex w-full shrink-0 items-stretch bg-[#111111] border-t border-[#2e2e2e] select-none"
       style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
@@ -65,15 +75,18 @@ function BottomNav({
         return (
           <button
             key={id}
+            type="button"
             data-testid={`bottom-nav-${id}`}
             aria-current={isActive ? 'page' : undefined}
             onClick={() => onNavigate(id)}
+            // Labels at 12px (SH-12). The inactive gray-500 becomes the audit's
+            // accessible muted grey with UX-2's palette remap (§3.1, O3).
             className={[
-              'u-press flex-1 flex flex-col items-center justify-center gap-0.5 py-2 text-[11px] transition-colors',
+              'u-press flex-1 flex flex-col items-center justify-center gap-0.5 py-2 min-h-11 text-xs transition-colors',
               isActive ? 'text-white' : 'text-gray-500 hover:text-gray-300',
             ].join(' ')}
           >
-            <Icon size={20} strokeWidth={isActive ? 2.25 : 1.75} />
+            <Icon size={20} strokeWidth={isActive ? 2.25 : 1.75} aria-hidden />
             {t(id)}
           </button>
         );

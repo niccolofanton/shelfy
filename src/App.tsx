@@ -1,7 +1,20 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback, Suspense, lazy } from 'react';
-import { Construction, FileQuestion, Loader2 } from 'lucide-react';
+import React, {
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useMemo,
+  useCallback,
+  Suspense,
+  lazy,
+} from 'react';
+import { flushSync } from 'react-dom';
+import { Construction, FileQuestion, WifiOff } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import BottomNav, { type BottomNavTarget } from './components/BottomNav';
+import MenuButton, { ShellProvider, useShell } from './components/MenuButton';
+import Logo from './components/Logo';
+import { PLATFORM_SOURCES } from './lib/sourceList';
 import WindowControls from './components/WindowControls';
 import Gallery from './views/Gallery';
 import Browser from './views/Browser';
@@ -75,16 +88,52 @@ const CollectionModal = lazy(
 );
 const RemoteAiBanner = lazy(withMessages(() => import('./components/RemoteAiBanner'), 'remoteAi'));
 
-// Suspense fallback for the lazy views above: a view only ever takes a beat
-// to fetch its chunk the first time it's visited (or never, on the web while
-// its capability is off), so a small centered spinner is enough — it never
-// has layout/content to mirror the way PostGridSkeleton does for the gallery.
-function ViewLoading(): React.JSX.Element {
+// Suspense fallback for the lazy views above: a view only takes a beat to
+// fetch its chunk the first time it's visited. Nothing for the first 150ms (a
+// fast load never flashes), then a header-shaped skeleton (a PageHeader and
+// three rows) so the view doesn't jump in from a bare spinner (ST-1).
+function ViewLoading(): React.JSX.Element | null {
+  const [show, setShow] = useState<boolean>(false);
+  useEffect(() => {
+    const id = setTimeout(() => setShow(true), 150);
+    return () => clearTimeout(id);
+  }, []);
+  if (!show) return null;
   return (
-    <div className="flex items-center justify-center w-full h-full">
-      <Loader2 size={20} className="text-[#555] animate-spin" strokeWidth={1.5} />
+    <div
+      data-testid="view-loading"
+      aria-busy="true"
+      className="u-fade-in flex flex-col w-full h-full"
+    >
+      <div className="flex items-center gap-3 h-14 px-4 narrow:px-3 shrink-0 border-b border-[#1e1e1e]">
+        <div className="h-4 w-28 rounded bg-[#1c1c1c] animate-pulse" />
+        <div className="h-3 w-14 rounded bg-[#1a1a1a] animate-pulse" />
+      </div>
+      <div className="flex flex-col gap-3 p-4 narrow:p-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-14 rounded-lg bg-[#151515] animate-pulse" />
+        ))}
+      </div>
     </div>
   );
+}
+
+// `navigator.onLine`, live (ST-3): the shell shows an "Offline" pill while the
+// browser reports no network.
+function useOnline(): boolean {
+  const [online, setOnline] = useState<boolean>(
+    () => typeof navigator === 'undefined' || navigator.onLine !== false,
+  );
+  useEffect(() => {
+    const update = (): void => setOnline(navigator.onLine !== false);
+    window.addEventListener('online', update);
+    window.addEventListener('offline', update);
+    return () => {
+      window.removeEventListener('online', update);
+      window.removeEventListener('offline', update);
+    };
+  }, []);
+  return online;
 }
 
 // The non-browser view identifiers, in render order. `trash` exists only as
@@ -283,7 +332,9 @@ export default function App(): React.JSX.Element {
   return (
     <ErrorBoundary view="app" layout="page">
       <AnalysisProvider>
-        <AppInner />
+        <ShellProvider>
+          <AppInner />
+        </ShellProvider>
       </AnalysisProvider>
     </ErrorBoundary>
   );
@@ -292,6 +343,7 @@ export default function App(): React.JSX.Element {
 function AppInner(): React.JSX.Element {
   const t = useT('app');
   const te = useT('errors');
+  const ts = useT('sidebar');
   const { lang } = useLang();
   // The backend seam: what this client can do decides which surfaces exist
   // (the web app has no browser, downloads, AI… yet; see ShelfyCapabilities).
@@ -360,17 +412,41 @@ function AppInner(): React.JSX.Element {
     [navigate],
   );
 
+  // The menu drawer (narrow): ShellProvider (below, around AppInner) owns its
+  // state, so the MenuButton in any screen's top row can open it (UX-1).
+  const shell = useShell();
+  const menuOpen = shell?.menuOpen ?? false;
+  const closeMenu = shell?.closeMenu;
+
+  // The gallery's search field, focused for the BottomNav "Search" tab
+  // (SH-11). The gallery's FilterBar answers `shelfy:focus-search` and calls
+  // preventDefault() (UX-3); until it does, the field is focused from here.
+  const focusGallerySearch = useCallback((): void => {
+    const event = new CustomEvent('shelfy:focus-search', { cancelable: true });
+    if (!window.dispatchEvent(event)) return;
+    document.querySelector<HTMLInputElement>('[data-testid="gallery-view"] input')?.focus();
+  }, []);
+
   // BottomNav (narrow only): maps its fixed tab set onto the existing views.
-  // "Search" has no view/route of its own yet (P1-04 carry-over) — the search
-  // field already lives in the gallery's own toolbar, so it opens the library.
+  // "Search" has no view of its own: it opens the library and focuses its
+  // search field. The view switch (and the gallery's first mount, which the
+  // keep-alive effect would otherwise do a beat later) is flushed synchronously
+  // so the focus stays inside the tap: iOS opens the keyboard only for a
+  // focus() made during the user's gesture.
   const handleBottomNav = useCallback(
     (target: BottomNavTarget): void => {
-      if (target === 'search' || target === 'library') setView('gallery');
+      if (target === 'search') {
+        flushSync(() => {
+          setView('gallery');
+          setMountedViews((prev) => (prev.has('gallery') ? prev : new Set(prev).add('gallery')));
+        });
+        focusGallerySearch();
+      } else if (target === 'library') setView('gallery');
       else if (target === 'ai') setView('aiqueue');
       else if (target === 'jobs') setView('jobs');
       else setView('settings');
     },
-    [setView],
+    [setView, focusGallerySearch],
   );
   const [devBarVisible, setDevBarVisible] = useState<boolean>(false);
   const devBarMounted = useRef<boolean>(false);
@@ -632,6 +708,30 @@ function AppInner(): React.JSX.Element {
     [handleSelectBrowserTab, setView],
   );
 
+  // The drawer's picks close it, even when they land where the app already is
+  // (the same folder, the same view): the drawer has done its job.
+  const navigateFromMenu = useCallback(
+    (nextView: View, opts?: NavigateOpts) => {
+      closeMenu?.();
+      handleNavigate(nextView, opts);
+    },
+    [closeMenu, handleNavigate],
+  );
+  const selectSourceFromMenu = useCallback(
+    (source: ActiveSource) => {
+      closeMenu?.();
+      handleSelectSource(source);
+    },
+    [closeMenu, handleSelectSource],
+  );
+  const selectBrowserTabFromMenu = useCallback(
+    (tabId: BrowserPlatform) => {
+      closeMenu?.();
+      handleSelectBrowserTab(tabId);
+    },
+    [closeMenu, handleSelectBrowserTab],
+  );
+
   // Queue controls fired from the Activity center popover (pause / cancel-all).
   const handleActivityAction = useCallback(
     (id: string, item?: ActivityActionItem) => {
@@ -861,6 +961,42 @@ function AppInner(): React.JSX.Element {
       />
     ) : null;
 
+  const notFound = route?.name === 'notFound';
+
+  // The page's title, per view on the web (SH-13): "Trash · Shelfy", a
+  // folder's or a platform's name in the library. The desktop window keeps its own.
+  const platformSource = PLATFORM_SOURCES.find((p) => p.id === galleryPlatform);
+  const galleryTitle = galleryCollection
+    ? galleryCollection.name
+    : platformSource
+      ? ((platformSource.key ? ts(platformSource.key) : platformSource.label) ?? null)
+      : ts('allPosts');
+  const pageName: string | null = notFound
+    ? te('notFoundTitle')
+    : view === 'gallery'
+      ? galleryTitle
+      : view === 'trash' || view === 'jobs' || view === 'settings'
+        ? ts(view)
+        : null;
+  useEffect(() => {
+    if (!nav) return;
+    document.title = pageName ? t('pageTitle', { page: pageName }) : 'Shelfy';
+  }, [nav, pageName, t]);
+
+  // Narrow: the screen's top row is the view's own once it renders a
+  // MenuButton (UX-3, UX-6, UX-7); until then App's bar carries the button.
+  const showTopbar = view !== 'browser' && !shell?.hasMenuButton(view);
+  const online = useOnline();
+  // While the drawer is open (a modal dialog) the rest of the shell is inert:
+  // out of the tab order, unclickable, hidden from screen readers. A layout
+  // effect, so it is lifted before the drawer's cleanup returns focus.
+  const mainRef = useRef<HTMLElement>(null);
+  const topbarRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (mainRef.current) mainRef.current.inert = menuOpen;
+    if (topbarRef.current) topbarRef.current.inert = menuOpen;
+  }, [menuOpen, showTopbar]);
+
   const lastUpdate = new Date(buildTime).toLocaleTimeString(localeTag(lang), {
     hour: '2-digit',
     minute: '2-digit',
@@ -901,7 +1037,20 @@ function AppInner(): React.JSX.Element {
       save={saveSrc}
       web={webSrc}
     >
-      <div className="relative flex narrow:flex-col h-screen w-screen overflow-hidden bg-[#0f0f0f]">
+      {/* Shell height (SH-2): 100vh as the fallback (`h-screen`), then 100dvh
+        wherever the browser has it (`supports-[height:100dvh]:h-dvh`, emitted
+        in an @supports block after the plain utilities; a bare `h-dvh` would
+        lose to `h-screen` on source order). dvh follows iOS Safari's toolbar
+        as it collapses and expands, so the BottomNav is never under it; svh
+        would leave an empty band under a collapsed toolbar, and vh alone puts
+        the BottomNav under an expanded one. Safe areas (SH-3): the installed
+        iOS app draws under the status bar (`black-translucent` with
+        `viewport-fit=cover`), so the shell pads the top and, in landscape, the
+        sides; the BottomNav pads the bottom itself, and fixed full-screen
+        layers (the drawer, the modals, the sheets) pad themselves. Real-device
+        checks: the Safari toolbar, the installed app's status bar and home
+        indicator, the keyboard. */}
+      <div className="relative flex narrow:flex-col h-screen supports-[height:100dvh]:h-dvh w-screen overflow-hidden bg-[#0f0f0f] narrow:pt-[env(safe-area-inset-top)] narrow:pl-[env(safe-area-inset-left)] narrow:pr-[env(safe-area-inset-right)]">
         {/* Frameless window controls — Windows/Linux only (macOS uses its native
           traffic lights). Floats over the top-right corner of the shell; the
           gallery toolbar reserves room for it (see Gallery's needsWinControls). */}
@@ -916,17 +1065,18 @@ function AppInner(): React.JSX.Element {
           </div>
         )}
         <Sidebar
-          currentView={view}
-          onNavigate={handleNavigate}
+          // A 404 highlights no row (SH-14).
+          currentView={notFound ? 'notFound' : view}
+          onNavigate={navigateFromMenu}
           stats={stats}
           newPostsAlert={newPostsAlert}
           browserSyncing={browserSyncing}
           onClearAlert={clearAlert}
           browserTab={browserTab}
-          onSelectBrowserTab={handleSelectBrowserTab}
+          onSelectBrowserTab={selectBrowserTabFromMenu}
           onAddSite={openAddSite}
           onAddBookmark={openAddBookmark}
-          onSelectSource={handleSelectSource}
+          onSelectSource={selectSourceFromMenu}
           collections={collections}
           activeSource={activeSource}
           onAddCollection={openNewCollection}
@@ -941,8 +1091,32 @@ function AppInner(): React.JSX.Element {
           webDone={webDone}
           webTotal={webTotal}
           onActivityAction={handleActivityAction}
+          drawerOpen={menuOpen}
+          onCloseDrawer={closeMenu}
+          returnFocusRef={shell?.menuTriggerRef}
         />
-        <main className="flex-1 narrow:min-h-0 overflow-hidden relative">
+        {/* Narrow top bar (UX-1, SH-1): an in-flow row with the MenuButton,
+          shown above a view until that view renders the button in its own top
+          row. In the flow, it covers nothing, unlike the old floating button.
+          In a narrow macOS window it is the drag handle and clears the traffic
+          lights (main.ts puts them at x 18). */}
+        {showTopbar && (
+          <div
+            ref={topbarRef}
+            data-testid="shell-topbar"
+            className={[
+              'hidden narrow:flex shrink-0 items-center gap-2.5 h-[52px]',
+              caps.trafficLights ? 'drag-region pl-20 pr-3' : 'px-3',
+            ].join(' ')}
+          >
+            <MenuButton />
+            <Logo size={18} />
+            <span className="font-display text-white text-[15px] font-semibold tracking-wide">
+              SHELFY
+            </span>
+          </div>
+        )}
+        <main ref={mainRef} className="flex-1 narrow:min-h-0 overflow-hidden relative">
           {caps.ai && (
             <Suspense fallback={null}>
               <RemoteAiBanner />
@@ -987,10 +1161,14 @@ function AppInner(): React.JSX.Element {
             }}
           >
             {VIEW_IDS.filter((v) => mountedViews.has(v)).map((v) => {
-              const visible = view === v;
+              // Under a 404 panel no view shows through: z-indexed parts of a
+              // view (the gallery's toolbar) would otherwise paint over it (SH-14).
+              const visible = view === v && !routePanel;
               return (
                 <div
                   key={v}
+                  // The view a MenuButton inside belongs to (UX-1).
+                  data-shell-view={v}
                   // Keep-alive cross-fade: each layer stays mounted (state/scroll
                   // preserved) and is shown/hidden via visibility. Re-animating with a
                   // keyframe would require a remount, which would defeat keep-alive — so
@@ -1135,16 +1313,38 @@ function AppInner(): React.JSX.Element {
                 {routePanel}
               </div>
             )}
+
+            {/* Web: offline (ST-3). Inside this layer, so an open post modal
+              still covers it; at the bottom of <main>, so on narrow it sits
+              above the BottomNav. The live region stays mounted so screen
+              readers announce the change. */}
+            {nav && (
+              <div
+                role="status"
+                className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 z-[7]"
+              >
+                {!online && (
+                  <span
+                    data-testid="offline-pill"
+                    className="u-fade-in flex items-center gap-1.5 h-8 px-3 rounded-full bg-[#1c1c1e] ring-1 ring-white/10 shadow-lg text-xs text-gray-200 whitespace-nowrap"
+                  >
+                    <WifiOff size={14} aria-hidden className="text-amber-400" />
+                    {t('offline')}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </main>
         {/* Bottom navigation (narrow only): a normal flex-column sibling of
           `<main>`, not a floating overlay — App's `narrow:flex-col` reserves
           its height instead of it covering the last row of content. */}
         <BottomNav
-          active={bottomNavTargetOfView(view)}
+          active={notFound ? null : bottomNavTargetOfView(view)}
           onNavigate={handleBottomNav}
           aiVisible={caps.ai}
           jobsVisible={caps.jobs}
+          inert={menuOpen}
         />
         {collectionModal && (
           <Suspense fallback={null}>

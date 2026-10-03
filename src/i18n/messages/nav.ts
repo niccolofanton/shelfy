@@ -11,6 +11,8 @@ export default {
     ai: 'AI',
     jobs: 'Lavori',
     settings: 'Impostazioni',
+    // The bar's landmark name (UX-1).
+    navLabel: 'Navigazione principale',
   },
   en: {
     library: 'Library',
@@ -18,5 +20,6 @@ export default {
     ai: 'AI',
     jobs: 'Jobs',
     settings: 'Settings',
+    navLabel: 'Main navigation',
   },
 } satisfies LangMessages;

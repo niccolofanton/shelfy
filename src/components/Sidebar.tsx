@@ -12,15 +12,15 @@ import {
   Loader2,
   ChevronDown,
   Instagram,
-  Twitter,
   MessageSquare,
   Bookmark,
   FolderPlus,
-  Menu,
   Trash2,
   X,
 } from 'lucide-react';
 import PinterestIcon from './PinterestIcon';
+import { XIcon } from './SourceIcon';
+import { DRAWER_ID } from './MenuButton';
 import Logo from './Logo';
 import ActivityCenter from './ActivityCenter';
 import { useT, withMessages } from '../i18n';
@@ -134,6 +134,12 @@ interface SidebarProps {
   webDone?: number;
   webTotal?: number;
   onActivityAction?: (id: string, item?: ActivityActionItem) => void;
+  // The drawer under 900px (UX-1): App owns its state (ShellContext), so a
+  // MenuButton in any view's top row can open it. Unset: closed.
+  drawerOpen?: boolean;
+  onCloseDrawer?: () => void;
+  // Where focus goes back when the drawer closes: the MenuButton that opened it.
+  returnFocusRef?: React.RefObject<HTMLElement | null>;
 }
 
 // The live-analysis badge rides on the "Auto-tag" queue tab (aiqueue), since
@@ -149,7 +155,7 @@ const AI_TABS: AiTab[] = [
 
 const BROWSER_TABS: BrowserTab[] = [
   { id: 'instagram', label: 'Instagram', Icon: Instagram },
-  { id: 'twitter', label: 'X / Twitter', Icon: Twitter },
+  { id: 'twitter', label: 'X / Twitter', Icon: XIcon },
   { id: 'pinterest', label: 'Pinterest', Icon: PinterestIcon },
 ];
 
@@ -189,6 +195,21 @@ function formatBadge(n: number): string {
   return n > 99999 ? '99999+' : String(n);
 }
 
+// A 44×44 hit area around a small control, on narrow only (audit §4: keep
+// the glyph's size, extend the target). UX-2's `.u-hit` utility can replace it.
+const HIT_44 = "narrow:after:absolute narrow:after:-inset-3 narrow:after:content-['']";
+
+// The drawer's keyboard-reachable controls, in tab order (for the focus trap).
+// A collapsed group's rows aren't rendered, and nothing else in the drawer is
+// hidden, so a plain selector is enough.
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+function focusableIn(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => el.getClientRects().length > 0,
+  );
+}
+
 // Memoized (see export below): App re-renders on every queue/progress flush; the
 // sidebar only needs to follow its own (mostly primitive) props.
 function Sidebar({
@@ -220,6 +241,9 @@ function Sidebar({
   webTotal = 0,
   // Queue controls (pause/cancel) routed from the Activity center popover.
   onActivityAction,
+  drawerOpen = false,
+  onCloseDrawer,
+  returnFocusRef,
 }: SidebarProps): React.JSX.Element {
   const t: Translate = useT('sidebar');
   // Each group and row exists only where the client can back it: the web app
@@ -259,30 +283,60 @@ function Sidebar({
   useEffect(() => savePersisted(LS_GROUPS_KEY, expandedGroups), [expandedGroups]);
   useEffect(() => savePersisted(LS_PLATFORMS_KEY, expandedPlatforms), [expandedPlatforms]);
 
-  // ── Drawer (P1-02, under 900px) ─────────────────────────────────────────────
+  // ── Drawer (P1-02, under 900px; a modal dialog since UX-1) ─────────────────
   // Under the narrow breakpoint the sidebar is an off-canvas drawer instead of
   // a permanent column (tailwind.config.ts `narrow:` screen); at ≥900px these
-  // classes never match, so the desktop layout is untouched. Local, uncontrolled
-  // state — no other component needs to know the drawer is open.
-  const [drawerOpen, setDrawerOpen] = useState<boolean>(false);
-  const closeDrawer = (): void => setDrawerOpen(false);
-  // Auto-close once a tap inside the drawer actually navigates (a source pick,
-  // a browser tab, Downloads/Settings/AI…), instead of wrapping every one of
-  // the many onClick call sites above: reacting to the navigation state itself
-  // is the single choke point every one of them already funnels through.
-  const prevViewRef = useRef<NavView | string>(currentView);
-  const prevSourceRef = useRef<ActiveSource | undefined>(activeSource);
+  // classes never match, so the desktop layout is untouched. App owns the open
+  // state and closes it whenever a pick navigates (a source, a view, a tab).
+  // While open it behaves as a modal dialog (audit SH-4): focus moves in (to
+  // the close button), Tab and Shift+Tab stay inside, Escape closes it, and
+  // focus returns to the MenuButton that opened it. App makes the rest of the
+  // shell `inert` meanwhile. UX-2's shared useDialog() can replace this later.
+  const asideRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onCloseDrawer);
+  onCloseRef.current = onCloseDrawer;
   useEffect(() => {
-    const viewChanged = prevViewRef.current !== currentView;
-    const prevSource = prevSourceRef.current;
-    const sourceChanged =
-      !!activeSource &&
-      !!prevSource &&
-      (activeSource.type !== prevSource.type || activeSource.value !== prevSource.value);
-    if (viewChanged || sourceChanged) setDrawerOpen(false);
-    prevViewRef.current = currentView;
-    prevSourceRef.current = activeSource;
-  }, [currentView, activeSource]);
+    if (!drawerOpen) return;
+    const aside = asideRef.current;
+    // App records the trigger before it opens the drawer.
+    const trigger = returnFocusRef?.current ?? null;
+    closeRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCloseRef.current?.();
+        return;
+      }
+      if (e.key !== 'Tab' || !aside) return;
+      const items = focusableIn(aside);
+      if (items.length === 0) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!aside.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      // Back to the trigger, unless focus already left the drawer (a modal
+      // opened from it). App lifts `inert` in a layout effect, which runs
+      // before this passive cleanup, so the trigger is focusable again.
+      const active = document.activeElement;
+      if (!active || active === document.body || aside?.contains(active)) {
+        trigger?.focus();
+      }
+    };
+  }, [drawerOpen, returnFocusRef]);
 
   // Gate the staggered entrance animation to first mount + genuinely-new rows,
   // so a reload (after every assign/create/rename/delete) doesn't replay the
@@ -315,22 +369,28 @@ function Sidebar({
   ): React.JSX.Element => {
     const active = isActive('collection', c.id);
     const animate = isNewRow(c.id);
+    const select = (): void =>
+      onSelectSource?.({ type: 'collection', value: c.id, label: c.name, color: c.color });
     return (
       <div
         key={c.id}
         data-testid={`source-collection-${c.id}`}
         style={animate ? { animationDelay: Math.min(i, 8) * 30 + 'ms' } : undefined}
         className={[
-          'u-press group relative w-full flex items-center py-1.5 text-sm rounded-md cursor-pointer transition-colors mx-2',
+          // `w-[calc(100%_-_1rem)]` with `mx-2`: a full-width row plus its
+          // margins overflowed the scroller by 8px (SH-7).
+          'u-press group relative w-[calc(100%_-_1rem)] flex items-center py-1.5 narrow:min-h-11 text-sm rounded-md cursor-pointer transition-colors mx-2',
           animate ? 'u-fade-in-up' : '',
           nested ? 'pl-14 pr-2' : 'pl-9 pr-2',
           active
             ? 'bg-[#1e1e1e] text-white'
             : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
         ].join(' ')}
-        onClick={() =>
-          onSelectSource?.({ type: 'collection', value: c.id, label: c.name, color: c.color })
-        }
+        // The whole row stays a pointer target; the keyboard reaches the
+        // folder through its button below (SH-5), which handles its own clicks.
+        onClick={(e: React.MouseEvent<HTMLDivElement>) => {
+          if (!(e.target as Element).closest('button')) select();
+        }}
       >
         {active && accentBar(c.color)}
         {/* Tree guide: the vertical trunk runs full-height between siblings but
@@ -350,34 +410,49 @@ function Sidebar({
             />
           </>
         )}
-        <span
-          className={[
-            'w-2 h-2 rounded-full shrink-0 transition-shadow',
-            active ? 'u-pop-in' : '',
-          ].join(' ')}
-          style={{
-            backgroundColor: c.color,
-            boxShadow: active ? `0 0 0 3px ${c.color}33` : 'none',
-          }}
-        />
-        <span className="ml-2.5 flex-1 truncate">{c.name}</span>
+        <button
+          type="button"
+          aria-current={active ? 'page' : undefined}
+          onClick={select}
+          className="flex-1 min-w-0 flex items-center text-left"
+        >
+          <span
+            aria-hidden
+            className={[
+              'w-2 h-2 rounded-full shrink-0 transition-shadow',
+              active ? 'u-pop-in' : '',
+            ].join(' ')}
+            style={{
+              backgroundColor: c.color,
+              boxShadow: active ? `0 0 0 3px ${c.color}33` : 'none',
+            }}
+          />
+          <span className="ml-2.5 flex-1 truncate">{c.name}</span>
+        </button>
         {caps.libraryEdit && (
+          // On desktop it shows on hover, and on keyboard focus of the row so
+          // Tab reaches it; always shown on narrow, where there is no hover,
+          // with a 44px hit area around the 20px glyph (SH-6).
           <button
+            type="button"
             data-testid={`edit-collection-${c.id}`}
             onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation();
               onEditCollection?.(c);
             }}
             title={t('editSource')}
-            className="u-press u-fade-in hidden group-hover:flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-white transition-colors"
+            aria-label={t('editFolderNamed', { name: c.name })}
+            className={`u-press u-fade-in hidden group-hover:flex group-focus-within:flex narrow:flex relative items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-white transition-colors ${HIT_44}`}
           >
-            <Pencil size={13} />
+            <Pencil size={13} aria-hidden />
           </button>
         )}
         <span
           className={[
             'ml-1.5 text-[11px] text-gray-500 tabular-nums',
-            caps.libraryEdit ? 'group-hover:hidden' : '',
+            caps.libraryEdit
+              ? 'group-hover:hidden group-focus-within:hidden narrow:group-hover:inline narrow:group-focus-within:inline'
+              : '',
           ].join(' ')}
         >
           {formatCount(c.count ?? 0)}
@@ -401,54 +476,46 @@ function Sidebar({
 
   return (
     <>
-      {/* Drawer trigger (narrow only): floats below the gallery's own floating
-          toolbar (~52px + a gap) so the two never overlap. Hidden while the
-          drawer is open — the panel's own close affordance takes over. */}
-      {!drawerOpen && (
-        <button
-          data-testid="sidebar-open"
-          onClick={() => setDrawerOpen(true)}
-          title={t('openMenu')}
-          aria-label={t('openMenu')}
-          className="hidden narrow:flex fixed top-16 left-3 z-40 items-center justify-center w-10 h-10 rounded-full bg-[#1c1c1e] ring-1 ring-white/10 shadow-lg text-white u-press"
-        >
-          <Menu size={18} />
-        </button>
-      )}
-      {/* Backdrop: dims the view behind the open drawer and closes it on tap.
+      {/* Scrim: dims the view behind the open drawer and closes it on tap.
           The `hidden narrow:block` guard is a safety net in case the drawer was
-          left open while narrow and the viewport later widened past 900px. */}
+          left open while narrow and the viewport later widened past 900px.
+          z-30 / z-40 below are the audit's `z-scrim` / `z-drawer` (§3.1), for
+          UX-2's z-index scale to take over. The trigger that used to float
+          here is MenuButton now, in each screen's top row (SH-1). */}
       {drawerOpen && (
         <div
           data-testid="sidebar-backdrop"
-          onClick={closeDrawer}
+          aria-hidden
+          onClick={onCloseDrawer}
           className="hidden narrow:block fixed inset-0 z-30 bg-black/60 u-fade-in"
         />
       )}
       <aside
+        ref={asideRef}
+        id={DRAWER_ID}
         data-testid="sidebar"
+        // A modal dialog only while open as the drawer (narrow); at ≥900px it
+        // is the permanent column and never opens (SH-4).
+        role={drawerOpen ? 'dialog' : undefined}
+        aria-modal={drawerOpen ? true : undefined}
+        aria-label={drawerOpen ? t('menu') : undefined}
         className={[
           'flex flex-col w-[240px] min-w-[240px] h-full bg-[#111111] border-r border-[#2e2e2e] overflow-hidden select-none',
           // Off-canvas drawer under 900px: fixed over the content, sliding in
           // from the left edge. `narrow:` never matches at ≥900px, so none of
-          // this reaches the desktop (or ≥900px web) layout above.
-          'narrow:fixed narrow:inset-y-0 narrow:left-0 narrow:z-40 narrow:shadow-2xl',
-          'narrow:transition-transform narrow:duration-[var(--dur-3)] narrow:ease-[var(--ease-emphasized)]',
-          drawerOpen ? 'narrow:translate-x-0' : 'narrow:-translate-x-full',
+          // this reaches the desktop (or ≥900px web) layout above. Its own
+          // padding keeps the header clear of the status bar and the footer
+          // clear of the home indicator in the installed app (SH-3).
+          'narrow:fixed narrow:inset-y-0 narrow:left-0 narrow:z-40 narrow:shadow-2xl narrow:w-[min(85vw,320px)] narrow:min-w-0',
+          'narrow:pt-[env(safe-area-inset-top)] narrow:pb-[env(safe-area-inset-bottom)] narrow:pl-[env(safe-area-inset-left)]',
+          // Closed, it is also `invisible` (out of the tab order and the
+          // accessibility tree) once it has slid out: visibility switches at
+          // once on open and only after the slide on close.
+          drawerOpen
+            ? 'narrow:translate-x-0 narrow:visible narrow:[transition:transform_var(--dur-3)_var(--ease-emphasized),visibility_0s]'
+            : 'narrow:-translate-x-full narrow:invisible narrow:[transition:transform_var(--dur-3)_var(--ease-emphasized),visibility_0s_linear_var(--dur-3)]',
         ].join(' ')}
       >
-        {/* Close affordance (narrow only), beside the header the drawer already has. */}
-        {drawerOpen && (
-          <button
-            data-testid="sidebar-close"
-            onClick={closeDrawer}
-            title={t('closeMenu')}
-            aria-label={t('closeMenu')}
-            className="hidden narrow:flex absolute top-3 right-3 z-10 items-center justify-center w-8 h-8 rounded-md text-gray-400 hover:text-white hover:bg-[#2a2a2a] u-press"
-          >
-            <X size={16} />
-          </button>
-        )}
         {/* Frameless window: on macOS reserve a draggable top strip for the native
           traffic lights (positioned here via trafficLightPosition in main.ts). On
           Windows/Linux the custom controls live top-right (see App), so no strip. */}
@@ -457,7 +524,7 @@ function Sidebar({
         {/* App header — pinned above the single scrolling menu; doubles as the
           window drag handle (its interactive children opt out via the global
           no-drag rule). */}
-        <div className="drag-region u-fade-in flex items-center gap-2.5 px-4 h-14 shrink-0">
+        <div className="drag-region u-fade-in flex items-center gap-2.5 px-4 narrow:pr-2 h-14 shrink-0">
           <Logo size={20} />
           <div className="flex flex-col leading-tight">
             <span className="font-display text-white text-[15px] font-semibold tracking-wide">
@@ -467,6 +534,20 @@ function Sidebar({
               {t('postsCount', { n: formatCount(total) })}
             </span>
           </div>
+          {/* Close (narrow only, while open): in the header row, so the safe
+            area above pushes it down too; 44×44 (SH-4). */}
+          {drawerOpen && (
+            <button
+              ref={closeRef}
+              type="button"
+              data-testid="sidebar-close"
+              onClick={onCloseDrawer}
+              aria-label={t('closeMenu')}
+              className="hidden narrow:flex ml-auto items-center justify-center w-11 h-11 shrink-0 rounded-md text-gray-400 hover:text-white hover:bg-[#2a2a2a] u-press"
+            >
+              <X size={18} aria-hidden />
+            </button>
+          )}
         </div>
 
         {/* One single scrollable menu: Connections, Library (All posts → platforms /
@@ -476,7 +557,7 @@ function Sidebar({
           nothing is pinned as an overlay on top. */}
         <div
           data-testid="sidebar-scroll"
-          className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent flex flex-col"
+          className="flex-1 min-h-0 overflow-y-auto narrow:overscroll-contain scrollbar-thin scrollbar-thumb-[#2e2e2e] scrollbar-track-transparent flex flex-col"
         >
           <nav className="flex flex-col gap-0.5 mt-1">
             {/* ===================== CONNECTIONS (ex Sources/Browser) ===================== */}
@@ -489,7 +570,7 @@ function Sidebar({
                     data-testid="nav-browser"
                     aria-expanded={open}
                     onClick={() => toggleGroup('browser')}
-                    className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
+                    className="u-press flex items-center gap-3 px-4 py-2.5 narrow:min-h-11 rounded-md mx-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
                   >
                     <Globe size={16} strokeWidth={1.75} className="shrink-0" />
                     <span className="flex-1">{t('sources')}</span>
@@ -591,7 +672,7 @@ function Sidebar({
                     data-testid="nav-bookmarks"
                     aria-expanded={open}
                     onClick={() => toggleGroup('bookmarks')}
-                    className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
+                    className="u-press flex items-center gap-3 px-4 py-2.5 narrow:min-h-11 rounded-md mx-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
                   >
                     <Bookmark size={16} strokeWidth={1.75} className="shrink-0" />
                     <span className="flex-1 truncate">{t('bookmarks')}</span>
@@ -607,7 +688,7 @@ function Sidebar({
                         the platform rows below. */}
                       <div
                         className={[
-                          'group relative w-full flex items-center pr-2 pl-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors',
+                          'group relative w-[calc(100%_-_1rem)] flex items-center pr-2 pl-2 py-1.5 narrow:min-h-11 text-sm rounded-md mx-2 cursor-pointer transition-colors',
                           isActive('platform', 'all')
                             ? 'bg-[#1e1e1e] text-white'
                             : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
@@ -618,14 +699,18 @@ function Sidebar({
                           so the All posts icon stays aligned with chevron-less rows. */}
                         <span className="w-7 shrink-0 flex justify-center">
                           <button
+                            type="button"
                             data-testid="source-all-toggle"
                             aria-expanded={allPostsOpen}
+                            aria-label={t(allPostsOpen ? 'collapseNamed' : 'expandNamed', {
+                              name: t('allPosts'),
+                            })}
                             onClick={(e) => {
                               e.stopPropagation();
                               toggleGroup('allposts');
                             }}
                             title={allPostsOpen ? t('collapse') : t('expand')}
-                            className="u-press flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors"
+                            className={`u-press relative flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors ${HIT_44}`}
                           >
                             <ChevronDown
                               size={13}
@@ -674,7 +759,7 @@ function Sidebar({
                               <React.Fragment key={id}>
                                 <div
                                   className={[
-                                    'group relative w-full flex items-center pr-2 pl-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors',
+                                    'group relative w-[calc(100%_-_1rem)] flex items-center pr-2 pl-2 py-1.5 narrow:min-h-11 text-sm rounded-md mx-2 cursor-pointer transition-colors',
                                     isActive('platform', id)
                                       ? 'bg-[#1e1e1e] text-white'
                                       : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
@@ -686,14 +771,21 @@ function Sidebar({
                                   <span className="w-7 shrink-0 flex justify-center">
                                     {children.length > 0 && (
                                       <button
+                                        type="button"
                                         data-testid={`source-${id}-toggle`}
                                         aria-expanded={platformOpen}
+                                        aria-label={t(
+                                          platformOpen ? 'collapseNamed' : 'expandNamed',
+                                          {
+                                            name: platformLabel ?? id,
+                                          },
+                                        )}
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           togglePlatform(id);
                                         }}
                                         title={platformOpen ? t('collapse') : t('expand')}
-                                        className="u-press flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors"
+                                        className={`u-press relative flex items-center justify-center w-5 h-5 rounded text-gray-500 hover:text-gray-200 hover:bg-[#262626] transition-colors ${HIT_44}`}
                                       >
                                         <ChevronDown
                                           size={13}
@@ -706,7 +798,9 @@ function Sidebar({
                                     )}
                                   </span>
                                   <button
+                                    type="button"
                                     data-testid={`source-${id}`}
+                                    aria-current={isActive('platform', id) ? 'page' : undefined}
                                     onClick={() =>
                                       onSelectSource?.({ type: 'platform', value: id })
                                     }
@@ -757,11 +851,15 @@ function Sidebar({
                         no active state. Reads lighter (gray-500) like the add
                         rows in Connections, with the same "+" affordance. */}
                           {caps.libraryEdit && (
+                            // An action, not a disabled row: secondary text with
+                            // a hover state, unlike the dimmer desktop-only add
+                            // rows in Connections (SH-8).
                             <button
+                              type="button"
                               data-testid="add-source-btn"
                               onClick={onAddCollection}
                               title={t('addCollection')}
-                              className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 rounded-md mx-2 cursor-pointer text-sm text-gray-500 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
+                              className="u-press u-fade-in-down flex items-center gap-2 pl-9 pr-4 py-1.5 narrow:min-h-11 rounded-md mx-2 cursor-pointer text-sm text-[color:var(--text-secondary)] hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left"
                             >
                               <FolderPlus size={15} className="shrink-0" />
                               <span className="flex-1">{t('newFolder')}</span>
@@ -778,7 +876,7 @@ function Sidebar({
                           aria-current={currentView === 'downloads' ? 'page' : undefined}
                           onClick={() => onNavigate('downloads')}
                           className={[
-                            'u-press group relative w-full flex items-center pl-9 pr-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
+                            'u-press group relative w-[calc(100%_-_1rem)] flex items-center pl-9 pr-2 py-1.5 narrow:min-h-11 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
                             currentView === 'downloads'
                               ? 'bg-[#1e1e1e] text-white'
                               : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
@@ -814,7 +912,7 @@ function Sidebar({
                         aria-current={currentView === 'trash' ? 'page' : undefined}
                         onClick={() => onNavigate('trash')}
                         className={[
-                          'u-press group relative w-full flex items-center pl-9 pr-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
+                          'u-press group relative w-[calc(100%_-_1rem)] flex items-center pl-9 pr-2 py-1.5 narrow:min-h-11 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
                           currentView === 'trash'
                             ? 'bg-[#1e1e1e] text-white'
                             : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
@@ -835,7 +933,7 @@ function Sidebar({
                           aria-current={currentView === 'jobs' ? 'page' : undefined}
                           onClick={() => onNavigate('jobs')}
                           className={[
-                            'u-press group relative w-full flex items-center pl-9 pr-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
+                            'u-press group relative w-[calc(100%_-_1rem)] flex items-center pl-9 pr-2 py-1.5 narrow:min-h-11 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
                             currentView === 'jobs'
                               ? 'bg-[#1e1e1e] text-white'
                               : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
@@ -863,7 +961,7 @@ function Sidebar({
                     data-testid="nav-ai"
                     aria-expanded={open}
                     onClick={() => toggleGroup('ai')}
-                    className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 mt-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
+                    className="u-press flex items-center gap-3 px-4 py-2.5 narrow:min-h-11 rounded-md mx-2 mt-2 text-sm text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200 transition-colors text-left cursor-pointer"
                   >
                     <Sparkles size={16} strokeWidth={1.75} className="shrink-0" />
                     <span className="flex-1">{t('ai')}</span>
@@ -943,7 +1041,7 @@ function Sidebar({
                 <button
                   data-testid="nav-feedback"
                   onClick={() => setFeedbackOpen(true)}
-                  className="u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200"
+                  className="u-press flex items-center gap-3 px-4 py-2.5 narrow:min-h-11 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200"
                 >
                   <MessageSquare size={16} strokeWidth={1.75} className="shrink-0" />
                   <span>{t('feedback')}</span>
@@ -957,15 +1055,19 @@ function Sidebar({
 
               {caps.settings && (
                 <button
+                  type="button"
                   data-testid="nav-settings"
+                  aria-current={currentView === 'settings' ? 'page' : undefined}
                   onClick={() => onNavigate('settings')}
                   className={[
-                    'u-press flex items-center gap-3 px-4 py-2.5 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
+                    'u-press relative flex items-center gap-3 px-4 py-2.5 narrow:min-h-11 rounded-md mx-2 cursor-pointer text-sm transition-colors text-left',
                     currentView === 'settings'
                       ? 'bg-[#1e1e1e] text-white'
                       : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
                   ].join(' ')}
                 >
+                  {/* The same accent bar as every other active row (SH-10). */}
+                  {currentView === 'settings' && accentBar()}
                   <Settings size={16} strokeWidth={1.75} className="shrink-0" />
                   <span>{t('settings')}</span>
                 </button>
