@@ -5,7 +5,7 @@
 //! | user | 20 per second, 60 at once | user | every `/api/v1/*` route a signed-in user calls, with a session or an API token | [`by_user`] |
 //! | search | 5 per second, 5 at once | user | `GET /api/v1/search`, and `GET /api/v1/posts` and `/api/v1/posts/count` with a text query (`q` or `concept`) | [`by_user`] |
 //! | client errors | 10 per minute, 10 at once | user | `POST /api/v1/client-errors` | [`by_user`] |
-//! | sign-in | 10 per minute | client address | every `/api/v1/auth/*` route, signed in or not, but the device poll ([`UNCOUNTED_SIGN_IN_ROUTES`]) | [`by_client`] |
+//! | sign-in | 10 per minute | client address | every `/api/v1/auth/*` route, signed in or not, but the device poll ([`UNCOUNTED_SIGN_IN_ROUTES`]); the extension's pairing ([`COUNTED_SIGN_IN_ROUTES`]) | [`by_client`] |
 //!
 //! A request over a limit answers 429 `rate_limited` with `Retry-After`, the
 //! seconds until it would pass, before the handler runs. A limit does not
@@ -74,6 +74,12 @@ pub const AUTH_PREFIX: &str = "/api/v1/auth/";
 /// `slow_down`, and at most 20 polls a minute).
 pub const UNCOUNTED_SIGN_IN_ROUTES: &[(Method, &str)] =
     &[(Method::POST, "/api/v1/auth/device/poll")];
+
+/// Routes outside `/api/v1/auth/` that the limit per client address counts
+/// as sign-in requests: the browser extension's pairing (P2-03), a public
+/// route that exchanges a code for a token. A code is 256 random bits, so
+/// the limit guards the database from floods rather than guesses.
+pub const COUNTED_SIGN_IN_ROUTES: &[(Method, &str)] = &[(Method::POST, "/api/v1/extension/pair")];
 
 /// Most keys one limiter tracks.
 pub const MAX_KEYS: u64 = 10_000;
@@ -398,17 +404,18 @@ pub async fn by_user(State(state): State<AppState>, request: Request, next: Next
 }
 
 /// Whether the limit per client address counts `method path` (a route
-/// template): the `/api/v1/auth/*` routes, but [`UNCOUNTED_SIGN_IN_ROUTES`].
+/// template): the `/api/v1/auth/*` routes, but [`UNCOUNTED_SIGN_IN_ROUTES`],
+/// and [`COUNTED_SIGN_IN_ROUTES`].
 #[must_use]
 pub fn counts_as_sign_in(method: &Method, path: &str) -> bool {
-    path.starts_with(AUTH_PREFIX)
-        && !UNCOUNTED_SIGN_IN_ROUTES
-            .iter()
-            .any(|(m, p)| m == method && *p == path)
+    let listed = |routes: &[(Method, &str)]| routes.iter().any(|(m, p)| m == method && *p == path);
+    (path.starts_with(AUTH_PREFIX) && !listed(UNCOUNTED_SIGN_IN_ROUTES))
+        || listed(COUNTED_SIGN_IN_ROUTES)
 }
 
 /// Layer right inside the security headers: the sign-in limit per client
-/// address, on the `/api/v1/auth/*` routes ([`counts_as_sign_in`]).
+/// address, on the `/api/v1/auth/*` routes and the extension's pairing
+/// ([`counts_as_sign_in`]).
 pub async fn by_client(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let sign_in = request
         .extensions()
@@ -449,6 +456,14 @@ mod tests {
             "/api/v1/auth/device/poll"
         ));
         assert!(!counts_as_sign_in(&Method::GET, "/api/v1/me"));
+        // The extension's pairing counts; its other routes do not.
+        assert!(counts_as_sign_in(&Method::POST, "/api/v1/extension/pair"));
+        assert!(!counts_as_sign_in(&Method::GET, "/api/v1/extension/pair"));
+        assert!(!counts_as_sign_in(&Method::GET, "/api/v1/extension/config"));
+        assert!(!counts_as_sign_in(
+            &Method::POST,
+            "/api/v1/me/tokens/pairing-code"
+        ));
     }
 
     fn alice() -> Key {

@@ -455,6 +455,80 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/api/v1/extension/config': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * The extension's configuration: the minimum version, the kill switches of
+     *     each platform's capture modes, pacing and stop thresholds (contract C3).
+     * @description Conditional: send the `ETag` back in `If-None-Match` and an unchanged
+     *     configuration answers 304. A change made by the operator (`admin flags`)
+     *     shows within 30 seconds. This is the one route an outdated extension
+     *     still reaches: every other answers it 426 `extension_outdated`.
+     */
+    get: operations['getExtensionConfig'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/extension/pair': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Exchanges a pairing code for the extension's token.
+     * @description The extension calls it with the code that the web app got from `POST
+     *     /me/tokens/pairing-code`, within 60 seconds, once. No cookie and no CSRF
+     *     headers are needed, and none is read. 400 `invalid_pairing_code` for a
+     *     code that is malformed, unknown, used or expired; 422 for a malformed
+     *     `installId`, `label` or `version`; 426 `extension_outdated` for a version
+     *     below `minVersion` (the code stays usable); 409 `conflict` when the
+     *     account holds 50 working tokens. Limit: the sign-in limit, 10 requests a
+     *     minute per client over this route and the `/auth` routes (429).
+     */
+    post: operations['pairExtension'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/extension/status': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Whether the account's browser extension is connected: one of its
+     *     extension tokens made a request in the last 10 minutes, with the version
+     *     it sent. The same object as the `extension.status` event, which follows
+     *     every change. The server keeps it in memory: after a restart it is
+     *     disconnected until the extension's next request.
+     */
+    get: operations['getExtensionStatus'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/api/v1/jobs': {
     parameters: {
       query?: never;
@@ -727,6 +801,30 @@ export interface paths {
      *     50 working tokens already.
      */
     post: operations['createApiToken'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/api/v1/me/tokens/pairing-code': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /**
+     * Creates a code that pairs the browser extension with this account.
+     * @description The web app hands the code to the extension (`chrome.runtime.sendMessage`),
+     *     which exchanges it for its token at `POST /extension/pair` within 60
+     *     seconds, once. Needs a sign-in or a re-authentication from the last 5
+     *     minutes (403 `reauth_required` otherwise). 429 `rate_limited` while the
+     *     account holds 10 unused codes that have not expired.
+     */
+    post: operations['createPairingCode'];
     delete?: never;
     options?: never;
     head?: never;
@@ -1606,7 +1704,10 @@ export interface components {
        *     re-authentication links come from the operator (`admin login-link`).
        */
       emailLink: boolean;
-      /** @description The browser extension can pair and capture (P2). */
+      /**
+       * @description The browser extension can pair (`POST /me/tokens/pairing-code`) and
+       *     talk to this server (P2).
+       */
       extension: boolean;
       /**
        * @description Passkeys work on this server: sign-in, re-authentication and
@@ -1882,6 +1983,7 @@ export interface components {
       | 'challenge_expired'
       | 'passkey_invalid'
       | 'invalid_device_code'
+      | 'invalid_pairing_code'
       | 'unauthorized'
       | 'forbidden'
       | 'csrf_failed'
@@ -1910,7 +2012,152 @@ export interface components {
      *     `hello` and `resync` are not topics: every stream gets them.
      * @enum {string}
      */
-    EventTopic: 'posts.changed' | 'stats.changed' | 'job.updated' | 'notification';
+    EventTopic:
+      | 'posts.changed'
+      | 'stats.changed'
+      | 'job.updated'
+      | 'notification'
+      | 'extension.status';
+    /**
+     * @description What `GET /api/v1/extension/config` answers: the extension's minimum
+     *     version, kill switches, pacing and stop thresholds (contract C3). Data
+     *     only; the extension refreshes it, and applies a kill switch within one
+     *     refresh.
+     */
+    ExtensionConfig: {
+      /**
+       * Format: int64
+       * @description Longest sync run, ms.
+       */
+      maxRunMs: number;
+      /**
+       * Format: int32
+       * @description Most steps (scrolls, replay pages) of one sync run.
+       */
+      maxSteps: number;
+      /**
+       * @description The oldest extension version the API serves: below it, every other
+       *     request answers 426 `extension_outdated`.
+       */
+      minVersion: string;
+      /** @description Per platform: kill switches, pacing, stop thresholds. */
+      platforms: components['schemas']['ExtensionPlatforms'];
+      /**
+       * Format: int32
+       * @description Most Instagram posts refreshed per IG-tab session.
+       */
+      refreshPerSession: number;
+      /**
+       * Format: int32
+       * @description Minutes between two polls of `GET /ingest/tasks`.
+       */
+      taskPollMinutes: number;
+    };
+    /**
+     * @description Instagram's switches and pacing: X and Pinterest's, plus the REST
+     *     replay.
+     */
+    ExtensionInstagram: {
+      /** @description Passive capture is on (kill switch). */
+      passive: boolean;
+      /** @description The REST replay is on (kill switch). */
+      replay: boolean;
+      /**
+       * Format: int32
+       * @description Pause between two replay pages, ms.
+       */
+      replayGapMs: number;
+      /**
+       * Format: int32
+       * @description Most replay pages per run.
+       */
+      replayMaxPages: number;
+      /** @description The scroll is on (kill switch). */
+      scroll: boolean;
+      /**
+       * Format: int32
+       * @description Wait after each scroll step, ms.
+       */
+      scrollSettleMs: number;
+      /**
+       * Format: int32
+       * @description An incremental run stops at the first page boundary where this many
+       *     known items came in a row.
+       */
+      stopAfterKnown: number;
+    };
+    /**
+     * @description Body of `POST /api/v1/extension/pair` (contract C2). Fields a later
+     *     extension adds are ignored.
+     */
+    ExtensionPairRequest: {
+      /** @description The pairing code the web app handed over (43 characters). */
+      code: string;
+      /**
+       * @description A random id the extension keeps while it is installed (16 to 128
+       *     letters, digits, `-` or `_`). Pairing the same installation again
+       *     revokes the token it held.
+       */
+      installId: string;
+      /**
+       * @description A name for the account's token list, such as "Chrome on macOS"; up
+       *     to 64 characters, blank is none.
+       */
+      label?: string;
+      /** @description The extension's manifest version (`0.2.0`); below `minVersion`, 426. */
+      version: string;
+    };
+    /** @description A platform's switches and pacing (X, Pinterest). */
+    ExtensionPlatform: {
+      /** @description Passive capture is on (kill switch). */
+      passive: boolean;
+      /** @description The scroll is on (kill switch). */
+      scroll: boolean;
+      /**
+       * Format: int32
+       * @description Wait after each scroll step, ms.
+       */
+      scrollSettleMs: number;
+      /**
+       * Format: int32
+       * @description An incremental run stops at the first page boundary where this many
+       *     known items came in a row.
+       */
+      stopAfterKnown: number;
+    };
+    /** @description The per-platform part of [`ExtensionConfig`]. */
+    ExtensionPlatforms: {
+      /** @description Instagram. */
+      instagram: components['schemas']['ExtensionInstagram'];
+      /** @description Pinterest. */
+      pinterest: components['schemas']['ExtensionPlatform'];
+      /** @description X. */
+      twitter: components['schemas']['ExtensionPlatform'];
+    };
+    /**
+     * @description `extension.status`: whether the user's browser extension is connected
+     *     (plan §2.10, contract C8), sent when `connected` or `version` changes.
+     *     `GET /api/v1/extension/status` answers the same object.
+     */
+    ExtensionStatusEvent: {
+      /**
+       * @description One of the user's extension tokens made a request in the last 10
+       *     minutes.
+       */
+      connected: boolean;
+      /**
+       * Format: int64
+       * @description The newest request of the user's extension since the server started,
+       *     unix ms; `null` when there was none.
+       */
+      lastSeenAt: number | null;
+      /**
+       * @description The extension's version from its `X-Shelfy-Extension` header: the
+       *     highest among the connected browsers, or the last one known once
+       *     disconnected. `null` when none sent a valid version.
+       */
+      version: string | null;
+    };
     /** @description One field that failed validation. */
     FieldError: {
       /** @description The field, as named in the request (camelCase). */
@@ -2737,6 +2984,31 @@ export interface components {
       /** @description SHA-256 of the content, lowercase hex. */
       sha256: string;
     };
+    /** @description A paired extension's token. */
+    PairedExtension: {
+      /** @description What it may do: `ingest`, `tasks`, `uploads`, `lookup`. */
+      scopes: components['schemas']['TokenScope'][];
+      /**
+       * @description The `extension` token (`shx_…`) for `Authorization: Bearer`. Shown
+       *     only now; keep it where page scripts cannot read it.
+       */
+      token: string;
+      /** @description Its id, as the account's token list names it. */
+      tokenId: string;
+    };
+    /** @description A code that pairs the browser extension (contract C2). */
+    PairingCode: {
+      /**
+       * @description The code (43 characters), for the extension's `POST /extension/pair`.
+       *     Hand it to the extension only; it works once.
+       */
+      code: string;
+      /**
+       * Format: int64
+       * @description When it stops working, unix ms: 60 seconds from now.
+       */
+      expiresAt: number;
+    };
     /** @description A passkey of the account. */
     Passkey: {
       /**
@@ -3457,6 +3729,12 @@ export interface components {
           data: components['schemas']['Notification'];
           /** @enum {string} */
           event: 'notification';
+        }
+      | {
+          /** @description The browser extension connected, disconnected or changed version. */
+          data: components['schemas']['ExtensionStatusEvent'];
+          /** @enum {string} */
+          event: 'extension.status';
         };
     /** @description A signed-in session of the account. */
     Session: {
@@ -4286,6 +4564,98 @@ export interface operations {
       default: components['responses']['Problem'];
     };
   };
+  getExtensionConfig: {
+    parameters: {
+      query?: never;
+      header?: {
+        /**
+         * @description The `ETag` of an earlier response. When the view has not changed since,
+         *     the answer is 304 with no body.
+         */
+        'If-None-Match'?: string;
+        /**
+         * @description The extension's manifest version (`0.2.0`). An extension token's
+         *     request without it, or below `minVersion`, gets 426
+         *     `extension_outdated`, except `GET /extension/config`.
+         */
+        'X-Shelfy-Extension'?: string;
+      };
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The configuration. */
+      200: {
+        headers: {
+          /** @description `private, no-cache`. */
+          'Cache-Control'?: string;
+          /** @description Weak ETag of this configuration. */
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ExtensionConfig'];
+        };
+      };
+      /** @description Unchanged since the ETag in `If-None-Match`; no body. */
+      304: {
+        headers: {
+          /** @description The same ETag. */
+          ETag?: string;
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  pairExtension: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ExtensionPairRequest'];
+      };
+    };
+    responses: {
+      /** @description Paired: the token, shown once. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PairedExtension'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  getExtensionStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The extension's status. */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ExtensionStatusEvent'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
   listJobs: {
     parameters: {
       query?: {
@@ -4681,6 +5051,27 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['CreatedApiToken'];
+        };
+      };
+      default: components['responses']['Problem'];
+    };
+  };
+  createPairingCode: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The code and its expiry. */
+      201: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['PairingCode'];
         };
       };
       default: components['responses']['Problem'];

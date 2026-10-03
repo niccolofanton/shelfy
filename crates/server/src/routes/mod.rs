@@ -6,7 +6,7 @@
 //!
 //! | Group | Limits | Routes |
 //! |---|---|---|
-//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03); passkeys and re-authentication (P1-13); the account, its sessions and tokens, and the device flow (P1-17); bulk actions and the trash (P1-11) |
+//! | `standard` | 64 KiB, 30 s | everything JSON: health, OpenAPI, auth, account; the read API (T11), library; notifications, client errors, version (P1-01); jobs and queues (P1-07); library writes and collections (P1-03); passkeys and re-authentication (P1-13); the account, its sessions and tokens, and the device flow (P1-17); bulk actions and the trash (P1-11); the extension's pairing, configuration and status (P2-03) |
 //! | `streams` | 64 KiB, no time limit | `GET /api/v1/events` (P1-01), `POST /api/v1/search/chat` (P3) |
 //! | `media` | 64 KiB, 30 s until the headers | `GET /media/{file}`, outside `/api` and the document ([`media`]) |
 //! | `upload_chunks` | [`RouteLimits::UPLOAD_CHUNK`]: 16 MiB, no time limit | tus `PATCH /api/v1/uploads/{id}` (T9, P4-08, [`uploads`]) |
@@ -58,6 +58,12 @@
 //! sign-in, over [`crate::auth::device`]). `POST /posts/lookup` also takes a
 //! `lookup` token ([`TOKEN_ROUTES`]).
 //!
+//! The extension routes (P2-03): [`extension`] (`POST /extension/pair`,
+//! public and CSRF-exempt; `GET /extension/config`, an `ingest` token;
+//! `GET /extension/status`, a session) and `POST /me/tokens/pairing-code`
+//! in [`me`], over [`crate::extension`]. Every token route an `extension`
+//! token reaches also passes its version gate ([`crate::extension::admit`]).
+//!
 //! The committed copy of the document, `crates/server/openapi.json`, is what
 //! the TypeScript client is generated from (T11). After changing a route,
 //! regenerate it with
@@ -72,6 +78,7 @@ pub mod collections;
 pub mod device;
 pub mod docs;
 pub mod events;
+pub mod extension;
 pub mod health;
 pub mod jobs;
 pub mod listing;
@@ -146,6 +153,7 @@ const PROBLEM_RESPONSE: &str = "Problem";
         event::JobUpdatedEvent,
         event::JobState,
         event::Notification,
+        event::ExtensionStatusEvent,
         listing::MatchMode,
         listing::PostSort,
         listing::YesNo,
@@ -177,6 +185,8 @@ const PROBLEM_RESPONSE: &str = "Problem";
         ),
         (name = "jobs", description = "The signed-in user's background jobs and their queues: \
                                        progress, cancel, retry, pause and resume."),
+        (name = "extension", description = "The browser extension: pairing, its configuration \
+                                            and kill switches, and whether it is connected."),
     )
 )]
 pub struct ApiDoc;
@@ -197,15 +207,18 @@ pub const PUBLIC_ROUTES: &[(Method, &str)] = &[
     (Method::POST, "/api/v1/auth/logout"),
     (Method::POST, "/api/v1/auth/device/start"),
     (Method::POST, "/api/v1/auth/device/poll"),
+    (Method::POST, "/api/v1/extension/pair"),
 ];
 
 /// Public routes that programs call without a cookie, and that read none:
 /// the CSRF guard lets them through without `Origin` and `X-Shelfy-Client`
-/// ([`crate::auth::csrf`]). The migration CLI signs in with them before it
-/// has a token. Each must also be in [`PUBLIC_ROUTES`].
+/// ([`crate::auth::csrf`]). The migration CLI signs in with the device flow
+/// before it has a token; the browser extension exchanges its pairing code
+/// for one. Each must also be in [`PUBLIC_ROUTES`].
 pub const CSRF_EXEMPT_ROUTES: &[(Method, &str)] = &[
     (Method::POST, "/api/v1/auth/device/start"),
     (Method::POST, "/api/v1/auth/device/poll"),
+    (Method::POST, "/api/v1/extension/pair"),
 ];
 
 /// Routes that take a scoped API token: method, route template, the scopes
@@ -216,9 +229,15 @@ pub const CSRF_EXEMPT_ROUTES: &[(Method, &str)] = &[
 /// token only; `POST /posts/lookup` takes a `lookup` token or a session
 /// (P1-17); the tus uploads take a session, an `uploads` token or a
 /// `migrate` token, and the purpose of each upload decides further (P4-08);
-/// the extension routes join in P2.
+/// `GET /extension/config` takes the extension's `ingest` token (P2-03).
 pub const TOKEN_ROUTES: &[(Method, &str, &[Scope], bool)] = &[
     (Method::POST, "/api/v1/posts/lookup", &[Scope::Lookup], true),
+    (
+        Method::GET,
+        "/api/v1/extension/config",
+        &[Scope::Ingest],
+        false,
+    ),
     (
         Method::POST,
         "/api/v1/uploads",
@@ -356,6 +375,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .merge(reauth::router())
         .merge(me::router())
         .merge(device::router())
+        .merge(extension::router())
         .merge(jobs::router());
     // Streams end when the shutdown token fires instead of on a timer.
     let streams = OpenApiRouter::default().routes(routes!(events::stream_events));

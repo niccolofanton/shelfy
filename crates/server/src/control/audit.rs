@@ -35,11 +35,23 @@ pub const PASSKEY_DELETE: &str = "passkey.delete";
 pub const PASSKEY_CLONE_SUSPECTED: &str = "passkey.clone_suspected";
 /// An API token was minted. `meta`: `id` (the token's id), `kind`
 /// (`extension`, `shortcut` or `migrate`) and `via`: `cli` (`admin
-/// migrate-token`), `account` (`POST /me/tokens`) or `device` (the device
-/// flow, whose approver is the actor).
+/// migrate-token`), `account` (`POST /me/tokens`), `device` (the device
+/// flow, whose approver is the actor) or `pairing` (`POST /extension/pair`,
+/// whose code's owner is the actor).
 pub const API_TOKEN_CREATE: &str = "api_token.create";
-/// An API token was revoked from the account. `meta`: `id` and `kind`.
+/// An API token was revoked. `meta`: `id` and `kind`; plus `via: pairing`
+/// when pairing the same browser installation again replaced it (P2-G16).
+/// Without `via`, the account revoked it.
 pub const API_TOKEN_REVOKE: &str = "api_token.revoke";
+/// A signed-in user asked for a pairing code (`POST /me/tokens/pairing-code`).
+/// `meta`: `kind` (`extension`) and `expiresAt`. Never the code.
+pub const PAIRING_CODE_CREATE: &str = "pairing_code.create";
+/// The operator set a server-wide flag (`admin flags set`). `meta`: `key`
+/// and `value` (JSON). Flags hold no secrets.
+pub const FLAG_SET: &str = "flag.set";
+/// The operator removed a flag, so its default applies (`admin flags
+/// unset`). `meta`: `key`.
+pub const FLAG_UNSET: &str = "flag.unset";
 /// A signed-in user approved a device code (the migration CLI's sign-in).
 /// `meta`: `scope` (what the device gets: `migrate`).
 pub const DEVICE_APPROVE: &str = "device.approve";

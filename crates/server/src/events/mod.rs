@@ -11,6 +11,7 @@
 //! | [`EventBus::stats_changed`] | `stats.changed` `{}` | leading edge, then at most one per second |
 //! | [`EventBus::job_updated`] | `job.updated` | per job: leading edge, then the latest state at most every 250 ms |
 //! | [`notify`] (or [`EventBus::notification`]) | `notification` | none |
+//! | [`EventBus::extension_status`] | `extension.status` | none: sent on change only ([`crate::extension::presence`]) |
 //!
 //! The throttles are leading edge (P1 assumption G1): a lone change goes out
 //! at once, follow-ups merge, and nothing waits longer than its window
@@ -48,7 +49,7 @@ use tokio::time::Instant;
 
 pub use bus::{Delivery, Published, Subscription};
 pub use coalesce::MAX_EVENT_KEYS;
-use model::{ChangeReason, EventTopic, JobUpdatedEvent, Notification};
+use model::{ChangeReason, EventTopic, ExtensionStatusEvent, JobUpdatedEvent, Notification};
 
 use crate::error::ApiError;
 use crate::ids::now_ms;
@@ -134,6 +135,13 @@ impl EventBus {
     pub fn notification(&self, user_id: &str, notification: &Notification) {
         self.user(user_id)
             .publish(EventTopic::Notification, notification, Instant::now());
+    }
+
+    /// Publishes the new status of `user_id`'s browser extension. Its
+    /// presence calls this only when the status changed.
+    pub fn extension_status(&self, user_id: &str, status: &ExtensionStatusEvent) {
+        self.user(user_id)
+            .publish(EventTopic::ExtensionStatus, status, Instant::now());
     }
 
     /// Opens a subscription to `user_id`'s events, resuming after the event

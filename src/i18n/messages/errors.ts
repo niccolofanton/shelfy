@@ -35,6 +35,8 @@ export default {
     'code.challenge_expired': 'La richiesta della passkey è scaduta. Riprova.',
     'code.passkey_invalid': 'Questa passkey non è stata accettata.',
     'code.invalid_device_code': 'Questo codice non è valido, è scaduto o è già stato usato.',
+    'code.invalid_pairing_code':
+      "Il codice di abbinamento non è valido, è scaduto o è già stato usato. Abbina di nuovo l'estensione.",
     'code.unauthorized': 'La sessione è scaduta. Accedi di nuovo.',
     'code.forbidden': 'Non hai il permesso di farlo.',
     'code.csrf_failed': 'Richiesta bloccata per sicurezza. Ricarica la pagina e riprova.',
@@ -79,6 +81,8 @@ export default {
     'code.challenge_expired': 'The passkey request expired. Try again.',
     'code.passkey_invalid': 'This passkey was not accepted.',
     'code.invalid_device_code': 'This code is invalid, has expired or was already used.',
+    'code.invalid_pairing_code':
+      'The pairing code is invalid, has expired or was already used. Pair the extension again.',
     'code.unauthorized': 'Your session has ended. Sign in again.',
     'code.forbidden': 'You are not allowed to do this.',
     'code.csrf_failed': 'The request was blocked for security. Reload the page and try again.',

@@ -26,6 +26,7 @@ use shelfy_core::search::index;
 use shelfy_server::conditional::ETag;
 use shelfy_server::error::ErrorCode;
 use shelfy_server::events::model::ChangeReason;
+use shelfy_server::extension::VERSION_HEADER;
 use shelfy_server::ids::{new_ulid, now_ms};
 use shelfy_server::library::{self, Change};
 use shelfy_server::limits::RouteLimits;
@@ -154,11 +155,16 @@ fn api_token(t: &TestState, user_id: &str) -> String {
     token
 }
 
+/// `request` with `Authorization: Bearer token`, and the version header an
+/// extension token's requests carry (P2-03, contract C1).
 fn bearer(mut request: Request<Body>, token: &str) -> Request<Body> {
     request.headers_mut().insert(
         header::AUTHORIZATION,
         format!("Bearer {token}").parse().unwrap(),
     );
+    request
+        .headers_mut()
+        .insert(VERSION_HEADER, "0.2.0".parse().unwrap());
     request
 }
 

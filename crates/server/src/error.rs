@@ -46,6 +46,9 @@ pub enum ErrorCode {
     /// 400: the device code or user code of a device sign-in (the migration
     /// CLI's `login`) is unknown, already used or expired; start again.
     InvalidDeviceCode,
+    /// 400: the browser extension's pairing code is unknown, already used or
+    /// expired (it works 60 seconds); ask the web app for a new one.
+    InvalidPairingCode,
     /// 401: the request needs an authenticated session or token.
     Unauthorized,
     /// 403: the caller may not perform this action.
@@ -112,7 +115,8 @@ impl ErrorCode {
             | Self::InvalidLink
             | Self::ChallengeExpired
             | Self::PasskeyInvalid
-            | Self::InvalidDeviceCode => StatusCode::BAD_REQUEST,
+            | Self::InvalidDeviceCode
+            | Self::InvalidPairingCode => StatusCode::BAD_REQUEST,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden | Self::CsrfFailed | Self::ReauthRequired | Self::QuotaExceeded => {
                 StatusCode::FORBIDDEN
@@ -171,6 +175,7 @@ impl ErrorCode {
             Self::ChallengeExpired => "challenge_expired",
             Self::PasskeyInvalid => "passkey_invalid",
             Self::InvalidDeviceCode => "invalid_device_code",
+            Self::InvalidPairingCode => "invalid_pairing_code",
             Self::Unauthorized => "unauthorized",
             Self::Forbidden => "forbidden",
             Self::CsrfFailed => "csrf_failed",
@@ -519,6 +524,7 @@ mod tests {
             ErrorCode::ChallengeExpired,
             ErrorCode::PasskeyInvalid,
             ErrorCode::InvalidDeviceCode,
+            ErrorCode::InvalidPairingCode,
             ErrorCode::Unauthorized,
             ErrorCode::Forbidden,
             ErrorCode::CsrfFailed,

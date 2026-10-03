@@ -6,6 +6,11 @@
 //! one needs a sign-in or a re-authentication from the last 5 minutes, and
 //! the token's value appears in that answer only. A `migrate` token cannot be
 //! created here: the migration CLI gets its own through the device flow.
+//!
+//! `POST /me/tokens/pairing-code` (P2-03, contract C2) gives the web app a
+//! 60-second code to hand to the browser extension, which exchanges it for
+//! its own token at `POST /extension/pair` ([`crate::extension::pairing`]).
+//! It needs the same recent sign-in as creating a token.
 
 use std::sync::Arc;
 
@@ -27,6 +32,7 @@ use crate::control::api_tokens::{self as rows, TokenRow};
 use crate::control::audit::{self, Entry};
 use crate::current_user::CurrentUser;
 use crate::error::{ApiError, ErrorCode};
+use crate::extension::{self, pairing};
 use crate::extract::{Json, Path};
 use crate::ids::now_ms;
 use crate::routes::auth::no_store;
@@ -38,6 +44,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(list_tokens, create_token))
         .routes(routes!(revoke_token))
+        .routes(routes!(create_pairing_code))
 }
 
 /// Who holds a token.
@@ -144,6 +151,17 @@ pub struct CreatedApiToken {
     pub token: String,
     /// The token as the list shows it.
     pub api_token: ApiToken,
+}
+
+/// A code that pairs the browser extension (contract C2).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingCode {
+    /// The code (43 characters), for the extension's `POST /extension/pair`.
+    /// Hand it to the extension only; it works once.
+    pub code: String,
+    /// When it stops working, unix ms: 60 seconds from now.
+    pub expires_at: i64,
 }
 
 /// The account's working API tokens (not revoked, not expired), with their
@@ -260,7 +278,7 @@ pub async fn revoke_token(
     let revoked = blocking(move || {
         control.write(|tx| {
             let Some(row) = rows::revoke(tx, &user_id, &id, now)? else {
-                return Ok(false);
+                return Ok(None);
             };
             let meta = serde_json::json!({ "id": row.id, "kind": row.kind.as_str() });
             let entry = Entry {
@@ -270,12 +288,42 @@ pub async fn revoke_token(
                 meta: Some(&meta),
             };
             audit::record(tx, &entry, now)?;
-            Ok::<_, RepoError>(true)
+            Ok::<_, RepoError>(Some(row.id))
         })
     })
     .await?;
-    if !revoked {
+    let Some(token_id) = revoked else {
         return Err(ApiError::new(ErrorCode::NotFound));
-    }
+    };
+    // A revoked extension token no longer keeps the extension connected.
+    extension::token_revoked(&state, user.id(), &token_id);
     Ok(no_store(StatusCode::NO_CONTENT.into_response()))
+}
+
+/// Creates a code that pairs the browser extension with this account.
+///
+/// The web app hands the code to the extension (`chrome.runtime.sendMessage`),
+/// which exchanges it for its token at `POST /extension/pair` within 60
+/// seconds, once. Needs a sign-in or a re-authentication from the last 5
+/// minutes (403 `reauth_required` otherwise). 429 `rate_limited` while the
+/// account holds 10 unused codes that have not expired.
+#[utoipa::path(
+    post,
+    path = "/api/v1/me/tokens/pairing-code",
+    tag = "account",
+    operation_id = "createPairingCode",
+    responses(
+        (status = CREATED, description = "The code and its expiry.", body = PairingCode),
+    )
+)]
+pub async fn create_pairing_code(
+    State(state): State<AppState>,
+    RecentAuth(user): RecentAuth,
+) -> Result<Response, ApiError> {
+    let created = pairing::create_code(&state, user.id()).await?;
+    let code = PairingCode {
+        code: created.code.expose().to_owned(),
+        expires_at: created.expires_at,
+    };
+    Ok(no_store((StatusCode::CREATED, Json(code)).into_response()))
 }

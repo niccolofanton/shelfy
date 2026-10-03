@@ -88,6 +88,24 @@ impl ETag {
         Self(HeaderValue::from_str(&value).expect("base64url is a valid header value"))
     }
 
+    /// The ETag of a document that is the same for every user and does not
+    /// come from a library, such as the extension's configuration: a hash of
+    /// `view` and the document itself, so it changes exactly when the
+    /// document does.
+    ///
+    /// # Panics
+    ///
+    /// When `document` cannot be serialized to JSON (a map with non-string
+    /// keys); every response type of the API serializes.
+    #[must_use]
+    pub fn for_document(view: &str, document: &impl Serialize) -> Self {
+        let none = Generation {
+            instance: 0,
+            counter: 0,
+        };
+        Self::for_view(view, "", none, document)
+    }
+
     /// The header value.
     #[must_use]
     pub fn as_str(&self) -> &str {

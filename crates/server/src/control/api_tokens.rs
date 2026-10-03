@@ -12,6 +12,10 @@
 //! - Minting ([`crate::auth::api_tokens::mint`]) inserts with [`insert`].
 //! - The account lists its tokens with [`list_active`] and revokes one with
 //!   [`revoke`].
+//! - Pairing ([`crate::extension::pairing`]) records which browser
+//!   installation holds an extension token with [`set_install`] (control
+//!   schema v4, `install_hash`), and pairing the same installation again
+//!   revokes its earlier token with [`revoke_install`] (P2-G16).
 
 use rusqlite::{Connection, OptionalExtension as _, Row, params};
 use shelfy_core::repo::{RepoError, Result};
@@ -246,6 +250,46 @@ pub fn revoke(conn: &Connection, user_id: &str, id: &str, now: i64) -> Result<Op
     .map_err(RepoError::from)
 }
 
+/// Records that the browser installation whose id hashes to `install_hash`
+/// holds token `id`.
+///
+/// # Errors
+///
+/// [`RepoError::NotFound`] when no token has this id; the update failed.
+pub fn set_install(conn: &Connection, id: &str, install_hash: &TokenHash) -> Result<()> {
+    let updated = conn.execute(
+        "UPDATE api_tokens SET install_hash = ?2 WHERE id = ?1",
+        params![id, install_hash.as_slice()],
+    )?;
+    if updated == 0 {
+        return Err(RepoError::NotFound);
+    }
+    Ok(())
+}
+
+/// Revokes at `now` the working tokens of `user_id` that the installation
+/// `install_hash` holds; returns them. Another user's tokens are left
+/// alone, whatever installation holds them.
+///
+/// # Errors
+///
+/// The update failed.
+pub fn revoke_install(
+    conn: &Connection,
+    user_id: &str,
+    install_hash: &TokenHash,
+    now: i64,
+) -> Result<Vec<TokenRow>> {
+    let mut statement = conn.prepare_cached(&format!(
+        "UPDATE api_tokens SET revoked_at = ?2 WHERE install_hash = ?3 AND {ACTIVE} \
+         RETURNING {ROW_COLUMNS}"
+    ))?;
+    let rows = statement
+        .query_map(params![user_id, now, install_hash.as_slice()], from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use rusqlite::params;
@@ -395,5 +439,58 @@ mod tests {
         assert_eq!(row[0].last_used_at, Some(NOW + 50));
         assert_eq!(row[0].created_at, NOW);
         assert_eq!(row[0].label, None);
+    }
+
+    #[test]
+    fn an_installations_working_tokens_of_one_user_are_revoked_together() {
+        let (db, owner, member) = control_with_users();
+        let hashes: Vec<TokenHash> = (0..5).map(|i| hash_token(&format!("shx_{i}"))).collect();
+        let install = hash_token("install-1");
+        let other_install = hash_token("install-2");
+        db.write(|tx| {
+            for (i, (id, user)) in [
+                ("A", &owner),
+                ("B", &owner),
+                ("C", &owner),
+                ("D", &member),
+                ("E", &owner),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                insert(tx, &token(id, user, &hashes[i]), NOW)?;
+            }
+            for id in ["A", "B", "D"] {
+                set_install(tx, id, &install)?;
+            }
+            set_install(tx, "C", &other_install)?;
+            revoke(tx, &owner, "B", NOW + 1)?;
+            Ok::<_, RepoError>(())
+        })
+        .unwrap();
+        assert!(matches!(
+            db.write(|tx| set_install(tx, "nope", &install)),
+            Err(RepoError::NotFound)
+        ));
+
+        let revoked = db
+            .write(|tx| revoke_install(tx, &owner, &install, NOW + 2))
+            .unwrap();
+        let ids: Vec<&str> = revoked.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, ["A"], "B was revoked already, D is another user's");
+        let working = |user: &str| -> Vec<String> {
+            db.read(|conn| list_active(conn, user, NOW + 3))
+                .unwrap()
+                .into_iter()
+                .map(|row| row.id)
+                .collect()
+        };
+        assert_eq!(working(&owner), ["E", "C"]);
+        assert_eq!(working(&member), ["D"]);
+        assert_eq!(
+            db.write(|tx| revoke_install(tx, &owner, &install, NOW + 4))
+                .unwrap(),
+            Vec::new()
+        );
     }
 }

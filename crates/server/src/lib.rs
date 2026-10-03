@@ -36,6 +36,7 @@
 //! | [`admin`] | the operator commands |
 //! | [`migrations`] | installing a desktop library uploaded by `shelfy-migrate` (T9) |
 //! | [`events`] | the per-user realtime bus behind SSE: publish, replay, throttles |
+//! | [`extension`] | the browser extension: pairing, typed flags and kill switches, the version gate, presence |
 //! | [`jobs`] | the job system: scheduler, workers, job-kind registry, `Idempotency-Key` |
 //! | [`static_files`] | the web app's files: precompressed assets, `index.html` for client routes |
 //! | [`security_headers`] | the content security policy, HSTS and `nosniff` on every response |
@@ -54,6 +55,7 @@ pub mod control;
 pub mod current_user;
 pub mod error;
 pub mod events;
+pub mod extension;
 pub mod extract;
 pub mod healthcheck;
 pub mod ids;

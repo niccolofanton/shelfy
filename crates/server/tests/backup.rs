@@ -36,6 +36,7 @@ use shelfy_server::auth::bearer::{Scope, TokenUser, scopes};
 use shelfy_server::config::{DataDir, create_private_dir};
 use shelfy_server::error::{ErrorCode, USER_LOCKED_RETRY_AFTER_SECS};
 use shelfy_server::events::model::JobState;
+use shelfy_server::extension::VERSION_HEADER;
 use shelfy_server::ids::{new_ulid, now_ms};
 use shelfy_server::jobs::{JobContext, JobError, Kind, KindSpec, Outcome, Registry};
 use shelfy_server::limits::RouteLimits;
@@ -444,6 +445,10 @@ async fn a_locked_user_gets_423_on_token_routes_too() {
             header::AUTHORIZATION,
             format!("Bearer {token}").parse().unwrap(),
         );
+        // An extension token's requests name its version (P2-03, C1).
+        request
+            .headers_mut()
+            .insert(VERSION_HEADER, "0.2.0".parse().unwrap());
         request
     };
     assert_eq!(send(&app, request()).await.status(), StatusCode::OK);

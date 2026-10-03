@@ -22,12 +22,15 @@
 //!
 //! Limits (P4-07): `user limits` sets a user's storage quota and daily
 //! captures; there are no admin pages (E4).
+//! Server-wide flags (P2-03): `flags list | get | set | unset` reads and
+//! changes `feature_flags`, such as the browser extension's kill switches.
 //!
 //! This file is the command dispatch: a new command adds its module and one
 //! line here.
 
 pub mod bench;
 pub mod create_user;
+pub mod flags;
 pub mod install;
 pub mod invite;
 pub mod login_link;
@@ -95,6 +98,10 @@ pub enum AdminCommand {
     /// Time the read routes on a user's library against the §6.2 budgets
     /// (aggregates only).
     Bench(bench::BenchArgs),
+    /// Read or change the server-wide flags: the browser extension's kill
+    /// switches, pacing and minimum version. A running server applies a
+    /// change within 30 seconds.
+    Flags(flags::FlagsArgs),
 }
 
 /// Runs an admin command, writing its output to stdout.
@@ -118,6 +125,7 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
         AdminCommand::InstallSnapshots(args) => install::run(&data, &args, &mut out),
         AdminCommand::Synth(args) => synth::run(&data, &args, &mut out),
         AdminCommand::Bench(args) => bench::run(&data, &args, &mut out),
+        AdminCommand::Flags(args) => flags::run(&data, &args, &mut out),
     }?;
     out.flush()?;
     Ok(())

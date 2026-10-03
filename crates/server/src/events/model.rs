@@ -31,15 +31,19 @@ pub enum EventTopic {
     /// A new notification.
     #[serde(rename = "notification")]
     Notification,
+    /// The browser extension connected, disconnected or changed version.
+    #[serde(rename = "extension.status")]
+    ExtensionStatus,
 }
 
 impl EventTopic {
     /// Every topic, in a stable order.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::PostsChanged,
         Self::StatsChanged,
         Self::JobUpdated,
         Self::Notification,
+        Self::ExtensionStatus,
     ];
 
     /// The event name.
@@ -50,6 +54,7 @@ impl EventTopic {
             Self::StatsChanged => "stats.changed",
             Self::JobUpdated => "job.updated",
             Self::Notification => "notification",
+            Self::ExtensionStatus => "extension.status",
         }
     }
 
@@ -65,7 +70,7 @@ pub struct TopicSet(u8);
 impl TopicSet {
     /// Every topic: the stream of a client that names none. Opt-in topics
     /// (`ai.stream`, P3) will stay out of it.
-    pub const ALL: Self = Self(0b1111);
+    pub const ALL: Self = Self(0b1_1111);
 
     /// The topics named in `topics`, or [`TopicSet::ALL`] when it is empty.
     #[must_use]
@@ -255,6 +260,26 @@ impl From<core::Notification> for Notification {
     }
 }
 
+/// `extension.status`: whether the user's browser extension is connected
+/// (plan §2.10, contract C8), sent when `connected` or `version` changes.
+/// `GET /api/v1/extension/status` answers the same object.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionStatusEvent {
+    /// One of the user's extension tokens made a request in the last 10
+    /// minutes.
+    pub connected: bool,
+    /// The extension's version from its `X-Shelfy-Extension` header: the
+    /// highest among the connected browsers, or the last one known once
+    /// disconnected. `null` when none sent a valid version.
+    #[schema(required = true)]
+    pub version: Option<String>,
+    /// The newest request of the user's extension since the server started,
+    /// unix ms; `null` when there was none.
+    #[schema(required = true)]
+    pub last_seen_at: Option<i64>,
+}
+
 /// Every event of `GET /api/v1/events`: `event` is the SSE event name and
 /// `data` the JSON of its `data:` line. A type for clients; no response sends
 /// this object as such.
@@ -279,6 +304,9 @@ pub enum ServerEvent {
     /// A new notification.
     #[serde(rename = "notification")]
     Notification(Notification),
+    /// The browser extension connected, disconnected or changed version.
+    #[serde(rename = "extension.status")]
+    ExtensionStatus(ExtensionStatusEvent),
 }
 
 #[cfg(test)]
@@ -331,5 +359,17 @@ mod tests {
             })
         );
         assert!(JobState::Cancelled.is_final() && !JobState::Running.is_final());
+        let status = ServerEvent::ExtensionStatus(ExtensionStatusEvent {
+            connected: true,
+            version: Some("0.2.0".into()),
+            last_seen_at: None,
+        });
+        assert_eq!(
+            serde_json::to_value(&status).unwrap(),
+            serde_json::json!({
+                "event": "extension.status",
+                "data": { "connected": true, "version": "0.2.0", "lastSeenAt": null }
+            })
+        );
     }
 }

@@ -133,10 +133,16 @@ mod tus {
     }
 }
 
+/// `request` with `Authorization: Bearer token`, and the version header an
+/// extension token's requests carry (P2-03, contract C1).
 fn bearer(mut request: Request<Body>, token: &str) -> Request<Body> {
     request.headers_mut().insert(
         header::AUTHORIZATION,
         format!("Bearer {token}").parse().unwrap(),
+    );
+    request.headers_mut().insert(
+        shelfy_server::extension::VERSION_HEADER,
+        "0.2.0".parse().unwrap(),
     );
     request
 }

@@ -26,6 +26,7 @@ use shelfy_server::auth::rate_limit::RateLimit;
 use shelfy_server::config::Config;
 use shelfy_server::current_user::CurrentUser;
 use shelfy_server::error::ErrorCode;
+use shelfy_server::extension::VERSION_HEADER;
 use shelfy_server::ids::{new_ulid, now_ms};
 use shelfy_server::limits::RouteLimits;
 use shelfy_server::mail::{MailConfig, SmtpConfig, SmtpTls};
@@ -964,11 +965,17 @@ fn app_with_test_routes(t: &TestState) -> Router {
     )
 }
 
+/// `request` with `Authorization: Bearer token`, and the version header an
+/// extension token's requests carry (P2-03, contract C1); the tokens here
+/// are of kind `extension`.
 fn bearer(mut request: Request<Body>, token: &str) -> Request<Body> {
     request.headers_mut().insert(
         header::AUTHORIZATION,
         format!("Bearer {token}").parse().unwrap(),
     );
+    request
+        .headers_mut()
+        .insert(VERSION_HEADER, "0.2.0".parse().unwrap());
     request
 }
 

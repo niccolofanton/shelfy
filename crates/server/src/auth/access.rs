@@ -34,7 +34,11 @@
 //! [`TokenPrincipal`](super::bearer::TokenPrincipal) and [`CurrentUser`]. It
 //! answers 401 (403 for a token without the scope) before the handler runs;
 //! on a route that takes tokens the 401 carries `WWW-Authenticate: Bearer`,
-//! sessions or not.
+//! sessions or not. A token of kind `extension` also passes the extension's
+//! hooks (P2-03, contract C1): once verified, its request marks the
+//! extension present ([`crate::extension::seen`]); once past the scope, an
+//! outdated or unversioned extension gets 426 `extension_outdated`
+//! everywhere but `GET /extension/config` ([`crate::extension::admit`]).
 //! Once it knows the user, it answers 423 `user_locked` while the user's
 //! library is locked for maintenance (`admin user lock`, plan §3.5), so a
 //! restore never races the user's own requests.
@@ -63,8 +67,10 @@ use axum::response::{IntoResponse, Response};
 
 use super::bearer::{self, BearerRejection, ScopeSet};
 use super::session;
+use crate::control::api_tokens::TokenKind;
 use crate::current_user::CurrentUser;
 use crate::error::{ApiError, ErrorCode};
+use crate::extension;
 use crate::ids::now_ms;
 use crate::state::AppState;
 
@@ -256,12 +262,32 @@ async fn admit(state: &AppState, access: Access, request: &mut Request) -> Resul
         Access::Token { scopes, session } => {
             if request.headers().contains_key(header::AUTHORIZATION) {
                 match bearer::verify(state, request.headers()).await {
-                    Ok(Some(token)) if token.has_any(scopes) => {
+                    Ok(Some(token)) => {
+                        let is_extension = token.kind() == TokenKind::Extension;
+                        if is_extension {
+                            extension::seen(
+                                state,
+                                token.user_id(),
+                                token.token_id(),
+                                request.headers(),
+                            );
+                        }
+                        if !token.has_any(scopes) {
+                            return Err(Refused::Token(BearerRejection::missing_scope(scopes)));
+                        }
                         bearer::record_use(state, &token).await;
                         token.attach(request.extensions_mut());
+                        if is_extension {
+                            let path = request
+                                .extensions()
+                                .get::<MatchedPath>()
+                                .map_or("", MatchedPath::as_str);
+                            extension::admit(state, request.method(), path, request.headers())
+                                .await
+                                .map_err(Refused::Problem)?;
+                        }
                         Ok(())
                     }
-                    Ok(Some(_)) => Err(Refused::Token(BearerRejection::missing_scope(scopes))),
                     Ok(None) => Err(Refused::Token(BearerRejection::unauthorized())),
                     Err(err) => Err(Refused::Problem(err)),
                 }

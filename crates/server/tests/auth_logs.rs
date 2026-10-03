@@ -18,6 +18,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde_json::{Value, json};
 use shelfy_server::config::Config;
+use shelfy_server::extension::VERSION_HEADER;
 use shelfy_server::mail::MailConfig;
 use shelfy_server::telemetry::http::REQUEST_ID_HEADER;
 use shelfy_server::telemetry::json_layer;
@@ -305,12 +306,16 @@ fn cli_post(uri: &str, body: &Value) -> Request<Body> {
         .unwrap()
 }
 
-/// `request` with `Authorization: Bearer token`.
+/// `request` with `Authorization: Bearer token`, and the version header an
+/// extension token's requests carry (P2-03, contract C1).
 fn bearer(mut request: Request<Body>, token: &str) -> Request<Body> {
     request.headers_mut().insert(
         header::AUTHORIZATION,
         format!("Bearer {token}").parse().unwrap(),
     );
+    request
+        .headers_mut()
+        .insert(VERSION_HEADER, "0.2.0".parse().unwrap());
     request
 }
 
@@ -452,5 +457,72 @@ async fn the_account_and_the_device_flow_never_log_tokens_or_codes() {
             .any(|line| line["message"] == "device signed in"
                 && line["user_id"] == owner_id.as_str()),
         "the delivery names the account"
+    );
+}
+
+#[tokio::test]
+async fn pairing_never_logs_codes_tokens_or_installation_ids() {
+    let capture = capture();
+    let t = TestState::with_config(|config: &mut Config| {
+        config.auth.ip_limit.max = 1_000;
+    });
+    let app = t.app();
+    let owner_id = owner(&t);
+    let cookie = sign_in(&app, &t).await;
+    let install = "4b1d0c9e-8f7a-4e6d-9c5b-3a2f1e0d9c8b";
+
+    // A code, a refused exchange, the exchange, a replay, then the token in
+    // use and refused as outdated.
+    let request = spa(&t, post("/api/v1/me/tokens/pairing-code"), &cookie);
+    let created = body_json(send(&app, request).await).await;
+    let code = created["code"].as_str().unwrap().to_owned();
+    let pair = |code: &str, version: &str| {
+        cli_post(
+            "/api/v1/extension/pair",
+            &json!({ "code": code, "installId": install, "label": "Chrome", "version": version }),
+        )
+    };
+    assert_eq!(
+        send(&app, pair(&code, "0.1.0")).await.status(),
+        StatusCode::UPGRADE_REQUIRED
+    );
+    let response = send(&app, pair(&code, "0.2.0")).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let token = body_json(response).await["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        send(&app, pair(&code, "0.2.0")).await.status(),
+        StatusCode::BAD_REQUEST,
+        "a replay"
+    );
+    let config = bearer(get("/api/v1/extension/config"), &token);
+    assert_eq!(send(&app, config).await.status(), StatusCode::OK);
+    let lookup = cli_post(
+        "/api/v1/posts/lookup",
+        &json!({ "platform": "instagram", "keys": ["1"] }),
+    );
+    let mut outdated = bearer(lookup, &token);
+    outdated.headers_mut().remove(VERSION_HEADER);
+    assert_eq!(
+        send(&app, outdated).await.status(),
+        StatusCode::UPGRADE_REQUIRED
+    );
+
+    let text = capture.text();
+    for secret in [code.as_str(), token.as_str(), &token[4..], install] {
+        assert!(!text.contains(secret), "{secret} leaked into the logs");
+    }
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["message"] == "extension paired"
+                && line["user_id"] == owner_id.as_str()),
+        "the pairing names the account"
     );
 }

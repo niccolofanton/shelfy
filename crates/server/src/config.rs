@@ -46,6 +46,7 @@ use shelfy_media::video::{DEFAULT_FFMPEG_BIN, DEFAULT_YTDLP_BIN, ToolPaths};
 use url::Url;
 
 use crate::auth::AuthConfig;
+use crate::extension::ExtensionSettings;
 use crate::jobs::JobsConfig;
 use crate::mail::{MailArgs, MailConfig};
 use crate::net::TrustedProxies;
@@ -317,6 +318,9 @@ pub struct Config {
     pub video_tools: ToolPaths,
     /// The global media budget (plan §3.1; P4-07).
     pub quota: QuotaConfig,
+    /// The browser extension's flag refresh, presence timeout and clock
+    /// (P2-03).
+    pub extension: ExtensionSettings,
 }
 
 impl Config {
@@ -383,6 +387,7 @@ impl Config {
             import_max_bytes: DEFAULT_IMPORT_MAX_GB * GIB,
             video_tools: ToolPaths::default(),
             quota: QuotaConfig::default(),
+            extension: ExtensionSettings::default(),
         }
     }
 }

@@ -7,7 +7,8 @@
 //! 2. the security headers ([`security_headers`]): the content security
 //!    policy, HSTS on an https public URL, `nosniff`, on every response;
 //! 3. the sign-in rate limit ([`rate_limit::by_client`]): 10 requests a
-//!    minute per client address over the `/api/v1/auth/*` routes, or 429;
+//!    minute per client address over the `/api/v1/auth/*` routes and the
+//!    extension's pairing, or 429;
 //! 4. compression (gzip, brotli) of responses over 1 KiB, except images,
 //!    audio, video, fonts and event streams;
 //! 5. [`problem_fallback`](crate::error::problem_fallback): error responses

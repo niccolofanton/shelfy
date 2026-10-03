@@ -39,6 +39,7 @@ const EVENT_NAMES = Object.keys({
   'stats.changed': true,
   'job.updated': true,
   notification: true,
+  'extension.status': true,
 } satisfies Record<ServerEventName, true>) as ServerEventName[];
 
 // The part of EventSource the stream uses; tests pass a fake.

@@ -704,6 +704,135 @@
         }
       }
     },
+    "/api/v1/extension/config": {
+      "get": {
+        "tags": ["extension"],
+        "summary": "The extension's configuration: the minimum version, the kill switches of\neach platform's capture modes, pacing and stop thresholds (contract C3).",
+        "description": "Conditional: send the `ETag` back in `If-None-Match` and an unchanged\nconfiguration answers 304. A change made by the operator (`admin flags`)\nshows within 30 seconds. This is the one route an outdated extension\nstill reaches: every other answers it 426 `extension_outdated`.",
+        "operationId": "getExtensionConfig",
+        "parameters": [
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "The `ETag` of an earlier response. When the view has not changed since,\nthe answer is 304 with no body.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Shelfy-Extension",
+            "in": "header",
+            "description": "The extension's manifest version (`0.2.0`). An extension token's\nrequest without it, or below `minVersion`, gets 426\n`extension_outdated`, except `GET /extension/config`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The configuration.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "`private, no-cache`."
+              },
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Weak ETag of this configuration."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtensionConfig"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Unchanged since the ETag in `If-None-Match`; no body.",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "The same ETag."
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [
+          {
+            "bearer": ["ingest"]
+          }
+        ]
+      }
+    },
+    "/api/v1/extension/pair": {
+      "post": {
+        "tags": ["extension"],
+        "summary": "Exchanges a pairing code for the extension's token.",
+        "description": "The extension calls it with the code that the web app got from `POST\n/me/tokens/pairing-code`, within 60 seconds, once. No cookie and no CSRF\nheaders are needed, and none is read. 400 `invalid_pairing_code` for a\ncode that is malformed, unknown, used or expired; 422 for a malformed\n`installId`, `label` or `version`; 426 `extension_outdated` for a version\nbelow `minVersion` (the code stays usable); 409 `conflict` when the\naccount holds 50 working tokens. Limit: the sign-in limit, 10 requests a\nminute per client over this route and the `/auth` routes (429).",
+        "operationId": "pairExtension",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtensionPairRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Paired: the token, shown once.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairedExtension"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "security": [{}]
+      }
+    },
+    "/api/v1/extension/status": {
+      "get": {
+        "tags": ["extension"],
+        "summary": "Whether the account's browser extension is connected: one of its\nextension tokens made a request in the last 10 minutes, with the version\nit sent. The same object as the `extension.status` event, which follows\nevery change. The server keeps it in memory: after a restart it is\ndisconnected until the extension's next request.",
+        "operationId": "getExtensionStatus",
+        "responses": {
+          "200": {
+            "description": "The extension's status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtensionStatusEvent"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/jobs": {
       "get": {
         "tags": ["jobs"],
@@ -1199,6 +1328,29 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CreatedApiToken"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/me/tokens/pairing-code": {
+      "post": {
+        "tags": ["account"],
+        "summary": "Creates a code that pairs the browser extension with this account.",
+        "description": "The web app hands the code to the extension (`chrome.runtime.sendMessage`),\nwhich exchanges it for its token at `POST /extension/pair` within 60\nseconds, once. Needs a sign-in or a re-authentication from the last 5\nminutes (403 `reauth_required` otherwise). 429 `rate_limited` while the\naccount holds 10 unused codes that have not expired.",
+        "operationId": "createPairingCode",
+        "responses": {
+          "201": {
+            "description": "The code and its expiry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingCode"
                 }
               }
             }
@@ -3626,7 +3778,7 @@
           },
           "extension": {
             "type": "boolean",
-            "description": "The browser extension can pair and capture (P2)."
+            "description": "The browser extension can pair (`POST /me/tokens/pairing-code`) and\ntalk to this server (P2)."
           },
           "passkeys": {
             "type": "boolean",
@@ -4069,6 +4221,7 @@
           "challenge_expired",
           "passkey_invalid",
           "invalid_device_code",
+          "invalid_pairing_code",
           "unauthorized",
           "forbidden",
           "csrf_failed",
@@ -4096,7 +4249,199 @@
       "EventTopic": {
         "type": "string",
         "description": "The name of a published event; the `topics` filter selects by it.\n\n`hello` and `resync` are not topics: every stream gets them.",
-        "enum": ["posts.changed", "stats.changed", "job.updated", "notification"]
+        "enum": [
+          "posts.changed",
+          "stats.changed",
+          "job.updated",
+          "notification",
+          "extension.status"
+        ]
+      },
+      "ExtensionConfig": {
+        "type": "object",
+        "description": "What `GET /api/v1/extension/config` answers: the extension's minimum\nversion, kill switches, pacing and stop thresholds (contract C3). Data\nonly; the extension refreshes it, and applies a kill switch within one\nrefresh.",
+        "required": [
+          "minVersion",
+          "platforms",
+          "maxSteps",
+          "maxRunMs",
+          "taskPollMinutes",
+          "refreshPerSession"
+        ],
+        "properties": {
+          "maxRunMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Longest sync run, ms.",
+            "minimum": 0
+          },
+          "maxSteps": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Most steps (scrolls, replay pages) of one sync run.",
+            "minimum": 0
+          },
+          "minVersion": {
+            "type": "string",
+            "description": "The oldest extension version the API serves: below it, every other\nrequest answers 426 `extension_outdated`."
+          },
+          "platforms": {
+            "$ref": "#/components/schemas/ExtensionPlatforms",
+            "description": "Per platform: kill switches, pacing, stop thresholds."
+          },
+          "refreshPerSession": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Most Instagram posts refreshed per IG-tab session.",
+            "minimum": 0
+          },
+          "taskPollMinutes": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Minutes between two polls of `GET /ingest/tasks`.",
+            "minimum": 0
+          }
+        }
+      },
+      "ExtensionInstagram": {
+        "type": "object",
+        "description": "Instagram's switches and pacing: X and Pinterest's, plus the REST\nreplay.",
+        "required": [
+          "passive",
+          "replay",
+          "scroll",
+          "stopAfterKnown",
+          "replayGapMs",
+          "replayMaxPages",
+          "scrollSettleMs"
+        ],
+        "properties": {
+          "passive": {
+            "type": "boolean",
+            "description": "Passive capture is on (kill switch)."
+          },
+          "replay": {
+            "type": "boolean",
+            "description": "The REST replay is on (kill switch)."
+          },
+          "replayGapMs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Pause between two replay pages, ms.",
+            "minimum": 0
+          },
+          "replayMaxPages": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Most replay pages per run.",
+            "minimum": 0
+          },
+          "scroll": {
+            "type": "boolean",
+            "description": "The scroll is on (kill switch)."
+          },
+          "scrollSettleMs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Wait after each scroll step, ms.",
+            "minimum": 0
+          },
+          "stopAfterKnown": {
+            "type": "integer",
+            "format": "int32",
+            "description": "An incremental run stops at the first page boundary where this many\nknown items came in a row.",
+            "minimum": 0
+          }
+        }
+      },
+      "ExtensionPairRequest": {
+        "type": "object",
+        "description": "Body of `POST /api/v1/extension/pair` (contract C2). Fields a later\nextension adds are ignored.",
+        "required": ["code", "installId", "version"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The pairing code the web app handed over (43 characters)."
+          },
+          "installId": {
+            "type": "string",
+            "description": "A random id the extension keeps while it is installed (16 to 128\nletters, digits, `-` or `_`). Pairing the same installation again\nrevokes the token it held."
+          },
+          "label": {
+            "type": "string",
+            "description": "A name for the account's token list, such as \"Chrome on macOS\"; up\nto 64 characters, blank is none."
+          },
+          "version": {
+            "type": "string",
+            "description": "The extension's manifest version (`0.2.0`); below `minVersion`, 426."
+          }
+        }
+      },
+      "ExtensionPlatform": {
+        "type": "object",
+        "description": "A platform's switches and pacing (X, Pinterest).",
+        "required": ["passive", "scroll", "stopAfterKnown", "scrollSettleMs"],
+        "properties": {
+          "passive": {
+            "type": "boolean",
+            "description": "Passive capture is on (kill switch)."
+          },
+          "scroll": {
+            "type": "boolean",
+            "description": "The scroll is on (kill switch)."
+          },
+          "scrollSettleMs": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Wait after each scroll step, ms.",
+            "minimum": 0
+          },
+          "stopAfterKnown": {
+            "type": "integer",
+            "format": "int32",
+            "description": "An incremental run stops at the first page boundary where this many\nknown items came in a row.",
+            "minimum": 0
+          }
+        }
+      },
+      "ExtensionPlatforms": {
+        "type": "object",
+        "description": "The per-platform part of [`ExtensionConfig`].",
+        "required": ["instagram", "twitter", "pinterest"],
+        "properties": {
+          "instagram": {
+            "$ref": "#/components/schemas/ExtensionInstagram",
+            "description": "Instagram."
+          },
+          "pinterest": {
+            "$ref": "#/components/schemas/ExtensionPlatform",
+            "description": "Pinterest."
+          },
+          "twitter": {
+            "$ref": "#/components/schemas/ExtensionPlatform",
+            "description": "X."
+          }
+        }
+      },
+      "ExtensionStatusEvent": {
+        "type": "object",
+        "description": "`extension.status`: whether the user's browser extension is connected\n(plan §2.10, contract C8), sent when `connected` or `version` changes.\n`GET /api/v1/extension/status` answers the same object.",
+        "required": ["connected", "version", "lastSeenAt"],
+        "properties": {
+          "connected": {
+            "type": "boolean",
+            "description": "One of the user's extension tokens made a request in the last 10\nminutes."
+          },
+          "lastSeenAt": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "description": "The newest request of the user's extension since the server started,\nunix ms; `null` when there was none."
+          },
+          "version": {
+            "type": ["string", "null"],
+            "description": "The extension's version from its `X-Shelfy-Extension` header: the\nhighest among the connected browsers, or the last one known once\ndisconnected. `null` when none sent a valid version."
+          }
+        }
       },
       "FieldError": {
         "type": "object",
@@ -5302,6 +5647,44 @@
           "sha256": {
             "type": "string",
             "description": "SHA-256 of the content, lowercase hex."
+          }
+        }
+      },
+      "PairedExtension": {
+        "type": "object",
+        "description": "A paired extension's token.",
+        "required": ["token", "tokenId", "scopes"],
+        "properties": {
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TokenScope"
+            },
+            "description": "What it may do: `ingest`, `tasks`, `uploads`, `lookup`."
+          },
+          "token": {
+            "type": "string",
+            "description": "The `extension` token (`shx_…`) for `Authorization: Bearer`. Shown\nonly now; keep it where page scripts cannot read it."
+          },
+          "tokenId": {
+            "type": "string",
+            "description": "Its id, as the account's token list names it."
+          }
+        }
+      },
+      "PairingCode": {
+        "type": "object",
+        "description": "A code that pairs the browser extension (contract C2).",
+        "required": ["code", "expiresAt"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The code (43 characters), for the extension's `POST /extension/pair`.\nHand it to the extension only; it works once."
+          },
+          "expiresAt": {
+            "type": "integer",
+            "format": "int64",
+            "description": "When it stops working, unix ms: 60 seconds from now."
           }
         }
       },
@@ -6596,6 +6979,21 @@
                 "enum": ["notification"]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "The browser extension connected, disconnected or changed version.",
+            "required": ["data", "event"],
+            "properties": {
+              "data": {
+                "$ref": "#/components/schemas/ExtensionStatusEvent",
+                "description": "The browser extension connected, disconnected or changed version."
+              },
+              "event": {
+                "type": "string",
+                "enum": ["extension.status"]
+              }
+            }
           }
         ],
         "description": "Every event of `GET /api/v1/events`: `event` is the SSE event name and\n`data` the JSON of its `data:` line. A type for clients; no response sends\nthis object as such."
@@ -7105,6 +7503,10 @@
     {
       "name": "jobs",
       "description": "The signed-in user's background jobs and their queues: progress, cancel, retry, pause and resume."
+    },
+    {
+      "name": "extension",
+      "description": "The browser extension: pairing, its configuration and kill switches, and whether it is connected."
     }
   ]
 }

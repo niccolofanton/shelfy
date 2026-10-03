@@ -8,7 +8,7 @@
 //! - **Jobs:** the scheduler ([`crate::jobs`]) runs beside the listeners on
 //!   a child of the shutdown token.
 //! - **Background tasks:** the maintenance timer (idle databases, locked
-//!   libraries, event buses, metrics: gauges every 5 s, the data directory's
+//!   libraries, silent browser extensions, event buses, metrics: gauges every 5 s, the data directory's
 //!   size every 5 minutes; what migration installs left behind, every hour,
 //!   [`crate::migrations::housekeeping`]) and, once per boot, the library
 //!   upgrade sweep ([`upgrade_libraries`], plan §3.8). The control database
@@ -293,8 +293,9 @@ impl Server {
 }
 
 /// Periodic upkeep until shutdown: evicts idle user databases and closes idle
-/// readers, drops expired realtime events and idle event buses, drains the
-/// metrics recorder and samples the gauges, and measures the data directory.
+/// readers, disconnects silent browser extensions, drops expired realtime
+/// events and idle event buses, drains the metrics recorder and samples the
+/// gauges, and measures the data directory.
 async fn maintenance(state: AppState, metrics: PrometheusHandle, token: CancellationToken) {
     let mut databases = tokio::time::interval(MAINTENANCE_INTERVAL);
     let mut upkeep = tokio::time::interval(UPKEEP_INTERVAL);
@@ -308,6 +309,7 @@ async fn maintenance(state: AppState, metrics: PrometheusHandle, token: Cancella
         tokio::select! {
             () = token.cancelled() => break,
             _ = databases.tick() => {
+                crate::extension::sweep(&state);
                 state.events().sweep();
                 let user_dbs = Arc::clone(state.user_dbs());
                 if let Err(err) = tokio::task::spawn_blocking(move || user_dbs.run_maintenance()).await {

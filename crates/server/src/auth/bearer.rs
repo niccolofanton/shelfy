@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::millis;
-use crate::control::api_tokens;
+use crate::control::api_tokens::{self, TokenKind};
 use crate::current_user::CurrentUser;
 use crate::error::{ApiError, ErrorCode};
 use crate::ids::now_ms;
@@ -246,6 +246,7 @@ pub mod scopes {
 pub struct TokenPrincipal {
     user_id: Arc<str>,
     token_id: String,
+    kind: TokenKind,
     scopes: Vec<Scope>,
     last_used_at: Option<i64>,
 }
@@ -263,6 +264,14 @@ impl TokenPrincipal {
         &self.token_id
     }
 
+    /// Who holds the token. An `extension` token's requests also mark the
+    /// extension's presence and pass its version gate
+    /// ([`crate::extension::seen`], [`crate::extension::admit`]).
+    #[must_use]
+    pub fn kind(&self) -> TokenKind {
+        self.kind
+    }
+
     /// Whether the token has `scope`.
     #[must_use]
     pub fn has(&self, scope: Scope) -> bool {
@@ -275,12 +284,19 @@ impl TokenPrincipal {
         self.scopes.iter().any(|scope| scopes.contains(*scope))
     }
 
-    /// A verified token of `user_id` with `scopes`, for unit tests.
+    /// A verified token of `user_id` with `scopes`, for unit tests: of kind
+    /// `migrate` when it has that scope, `extension` otherwise.
     #[cfg(test)]
     pub(crate) fn for_tests(user_id: &str, scopes: &[Scope]) -> Self {
+        let kind = if scopes.contains(&Scope::Migrate) {
+            TokenKind::Migrate
+        } else {
+            TokenKind::Extension
+        };
         Self {
             user_id: user_id.into(),
             token_id: "T".to_owned(),
+            kind,
             scopes: scopes.to_vec(),
             last_used_at: None,
         }
@@ -326,6 +342,9 @@ pub async fn verify(
     Ok(found.map(|token| TokenPrincipal {
         user_id: token.user_id.into(),
         scopes: Scope::parse_list(&token.scopes),
+        // The schema's CHECK constraint admits only known kinds; an unknown
+        // one would get the strictest treatment, the extension's.
+        kind: TokenKind::parse(&token.kind).unwrap_or(TokenKind::Extension),
         token_id: token.id,
         last_used_at: token.last_used_at,
     }))

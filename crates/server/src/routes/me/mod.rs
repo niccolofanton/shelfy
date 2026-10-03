@@ -15,6 +15,7 @@
 //! | `GET /me/tokens` | session | the working API tokens ([`tokens`]) |
 //! | `POST /me/tokens` | session, signed in or re-authenticated in the last 5 minutes | 201 with the token, shown once |
 //! | `DELETE /me/tokens/{id}` | session | 204: the token is revoked |
+//! | `POST /me/tokens/pairing-code` | session, signed in or re-authenticated in the last 5 minutes | 201 with a 60-second code that pairs the browser extension (P2-03) |
 //!
 //! Every route takes the session cookie only: an API token is refused with
 //! 401, even next to a valid cookie. Another user's session or token is a
@@ -107,7 +108,8 @@ pub struct Capabilities {
     /// re-authentication links come from the operator (`admin login-link`).
     #[serde(rename = "emailLink")]
     pub email_link: bool,
-    /// The browser extension can pair and capture (P2).
+    /// The browser extension can pair (`POST /me/tokens/pairing-code`) and
+    /// talk to this server (P2).
     pub extension: bool,
     /// AI analysis and its tasks (P3).
     #[serde(rename = "ai.tasks")]
@@ -120,14 +122,14 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// The capabilities of an account with `role` on this server (P1).
+    /// The capabilities of an account with `role` on this server.
     #[must_use]
     pub fn of(state: &AppState, role: Role) -> Self {
         Self {
             admin: role == Role::Owner,
             passkeys: state.auth().passkeys().is_enabled(),
             email_link: state.mailer().is_enabled(),
-            extension: false,
+            extension: true,
             ai_tasks: false,
             capture: false,
             video_on_demand: false,

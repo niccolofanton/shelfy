@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use shelfy_server::config::Config;
 use shelfy_server::error::ErrorCode;
 use shelfy_server::events::model::JobState;
+use shelfy_server::extension::VERSION_HEADER;
 use shelfy_server::ids::now_ms;
 use shelfy_server::jobs::{NewJob, kinds, usage};
 use shelfy_server::mail::MailConfig;
@@ -61,11 +62,16 @@ fn spa_empty(t: &TestState, method: Method, uri: &str, cookie: &str) -> Request<
     spa(t, request, cookie)
 }
 
+/// `request` with `Authorization: Bearer token`, and the version header an
+/// extension token's requests carry (P2-03, contract C1).
 fn bearer(mut request: Request<Body>, token: &str) -> Request<Body> {
     request.headers_mut().insert(
         header::AUTHORIZATION,
         format!("Bearer {token}").parse().unwrap(),
     );
+    request
+        .headers_mut()
+        .insert(VERSION_HEADER, "0.2.0".parse().unwrap());
     request
 }
 
@@ -90,7 +96,7 @@ async fn sign_in_with_agent(app: &Router, t: &TestState, agent: &str) -> String 
 }
 
 #[tokio::test]
-async fn me_reports_the_p1_capabilities_and_consent() {
+async fn me_reports_the_capabilities_and_consent() {
     let t = roomy(|_| {});
     let app = t.app();
     let cookie = sign_in(&app, &t).await;
@@ -103,7 +109,7 @@ async fn me_reports_the_p1_capabilities_and_consent() {
             "admin": true,
             "passkeys": true,
             "emailLink": false,
-            "extension": false,
+            "extension": true,
             "ai.tasks": false,
             "capture": false,
             "video.onDemand": false,
@@ -786,7 +792,7 @@ async fn every_account_route_has_its_access() {
             params![owner_id, hash_token(&every).as_slice(), now_ms()],
         )
         .unwrap();
-    let routes: [(Method, &str, Value); 11] = [
+    let routes: [(Method, &str, Value); 12] = [
         (Method::GET, "/api/v1/me", Value::Null),
         (Method::GET, "/api/v1/me/settings", Value::Null),
         (
@@ -818,6 +824,7 @@ async fn every_account_route_has_its_access() {
             "/api/v1/me/tokens/01NOTATOKEN000000000000000",
             Value::Null,
         ),
+        (Method::POST, "/api/v1/me/tokens/pairing-code", Value::Null),
     ];
     for (method, uri, body) in &routes {
         let request = || {

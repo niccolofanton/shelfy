@@ -30,8 +30,11 @@
 //! flow's `start` and `poll`, which the migration CLI calls before it has a
 //! token. They read no cookie and act for nobody until a signed-in user
 //! approves the code on `POST /auth/device/approve`, which is checked like
-//! any other request. The route is the matched template, so no other path
-//! can borrow the exemption.
+//! any other request. Likewise `POST /extension/pair`, where the browser
+//! extension's service worker exchanges a pairing code for its token: it
+//! reads no cookie, and the code, which a signed-in user asked for on the
+//! checked `POST /me/tokens/pairing-code`, is its only credential. The route
+//! is the matched template, so no other path can borrow the exemption.
 //!
 //! The SPA therefore sends `X-Shelfy-Client: web` on every unsafe request
 //! (`fetch`, including `keepalive`; `navigator.sendBeacon` cannot set it).
@@ -275,11 +278,15 @@ mod tests {
     }
 
     #[test]
-    fn only_the_device_flow_of_the_cli_is_exempt() {
+    fn only_the_device_flow_of_the_cli_and_the_extension_pairing_are_exempt() {
         assert!(is_exempt(&Method::POST, "/api/v1/auth/device/start"));
         assert!(is_exempt(&Method::POST, "/api/v1/auth/device/poll"));
+        assert!(is_exempt(&Method::POST, "/api/v1/extension/pair"));
         assert!(!is_exempt(&Method::POST, "/api/v1/auth/device/approve"));
         assert!(!is_exempt(&Method::GET, "/api/v1/auth/device/poll"));
         assert!(!is_exempt(&Method::POST, "/api/v1/auth/logout"));
+        assert!(!is_exempt(&Method::POST, "/api/v1/me/tokens/pairing-code"));
+        assert!(!is_exempt(&Method::POST, "/api/v1/me/tokens"));
+        assert_eq!(crate::routes::CSRF_EXEMPT_ROUTES.len(), 3);
     }
 }

@@ -1,7 +1,7 @@
 //! The state shared by every request: the databases, the configuration,
 //! authentication, the mailer, the realtime event bus, the job system, the
-//! library caches, the rate limiters, outbound HTTP, the quota ledger and
-//! the shutdown token.
+//! library caches, the rate limiters, outbound HTTP, the quota ledger, the
+//! browser extension's flags and presence, and the shutdown token.
 
 use std::sync::Arc;
 
@@ -14,6 +14,7 @@ use crate::auth::{self, AuthState};
 use crate::config::Config;
 use crate::error::ApiError;
 use crate::events::EventBus;
+use crate::extension::ExtensionState;
 use crate::jobs::Jobs;
 use crate::library::LibraryCaches;
 use crate::mail::Mailer;
@@ -39,6 +40,7 @@ struct Inner {
     rate_limits: RateLimits,
     outbound: Outbound,
     quota: Quotas,
+    extension: ExtensionState,
     shutdown: CancellationToken,
 }
 
@@ -104,6 +106,7 @@ impl AppState {
             config.jobs.clock,
             data.root().to_path_buf(),
         );
+        let extension = ExtensionState::new(&config.extension);
         Ok(Self {
             inner: Arc::new(Inner {
                 config,
@@ -117,6 +120,7 @@ impl AppState {
                 rate_limits,
                 outbound,
                 quota,
+                extension,
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -188,6 +192,12 @@ impl AppState {
     #[must_use]
     pub fn quota(&self) -> &Quotas {
         &self.inner.quota
+    }
+
+    /// The browser extension's flags and presence ([`crate::extension`]).
+    #[must_use]
+    pub fn extension(&self) -> &ExtensionState {
+        &self.inner.extension
     }
 
     /// Cancelled when the server starts shutting down. Long-running work (job

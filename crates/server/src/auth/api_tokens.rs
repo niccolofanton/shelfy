@@ -7,6 +7,7 @@
 //! | `account` (`POST /me/tokens`, re-authentication within 5 minutes) | `extension` or `shortcut` | a non-empty subset of the kind's scopes, all by default | until revoked | the signed-in user |
 //! | `device` (the device flow, [`super::device`]) | `migrate` | `migrate` | 7 days | the migration CLI, approved by a signed-in user |
 //! | `cli` (`admin migrate-token`) | `migrate` | `migrate` | 7 days | the operator |
+//! | `pairing` (`POST /extension/pair`, [`crate::extension::pairing`]) | `extension` | all four | until revoked | the browser extension, with a pairing code a signed-in user asked for |
 //!
 //! A token's value is `shx_` and 43 base64url characters (256 random bits),
 //! returned once; the database keeps its SHA-256 ([`crate::tokens`]). Each
@@ -14,8 +15,9 @@
 //! the transaction that stores the token. A kind holds only its own scopes
 //! ([`allowed_scopes`], §7.1 "narrow scopes"): an extension token never
 //! migrates, a Shortcut token only creates links. Extension tokens come from
-//! the pairing flow in P2 (`POST /me/tokens/pairing-code`); minting one from
-//! the account is the way to try the unpacked extension before then (E3).
+//! pairing (P2-03: `POST /me/tokens/pairing-code` in the web app, then
+//! `POST /extension/pair` from the extension); minting one from the account
+//! stays possible, for trying an unpacked build by hand (E3).
 
 use std::time::Duration;
 
@@ -60,6 +62,8 @@ pub enum Via {
     Account,
     /// The device flow.
     Device,
+    /// `POST /extension/pair`: the browser extension spent a pairing code.
+    Pairing,
 }
 
 impl Via {
@@ -70,6 +74,7 @@ impl Via {
             Self::Cli => "cli",
             Self::Account => "account",
             Self::Device => "device",
+            Self::Pairing => "pairing",
         }
     }
 }
