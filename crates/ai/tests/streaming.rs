@@ -121,3 +121,81 @@ async fn a_text_stream_reports_reasoning_free_text() {
     assert_eq!(answer.json, None);
     assert_eq!(answer.requests, 1);
 }
+
+#[tokio::test]
+async fn a_head_that_comes_at_once_with_late_tokens_also_ends_the_call() {
+    let stub = stub().await;
+    let provider = operator(&stub, ProviderKind::Anthropic);
+    // Headers and the first events at once; the first token after 1.5 s.
+    stub.set_chunk_delay(Duration::from_millis(1500));
+    let options = CallOptions::new(
+        Timeouts::new(Duration::from_secs(2), Duration::from_secs(10))
+            .with_first_token(Duration::from_millis(200)),
+    )
+    .with_retry(fast_retry());
+    let started = std::time::Instant::now();
+    let error = provider
+        .chat(&streamed(ProviderKind::Anthropic), &options)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Transient);
+    assert!(error.message().contains("no token"), "{error}");
+    assert!(started.elapsed() < Duration::from_millis(1200));
+    assert_eq!(stub.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn the_call_has_its_own_deadline_across_retries() {
+    let stub = stub().await;
+    let provider = operator(&stub, ProviderKind::OpenAiCompatible);
+    stub.set_latency(Duration::from_millis(100));
+    stub.inject(FaultRule::new(Fault::ServerError).always());
+    let options = CallOptions::new(
+        Timeouts::new(Duration::from_secs(2), Duration::from_secs(10))
+            .with_overall(Duration::from_millis(250)),
+    )
+    .with_retry(fast_retry());
+    let started = std::time::Instant::now();
+    let error = provider
+        .chat(
+            &ChatRequest::new("m", vec![Message::user_text("x")]),
+            &options,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Transient);
+    assert!(
+        error.message().contains("the call took longer than 250 ms"),
+        "{error}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(600),
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(stub.requests().len() <= 3);
+
+    // A wait that would end after the deadline is not started.
+    stub.clear_faults();
+    stub.set_latency(Duration::ZERO);
+    stub.inject(FaultRule::new(Fault::RateLimited {
+        retry_after_ms: 1000,
+    }));
+    let started = std::time::Instant::now();
+    let error = provider
+        .chat(
+            &ChatRequest::new("m", vec![Message::user_text("x")]),
+            &options,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::RateLimited);
+    assert!(started.elapsed() < Duration::from_millis(250));
+}
+
+#[test]
+fn chat_timeouts_cap_the_whole_call() {
+    assert_eq!(Timeouts::CHAT.overall, Some(Duration::from_secs(60)));
+    assert_eq!(Timeouts::CHAT.first_token, Some(Duration::from_secs(20)));
+    assert_eq!(Timeouts::CATALOG.overall, None);
+}

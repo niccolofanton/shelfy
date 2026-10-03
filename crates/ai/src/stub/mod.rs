@@ -136,7 +136,7 @@ enum Protocol {
 }
 
 enum Command {
-    Offline(bool, Option<oneshot::Sender<()>>),
+    Offline(bool, Option<oneshot::Sender<io::Result<()>>>),
 }
 
 struct Shared {
@@ -292,16 +292,19 @@ impl Stub {
     /// Goes offline (the listener closes and open connections drop: clients
     /// get "connection refused") or back online on the same port. Returns
     /// once done.
-    pub async fn set_offline(&self, offline: bool) {
+    ///
+    /// # Errors
+    ///
+    /// The port could not be bound again (another process took it while the
+    /// stub was offline), or the stub has stopped.
+    pub async fn set_offline(&self, offline: bool) -> io::Result<()> {
         let (ack, done) = oneshot::channel();
-        if self
-            .shared
+        let stopped = || io::Error::new(io::ErrorKind::NotConnected, "the stub has stopped");
+        self.shared
             .commands
             .send(Command::Offline(offline, Some(ack)))
-            .is_ok()
-        {
-            let _ = done.await;
-        }
+            .map_err(|_| stopped())?;
+        done.await.map_err(|_| stopped())?
     }
 
     /// Stops the server.
@@ -323,6 +326,7 @@ enum Event {
     Stop,
     Command(Command),
     Accepted(TcpStream),
+    AcceptFailed,
     Nothing,
 }
 
@@ -342,7 +346,7 @@ async fn serve(
             Some(open) => tokio::select! {
                 () = shutdown.cancelled() => Event::Stop,
                 command = commands.recv() => command.map_or(Event::Stop, Event::Command),
-                accepted = open.accept() => accepted.map_or(Event::Nothing, |(stream, _)| Event::Accepted(stream)),
+                accepted = open.accept() => accepted.map_or(Event::AcceptFailed, |(stream, _)| Event::Accepted(stream)),
                 Some(_) = connections.join_next(), if !connections.is_empty() => Event::Nothing,
             },
             None => tokio::select! {
@@ -353,19 +357,25 @@ async fn serve(
         match event {
             Event::Stop => break,
             Event::Nothing => {}
+            // Out of file descriptors and the like: do not spin.
+            Event::AcceptFailed => tokio::time::sleep(Duration::from_millis(10)).await,
             Event::Accepted(stream) => {
                 connections.spawn(connection(stream, router.clone()));
             }
             Event::Command(Command::Offline(offline, ack)) => {
+                let mut result = Ok(());
                 if offline {
                     listener = None;
                     connections.abort_all();
                     while connections.join_next().await.is_some() {}
                 } else if listener.is_none() {
-                    listener = rebind(addr).await;
+                    match rebind(addr).await {
+                        Ok(bound) => listener = Some(bound),
+                        Err(error) => result = Err(error),
+                    }
                 }
                 if let Some(ack) = ack {
-                    let _ = ack.send(());
+                    let _ = ack.send(result);
                 }
             }
         }
@@ -374,15 +384,17 @@ async fn serve(
 }
 
 /// Binds `addr` again, retrying for a moment.
-async fn rebind(addr: SocketAddr) -> Option<TcpListener> {
+async fn rebind(addr: SocketAddr) -> io::Result<TcpListener> {
+    let mut last = None;
     for _ in 0..40 {
-        if let Ok(listener) = TcpListener::bind(addr).await {
-            return Some(listener);
+        match TcpListener::bind(addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(error) => last = Some(error),
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     tracing::warn!(%addr, "the stub could not listen again");
-    None
+    Err(last.unwrap_or_else(|| io::Error::other("the stub could not listen again")))
 }
 
 async fn connection(stream: TcpStream, router: Router) {
@@ -831,19 +843,21 @@ async fn chat(
         _ => Duration::ZERO,
     };
     let reset = matches!(fault, Some(Fault::Reset));
+    // The first token arrives late; like llama.cpp, a stream's head waits
+    // for it too.
+    if !slow.is_zero() {
+        tokio::time::sleep(slow).await;
+    }
     if ask.stream {
         let mut frames = match protocol {
             Protocol::Anthropic => anthropic::message_stream(ask, &reply, malformed),
             _ => openai::completion_stream(ask, &reply, malformed),
         };
-        for (index, frame) in frames.iter_mut().enumerate().skip(1) {
-            frame.delay = chunk_delay + if index == 1 { slow } else { Duration::ZERO };
+        for frame in frames.iter_mut().skip(1) {
+            frame.delay = chunk_delay;
         }
         let reset_at = reset.then_some(frames.len() / 2);
         return frames_response(frames, reset_at, "text/event-stream");
-    }
-    if !slow.is_zero() {
-        tokio::time::sleep(slow).await;
     }
     if malformed {
         return raw_json("{\"choices\": [");

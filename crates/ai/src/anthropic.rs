@@ -17,6 +17,7 @@ use secrecy::SecretString;
 use serde_json::{Map, Value, json};
 
 use crate::error::{AiError, RetryHint};
+use crate::provider::ProviderConfig;
 use crate::request::{ChatRequest, Message, Output, Part, Role};
 use crate::response::{FinishReason, ModelInfo, Usage};
 use crate::sse::SseEvent;
@@ -46,6 +47,7 @@ pub(crate) fn headers(key: Option<&SecretString>, stream: bool) -> Result<Header
 /// The body of a Messages call: `request`, then `extra` messages (the repair
 /// turn), with `mode` for JSON answers.
 pub(crate) fn chat_body(
+    config: &ProviderConfig,
     request: &ChatRequest,
     extra: &[Message],
     mode: Option<StructuredMode>,
@@ -73,7 +75,7 @@ pub(crate) fn chat_body(
     }
     let messages: Vec<Value> = request.messages.iter().chain(extra).map(message).collect();
     body.insert("messages".into(), messages.into());
-    if let Some(temperature) = request.temperature {
+    if let Some(temperature) = request.temperature.filter(|_| config.send_temperature) {
         body.insert("temperature".into(), temperature.into());
     }
     let mut output_config = Map::new();
@@ -169,7 +171,10 @@ fn usage(usage: &Value) -> Option<Usage> {
     let read = count(usage, "cache_read_input_tokens").unwrap_or(0);
     let written = count(usage, "cache_creation_input_tokens").unwrap_or(0);
     Some(Usage {
-        input_tokens: count(usage, "input_tokens").unwrap_or(0) + read + written,
+        input_tokens: count(usage, "input_tokens")
+            .unwrap_or(0)
+            .saturating_add(read)
+            .saturating_add(written),
         output_tokens: count(usage, "output_tokens").unwrap_or(0),
         cached_input_tokens: read,
     })
@@ -255,7 +260,7 @@ impl ChatStream {
         if let Some(input) = count(value, "input_tokens") {
             let read = count(value, "cache_read_input_tokens").unwrap_or(0);
             let written = count(value, "cache_creation_input_tokens").unwrap_or(0);
-            self.usage.input_tokens = input + read + written;
+            self.usage.input_tokens = input.saturating_add(read).saturating_add(written);
             self.usage.cached_input_tokens = read;
         }
         if let Some(output) = count(value, "output_tokens") {

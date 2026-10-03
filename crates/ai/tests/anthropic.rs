@@ -65,6 +65,27 @@ async fn a_text_call_uses_the_messages_shape() {
 }
 
 #[tokio::test]
+async fn temperature_is_left_out_when_the_provider_refuses_it() {
+    let stub = keyed_stub().await;
+    let mut config = ProviderConfig::new(ProviderKind::Anthropic, Source::Operator, stub.url())
+        .with_key(SecretString::from(KEY));
+    config.send_temperature = false;
+    let provider = provider(&stub, config);
+    let request = ChatRequest::new("claude-x", vec![Message::user_text("x")]).with_temperature(0.2);
+    provider.chat(&request, &options()).await.unwrap();
+    assert!(
+        only_request(&stub)
+            .body
+            .unwrap()
+            .get("temperature")
+            .is_none()
+    );
+    let preset = shelfy_ai::presets::preset("anthropic").unwrap();
+    assert!(!preset.send_temperature);
+    assert!(!preset.config(None, None).unwrap().send_temperature);
+}
+
+#[tokio::test]
 async fn images_are_base64_blocks() {
     let stub = keyed_stub().await;
     let provider = anthropic(&stub, StructuredMode::JsonSchema);

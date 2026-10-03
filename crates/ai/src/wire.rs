@@ -99,12 +99,63 @@ pub(crate) fn from_transport(error: TransportError) -> AiError {
     }
 }
 
-/// The error of a whole exchange that took longer than `total`.
-pub(crate) fn total_timeout(total: Duration) -> AiError {
-    AiError::transient(format!(
-        "the answer took longer than {} ms",
-        total.as_millis()
-    ))
+/// A moment an exchange must not pass, and the error it ends with if it does.
+#[derive(Clone, Debug)]
+pub(crate) struct Deadline {
+    pub(crate) at: Instant,
+    pub(crate) error: AiError,
+}
+
+impl Deadline {
+    /// One exchange's own deadline: `total` after `sent_at`.
+    pub(crate) fn total(sent_at: Instant, total: Duration) -> Self {
+        Self {
+            at: sent_at + total,
+            error: AiError::transient(format!(
+                "the answer took longer than {} ms",
+                total.as_millis()
+            )),
+        }
+    }
+
+    /// The first token's deadline: `wait` after `sent_at`. Never retried.
+    pub(crate) fn first_token(sent_at: Instant, wait: Duration) -> Self {
+        Self {
+            at: sent_at + wait,
+            error: AiError::transient(format!("no token arrived within {} ms", wait.as_millis()))
+                .with_hint(RetryHint::Never),
+        }
+    }
+
+    /// The whole call's deadline: `overall` after `started`. Never retried.
+    pub(crate) fn overall(started: Instant, overall: Duration) -> Self {
+        Self {
+            at: started + overall,
+            error: AiError::transient(format!(
+                "the call took longer than {} ms",
+                overall.as_millis()
+            ))
+            .with_hint(RetryHint::Never),
+        }
+    }
+
+    /// The earlier of `self` and `other`.
+    #[must_use]
+    pub(crate) fn min(self, other: Option<Self>) -> Self {
+        match other {
+            Some(other) if other.at < self.at => other,
+            _ => self,
+        }
+    }
+
+    /// Runs `future` until this deadline, unless `cancel` fires first.
+    pub(crate) async fn run<T>(
+        &self,
+        future: impl Future<Output = T>,
+        cancel: Option<&CancellationToken>,
+    ) -> Result<T, AiError> {
+        bounded(future, self.at, cancel, || self.error.clone()).await
+    }
 }
 
 /// An answer whose status and headers arrived.
@@ -112,50 +163,36 @@ pub(crate) struct Opened {
     pub(crate) headers: HeaderMap,
     body: BodyStream,
     pub(crate) sent_at: Instant,
-    pub(crate) deadline: Instant,
-    total: Duration,
+    deadline: Deadline,
 }
 
 impl Opened {
+    /// The answer of an exchange sent at `sent_at`, whose body must end by
+    /// `deadline`.
     pub(crate) fn new(
         headers: HeaderMap,
         body: BodyStream,
         sent_at: Instant,
-        total: Duration,
+        deadline: Deadline,
     ) -> Self {
         Self {
             headers,
             body,
             sent_at,
-            deadline: sent_at + total,
-            total,
+            deadline,
         }
     }
 
     /// The next chunk, or `None` at the end. It must arrive before the
     /// exchange's deadline, and before `early` when given (the first-token
-    /// deadline), whose passing is `on_early`. A failure here broke an answer
-    /// that had started.
+    /// deadline). A failure here broke an answer that had started.
     pub(crate) async fn next_chunk(
         &mut self,
-        early: Option<Instant>,
+        early: Option<Deadline>,
         cancel: Option<&CancellationToken>,
-        on_early: impl FnOnce() -> AiError,
     ) -> Result<Option<Bytes>, AiError> {
-        let total = self.total;
-        let (deadline, is_early) = match early {
-            Some(early) if early < self.deadline => (early, true),
-            _ => (self.deadline, false),
-        };
-        let next = bounded(self.body.next(), deadline, cancel, || {
-            if is_early {
-                on_early()
-            } else {
-                total_timeout(total)
-            }
-        })
-        .await?;
-        match next {
+        let deadline = self.deadline.clone().min(early);
+        match deadline.run(self.body.next(), cancel).await? {
             None => Ok(None),
             Some(Ok(chunk)) => Ok(Some(chunk)),
             Some(Err(error)) => Err(from_transport(error).with_hint(RetryHint::StreamBroken)),
@@ -175,15 +212,13 @@ impl Opened {
             RetryHint::StreamBroken => error.with_hint(RetryHint::Normal),
             _ => error,
         };
-        while let Some(chunk) = self
-            .next_chunk(None, cancel, total_timeout_unused)
-            .await
-            .map_err(unbroken)?
-        {
+        while let Some(chunk) = self.next_chunk(None, cancel).await.map_err(unbroken)? {
             if body.len() + chunk.len() > cap {
-                return Err(AiError::transient(format!(
-                    "the answer is larger than {cap} bytes"
-                )));
+                // The same answer would come back: no retry.
+                return Err(
+                    AiError::transient(format!("the answer is larger than {cap} bytes"))
+                        .with_hint(RetryHint::Never),
+                );
             }
             body.extend_from_slice(&chunk);
         }
@@ -199,12 +234,12 @@ impl Opened {
         key: Option<&SecretString>,
     ) -> AiError {
         let mut body = BytesMut::new();
-        let early = Instant::now() + Duration::from_secs(5);
+        let early = Deadline {
+            at: Instant::now() + Duration::from_secs(5),
+            error: AiError::transient("the error answer was slow"),
+        };
         while body.len() < MAX_ERROR_BYTES {
-            match self
-                .next_chunk(Some(early), cancel, || AiError::transient(""))
-                .await
-            {
+            match self.next_chunk(Some(early.clone()), cancel).await {
                 Ok(Some(chunk)) => body.extend_from_slice(&chunk),
                 Err(error) if error.kind() == ErrorKind::Cancelled => return error,
                 Ok(None) | Err(_) => break,
@@ -213,11 +248,6 @@ impl Opened {
         body.truncate(MAX_ERROR_BYTES);
         from_status(status, &self.headers, &body, key)
     }
-}
-
-/// `on_early` of a read without an early deadline: never called.
-fn total_timeout_unused() -> AiError {
-    AiError::transient("the answer timed out")
 }
 
 /// The error of a non-2xx answer.
@@ -229,7 +259,7 @@ pub(crate) fn from_status(
 ) -> AiError {
     let detail = ProviderError::parse(body);
     let code = status.as_u16();
-    let quota = detail.is_quota();
+    let quota = detail.is_quota(Some(code));
     let kind = match code {
         300..=399 => ErrorKind::BadRequest,
         401 | 403 => ErrorKind::InvalidKey,
@@ -251,7 +281,7 @@ pub(crate) fn from_status(
     };
     let mut error = AiError::new(kind, message).with_status(code);
     if let Some(code) = detail.code {
-        error = error.with_code(code);
+        error = error.with_code(scrub(&code, key));
     }
     if matches!(kind, ErrorKind::RateLimited | ErrorKind::Transient)
         && let Some(wait) = retry_after(headers)
@@ -270,7 +300,7 @@ pub(crate) fn from_error_value(error: &Value, key: Option<&SecretString>) -> AiE
         .or_else(|| error.get("status").and_then(Value::as_u64))
         .and_then(|code| u16::try_from(code).ok());
     let kind = match (status, detail.code.as_deref()) {
-        _ if detail.is_quota() => ErrorKind::QuotaExhausted,
+        _ if detail.is_quota(status) => ErrorKind::QuotaExhausted,
         (Some(401 | 403), _) | (_, Some("authentication_error" | "permission_error")) => {
             ErrorKind::InvalidKey
         }
@@ -291,7 +321,7 @@ pub(crate) fn from_error_value(error: &Value, key: Option<&SecretString>) -> AiE
         error = error.with_status(status);
     }
     if let Some(code) = detail.code {
-        error = error.with_code(code);
+        error = error.with_code(scrub(&code, key));
     }
     error
 }
@@ -369,13 +399,15 @@ impl ProviderError {
         }
     }
 
-    /// Whether the error says the account has no credit or quota left.
-    fn is_quota(&self) -> bool {
-        const CODES: [&str; 5] = [
+    /// Whether the error says the account has no credit or quota left. A 429
+    /// counts only with an explicit code (OpenAI's `insufficient_quota`):
+    /// Gemini's per-minute limits read "You exceeded your current quota" too,
+    /// and they pass.
+    fn is_quota(&self, status: Option<u16>) -> bool {
+        const CODES: [&str; 4] = [
             "insufficient_quota",
             "billing_error",
             "billing_hard_limit_reached",
-            "quota_exceeded",
             "insufficient_credits",
         ];
         const PHRASES: [&str; 3] = [
@@ -383,7 +415,11 @@ impl ProviderError {
             "credit balance is too low",
             "insufficient credits",
         ];
-        self.codes.iter().any(|code| CODES.contains(&code.as_str()))
+        let by_code = self.codes.iter().any(|code| CODES.contains(&code.as_str()));
+        if status == Some(429) {
+            return by_code;
+        }
+        by_code
             || self.message.as_deref().is_some_and(|message| {
                 let message = message.to_ascii_lowercase();
                 PHRASES.iter().any(|phrase| message.contains(phrase))
@@ -448,10 +484,27 @@ mod tests {
             status_error(400, anthropic, &[]).kind(),
             ErrorKind::QuotaExhausted
         );
-        let gemini = r#"[{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED"}}]"#;
-        let error = status_error(429, gemini, &[]);
-        assert_eq!(error.kind(), ErrorKind::RateLimited);
-        assert_eq!(error.code(), Some("RESOURCE_EXHAUSTED"));
+        // Gemini's per-minute limits name the quota too: a 429 needs a code.
+        for message in [
+            "Resource has been exhausted (e.g. check quota).",
+            "You exceeded your current quota, please check your plan and billing details.",
+        ] {
+            let gemini = json!([{"error": {"code": 429, "message": message, "status": "RESOURCE_EXHAUSTED"}}]);
+            let error = status_error(429, &gemini.to_string(), &[("retry-after", "7")]);
+            assert_eq!(error.kind(), ErrorKind::RateLimited, "{message}");
+            assert_eq!(error.code(), Some("RESOURCE_EXHAUSTED"));
+            assert_eq!(error.retry_after(), Some(Duration::from_secs(7)));
+            let in_stream = json!({"code": 429, "message": message});
+            assert_eq!(
+                from_error_value(&in_stream, None).kind(),
+                ErrorKind::RateLimited
+            );
+        }
+        let openrouter = r#"{"error":{"code":402,"message":"Insufficient credits"}}"#;
+        assert_eq!(
+            status_error(402, openrouter, &[]).kind(),
+            ErrorKind::QuotaExhausted
+        );
     }
 
     #[test]

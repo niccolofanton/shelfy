@@ -13,34 +13,41 @@ use tokio_util::sync::CancellationToken;
 
 use crate::structured::StructuredMode;
 
-/// The deadlines of one HTTP exchange.
+/// The deadlines of a call and of each of its HTTP exchanges.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Timeouts {
     /// Opening the connection. Passing it is [`crate::ErrorKind::Offline`].
     pub connect: Duration,
     /// Streamed calls: the first token (text, reasoning or tool input) after
-    /// sending. Passing it is [`crate::ErrorKind::Transient`], never retried.
+    /// sending, the response head included (llama.cpp sends it with the first
+    /// token). Passing it is [`crate::ErrorKind::Transient`], never retried.
     pub first_token: Option<Duration>,
-    /// The whole exchange, from sending to the last byte of the answer.
-    /// Passing it is [`crate::ErrorKind::Transient`]. Each retry, the
-    /// non-streaming retry and the repair call get their own.
+    /// One exchange, from sending to the last byte of the answer. Passing it
+    /// is [`crate::ErrorKind::Transient`]. Each retry, the non-streaming retry
+    /// and the repair call get their own.
     pub total: Duration,
+    /// The whole call: every exchange, retry and backoff. Passing it is
+    /// [`crate::ErrorKind::Transient`], never retried; no retry starts that
+    /// would end after it.
+    pub overall: Option<Duration>,
 }
 
 impl Timeouts {
-    /// Cloud cataloging: 10 s to connect, 120 s in all.
+    /// Cloud cataloging: 10 s to connect, 120 s per exchange.
     pub const CATALOG: Self = Self::new(Duration::from_secs(10), Duration::from_secs(120));
     /// Chat: 10 s to connect, the first token within 20 s, 60 s in all.
     pub const CHAT: Self = Self::new(Duration::from_secs(10), Duration::from_secs(60))
-        .with_first_token(Duration::from_secs(20));
+        .with_first_token(Duration::from_secs(20))
+        .with_overall(Duration::from_secs(60));
 
-    /// `connect` and `total`, without a first-token deadline.
+    /// `connect` and `total`, without a first-token or call deadline.
     #[must_use]
     pub const fn new(connect: Duration, total: Duration) -> Self {
         Self {
             connect,
             first_token: None,
             total,
+            overall: None,
         }
     }
 
@@ -48,6 +55,13 @@ impl Timeouts {
     #[must_use]
     pub const fn with_first_token(mut self, first_token: Duration) -> Self {
         self.first_token = Some(first_token);
+        self
+    }
+
+    /// With a deadline for the whole call.
+    #[must_use]
+    pub const fn with_overall(mut self, overall: Duration) -> Self {
+        self.overall = Some(overall);
         self
     }
 }

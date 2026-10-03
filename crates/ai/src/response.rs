@@ -19,10 +19,13 @@ pub struct Usage {
 }
 
 impl Usage {
+    /// Adds `other`, saturating: the counts come from the wire.
     pub(crate) fn add(&mut self, other: Self) {
-        self.input_tokens += other.input_tokens;
-        self.output_tokens += other.output_tokens;
-        self.cached_input_tokens += other.cached_input_tokens;
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.cached_input_tokens = self
+            .cached_input_tokens
+            .saturating_add(other.cached_input_tokens);
     }
 }
 

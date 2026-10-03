@@ -43,7 +43,9 @@ pub enum Fault {
     Overloaded,
     /// No answer at all: the request hangs until the client gives up.
     Timeout,
-    /// The first token (or the whole answer, when not streamed) arrives late.
+    /// The first token arrives late: the answer's head waits for it, streamed
+    /// or not, as llama.cpp's does. (A head that arrives at once with tokens
+    /// that come late is [`super::Stub::set_chunk_delay`].)
     SlowFirstToken {
         /// The delay.
         #[serde(default = "default_delay_ms")]

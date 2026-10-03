@@ -9,8 +9,11 @@
 //!
 //! A transport must:
 //!
-//! - route by [`HttpRequest::egress`]: [`Egress::Allowlisted`] and
-//!   [`Egress::Loopback`] directly, [`Egress::Public`] through
+//! - route by [`HttpRequest::egress`]: [`Egress::Allowlisted`] directly,
+//!   after checking the URL's origin against the server's own copy of the
+//!   allowlist (the field is public: anything can build a request);
+//!   [`Egress::Loopback`] directly, and only when every address the name
+//!   resolves to is a loopback address; [`Egress::Public`] through
 //!   `SHELFY_EGRESS_PROXY` when set, else only to addresses that pass
 //!   [`crate::guard::check_answers`];
 //! - never follow a redirect: the adapters treat a 3xx answer as an error;
@@ -20,6 +23,14 @@
 //! - return as soon as the status and headers arrive, with the body as a
 //!   stream: the adapters read streamed answers as they come and apply the
 //!   call's own deadlines.
+//!
+//! On a `reqwest` client (P2-04's), that is: `redirect::Policy::none()`, a
+//! client per route (direct for the operator's origins, proxied for public
+//! ones), `connect_timeout` on the client, `bytes_stream()` for the body, and
+//! errors mapped by phase: a request error with `is_connect()` (refused,
+//! unreachable, DNS, connect timeout) is [`TransportError::Connect`], any later
+//! one [`TransportError::Io`], a refusal of the resolver or the proxy
+//! [`TransportError::Blocked`].
 
 use std::fmt;
 use std::time::Duration;

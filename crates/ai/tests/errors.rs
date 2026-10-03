@@ -26,11 +26,11 @@ fn hello() -> ChatRequest {
 async fn offline_is_connection_refused_and_never_retried() {
     let stub = stub().await;
     let provider = operator(&stub, ProviderKind::OpenAiCompatible);
-    stub.set_offline(true).await;
+    stub.set_offline(true).await.unwrap();
     let error = provider.chat(&hello(), &options()).await.unwrap_err();
     assert_eq!(error.kind(), ErrorKind::Offline, "{error}");
     assert!(error.message().contains("refused"), "{error}");
-    stub.set_offline(false).await;
+    stub.set_offline(false).await.unwrap();
     provider.chat(&hello(), &options()).await.unwrap();
     assert_eq!(
         stub.requests().len(),
@@ -46,12 +46,12 @@ async fn offline_is_connection_refused_and_never_retried() {
         )
         .with_llama_health(),
     );
-    stub.set_offline(true).await;
+    stub.set_offline(true).await.unwrap();
     assert_eq!(
         health.health(&options()).await.unwrap_err().kind(),
         ErrorKind::Offline
     );
-    stub.set_offline(false).await;
+    stub.set_offline(false).await.unwrap();
     health.health(&options()).await.unwrap();
 }
 

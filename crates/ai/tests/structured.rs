@@ -53,6 +53,31 @@ async fn a_non_conforming_answer_gets_one_repair_call_that_quotes_the_error() {
 }
 
 #[tokio::test]
+async fn a_repair_after_an_empty_answer_keeps_the_turns_alternating() {
+    for kind in [ProviderKind::OpenAiCompatible, ProviderKind::Anthropic] {
+        let stub = stub().await;
+        let provider = operator(&stub, kind);
+        stub.inject(FaultRule::new(Fault::EmptyStream));
+        let answer = provider.chat(&catalog_request(), &options()).await.unwrap();
+        assert!(answer.repaired, "{kind:?}");
+        let repair = stub.requests()[1].body.clone().unwrap();
+        let messages = repair["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages
+            .iter()
+            .filter_map(|message| message["role"].as_str())
+            .filter(|role| *role != "system")
+            .collect();
+        assert_eq!(roles, ["user"], "{kind:?}: one user turn, no empty answer");
+        let text = messages.last().unwrap()["content"].as_str().unwrap();
+        assert!(text.starts_with("a blown-glass lamp"), "{text}");
+        assert!(
+            text.contains("does not match the required JSON schema"),
+            "{text}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_second_bad_answer_is_schema_invalid() {
     let stub = stub().await;
     let provider = operator(&stub, ProviderKind::OpenAiCompatible);

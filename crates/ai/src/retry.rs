@@ -6,16 +6,19 @@
 use std::future::Future;
 use std::time::Duration;
 
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::AiError;
 use crate::options::RetryPolicy;
 
 /// Runs `attempt` until it succeeds or may not be retried. Returns its result
-/// and how many tries ran.
+/// and how many tries ran. No retry starts whose wait would end after
+/// `deadline` (the call's own).
 pub(crate) async fn retrying<T, F, Fut>(
     policy: &RetryPolicy,
     cancel: Option<&CancellationToken>,
+    deadline: Option<Instant>,
     mut attempt: F,
 ) -> (Result<T, AiError>, u32)
 where
@@ -37,6 +40,9 @@ where
             Some(wait) => wait,
             None => backoff(policy, tries - 1),
         };
+        if deadline.is_some_and(|deadline| Instant::now() + wait >= deadline) {
+            return (Err(error), tries);
+        }
         tracing::debug!(
             kind = %error.kind(),
             status = error.status(),
@@ -107,7 +113,7 @@ mod tests {
 
     async fn run(policy: RetryPolicy, errors: Vec<AiError>) -> (Result<u32, AiError>, u32) {
         let calls = AtomicU32::new(0);
-        retrying(&policy, None, || {
+        retrying(&policy, None, None, || {
             let n = calls.fetch_add(1, Ordering::SeqCst) as usize;
             let next = errors.get(n).cloned();
             async move { next.map_or(Ok(7), Err) }
@@ -169,6 +175,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn no_retry_starts_past_the_calls_deadline() {
+        let deadline = Instant::now() + Duration::from_millis(100);
+        let error = AiError::new(ErrorKind::RateLimited, "429")
+            .with_retry_after(Duration::from_millis(500));
+        let patient = RetryPolicy {
+            retry_after_cap: Duration::from_secs(5),
+            ..fast()
+        };
+        let started = Instant::now();
+        let (result, tries) = retrying(&patient, None, Some(deadline), || {
+            let error = error.clone();
+            async move { Err::<(), _>(error) }
+        })
+        .await;
+        assert_eq!(result.unwrap_err().kind(), ErrorKind::RateLimited);
+        assert_eq!(tries, 1);
+        assert!(started.elapsed() < Duration::from_millis(100));
+    }
+
+    #[tokio::test]
     async fn cancelling_ends_the_wait() {
         let token = CancellationToken::new();
         token.cancel();
@@ -177,7 +203,7 @@ mod tests {
             max_delay: Duration::from_secs(60),
             ..fast()
         };
-        let (result, tries) = retrying(&slow, Some(&token), || async {
+        let (result, tries) = retrying(&slow, Some(&token), None, || async {
             Err::<(), _>(AiError::transient("500"))
         })
         .await;

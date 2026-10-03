@@ -6,27 +6,32 @@
 //! use secrecy::SecretString;
 //! use shelfy_ai::guard::{EgressPolicy, Origin};
 //! use shelfy_ai::{
-//!     CallOptions, ChatRequest, JsonOutput, Message, Part, Provider, ProviderConfig, ProviderKind,
-//!     Source, Timeouts,
+//!     CallOptions, ChatRequest, Image, ImageType, JsonOutput, Message, Part, Provider,
+//!     ProviderConfig, ProviderKind, Source, Timeouts,
 //! };
 //!
 //! // The operator provider (P3-09): its origin is the one allowlisted endpoint.
+//! // A llama.cpp server decodes no WebP, so it gets JPEG.
 //! let base = url::Url::parse("http://100.94.10.20:8080/v1").unwrap();
 //! let policy = EgressPolicy::new().allow(Origin::of(&base).unwrap());
 //! let config = ProviderConfig::new(ProviderKind::OpenAiCompatible, Source::Operator, base)
 //!     .with_key(SecretString::from("…from SHELFY_OPERATOR_AI_KEY…"))
-//!     .with_llama_health();
+//!     .with_llama_health()
+//!     .without_webp();
 //! let provider = Provider::new(config, &policy, transport)?;
 //!
 //! let schema = serde_json::json!({"type": "object", "properties": {}, "additionalProperties": false});
+//! let cover = Image { media_type: ImageType::Jpeg, data: vec![/* g480 as JPEG */].into() };
 //! let request = ChatRequest::new(
 //!     "qwen3.8-27b",
-//!     vec![Message::user(vec![Part::text("…the post…"), Part::webp(vec![/* g480 */])])],
+//!     vec![Message::user(vec![Part::text("…the post…"), Part::Image(cover)])],
 //! )
 //! .with_system("…catalog.system.md…")
 //! .with_json(JsonOutput::new("catalog", schema)?)
 //! .with_temperature(0.2)
 //! .with_max_tokens(768)
+//! // Qwen thinks by default; without it the answer is about 5 times faster.
+//! .with_extra("chat_template_kwargs", serde_json::json!({"enable_thinking": false}))
 //! .streamed(true);
 //! let options = CallOptions::new(Timeouts::CATALOG).with_text_callback(|text| {
 //!     let _ = text; // forward to `ai.stream`
@@ -37,7 +42,9 @@
 //! # }
 //! ```
 
+use std::borrow::Cow;
 use std::fmt;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -48,13 +55,14 @@ use secrecy::SecretString;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
 use url::Url;
 
 use crate::error::{AiError, ErrorKind, RetryHint};
 use crate::guard::{Egress, EgressPolicy};
 use crate::options::CallOptions;
 use crate::request::{
-    ChatRequest, EmbedRequest, ImageType, Message, Output, Part, TranscribeRequest,
+    ChatRequest, EmbedRequest, ImageType, Message, Output, Part, Role, TranscribeRequest,
 };
 use crate::response::{
     ChatResponse, Embeddings, FinishReason, ModelInfo, ServerTimings, Timings, Transcript, Usage,
@@ -64,9 +72,7 @@ use crate::sse::SseParser;
 use crate::structured::{self, StructuredMode};
 use crate::transport::{HttpRequest, Transport};
 use crate::turn::{Delta, StreamDecoder, Turn};
-use crate::wire::{
-    self, MAX_ANSWER_BYTES, Opened, bounded, endpoint, from_transport, total_timeout,
-};
+use crate::wire::{self, Deadline, MAX_ANSWER_BYTES, Opened, endpoint, from_transport};
 use crate::{anthropic, openai, whisper};
 
 /// The protocol a provider speaks.
@@ -142,6 +148,10 @@ pub struct ProviderConfig {
     /// carries a WebP image fails with [`ErrorKind::Unsupported`] before
     /// sending, and the caller sends JPEG or PNG instead.
     pub webp_images: bool,
+    /// Whether to send a request's `temperature`. Off for providers whose
+    /// current models refuse it: Anthropic's newest models answer 400 to any
+    /// sampling field.
+    pub send_temperature: bool,
     /// The optional health probe, `GET` without generation (llama.cpp's
     /// `/health`).
     pub health_url: Option<Url>,
@@ -166,6 +176,7 @@ impl ProviderConfig {
             max_tokens_field: MaxTokensField::MaxTokens,
             stream_usage: kind == ProviderKind::OpenAiCompatible,
             webp_images: true,
+            send_temperature: true,
             health_url: None,
             extra_body: None,
         }
@@ -227,6 +238,7 @@ impl fmt::Debug for ProviderConfig {
             .field("max_tokens_field", &self.max_tokens_field)
             .field("stream_usage", &self.stream_usage)
             .field("webp_images", &self.webp_images)
+            .field("send_temperature", &self.send_temperature)
             .field("health_url", &self.health_url.as_ref().map(display_url))
             .field(
                 "extra_body",
@@ -293,6 +305,41 @@ impl Tally {
         if self.first_token.is_none() {
             self.first_token = turn.first_token;
         }
+    }
+}
+
+/// One call: its options, when it started, and its own deadline.
+struct Call<'a> {
+    options: &'a CallOptions,
+    started: Instant,
+    deadline: Option<Deadline>,
+}
+
+impl<'a> Call<'a> {
+    fn new(options: &'a CallOptions) -> Self {
+        let started = Instant::now();
+        Self {
+            options,
+            started,
+            deadline: options
+                .timeouts
+                .overall
+                .map(|overall| Deadline::overall(started, overall)),
+        }
+    }
+
+    fn cancel(&self) -> Option<&CancellationToken> {
+        self.options.cancel.as_ref()
+    }
+
+    /// Runs `attempt` with the call's retries.
+    async fn retrying<T, F, Fut>(&self, attempt: F) -> (Result<T, AiError>, u32)
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<T, AiError>>,
+    {
+        let deadline = self.deadline.as_ref().map(|deadline| deadline.at);
+        retrying(&self.options.retry, self.cancel(), deadline, attempt).await
     }
 }
 
@@ -363,7 +410,7 @@ impl Provider {
         request: &ChatRequest,
         options: &CallOptions,
     ) -> Result<ChatResponse, AiError> {
-        let started = Instant::now();
+        let call = Call::new(options);
         if self.kind() == ProviderKind::WhisperCpp {
             return Err(AiError::unsupported(
                 "a whisper.cpp server only transcribes",
@@ -376,27 +423,16 @@ impl Provider {
         }
         let mode = self.mode(request, options)?;
         let mut tally = Tally::default();
-        let first = self
-            .first_answer(request, mode, options, started, &mut tally)
-            .await?;
+        let first = self.first_answer(request, mode, &call, &mut tally).await?;
         tally.absorb(&first);
         if first.refusal.is_some() {
             return Err(refused());
         }
         let Output::Json(output) = &request.output else {
-            return Ok(respond(first, None, tally, started, request, options));
+            return Ok(respond(first, None, tally, &call, request));
         };
         let invalid = match structured::validate(output, &first.text) {
-            Ok(value) => {
-                return Ok(respond(
-                    first,
-                    Some(value),
-                    tally,
-                    started,
-                    request,
-                    options,
-                ));
-            }
+            Ok(value) => return Ok(respond(first, Some(value), tally, &call, request)),
             Err(invalid) => invalid,
         };
         if first.finish == Some(FinishReason::Length) {
@@ -406,15 +442,26 @@ impl Provider {
             ));
         }
         tracing::debug!(reason = %invalid.for_log, "repairing a JSON answer");
-        let mut extra = Vec::with_capacity(2);
-        if !first.text.trim().is_empty() {
-            extra.push(Message::assistant_text(first.text.clone()));
-        }
-        extra.push(Message::user_text(structured::repair_prompt(&invalid)));
-        let (result, tries) = retrying(&options.retry, options.cancel.as_ref(), || {
-            self.chat_once(request, &extra, mode, false, options, started)
-        })
-        .await;
+        let prompt = structured::repair_prompt(&invalid);
+        let (repair, extra) = if first.text.trim().is_empty() {
+            // No answer to quote: the instruction joins the last user turn, so
+            // that no template sees two user turns in a row.
+            (
+                Cow::Owned(with_repair_in_last_turn(request, prompt)),
+                Vec::new(),
+            )
+        } else {
+            (
+                Cow::Borrowed(request),
+                vec![
+                    Message::assistant_text(first.text.clone()),
+                    Message::user_text(prompt),
+                ],
+            )
+        };
+        let (result, tries) = call
+            .retrying(|| self.chat_once(&repair, &extra, mode, false, &call))
+            .await;
         tally.requests += tries;
         let repaired = result?;
         tally.absorb(&repaired);
@@ -424,14 +471,7 @@ impl Provider {
         match structured::validate(output, &repaired.text) {
             Ok(value) => {
                 tally.repaired = true;
-                Ok(respond(
-                    repaired,
-                    Some(value),
-                    tally,
-                    started,
-                    request,
-                    options,
-                ))
+                Ok(respond(repaired, Some(value), tally, &call, request))
             }
             Err(invalid) => Err(AiError::new(ErrorKind::SchemaInvalid, invalid.for_log)),
         }
@@ -461,16 +501,13 @@ impl Provider {
         &self,
         request: &ChatRequest,
         mode: Option<StructuredMode>,
-        options: &CallOptions,
-        started: Instant,
+        call: &Call<'_>,
         tally: &mut Tally,
     ) -> Result<Turn, AiError> {
-        let cancel = options.cancel.as_ref();
         if request.stream {
-            let (result, tries) = retrying(&options.retry, cancel, || {
-                self.chat_once(request, &[], mode, true, options, started)
-            })
-            .await;
+            let (result, tries) = call
+                .retrying(|| self.chat_once(request, &[], mode, true, call))
+                .await;
             tally.requests += tries;
             match result {
                 Ok(turn) if usable(&turn, request) => return Ok(turn),
@@ -485,10 +522,9 @@ impl Provider {
             }
             tally.stream_fallback = true;
         }
-        let (result, tries) = retrying(&options.retry, cancel, || {
-            self.chat_once(request, &[], mode, false, options, started)
-        })
-        .await;
+        let (result, tries) = call
+            .retrying(|| self.chat_once(request, &[], mode, false, call))
+            .await;
         tally.requests += tries;
         result
     }
@@ -500,8 +536,7 @@ impl Provider {
         extra: &[Message],
         mode: Option<StructuredMode>,
         stream: bool,
-        options: &CallOptions,
-        started: Instant,
+        call: &Call<'_>,
     ) -> Result<Turn, AiError> {
         let config = &self.inner.config;
         let key = self.key();
@@ -514,7 +549,7 @@ impl Provider {
             ProviderKind::Anthropic => (
                 endpoint(&config.base_url, "/v1/messages")?,
                 anthropic::headers(key, stream)?,
-                anthropic::chat_body(request, extra, mode, stream),
+                anthropic::chat_body(config, request, extra, mode, stream),
             ),
             ProviderKind::WhisperCpp => {
                 return Err(AiError::unsupported(
@@ -523,12 +558,18 @@ impl Provider {
             }
         };
         let opened = self
-            .exchange(Method::POST, url, self.inner.egress, headers, body, options)
+            .exchange(
+                Method::POST,
+                url,
+                self.inner.egress,
+                headers,
+                body,
+                call,
+                stream,
+            )
             .await?;
         if !stream {
-            let body = opened
-                .read_all(MAX_ANSWER_BYTES, options.cancel.as_ref())
-                .await?;
+            let body = opened.read_all(MAX_ANSWER_BYTES, call.cancel()).await?;
             return match config.kind {
                 ProviderKind::Anthropic => anthropic::parse_chat(&body, key),
                 _ => openai::parse_chat(&body, key),
@@ -538,11 +579,14 @@ impl Provider {
             ProviderKind::Anthropic => Box::new(anthropic::ChatStream::new(key)),
             _ => Box::new(openai::ChatStream::new(key)),
         };
-        read_stream(opened, decoder, options, started).await
+        read_stream(opened, decoder, call).await
     }
 
     /// Sends one request; returns once a 2xx answer's headers arrived, or the
-    /// error of any other answer.
+    /// error of any other answer. A streamed call's head must also arrive
+    /// before the first-token deadline: llama.cpp sends it with the first
+    /// token.
+    #[allow(clippy::too_many_arguments)]
     async fn exchange(
         &self,
         method: Method,
@@ -550,31 +594,34 @@ impl Provider {
         egress: Egress,
         headers: HeaderMap,
         body: Bytes,
-        options: &CallOptions,
+        call: &Call<'_>,
+        streamed: bool,
     ) -> Result<Opened, AiError> {
-        let cancel = options.cancel.as_ref();
-        let total = options.timeouts.total;
+        let timeouts = &call.options.timeouts;
         let sent_at = Instant::now();
+        let body_deadline = Deadline::total(sent_at, timeouts.total).min(call.deadline.clone());
+        let head_deadline = match timeouts.first_token {
+            Some(wait) if streamed => body_deadline
+                .clone()
+                .min(Some(Deadline::first_token(sent_at, wait))),
+            _ => body_deadline.clone(),
+        };
         let request = HttpRequest {
             method,
             url,
             headers,
             body,
             egress,
-            connect_timeout: options.timeouts.connect,
+            connect_timeout: timeouts.connect,
         };
-        let response = bounded(
-            self.inner.transport.send(request),
-            sent_at + total,
-            cancel,
-            || total_timeout(total),
-        )
-        .await?
-        .map_err(from_transport)?;
+        let response = head_deadline
+            .run(self.inner.transport.send(request), call.cancel())
+            .await?
+            .map_err(from_transport)?;
         let status = response.status;
-        let opened = Opened::new(response.headers, response.body, sent_at, total);
+        let opened = Opened::new(response.headers, response.body, sent_at, body_deadline);
         if !status.is_success() {
-            return Err(opened.into_error(status, cancel, self.key()).await);
+            return Err(opened.into_error(status, call.cancel(), self.key()).await);
         }
         Ok(opened)
     }
@@ -588,27 +635,25 @@ impl Provider {
         options: &CallOptions,
         parse: impl Fn(&[u8]) -> Result<T, AiError>,
     ) -> Result<T, AiError> {
+        let call = Call::new(options);
         let mut headers = match self.kind() {
             ProviderKind::Anthropic => anthropic::headers(self.key(), false)?,
             _ => openai::headers(self.key(), false)?,
         };
         headers.remove(CONTENT_TYPE);
-        let parse = &parse;
-        let (result, _) = retrying(&options.retry, options.cancel.as_ref(), || {
-            let url = url.clone();
-            let headers = headers.clone();
-            async move {
-                let opened = self
-                    .exchange(Method::GET, url, egress, headers, Bytes::new(), options)
-                    .await?;
-                parse(
-                    &opened
-                        .read_all(MAX_ANSWER_BYTES, options.cancel.as_ref())
-                        .await?,
-                )
-            }
-        })
-        .await;
+        let (call, parse) = (&call, &parse);
+        let (result, _) = call
+            .retrying(|| {
+                let url = url.clone();
+                let headers = headers.clone();
+                async move {
+                    let opened = self
+                        .exchange(Method::GET, url, egress, headers, Bytes::new(), call, false)
+                        .await?;
+                    parse(&opened.read_all(MAX_ANSWER_BYTES, call.cancel()).await?)
+                }
+            })
+            .await;
         result
     }
 
@@ -624,6 +669,7 @@ impl Provider {
         request: &EmbedRequest,
         options: &CallOptions,
     ) -> Result<Embeddings, AiError> {
+        let call = Call::new(options);
         if self.kind() != ProviderKind::OpenAiCompatible {
             return Err(AiError::unsupported(format!(
                 "{} serves no embeddings",
@@ -641,19 +687,27 @@ impl Provider {
         let url = endpoint(&self.inner.config.base_url, "/embeddings")?;
         let headers = openai::headers(self.key(), false)?;
         let body = openai::embeddings_body(request);
-        let (result, tries) = retrying(&options.retry, options.cancel.as_ref(), || {
-            let (url, headers, body) = (url.clone(), headers.clone(), body.clone());
-            async move {
-                let opened = self
-                    .exchange(Method::POST, url, self.inner.egress, headers, body, options)
-                    .await?;
-                let answer = opened
-                    .read_all(MAX_ANSWER_BYTES, options.cancel.as_ref())
-                    .await?;
-                openai::parse_embeddings(&answer, request.input.len())
-            }
-        })
-        .await;
+        let call = &call;
+        let (result, tries) = call
+            .retrying(|| {
+                let (url, headers, body) = (url.clone(), headers.clone(), body.clone());
+                async move {
+                    let opened = self
+                        .exchange(
+                            Method::POST,
+                            url,
+                            self.inner.egress,
+                            headers,
+                            body,
+                            call,
+                            false,
+                        )
+                        .await?;
+                    let answer = opened.read_all(MAX_ANSWER_BYTES, call.cancel()).await?;
+                    openai::parse_embeddings(&answer, request.input.len())
+                }
+            })
+            .await;
         Ok(Embeddings {
             requests: tries,
             ..result?
@@ -673,7 +727,7 @@ impl Provider {
         request: &TranscribeRequest,
         options: &CallOptions,
     ) -> Result<Transcript, AiError> {
-        let started = Instant::now();
+        let call = Call::new(options);
         if !whisper::looks_like_wav(&request.wav) {
             return Err(AiError::bad_request("the recording is not a WAV file"));
         }
@@ -706,23 +760,31 @@ impl Provider {
         if let Some(key) = self.key() {
             wire::put_key(&mut headers, AUTHORIZATION, "Bearer ", key)?;
         }
-        let (result, tries) = retrying(&options.retry, options.cancel.as_ref(), || {
-            let (url, headers, body) = (url.clone(), headers.clone(), body.clone());
-            async move {
-                let opened = self
-                    .exchange(Method::POST, url, self.inner.egress, headers, body, options)
-                    .await?;
-                let answer = opened
-                    .read_all(MAX_ANSWER_BYTES, options.cancel.as_ref())
-                    .await?;
-                openai::parse_transcription(&answer, self.key())
-            }
-        })
-        .await;
+        let call = &call;
+        let (result, tries) = call
+            .retrying(|| {
+                let (url, headers, body) = (url.clone(), headers.clone(), body.clone());
+                async move {
+                    let opened = self
+                        .exchange(
+                            Method::POST,
+                            url,
+                            self.inner.egress,
+                            headers,
+                            body,
+                            call,
+                            false,
+                        )
+                        .await?;
+                    let answer = opened.read_all(MAX_ANSWER_BYTES, call.cancel()).await?;
+                    openai::parse_transcription(&answer, self.key())
+                }
+            })
+            .await;
         Ok(Transcript {
             text: result?,
             requests: tries,
-            total: started.elapsed(),
+            total: call.started.elapsed(),
         })
     }
 
@@ -805,6 +867,17 @@ fn has_webp(request: &ChatRequest) -> bool {
         .any(|part| matches!(part, Part::Image(image) if image.media_type == ImageType::Webp))
 }
 
+/// `request` with `prompt` added to its last user turn, or as a new user turn
+/// when the last one is the model's.
+fn with_repair_in_last_turn(request: &ChatRequest, prompt: String) -> ChatRequest {
+    let mut repaired = request.clone();
+    match repaired.messages.last_mut() {
+        Some(last) if last.role == Role::User => last.parts.push(Part::Text(prompt)),
+        _ => repaired.messages.push(Message::user_text(prompt)),
+    }
+    repaired
+}
+
 /// Whether a streamed turn can stand: a refusal, or a non-empty answer that
 /// parses as JSON when JSON was asked for (a cut answer goes on to
 /// validation, which reports it).
@@ -825,27 +898,27 @@ fn usable(turn: &Turn, request: &ChatRequest) -> bool {
     }
 }
 
-/// Reads a streamed answer, feeding the callback.
+/// Reads a streamed answer, feeding the callback. The answer may not grow
+/// past [`MAX_ANSWER_BYTES`].
 async fn read_stream(
     mut opened: Opened,
     mut decoder: Box<dyn StreamDecoder>,
-    options: &CallOptions,
-    started: Instant,
+    call: &Call<'_>,
 ) -> Result<Turn, AiError> {
-    let cancel = options.cancel.as_ref();
-    let first_wait = options.timeouts.first_token;
-    let first_deadline = first_wait.map(|wait| opened.sent_at + wait);
+    let first_deadline = call
+        .options
+        .timeouts
+        .first_token
+        .map(|wait| Deadline::first_token(opened.sent_at, wait));
     let mut first_token = None;
     let mut parser = SseParser::new();
     'read: loop {
         let early = if first_token.is_none() {
-            first_deadline
+            first_deadline.clone()
         } else {
             None
         };
-        let chunk = opened
-            .next_chunk(early, cancel, || first_token_timeout(first_wait))
-            .await?;
+        let chunk = opened.next_chunk(early, call.cancel()).await?;
         let ended = chunk.is_none();
         let events = match chunk {
             Some(chunk) => parser.push(&chunk).map_err(malformed)?,
@@ -855,11 +928,17 @@ async fn read_stream(
             match decoder.event(event)? {
                 Delta::None => {}
                 Delta::Token => {
-                    first_token.get_or_insert_with(|| started.elapsed());
+                    first_token.get_or_insert_with(|| call.started.elapsed());
                 }
                 Delta::Output => {
-                    first_token.get_or_insert_with(|| started.elapsed());
-                    if let Some(callback) = &options.on_text {
+                    first_token.get_or_insert_with(|| call.started.elapsed());
+                    if decoder.output().len() > MAX_ANSWER_BYTES {
+                        return Err(AiError::transient(format!(
+                            "the streamed answer is larger than {MAX_ANSWER_BYTES} bytes"
+                        ))
+                        .with_hint(RetryHint::Never));
+                    }
+                    if let Some(callback) = &call.options.on_text {
                         callback(decoder.output());
                     }
                 }
@@ -882,23 +961,17 @@ fn malformed(error: crate::sse::SseError) -> AiError {
         .with_hint(RetryHint::StreamBroken)
 }
 
-fn first_token_timeout(wait: Option<Duration>) -> AiError {
-    let ms = wait.map_or(0, |wait| wait.as_millis());
-    AiError::transient(format!("no token arrived within {ms} ms")).with_hint(RetryHint::Never)
-}
-
 /// The response of a finished chat call.
 fn respond(
     turn: Turn,
     json: Option<Value>,
     tally: Tally,
-    started: Instant,
+    call: &Call<'_>,
     request: &ChatRequest,
-    options: &CallOptions,
 ) -> ChatResponse {
     if request.stream && (tally.stream_fallback || tally.repaired) {
         // The streamed text was replaced: show the final one.
-        if let Some(callback) = &options.on_text {
+        if let Some(callback) = &call.options.on_text {
             callback(&turn.text);
         }
     }
@@ -910,7 +983,7 @@ fn respond(
         usage: tally.usage,
         server_timings: turn.server_timings.or(tally.server_timings),
         timings: Timings {
-            total: started.elapsed(),
+            total: call.started.elapsed(),
             first_token: tally.first_token,
         },
         requests: tally.requests,

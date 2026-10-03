@@ -63,7 +63,7 @@ pub(crate) fn chat_body(
     }
     messages.extend(request.messages.iter().chain(extra).map(message));
     body.insert("messages".into(), messages.into());
-    if let Some(temperature) = request.temperature {
+    if let Some(temperature) = request.temperature.filter(|_| config.send_temperature) {
         body.insert("temperature".into(), temperature.into());
     }
     if let Some(max_tokens) = request.max_tokens {

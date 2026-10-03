@@ -46,6 +46,8 @@ pub struct Preset {
     pub stream_usage: bool,
     /// Whether it decodes WebP images ([`ProviderConfig::webp_images`]).
     pub webp_images: bool,
+    /// Whether it takes `temperature` ([`ProviderConfig::send_temperature`]).
+    pub send_temperature: bool,
     /// Whether SPIKE-6 confirmed the row.
     pub verified: bool,
 }
@@ -70,6 +72,7 @@ pub const PRESETS: &[Preset] = &[
         max_tokens_field: MaxTokensField::MaxCompletionTokens,
         stream_usage: true,
         webp_images: true,
+        send_temperature: true,
         verified: false,
     },
     Preset {
@@ -84,6 +87,8 @@ pub const PRESETS: &[Preset] = &[
         max_tokens_field: MaxTokensField::MaxTokens,
         stream_usage: false,
         webp_images: true,
+        // The newest Claude models answer 400 to `temperature`.
+        send_temperature: false,
         verified: false,
     },
     Preset {
@@ -96,6 +101,7 @@ pub const PRESETS: &[Preset] = &[
         max_tokens_field: MaxTokensField::MaxTokens,
         stream_usage: true,
         webp_images: true,
+        send_temperature: true,
         verified: false,
     },
     Preset {
@@ -108,6 +114,7 @@ pub const PRESETS: &[Preset] = &[
         max_tokens_field: MaxTokensField::MaxTokens,
         stream_usage: true,
         webp_images: true,
+        send_temperature: true,
         verified: false,
     },
     Preset {
@@ -120,6 +127,7 @@ pub const PRESETS: &[Preset] = &[
         max_tokens_field: MaxTokensField::MaxTokens,
         stream_usage: true,
         webp_images: true,
+        send_temperature: true,
         verified: false,
     },
     Preset {
@@ -132,6 +140,7 @@ pub const PRESETS: &[Preset] = &[
         max_tokens_field: MaxTokensField::MaxTokens,
         stream_usage: false,
         webp_images: true,
+        send_temperature: true,
         verified: false,
     },
     Preset {
@@ -144,6 +153,7 @@ pub const PRESETS: &[Preset] = &[
         max_tokens_field: MaxTokensField::MaxTokens,
         stream_usage: true,
         webp_images: true,
+        send_temperature: true,
         verified: false,
     },
     Preset {
@@ -157,6 +167,7 @@ pub const PRESETS: &[Preset] = &[
         stream_usage: false,
         // llama.cpp-based servers decode no WebP (stb_image): send JPEG.
         webp_images: false,
+        send_temperature: true,
         verified: false,
     },
 ];
@@ -192,6 +203,7 @@ impl Preset {
         config.max_tokens_field = self.max_tokens_field;
         config.stream_usage = self.stream_usage;
         config.webp_images = self.webp_images;
+        config.send_temperature = self.send_temperature;
         config.key = key;
         Ok(config)
     }
