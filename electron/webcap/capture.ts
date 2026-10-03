@@ -894,6 +894,9 @@ function pageArtifactBytes(p: CapturedPage): number {
 }
 
 export async function captureSite(url: string, opts: SiteOptions): Promise<SiteCapture> {
+  // The site budget includes session setup and the primary page. Keep a finished
+  // primary even when that budget is exhausted, but do not start inner pages.
+  const siteStart = Date.now();
   const { signal, hooks } = opts;
   const emit = (e: CaptureEvent): void => {
     try {
@@ -960,7 +963,6 @@ export async function captureSite(url: string, opts: SiteOptions): Promise<SiteC
     const total = opts.singlePage ? 1 : Math.max(1, opts.maxPages);
     hooks?.onPage?.(primary, 0, total);
 
-    const siteStart = Date.now();
     const pages: CapturedPage[] = [primary];
     const skipped: { url: string; reason: string }[] = [];
     let discoverySource: SiteCapture['discoverySource'] = 'single-page';
