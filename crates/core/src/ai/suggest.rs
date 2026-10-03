@@ -21,6 +21,11 @@ pub struct SuggestRequest {
     pub max_tokens: u32,
 }
 
+/// Whether a query is empty under the shared desktop whitespace rules.
+pub fn is_blank(query: &str) -> bool {
+    js_trim(query).is_empty()
+}
+
 /// The same builder the desktop uses for the suggest task of shared/ai.
 pub fn request(query: &str) -> Result<SuggestRequest, PromptError> {
     Ok(SuggestRequest {

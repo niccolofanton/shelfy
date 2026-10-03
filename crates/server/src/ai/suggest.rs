@@ -39,7 +39,7 @@ pub async fn suggest(
     query: String,
     source: Option<SourceBucket>,
 ) -> Result<SuggestResult, ApiError> {
-    if shelfy_core::search::terms::js_trim(&query).is_empty() {
+    if core::is_blank(&query) {
         return Ok(SuggestResult::empty("empty_query"));
     }
     let owner = crate::jobs::ai_drain::is_owner(state, user).await?;
@@ -79,7 +79,7 @@ pub async fn suggest(
         ).optional()?;
         let cached = raw.and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
             .map(|tags| core::intersect(conn, source, &tags)).transpose()?;
-        Ok::<_,ApiError>((key, cached))
+        Ok::<_,shelfy_core::repo::RepoError>((key, cached))
     })).await?;
     if let Some(tags) = cached {
         return Ok(SuggestResult { tags, reason: None });
@@ -124,6 +124,6 @@ pub async fn suggest(
                 ON CONFLICT(kind,key_hash) DO UPDATE SET value_json=excluded.value_json,created_at=excluded.created_at",
                 params![key, serde_json::to_string(&tags).expect("tags serialize"), now_ms()])?;
         }
-        Ok::<_,ApiError>(SuggestResult { tags, reason: None })
+        Ok::<_,shelfy_core::repo::RepoError>(SuggestResult { tags, reason: None })
     })).await
 }
