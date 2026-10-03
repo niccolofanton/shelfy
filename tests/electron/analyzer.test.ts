@@ -63,7 +63,7 @@ d('getTaxonomy()', () => {
 d('buildUserPrompt()', () => {
   it('uses the frames intro when hasFrames is true', () => {
     const prompt = analyzer.buildUserPrompt('', [], true);
-    expect(prompt).toContain('frames in chronological order');
+    expect(prompt).toContain('These media belong to one saved post');
     expect(prompt).not.toContain('text-only post saved as reference');
   });
 
@@ -71,7 +71,7 @@ d('buildUserPrompt()', () => {
     const prompt = analyzer.buildUserPrompt('', [], false);
     expect(prompt).toContain('text-only post saved as reference, with no media');
     expect(prompt).toContain('Rely exclusively on the caption text');
-    expect(prompt).not.toContain('frames in chronological order');
+    expect(prompt).not.toContain('These media belong to one saved post');
   });
 
   it('includes the caption when present', () => {

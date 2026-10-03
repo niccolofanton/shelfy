@@ -13,13 +13,10 @@
 //!   video (for keyframes), not only image slides.
 //! - **The cover is the first slide** (finding 3): objects are de-duplicated
 //!   by digest, so a cover that equals the first slide is sent once.
-//! - **Hashtag walls** (finding 4): [`trim_hashtag_wall`] drops a trailing
-//!   block of curation hashtags before the caption reaches the prompt, so it
-//!   does not fill the caption budget or leak into tags and entities.
-
-use std::sync::LazyLock;
-
-use regex::Regex;
+//! - **Hashtag walls** (finding 4): X1's fair poster run improved when the
+//!   original caption was preserved. Hashtags remain weak data, as directed by
+//!   the shared prompt; its builder strips markers and enforces the 1,200-unit
+//!   caption budget. Selection never adds speech or transcript text.
 use rusqlite::{Connection, OptionalExtension as _, params};
 
 use super::catalog::CatalogKind;
@@ -30,8 +27,6 @@ use crate::repo::Result;
 pub const MAX_FRAMES: usize = 6;
 /// Slides looked at when choosing frames.
 pub const MAX_SLIDES: usize = 8;
-/// A trailing run of at least this many hashtags is a wall and is trimmed.
-pub const HASHTAG_WALL_MIN: usize = 5;
 /// Tags shown to the model as the archive's vocabulary (plan §2.15: top-30).
 pub const VOCABULARY_SIZE: usize = 30;
 
@@ -73,8 +68,8 @@ pub struct PostInputs {
     pub kind: CatalogKind,
     /// Its media type.
     pub media_type: String,
-    /// The caption, with any trailing hashtag wall removed (finding 4); `None`
-    /// when the post has no caption.
+    /// The original caption, including hashtag evidence; the shared catalog
+    /// builder bounds and neutralizes it. `None` for absent/blank captions.
     pub caption: Option<String>,
     /// The frame sources, in order, de-duplicated by object (finding 3).
     pub frames: Vec<Frame>,
@@ -99,22 +94,6 @@ impl PostInputs {
             .iter()
             .any(|frame| matches!(frame, Frame::Video { video: Some(_), .. }))
     }
-}
-
-static HASHTAG_WALL: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:\s*#\S+){5,}\s*$").expect("valid pattern"));
-
-/// Removes a trailing wall of hashtags from a caption (finding 4): a run of
-/// at least [`HASHTAG_WALL_MIN`] hashtags at the end, which on Instagram is
-/// curation spam rather than a description. Inline hashtags in prose (fewer
-/// than the threshold, or not at the end) are kept. Returns the trimmed text.
-#[must_use]
-pub fn trim_hashtag_wall(caption: &str) -> String {
-    let trimmed = match HASHTAG_WALL.find(caption) {
-        Some(wall) => &caption[..wall.start()],
-        None => caption,
-    };
-    trimmed.trim_end().to_owned()
 }
 
 /// The archive's most-used tags, canonical form, most frequent first (plan
@@ -229,10 +208,7 @@ pub fn select(conn: &Connection, post_id: i64) -> Result<Option<PostInputs>> {
         key,
         kind: CatalogKind::of(&platform, &media_type),
         media_type,
-        caption: caption
-            .as_deref()
-            .map(trim_hashtag_wall)
-            .filter(|c| !c.is_empty()),
+        caption: caption.filter(|c| !c.trim().is_empty()),
         frames,
     }))
 }
@@ -264,25 +240,4 @@ fn object_by_id(conn: &Connection, id: i64) -> Result<Option<FrameObject>> {
         })
         .optional()?;
     Ok(obj)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_trailing_hashtag_wall_is_trimmed_but_inline_tags_stay() {
-        let wall = "A walnut desk lamp.\n#design #lighting #interior #walnut #studio #lamp";
-        assert_eq!(trim_hashtag_wall(wall), "A walnut desk lamp.");
-        // Fewer than the threshold: kept (inline hashtags in prose).
-        let inline = "I love #design and #lighting here";
-        assert_eq!(trim_hashtag_wall(inline), inline);
-        // A caption with no hashtags is unchanged.
-        assert_eq!(trim_hashtag_wall("Just a lamp"), "Just a lamp");
-        // A wall separated onto its own line.
-        let multi = "Great tips.\n\n#a #b #c #d #e #f #g";
-        assert_eq!(trim_hashtag_wall(multi), "Great tips.");
-        // An all-wall caption trims to nothing.
-        assert_eq!(trim_hashtag_wall("#a #b #c #d #e #f"), "");
-    }
 }

@@ -102,14 +102,50 @@ pnpm exec tsx scripts/ai-eval/score.ts --gold=<gold.json> --answers=<answers.jso
 
 Each answer is checked against its schema (off the schema scores 0, as the web
 server would store nothing), normalized like the products do, then scored per
-field: tag lists by F1 of matched terms (plurals, case, `#`, `-` and spacing
-ignored; no partial matches, so list the alternatives in the gold), entities
-by F1, keywords by a soft token F1, description and save reason by content-word
-F1, language, purpose and industry exactly. The report gives the mean per field,
-a weighted composite (`WEIGHTS` in `score.ts`), the composite per media type,
-the worst posts, and the digest of the catalog prompts the run should have used.
+field: tag lists by F1 of matched terms (plurals, case, accents, trademark marks,
+`#`, `-` and spacing ignored; no partial matches, so list alternatives in the
+gold), entities by F1, keywords by a soft token F1, description and save reason
+by content-word F1, language, purpose and industry exactly. Explicit `@handles`
+retain dot/underscore identity. Scorer v2 also reports entity micro precision,
+recall and F1, including missing answers, and false positives on empty entity
+gold. Language has weight 0.02 because the current owner gold is uniformly
+English. Recompute both sides with the same scorer version before comparing.
+The report gives the mean per field, a weighted composite (`WEIGHTS` in
+`score.ts`), the composite per media type, the worst posts, and the digest of
+the catalog prompts currently loaded by the scoring command. For historical
+answers, use the run manifest's digest as their provenance.
 `fixtures/gold.json` shows the format. Real gold and answers are owner data:
-keep them in `../shelfy-web-local/ref/`, never in the repo.
+keep them outside the repo (`../shelfy-web-local/bench40/` for X1), never commit
+captions, gold, answers, media, provider URLs or credentials.
+
+The serial operator-node runner is `scripts/ai-eval/run.ts`; its private env
+provides `SHELFY_EVAL_ORNITH_BASE_URL`, `SHELFY_EVAL_ORNITH_API_KEY` and
+`SHELFY_EVAL_ORNITH_VISION_MODEL`. Invoke it with Node 24, `--import=tsx`,
+`--input=<private-bench40>`, `--out=<fresh-private-run-dir>`,
+`--pipeline=baseline|candidate`, candidate `--media=deep|poster` (default poster),
+and optionally `--limit=8`. It checks and decodes declared
+media before contacting the node, refuses output paths inside either the
+worktree or primary checkout even through symlink ancestors, and writes 0700
+directories / 0600 JSON files. Baseline sends up to four extracted video frames
+at 448 px and up to eight carousel images. Candidate mirrors P3-13 deep media
+ordering: cover first, at most eight slides, video poster followed by up to
+four equal-span midpoint keyframes, six JPEG images total at 1024 px; cover
+and image slides are deduplicated by digest. It trims trailing hashtag walls
+with the engine's rule. The independent private extraction is not the engine's
+production CAS, so this benchmark cannot validate production video-object
+availability. Poster mode uses only existing cover/image-slide/exported-poster
+stills, never decodes video or substitutes extracted keyframes. It represents
+a production library without video objects, retaining the candidate's 1024 px
+still size. Neither pipeline sends transcripts.
+
+Candidate `--hashtags=weak` is the engine-aligned default: it retains the
+original caption, still bounded and marker-stripped by the shared builder,
+leaving hashtag interpretation to the prompt. The manifest records
+`captionPolicy`. `--hashtags=trim` retains the earlier trailing-wall rule as an
+explicit experimental comparison. Enqueue the production engine with
+`deep=true` to match the benchmark's 1024 px stills; `deep=false` uses 480 px.
+When production video objects are absent, `deep=true` sends only available
+stills and does not download videos.
 
 ## Changing a prompt or a schema
 

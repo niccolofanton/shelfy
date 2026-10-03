@@ -35,6 +35,7 @@ export function promptDigest(name: TaskName): string {
 /** The report as text. */
 export function formatReport(report: ScoreReport, worst = 10): string {
   const lines: string[] = [];
+  lines.push(`scorer: v${report.scorerVersion}`);
   lines.push(
     `prompts: catalog ${promptDigest('catalog')} · web_catalog ${promptDigest('web_catalog')}`,
   );
@@ -48,6 +49,11 @@ export function formatReport(report: ScoreReport, worst = 10): string {
     if (mean !== undefined) lines.push(`${field.padEnd(16)} ${mean.toFixed(3)}`);
   }
   lines.push(`${'composite'.padEnd(16)} ${report.composite.toFixed(3)}`);
+  const e = report.entities;
+  lines.push(
+    `entities micro: F1 ${e.f1.toFixed(3)} · precision ${e.precision.toFixed(3)} · recall ${e.recall.toFixed(3)} · ${e.matched}/${e.expected} matched · ${e.predicted} predicted`,
+    `empty entity gold: ${e.falsePositivePosts}/${e.emptyGoldPosts} posts with false positives`,
+  );
   const types = Object.entries(report.byMediaType);
   if (types.length) {
     lines.push('');
@@ -95,7 +101,8 @@ function main(): number {
   console.log(formatReport(report, Number(arg('worst') ?? 10)));
   const out = arg('json');
   if (out) {
-    fs.writeFileSync(out, JSON.stringify(report, null, 2) + '\n');
+    fs.writeFileSync(out, JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });
+    fs.chmodSync(out, 0o600);
     console.log(`\nwrote ${path.relative(process.cwd(), out)}`);
   }
   return 0;

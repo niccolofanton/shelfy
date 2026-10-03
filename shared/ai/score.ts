@@ -19,7 +19,7 @@
 //
 //   general_tags, specific_tags   F1 of the matched terms (one-to-one, alternatives allowed)
 //   tags                          F1 of the flat list against general ∪ specific (tier swaps)
-//   entities                      F1, case- and punctuation-insensitive
+//   entities                      F1, case-insensitive; explicit handles retain punctuation
 //   search_keywords               soft F1: token overlap of each keyword with its best match
 //   description, save_reason      F1 of the content words (a ROUGE-1-like overlap)
 //   language                      1 when the primary language subtag matches
@@ -74,6 +74,9 @@ export const FIELDS = [
 ] as const;
 export type Field = (typeof FIELDS)[number];
 
+/** Scores from different versions must be recomputed before comparison. */
+export const SCORER_VERSION = 2;
+
 /** The weight of each field in the composite (renormalized over the fields scored). */
 export const WEIGHTS: Readonly<Record<Field, number>> = {
   general_tags: 0.15,
@@ -83,7 +86,7 @@ export const WEIGHTS: Readonly<Record<Field, number>> = {
   search_keywords: 0.1,
   description: 0.1,
   save_reason: 0.05,
-  language: 0.1,
+  language: 0.02,
   purpose: 0.15,
   industry: 0.15,
 };
@@ -115,6 +118,7 @@ export interface PostScore {
 
 /** The scores of a run. */
 export interface ScoreReport {
+  scorerVersion: number;
   posts: PostScore[];
   /** The mean of each field over the posts that have it in their gold. */
   fields: Partial<Record<Field, number>>;
@@ -122,6 +126,17 @@ export interface ScoreReport {
   counts: { posts: number; answered: number; missing: number; invalid: number };
   /** The mean composite per media type, when the gold names them. */
   byMediaType: Record<string, { posts: number; composite: number }>;
+  /** Micro counts expose hallucinated entities even when most gold lists are empty. */
+  entities: {
+    expected: number;
+    predicted: number;
+    matched: number;
+    emptyGoldPosts: number;
+    falsePositivePosts: number;
+    precision: number;
+    recall: number;
+    f1: number;
+  };
 }
 
 // ── Terms ───────────────────────────────────────────────────────────────────
@@ -143,10 +158,20 @@ function stem(word: string): string {
 }
 
 /** The words of a term: NFKC, lowercase, "#" dropped, separators read as spaces. */
+function folded(text: string): string {
+  return (
+    text
+      // NFKC turns a trademark into literal "TM"; remove it before folding.
+      .replace(/[™®℠]/gu, '')
+      .normalize('NFKC')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+  );
+}
+
 function words(text: string): string[] {
-  return text
-    .normalize('NFKC')
-    .toLowerCase()
+  return folded(text)
     .replace(/^#+/, '')
     .replace(/[-_/]+/g, ' ')
     .replace(/[^\p{L}\p{N}\s]+/gu, '')
@@ -165,6 +190,17 @@ export function termsMatch(a: string, b: string): boolean {
   const [wa, ca] = forms(a);
   const [wb, cb] = forms(b);
   return !!wa && (wa === wb || ca === cb);
+}
+
+/** An explicitly credited handle keeps its dot/underscore identity. */
+export function entityTermsMatch(a: string, b: string): boolean {
+  const left = folded(a).trim();
+  const right = folded(b).trim();
+  if (left.startsWith('@') || right.startsWith('@')) {
+    const key = (value: string): string => value.replace(/^@/, '');
+    return !!key(left) && key(left) === key(right);
+  }
+  return termsMatch(a, b);
 }
 
 /** The content words of a text: words of 3+ letters (or any number), no stopwords, stemmed. */
@@ -197,12 +233,16 @@ function bagF1(a: string[], b: string[]): number {
 }
 
 /** Set scores of a list: one-to-one matching, gold items may hold alternatives. */
-function listScore(answer: string[], gold: GoldTerm[]): FieldScore {
+function listScore(
+  answer: string[],
+  gold: GoldTerm[],
+  match: (a: string, b: string) => boolean = termsMatch,
+): FieldScore {
   const alternatives = gold.map((g) => (Array.isArray(g) ? g : [g]));
   const used = new Set<number>();
   const matchedGold = new Set<number>();
   alternatives.forEach((alts, gi) => {
-    const hit = answer.findIndex((a, ai) => !used.has(ai) && alts.some((g) => termsMatch(a, g)));
+    const hit = answer.findIndex((a, ai) => !used.has(ai) && alts.some((g) => match(a, g)));
     if (hit >= 0) {
       used.add(hit);
       matchedGold.add(gi);
@@ -397,7 +437,7 @@ export function scorePost(id: string, gold: GoldPost, answer: unknown): PostScor
         ]);
         break;
       case 'entities':
-        fields[field] = listScore(result.entities, g.entities ?? []);
+        fields[field] = listScore(result.entities, g.entities ?? [], entityTermsMatch);
         break;
       case 'search_keywords':
         fields[field] = keywordScore(result.keywords, g.search_keywords ?? []);
@@ -443,7 +483,28 @@ export function scoreRun(gold: GoldFile, answers: Readonly<Record<string, unknow
     const list = posts.filter((p) => p.mediaType === type);
     byMediaType[type] = { posts: list.length, composite: mean(list) };
   }
+  let expected = 0;
+  let predicted = 0;
+  let matched = 0;
+  let emptyGoldPosts = 0;
+  let falsePositivePosts = 0;
+  for (const post of posts) {
+    const entities = gold.posts[post.id].catalog.entities;
+    if (entities === undefined) continue;
+    expected += entities.length;
+    if (entities.length === 0) emptyGoldPosts++;
+    if (post.status !== 'answered') continue;
+    const field = post.fields.entities;
+    const hits = entities.length - (field?.missed?.length ?? entities.length);
+    const extras = field?.extra?.length ?? 0;
+    matched += hits;
+    predicted += hits + extras;
+    if (entities.length === 0 && extras > 0) falsePositivePosts++;
+  }
+  const precision = predicted ? matched / predicted : expected ? 0 : 1;
+  const recall = expected ? matched / expected : predicted ? 0 : 1;
   return {
+    scorerVersion: SCORER_VERSION,
     posts,
     fields,
     composite: mean(posts),
@@ -454,5 +515,15 @@ export function scoreRun(gold: GoldFile, answers: Readonly<Record<string, unknow
       invalid: posts.filter((p) => p.status === 'not_json' || p.status === 'schema_invalid').length,
     },
     byMediaType,
+    entities: {
+      expected,
+      predicted,
+      matched,
+      emptyGoldPosts,
+      falsePositivePosts,
+      precision: round(precision),
+      recall: round(recall),
+      f1: round(f1(precision, recall)),
+    },
   };
 }

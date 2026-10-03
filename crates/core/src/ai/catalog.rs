@@ -251,7 +251,7 @@ mod tests {
             true,
         )
         .unwrap();
-        assert!(text.starts_with("These are frames in chronological order"));
+        assert!(text.starts_with("These media belong to one saved post"));
         assert!(text.contains("<<<CAPTION>>>\nLamp\n<<<END CAPTION>>>"));
         assert!(text.contains(": design, glass. Do NOT choose a tag"));
         let bare = user_prompt(CatalogKind::Social, None, NONE, false).unwrap();

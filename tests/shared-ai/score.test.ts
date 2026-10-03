@@ -8,6 +8,8 @@ import {
   scorePost,
   scoreRun,
   termsMatch,
+  entityTermsMatch,
+  SCORER_VERSION,
   type GoldFile,
   type GoldPost,
 } from '../../shared/ai/score';
@@ -35,6 +37,21 @@ describe('termsMatch', () => {
     expect(termsMatch('spun brass', 'brass')).toBe(false);
     expect(termsMatch('design', 'industrial design')).toBe(false);
     expect(termsMatch('', '')).toBe(false);
+  });
+
+  it('folds accents and removes trademark symbols before compatibility normalization', () => {
+    expect(termsMatch('São Paulo', 'Sao Paulo')).toBe(true);
+    expect(termsMatch('café', 'cafe')).toBe(true);
+    expect(termsMatch('Acme™', 'Acme')).toBe(true);
+    expect(termsMatch('Acme®', 'Acme')).toBe(true);
+    expect(termsMatch('Acme™', 'AcmeTM')).toBe(false);
+  });
+
+  it('keeps credited handle boundaries while preserving normal domain synonyms', () => {
+    expect(entityTermsMatch('@anna.design', 'anna.design')).toBe(true);
+    expect(entityTermsMatch('@anna.design', 'annadesign')).toBe(false);
+    expect(entityTermsMatch('@anna.design', '@anna_design')).toBe(false);
+    expect(entityTermsMatch('Three.js', 'threejs')).toBe(true);
   });
 });
 
@@ -108,6 +125,36 @@ describe('scoreRun', () => {
       'website',
     ]);
     expect(report.fields.purpose).toBe(1);
+  });
+
+  it('versions scores and exposes false positives on empty entity gold', () => {
+    const perfect = {
+      ...(answers.lamp as Record<string, unknown>),
+      entities: [],
+    };
+    const run = scoreRun(
+      { posts: { a: { catalog: { entities: [] } }, b: { catalog: { entities: [] } } } },
+      { a: perfect, b: { ...perfect, entities: ['invented studio'] } },
+    );
+    expect(run.scorerVersion).toBe(SCORER_VERSION);
+    expect(run.fields.entities).toBe(0.5);
+    expect(run.entities).toEqual({
+      expected: 0,
+      predicted: 1,
+      matched: 0,
+      emptyGoldPosts: 2,
+      falsePositivePosts: 1,
+      precision: 0,
+      recall: 0,
+      f1: 0,
+    });
+  });
+
+  it('counts unanswered nonempty entity gold as missed in micro recall', () => {
+    const run = scoreRun({ posts: { a: { catalog: { entities: ['real studio'] } } } }, {});
+    expect(run.entities.expected).toBe(1);
+    expect(run.entities.matched).toBe(0);
+    expect(run.entities.recall).toBe(0);
   });
 });
 

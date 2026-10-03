@@ -100,7 +100,7 @@ fn every_fixture_post_gets_its_request() {
             post.id
         );
         let images_intro = match kind {
-            CatalogKind::Social => "These are frames",
+            CatalogKind::Social => "These media belong to one saved post",
             CatalogKind::Web => "These are screenshots",
         };
         assert_eq!(
