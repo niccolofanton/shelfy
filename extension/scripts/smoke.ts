@@ -12,19 +12,29 @@
 // Branded Google Chrome ignores --load-extension (Chrome 137+): this uses Playwright's Chromium
 // (`pnpm exec playwright install chromium`), any Chromium in the Playwright cache, or --chrome.
 
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { homedir, platform as osPlatform, tmpdir } from 'node:os';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { chromium, type BrowserContext, type Page, type Route, type Worker } from 'playwright-core';
+import type { BrowserContext, Page, Route } from 'playwright-core';
 import { buildExtension } from '../build';
 import { EXTENSION_ID } from '../src/id';
 import { igPkToShortcode } from '../src/shared/identity';
-import { MSG } from '../src/shared/protocol';
-import type { PanelState } from '../src/sw/state';
-import { FakeShelfyApi } from './fake-api';
+import {
+  FakeServer,
+  check,
+  externalMessage,
+  extensionWorker,
+  htmlPage,
+  jsonBody,
+  launch as launchChromium,
+  openPanel,
+  runSmoke,
+  sleep,
+  stateOf,
+  waitFor,
+} from './smoke-lib';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixtures = join(here, '..', 'tests', 'fixtures');
@@ -41,6 +51,9 @@ const { values } = parseArgs({
 const PORT = Number(values.port ?? process.env.SHELFY_SMOKE_PORT ?? 18286);
 const ORIGIN = `http://localhost:${PORT}`;
 
+const launch = (profile: string, dist: string): Promise<BrowserContext> =>
+  launchChromium(profile, dist, { headed: values.headed, chrome: values.chrome });
+
 const IG_SAVED = 'https://www.instagram.com/someone/saved/all-posts/';
 const IG_FOLDER = 'https://www.instagram.com/someone/saved/recipes/17890000000000001/';
 const IG_EXPLORE = 'https://www.instagram.com/explore/';
@@ -49,139 +62,10 @@ const PIN_BOARD = 'https://www.pinterest.com/someone/recipes/';
 const PIN_OTHER_BOARD = 'https://www.pinterest.com/someone_else/cakes/';
 const FOLDER_KEYS = ['ig_3400000000000000005', 'ig_3400000000000000006', 'ig_3400000000000000007'];
 
-let failures = 0;
-function check(condition: boolean, what: string, detail = ''): void {
-  if (!condition) failures += 1;
-  console.log(`${condition ? 'ok  ' : 'FAIL'} - ${what}${detail ? ` (${detail})` : ''}`);
-}
-
-async function waitFor(
-  condition: () => boolean | Promise<boolean>,
-  what: string,
-  timeoutMs = 20_000,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await condition()) return true;
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
-  console.log(`     (timed out after ${timeoutMs} ms waiting for ${what})`);
-  return false;
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// ── Chromium ─────────────────────────────────────────────────────────────────
-
-const CHROME_BINARIES = [
-  'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
-  'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
-  'chrome-mac/Chromium.app/Contents/MacOS/Chromium',
-  'chrome-linux64/chrome',
-  'chrome-linux/chrome',
-  'chrome-win64/chrome.exe',
-  'chrome-win/chrome.exe',
-];
-
-/** --chrome, else Playwright's own Chromium, else the newest full Chromium in its cache. */
-function findChromium(): string | undefined {
-  if (values.chrome) return values.chrome;
-  const bundled = chromium.executablePath();
-  if (existsSync(bundled)) return bundled;
-  const cache =
-    process.env.PLAYWRIGHT_BROWSERS_PATH ??
-    (osPlatform() === 'darwin'
-      ? join(homedir(), 'Library', 'Caches', 'ms-playwright')
-      : osPlatform() === 'win32'
-        ? join(homedir(), 'AppData', 'Local', 'ms-playwright')
-        : join(homedir(), '.cache', 'ms-playwright'));
-  if (!existsSync(cache)) return undefined;
-  const builds = readdirSync(cache)
-    .filter((name) => /^chromium-\d+$/.test(name))
-    .sort((a, b) => Number(b.slice(9)) - Number(a.slice(9)));
-  for (const build of builds)
-    for (const binary of CHROME_BINARIES)
-      if (existsSync(join(cache, build, binary))) return join(cache, build, binary);
-  return undefined;
-}
-
-async function launch(profile: string, dist: string): Promise<BrowserContext> {
-  return chromium.launchPersistentContext(profile, {
-    headless: !values.headed,
-    executablePath: findChromium(),
-    args: [
-      `--disable-extensions-except=${dist}`,
-      `--load-extension=${dist}`,
-      '--disable-background-networking',
-      '--disable-component-update',
-      '--no-first-run',
-    ],
-  });
-}
-
-async function extensionWorker(context: BrowserContext): Promise<Worker> {
-  return (
-    context.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://')) ??
-    (await context.waitForEvent('serviceworker', {
-      predicate: (w) => w.url().startsWith('chrome-extension://'),
-    }))
-  );
-}
-
-// ── The fake Shelfy server ──────────────────────────────────────────────────
-
-const SPA_PAGE =
-  '<!doctype html><html><head><title>Shelfy (fake)</title></head><body>fake SPA</body></html>';
-
-class FakeServer {
-  readonly api = new FakeShelfyApi();
-  private server: Server | null = null;
-
-  async start(): Promise<void> {
-    this.server = createServer((req, res) => void this.serve(req, res));
-    await new Promise<void>((resolve, reject) => {
-      this.server?.once('error', reject);
-      this.server?.listen(PORT, '127.0.0.1', () => resolve());
-    });
-  }
-
-  async stop(): Promise<void> {
-    const server = this.server;
-    this.server = null;
-    if (!server) return;
-    server.closeAllConnections();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
-
-  private async serve(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk as Buffer);
-    const path = req.url ?? '/';
-    if (req.method === 'GET' && (path === '/' || path.startsWith('/settings'))) {
-      res.writeHead(200, { 'content-type': 'text/html' }).end(SPA_PAGE);
-      return;
-    }
-    const headers: Record<string, string> = {};
-    for (const [name, value] of Object.entries(req.headers))
-      if (typeof value === 'string') headers[name.toLowerCase()] = value;
-    const result = this.api.handle({
-      method: req.method ?? 'GET',
-      path,
-      headers,
-      body: chunks.length ? Buffer.concat(chunks).toString('utf8') : null,
-    });
-    res.writeHead(result.status, result.headers).end(result.body);
-  }
-}
-
 // ── Synthetic platform pages ────────────────────────────────────────────────
 
-const page = (body: string, head = '') => ({
-  status: 200,
-  contentType: 'text/html',
-  body: `<!doctype html><html><head>${head}</head><body>${body}</body></html>`,
-});
-const json = (body: string) => ({ status: 200, contentType: 'application/json', body });
+const page = htmlPage;
+const json = jsonBody;
 const fetchThenLoaded = (url: string, init = '{}') =>
   `<script>fetch(${JSON.stringify(url)}, ${init}).then((r) => r.text()).then(() => { document.title = 'loaded'; });</script>`;
 
@@ -280,35 +164,6 @@ async function visit(context: BrowserContext, url: string, errors: string[]): Pr
   return tab;
 }
 
-async function openPanel(context: BrowserContext, errors: string[]): Promise<Page> {
-  const panel = await context.newPage();
-  panel.on('console', (m) => {
-    if (m.type() === 'error') errors.push(`panel: ${m.text()}`);
-  });
-  panel.on('pageerror', (e) => errors.push(`panel: ${e.message}`));
-  await panel.goto(`chrome-extension://${EXTENSION_ID}/panel.html`);
-  await panel.waitForSelector('[data-testid=pairing-state]');
-  return panel;
-}
-
-const stateOf = (panel: Page): Promise<PanelState> =>
-  panel.evaluate((kind) => chrome.runtime.sendMessage<PanelState>({ kind }), MSG.stateGet);
-
-function externalMessage(spa: Page, message: unknown): Promise<unknown> {
-  return spa.evaluate(
-    ([id, body]) =>
-      new Promise((resolve) => {
-        const runtime = (globalThis as { chrome?: { runtime?: { sendMessage?: unknown } } }).chrome
-          ?.runtime as
-          | { sendMessage(id: string, message: unknown, callback: (answer: unknown) => void): void }
-          | undefined;
-        if (!runtime?.sendMessage) resolve('no chrome.runtime');
-        else runtime.sendMessage(id as string, body, resolve);
-      }),
-    [EXTENSION_ID, message] as const,
-  );
-}
-
 // ── The run ─────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -322,7 +177,7 @@ async function main(): Promise<void> {
     build.problems.join('; '),
   );
 
-  const server = new FakeServer();
+  const server = new FakeServer(PORT);
   const api = server.api;
   await server.start();
   const errors: string[] = [];
@@ -596,12 +451,4 @@ async function main(): Promise<void> {
   }
 }
 
-main()
-  .catch((err: unknown) => {
-    failures += 1;
-    console.error(`FAIL - ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
-  })
-  .finally(() => {
-    console.log(failures ? `\n${failures} check(s) failed` : '\nall checks passed');
-    process.exitCode = failures ? 1 : 0;
-  });
+runSmoke(main);
