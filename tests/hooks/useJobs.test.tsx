@@ -108,6 +108,12 @@ function unusedClientMethods() {
     removePostFromCollection: vi.fn(),
     openExternal: vi.fn(),
     on: vi.fn(() => () => {}),
+    countPosts: vi.fn(),
+    resolveAllIds: vi.fn(),
+    bulkAction: vi.fn(),
+    listTrash: vi.fn(),
+    restoreFromTrash: vi.fn(),
+    emptyTrash: vi.fn(),
     reportError: vi.fn(),
   };
 }
