@@ -42,6 +42,11 @@ export default {
     // ⌘/Ctrl +/- shortcut hint is appended in code next to these labels.
     gridShrink: 'Riduci dimensione griglia',
     gridEnlarge: 'Aumenta dimensione griglia',
+    // Shared UI primitives (src/components/ui): the toast region and its ×,
+    // and the name of a menu shown as a bottom sheet.
+    notifications: 'Notifiche',
+    dismiss: 'Chiudi notifica',
+    options: 'Opzioni',
   },
   en: {
     cancel: 'Cancel',
@@ -73,5 +78,8 @@ export default {
     genericError: 'Operation failed. Try again.',
     gridShrink: 'Shrink grid size',
     gridEnlarge: 'Enlarge grid size',
+    notifications: 'Notifications',
+    dismiss: 'Dismiss',
+    options: 'Options',
   },
 } satisfies LangMessages;
