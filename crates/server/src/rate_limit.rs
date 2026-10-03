@@ -5,7 +5,7 @@
 //! | user | 20 per second, 60 at once | user | every `/api/v1/*` route a signed-in user calls, with a session or an API token | [`by_user`] |
 //! | search | 5 per second, 5 at once | user | `GET /api/v1/search`, and `GET /api/v1/posts` and `/api/v1/posts/count` with a text query (`q` or `concept`) | [`by_user`] |
 //! | client errors | 10 per minute, 10 at once | user | `POST /api/v1/client-errors` | [`by_user`] |
-//! | sign-in | 10 per minute | client address | every `/api/v1/auth/*` route, signed in or not, but the device poll ([`UNCOUNTED_SIGN_IN_ROUTES`]); the extension's pairing ([`COUNTED_SIGN_IN_ROUTES`]) | [`by_client`] |
+//! | sign-in | 10 per minute | client address | every `/api/v1/auth/*` route, signed in or not, but the device poll ([`UNCOUNTED_SIGN_IN_ROUTES`]); the extension's pairing ([`COUNTED_SIGN_IN_ROUTES`]); an answer 403 `reauth_required` is refunded | [`by_client`] |
 //!
 //! A request over a limit answers 429 `rate_limited` with `Retry-After`, the
 //! seconds until it would pass, before the handler runs. A limit does not
@@ -413,26 +413,47 @@ pub fn counts_as_sign_in(method: &Method, path: &str) -> bool {
         || listed(COUNTED_SIGN_IN_ROUTES)
 }
 
+/// Whether `response` is a 403 `reauth_required`: the session must
+/// re-authenticate before the route does anything, so the request was no
+/// sign-in attempt and the limit per client address takes its hit back.
+#[must_use]
+pub fn is_reauth_required(response: &Response) -> bool {
+    response.extensions().get::<ErrorCode>() == Some(&ErrorCode::ReauthRequired)
+}
+
 /// Layer right inside the security headers: the sign-in limit per client
 /// address, on the `/api/v1/auth/*` routes and the extension's pairing
-/// ([`counts_as_sign_in`]).
+/// ([`counts_as_sign_in`]). An answer 403 `reauth_required`
+/// ([`is_reauth_required`]) is not counted (F10): the `/device` page that
+/// approves a code while its session still has to re-authenticate would
+/// otherwise spend the budget its re-authentication and approval need. That
+/// answer comes from `RecentAuth`, before the route reads its body, and
+/// needs a signed-in session, so it tells nothing about a code or a
+/// credential.
 pub async fn by_client(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let sign_in = request
         .extensions()
         .get::<MatchedPath>()
         .is_some_and(|path| counts_as_sign_in(request.method(), path.as_str()));
-    if sign_in {
-        let peer = request
-            .extensions()
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|ConnectInfo(addr)| addr.ip());
-        let client = net::client_ip(request.headers(), peer, &state.config().trusted_proxies);
-        if let Err(seconds) = state.auth().ip_limiter().hit(&ip_key(client), now_ms()) {
-            let wait = Duration::from_secs(u64::from(seconds));
-            return too_many(wait, "too many sign-in requests from this address");
-        }
+    if !sign_in {
+        return next.run(request).await;
     }
-    next.run(request).await
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip());
+    let client = net::client_ip(request.headers(), peer, &state.config().trusted_proxies);
+    let key = ip_key(client);
+    let at = now_ms();
+    if let Err(seconds) = state.auth().ip_limiter().hit(&key, at) {
+        let wait = Duration::from_secs(u64::from(seconds));
+        return too_many(wait, "too many sign-in requests from this address");
+    }
+    let response = next.run(request).await;
+    if is_reauth_required(&response) {
+        state.auth().ip_limiter().refund(&key, at);
+    }
+    response
 }
 
 #[cfg(test)]

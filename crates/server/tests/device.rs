@@ -481,6 +481,79 @@ async fn polls_skip_the_sign_in_limit_and_are_paced_per_device_code() {
     assert_eq!(json(response).await["status"], "pending");
 }
 
+/// `POST /auth/reauth/finish` with the link `token`, from the web app.
+fn reauth_with(t: &TestState, cookie: &str, token: &str) -> Request<Body> {
+    let request = Request::post("/api/v1/auth/reauth/finish")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "method": "link", "token": token }).to_string(),
+        ))
+        .unwrap();
+    spa(t, request, cookie)
+}
+
+#[tokio::test]
+async fn approvals_that_need_a_reauth_do_not_spend_the_sign_in_limit() {
+    // F10: the owner clicked Approve a few times while the session had to
+    // re-authenticate, and got 429 before the re-authentication.
+    let t = TestState::with_config(|config: &mut Config| {
+        config.auth.device_poll_interval = Duration::ZERO;
+    });
+    let app = t.app();
+    let client = "198.51.100.7";
+    let started = json(
+        send(
+            &app,
+            from_peer(cli_post("/api/v1/auth/device/start", None), client),
+        )
+        .await,
+    )
+    .await;
+    let user_code = started["userCode"].as_str().unwrap().to_owned();
+    let cookie = sign_in(&app, &t).await;
+    make_sessions_stale(&t);
+
+    // Twice the limit of approvals answer `reauth_required`, never 429.
+    for i in 0..20 {
+        let response = send(&app, from_peer(approve(&t, &cookie, &user_code), client)).await;
+        let refused = problem(response, StatusCode::FORBIDDEN).await;
+        assert_eq!(refused.code, ErrorCode::ReauthRequired, "approval {i}");
+    }
+
+    // The re-authentication and the approval still pass.
+    let link = create_link(
+        &t.data_dir(),
+        &t.state.config().public_url,
+        OWNER_EMAIL,
+        LinkPurpose::Reauth,
+        Duration::from_secs(900),
+    )
+    .unwrap();
+    let token = link.url.expose().split_once('#').unwrap().1.to_owned();
+    let response = send(&app, from_peer(reauth_with(&t, &cookie, &token), client)).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT, "re-auth");
+    let response = send(&app, from_peer(approve(&t, &cookie, &user_code), client)).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT, "approval");
+    let approved = json(poll(&app, &started["deviceCode"]).await).await;
+    assert_eq!(approved["status"], "approved");
+
+    // Real failures still count: start, re-auth and approval used 3 of the
+    // 10, so the 8th failed re-authentication is refused.
+    let unknown = SecretToken::generate();
+    for i in 0..7 {
+        let request = from_peer(reauth_with(&t, &cookie, unknown.expose()), client);
+        let refused = problem(send(&app, request).await, StatusCode::BAD_REQUEST).await;
+        assert_eq!(refused.code, ErrorCode::InvalidLink, "failure {i}");
+    }
+    let request = from_peer(reauth_with(&t, &cookie, unknown.expose()), client);
+    let refused = problem(send(&app, request).await, StatusCode::TOO_MANY_REQUESTS).await;
+    assert_eq!(refused.code, ErrorCode::RateLimited);
+    assert_eq!(
+        refused.detail.as_deref(),
+        Some("too many sign-in requests from this address")
+    );
+}
+
 #[tokio::test]
 async fn every_device_route_has_its_access() {
     let t = state(|_| {});
