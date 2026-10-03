@@ -9,12 +9,14 @@ export default {
     library: 'Libreria',
     search: 'Cerca',
     ai: 'AI',
+    jobs: 'Lavori',
     settings: 'Impostazioni',
   },
   en: {
     library: 'Library',
     search: 'Search',
     ai: 'AI',
+    jobs: 'Jobs',
     settings: 'Settings',
   },
 } satisfies LangMessages;

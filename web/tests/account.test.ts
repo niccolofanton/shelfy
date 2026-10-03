@@ -212,13 +212,14 @@ describe('account', () => {
 });
 
 describe('web capabilities', () => {
-  it('turn on the account, Settings and links for a signed-in user, and nothing else yet', () => {
+  it('turn on the account, Settings, links and Jobs for a signed-in user, and nothing else yet', () => {
     expect(webCapabilities(null)).toBe(WEB_CAPABILITIES);
     expect(webCapabilities(OWNER)).toEqual({
       ...WEB_CAPABILITIES,
       account: true,
       settings: true,
       links: true,
+      jobs: true,
     });
   });
 

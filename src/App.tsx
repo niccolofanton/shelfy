@@ -25,16 +25,16 @@ import {
 } from './api/navigation';
 import { buildTime } from 'virtual:build-time';
 
-// AI, Websites, Settings, Downloads (plan §2.19 "code-split AI, Websites,
-// Settings and Admin"; Admin has no view of its own — out of scope, E4): on
-// the web these are capability-gated off until P3/P1-20 (see `caps.ai` /
-// `caps.websites` / `caps.settings` below), but a static import still ships
-// their JS in the initial bundle for every visitor. `views/websites/model.ts`
-// alone (the biggest of these view trees) is ~25 KB uncompressed, and
-// AiWebsites also pulls in the rest of `views/websites/**`. React.lazy defers
-// all of it to its own chunk, fetched only the first time `mountedViews`
-// (below) adds that view — which capability-gated navigation on the web
-// never does.
+// AI, Websites, Settings, Downloads, Jobs (plan §2.19 "code-split AI,
+// Websites, Settings and Admin"; Admin has no view of its own — out of
+// scope, E4): on the web these are capability-gated off until P3/P1-20 (see
+// `caps.ai` / `caps.websites` / `caps.settings` below), but a static import
+// still ships their JS in the initial bundle for every visitor.
+// `views/websites/model.ts` alone (the biggest of these view trees) is
+// ~25 KB uncompressed, and AiWebsites also pulls in the rest of
+// `views/websites/**`. React.lazy defers all of it to its own chunk, fetched
+// only the first time `mountedViews` (below) adds that view — which
+// capability-gated navigation on the web never does.
 //
 // F14: withMessages() (src/i18n) wraps each factory so the view's own i18n
 // namespace(s) load in the same Promise as its code — Suspense below waits
@@ -58,6 +58,9 @@ const AiSearch = lazy(
 );
 const AiOnboarding = lazy(withMessages(() => import('./views/AiOnboarding'), 'aiOnboarding'));
 const DownloadsView = lazy(withMessages(() => import('./views/Downloads'), 'downloads'));
+// P4-09: the Jobs view is web-only (PG18), so it is always lazy — there is no
+// "ships in the initial bundle" baseline to improve on, unlike Downloads.
+const JobsView = lazy(withMessages(() => import('./views/Jobs'), 'jobs'));
 
 // Modals and a banner that aren't on the first screen — opened from a toolbar
 // action, or (RemoteAiBanner) shown only once `caps.ai` arrives — so each is
@@ -84,10 +87,12 @@ function ViewLoading(): React.JSX.Element {
 }
 
 // The non-browser view identifiers, in render order. `trash` exists only as
-// a web route so far.
+// a web route so far; `jobs` (P4-09) is web-only for good (PG18) — the
+// desktop keeps Downloads, gated by the opposite capability.
 type ViewId =
   | 'gallery'
   | 'downloads'
+  | 'jobs'
   | 'aitags'
   | 'aiqueue'
   | 'aiweb'
@@ -180,6 +185,7 @@ interface AiFilterPatch {
 const VIEW_IDS: ViewId[] = [
   'gallery',
   'downloads',
+  'jobs',
   'aitags',
   'aiqueue',
   'aiweb',
@@ -199,6 +205,7 @@ const ALL_SOURCE: ActiveSource = { type: 'platform', value: 'all' };
 // mounted under its panel.
 function viewOfRoute(route: CurrentRoute): ViewId {
   if (route.name === 'trash') return 'trash';
+  if (route.name === 'jobs') return 'jobs';
   if (route.name === 'settings') return 'settings';
   return 'gallery';
 }
@@ -227,6 +234,7 @@ function routeOfSource(source: ActiveSource): AppRoute {
 function routeOfView(view: View, source: ActiveSource): AppRoute | null {
   if (view === 'gallery') return routeOfSource(source);
   if (view === 'trash') return { name: 'trash' };
+  if (view === 'jobs') return { name: 'jobs', kind: [], state: [] };
   if (view === 'settings') return { name: 'settings', section: DEFAULT_SETTINGS_SECTION };
   return null;
 }
@@ -241,6 +249,7 @@ const AI_VIEW_IDS: ViewId[] = ['aitags', 'aiqueue', 'aiweb', 'aisearch'];
 function bottomNavTargetOfView(view: View): BottomNavTarget | null {
   if (view === 'gallery') return 'library';
   if (view === 'settings') return 'settings';
+  if (view === 'jobs') return 'jobs';
   if (AI_VIEW_IDS.includes(view as ViewId)) return 'ai';
   return null;
 }
@@ -256,6 +265,7 @@ const AiWebsitesMemo = React.memo(AiWebsites);
 const AiSearchMemo = React.memo(AiSearch);
 const SettingsMemo = React.memo(SettingsView);
 const DownloadsMemo = React.memo(DownloadsView);
+const JobsMemo = React.memo(JobsView);
 
 // Web-capture statuses counted as "active" for the sidebar badge.
 const WEB_ACTIVE_STATUS: string[] = [
@@ -355,6 +365,7 @@ function AppInner(): React.JSX.Element {
     (target: BottomNavTarget): void => {
       if (target === 'search' || target === 'library') setView('gallery');
       else if (target === 'ai') setView('aiqueue');
+      else if (target === 'jobs') setView('jobs');
       else setView('settings');
     },
     [setView],
@@ -499,6 +510,13 @@ function AppInner(): React.JSX.Element {
   );
   const openAddSite = useCallback(() => setShowAddSite(true), []);
   const openAddBookmark = useCallback(() => setShowAddBookmark(true), []);
+  // The Jobs view's post thumbnail (P4-09): a real link to `/p/:key`, not the
+  // local-state modal of openAiPost — the Jobs view is web-only, so `navigate`
+  // always exists by the time a user can reach it.
+  const openJobPost = useCallback(
+    (key: string): void => navigate?.({ name: 'post', key }),
+    [navigate],
+  );
 
   // Download queue — lifted here (App is always mounted) so the sidebar can show
   // live progress regardless of the current view, and the Downloads view shares
@@ -1017,6 +1035,14 @@ function AppInner(): React.JSX.Element {
                         <DownloadsMemo downloads={downloads} />
                       </Suspense>
                     )}
+                    {v === 'jobs' &&
+                      (caps.jobs ? (
+                        <Suspense fallback={<ViewLoading />}>
+                          <JobsMemo onOpenPost={openJobPost} />
+                        </Suspense>
+                      ) : (
+                        unavailablePanel
+                      ))}
                     {v === 'aitags' && (
                       <Suspense fallback={<ViewLoading />}>
                         <AiTagsMemo
@@ -1107,6 +1133,7 @@ function AppInner(): React.JSX.Element {
           active={bottomNavTargetOfView(view)}
           onNavigate={handleBottomNav}
           aiVisible={caps.ai}
+          jobsVisible={caps.jobs}
         />
         {collectionModal && (
           <Suspense fallback={null}>

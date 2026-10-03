@@ -9,6 +9,7 @@
 // `key` as `id` and same-origin `/media` URLs as the local file references.
 import type { AccountApi } from './account';
 import type { AiApi } from './ai';
+import type { JobsApi } from './jobs';
 import type { LinksApi } from './links';
 
 // What a client can do. The UI hides what its client cannot do instead of
@@ -73,6 +74,10 @@ export interface ShelfyCapabilities {
   // `/share` (Android's share target, the bookmarklet), the iOS Shortcut.
   // Web only; the desktop has no `/share` page.
   links: boolean;
+  // The Jobs view (ShelfyClient.jobs): the web's background-job manager,
+  // which replaces the desktop's Downloads there (PG18). Off on the desktop,
+  // which keeps its own download queue and local files instead.
+  jobs: boolean;
 }
 
 // The gallery query, as toApiFilters (src/lib/postFilters.ts) normalizes it:
@@ -224,6 +229,10 @@ export interface ShelfyClient {
   // is on: the desktop always has it; the web gains it area by area (P3-11,
   // P3-17, P3-18, P3-20, P3-22) as each capability flag turns on.
   readonly ai?: AiApi;
+  // The account's background jobs (src/api/jobs.ts), when the backend has
+  // one: the web client's. The desktop keeps its own Downloads queue instead
+  // (ShelfyCapabilities.jobs) and leaves this undefined.
+  readonly jobs?: JobsApi;
 
   // One page of the library (or of a folder, a search…).
   listPosts(query: PostQuery, page: PageRequest): Promise<PostPage>;

@@ -15,6 +15,7 @@ import type {
 import { createAccountApi } from './account';
 import { createEventStream, type EventStream } from './events';
 import { isApiError, type Http } from './http';
+import { createJobsApi } from './jobs';
 import { createLinksApi } from './links';
 import {
   MAX_PAGE_SIZE,
@@ -61,6 +62,7 @@ export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
   updates: false,
   localModels: false,
   links: false,
+  jobs: false,
 });
 
 // What the web app can do for a signed-in user, from `GET /me` (plan §2.19
@@ -69,11 +71,19 @@ export const WEB_CAPABILITIES: ShelfyCapabilities = Object.freeze({
 // off here until those views move onto this client: `extension` (P2),
 // `ai.tasks` → `aiQueue`/`aiTags`/`aiChat`/`aiSuggest`/`dictation`, one per
 // view (P3-11, P3-17, P3-18, P3-20, P3-22), `capture` → `websites` and
-// `video.onDemand` (P4). `passkeys` and `emailLink` are the account's sign-in methods
-// (AccountApi.signIn).
+// `video.onDemand` (P4). `passkeys` and `emailLink` are the account's sign-in
+// methods (AccountApi.signIn). `jobs` (P4-09) is the web's Jobs view, which
+// replaces the desktop's Downloads there (PG18); like `links` and `account`,
+// it needs a signed-in session, since jobs belong to the user.
 export function webCapabilities(me: Schemas['Me'] | null | undefined): ShelfyCapabilities {
   if (!me) return WEB_CAPABILITIES;
-  return Object.freeze({ ...WEB_CAPABILITIES, account: true, settings: true, links: true });
+  return Object.freeze({
+    ...WEB_CAPABILITIES,
+    account: true,
+    settings: true,
+    links: true,
+    jobs: true,
+  });
 }
 
 // Opens only http(s) URLs, in a new tab without access to this window.
@@ -137,7 +147,13 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
   return {
     capabilities: options.capabilities ?? webCapabilities(me),
     media: webMedia,
-    ...(me ? { account: createAccountApi(http, me, { events }), links: createLinksApi(http) } : {}),
+    ...(me
+      ? {
+          account: createAccountApi(http, me, { events }),
+          links: createLinksApi(http),
+          jobs: createJobsApi(http, { events }),
+        }
+      : {}),
 
     // One window of `limit` posts: as many API pages as it takes (at most 200
     // each). The first page of a query also asks for the total.

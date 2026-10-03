@@ -40,6 +40,9 @@ type UnsafeMethod = 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 export interface SendOptions {
   // Let the request outlive the page (fetch `keepalive`): crash reports.
   keepalive?: boolean;
+  // Sent as `Idempotency-Key`: a repeated request (a double click, or this
+  // same call resent after a re-authentication) has one effect server-side.
+  idempotencyKey?: string;
 }
 
 export interface Http {
@@ -121,6 +124,7 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
       body?: unknown;
       signal?: AbortSignal;
       keepalive?: boolean;
+      idempotencyKey?: string;
       // How many re-authentications this request asked for already.
       reauthRounds?: number;
     } = {},
@@ -129,6 +133,7 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (method !== 'GET') headers[CLIENT_HEADER] = CLIENT_WEB;
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
+    if (init.idempotencyKey) headers['Idempotency-Key'] = init.idempotencyKey;
     let res: Response;
     try {
       res = await doFetch(qs ? `${path}?${qs}` : path, {
@@ -172,7 +177,11 @@ export function createHttp({ fetch: fetchImpl }: HttpOptions = {}): Http {
       return (await res.json()) as T;
     },
     send: (method, path, body, options) =>
-      request(method, path, { body, keepalive: options?.keepalive }),
+      request(method, path, {
+        body,
+        keepalive: options?.keepalive,
+        idempotencyKey: options?.idempotencyKey,
+      }),
     onUnauthorized(listener) {
       unauthorized.add(listener);
       return () => {

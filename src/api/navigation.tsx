@@ -11,12 +11,17 @@ import React, { createContext, useContext } from 'react';
 // | `collection` | `/c/:collectionId`   | the gallery, one folder             |
 // | `post`       | `/p/:key`            | the post's modal, over the gallery  |
 // | `trash`      | `/trash`             | the trash                           |
+// | `jobs`       | `/jobs?kind&state`   | the Jobs view (P4-09, web-only)     |
 // | `settings`   | `/settings/:section` | Settings, at one section            |
 export type AppRoute =
   | { name: 'library' }
   | { name: 'collection'; collectionId: number }
   | { name: 'post'; key: string }
   | { name: 'trash' }
+  // `kind`/`state` repeat the query's values verbatim (empty: no filter); the
+  // Jobs view (src/views/Jobs.tsx) is the one place that knows which values
+  // are valid job kinds and states.
+  | { name: 'jobs'; kind: string[]; state: string[] }
   | { name: 'settings'; section: string };
 
 // What the address says: a route, or nothing the app knows.
@@ -57,12 +62,18 @@ export function useNavigation(): Navigation | null {
   return useContext(NavigationContext);
 }
 
+function sameValues(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
 export function sameRoute(a: CurrentRoute, b: CurrentRoute): boolean {
   switch (a.name) {
     case 'collection':
       return b.name === 'collection' && b.collectionId === a.collectionId;
     case 'post':
       return b.name === 'post' && b.key === a.key;
+    case 'jobs':
+      return b.name === 'jobs' && sameValues(a.kind, b.kind) && sameValues(a.state, b.state);
     case 'settings':
       return b.name === 'settings' && b.section === a.section;
     default:

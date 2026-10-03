@@ -3,6 +3,7 @@ import {
   Grid3X3,
   Globe,
   Download,
+  ListChecks,
   Settings,
   Plus,
   Pencil,
@@ -43,6 +44,7 @@ type IconComponent = (props: { size?: number; className?: string }) => React.Rea
 type NavView =
   | 'gallery'
   | 'downloads'
+  | 'jobs'
   | 'aitags'
   | 'aiqueue'
   | 'aiweb'
@@ -823,6 +825,28 @@ function Sidebar({
                         <span className="flex-1 truncate">{t('trash')}</span>
                         <span aria-hidden className="w-5 ml-1 shrink-0" />
                       </button>
+
+                      {/* Jobs (P4-09) — the web's background-job manager, where the web
+                        has no Downloads (PG18): same slot, same row style, gated on the
+                        opposite capability. */}
+                      {caps.jobs && (
+                        <button
+                          data-testid="nav-jobs"
+                          aria-current={currentView === 'jobs' ? 'page' : undefined}
+                          onClick={() => onNavigate('jobs')}
+                          className={[
+                            'u-press group relative w-full flex items-center pl-9 pr-2 py-1.5 text-sm rounded-md mx-2 cursor-pointer transition-colors text-left',
+                            currentView === 'jobs'
+                              ? 'bg-[#1e1e1e] text-white'
+                              : 'text-gray-400 hover:bg-[#1a1a1a] hover:text-gray-200',
+                          ].join(' ')}
+                        >
+                          {currentView === 'jobs' && accentBar()}
+                          <ListChecks size={15} className="shrink-0 mr-2.5" />
+                          <span className="flex-1 truncate">{t('jobs')}</span>
+                          <span aria-hidden className="w-5 ml-1 shrink-0" />
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

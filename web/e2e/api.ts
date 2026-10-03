@@ -21,6 +21,11 @@ export interface MockApi {
   // `GET /posts/{key}` answers; a key missing here is 404.
   details: Record<string, unknown>;
   collections: Schemas['Collection'][];
+  // P4-09: the user's jobs and which kinds are paused, for `/jobs*` and
+  // `/queues/*` (jobs.spec.ts). Mutated in place by the route handlers below,
+  // so a spec can read `api.jobs` afterwards to assert on the result.
+  jobs: Schemas['Job'][];
+  pausedKinds: Set<string>;
   // The body of each `/events` connection in turn (SSE text); then `hello`.
   streams: string[];
   requests: RecordedRequest[];
@@ -91,6 +96,79 @@ export function apiDetail(post: Schemas['Post'], overrides: Record<string, unkno
     tags: [],
     ...overrides,
   };
+}
+
+export function apiJob(overrides: Partial<Schemas['Job']> = {}): Schemas['Job'] {
+  return {
+    id: 1,
+    kind: 'capture.site',
+    state: 'running',
+    progress: 0.3,
+    stage: null,
+    postKey: null,
+    errorCode: null,
+    attempts: 0,
+    maxAttempts: 2,
+    runAt: T0,
+    createdAt: T0,
+    updatedAt: T0,
+    finishedAt: null,
+    ...overrides,
+  };
+}
+
+// `GET /jobs`'s cursor: the id before which the next page continues.
+const JOB_CURSOR_PREFIX = 'jobs.';
+
+function jobMatches(job: Schemas['Job'], query: URLSearchParams): boolean {
+  const kinds = query.getAll('kind');
+  const states = query.getAll('state');
+  return (
+    (!kinds.length || kinds.includes(job.kind)) && (!states.length || states.includes(job.state))
+  );
+}
+
+const FINISHED_STATES: Schemas['JobState'][] = ['succeeded', 'failed', 'cancelled'];
+
+function queueSummaryOf(
+  jobs: Schemas['Job'][],
+  pausedKinds: Set<string>,
+): Schemas['QueueSummary'][] {
+  const byKind = new Map<string, Schemas['QueueSummary']>();
+  for (const job of jobs) {
+    const queue =
+      byKind.get(job.kind) ??
+      ({
+        kind: job.kind,
+        paused: pausedKinds.has(job.kind),
+        queued: 0,
+        running: 0,
+        succeeded: 0,
+        failed: 0,
+        cancelled: 0,
+      } satisfies Schemas['QueueSummary']);
+    queue[job.state] += 1;
+    byKind.set(job.kind, queue);
+  }
+  return Array.from(byKind.values());
+}
+
+function queueOf(
+  kind: string,
+  jobs: Schemas['Job'][],
+  pausedKinds: Set<string>,
+): Schemas['QueueSummary'] {
+  return (
+    queueSummaryOf(jobs, pausedKinds).find((q) => q.kind === kind) ?? {
+      kind,
+      paused: pausedKinds.has(kind),
+      queued: 0,
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+      cancelled: 0,
+    }
+  );
 }
 
 function collection(overrides: Partial<Schemas['Collection']>): Schemas['Collection'] {
@@ -358,6 +436,86 @@ async function answer(api: MockApi, route: Route): Promise<void> {
   if (path === '/api/v1/client-errors' && method === 'POST') {
     return route.fulfill({ status: 204 });
   }
+
+  // ── Jobs (P4-09) ─────────────────────────────────────────────────────────
+  if (path === '/api/v1/jobs' && method === 'GET') {
+    const matching = api.jobs.filter((j) => jobMatches(j, query)).sort((a, b) => b.id - a.id);
+    const cursor = query.get('cursor');
+    const before = cursor?.startsWith(JOB_CURSOR_PREFIX)
+      ? Number(cursor.slice(JOB_CURSOR_PREFIX.length))
+      : null;
+    const windowed = before == null ? matching : matching.filter((j) => j.id < before);
+    const limit = Number(query.get('limit')) || 60;
+    const items = windowed.slice(0, limit);
+    const last = items.at(-1);
+    const nextCursor = windowed.length > limit && last ? `${JOB_CURSOR_PREFIX}${last.id}` : null;
+    return route.fulfill({ json: { items, nextCursor } });
+  }
+  if (path === '/api/v1/jobs/summary' && method === 'GET') {
+    return route.fulfill({ json: { queues: queueSummaryOf(api.jobs, api.pausedKinds) } });
+  }
+  const cancelJob = /^\/api\/v1\/jobs\/(\d+)\/cancel$/.exec(path);
+  if (cancelJob && method === 'POST') {
+    const job = api.jobs.find((j) => j.id === Number(cancelJob[1]));
+    if (!job) return problem(route, 404, 'not_found');
+    job.state = 'cancelled';
+    return route.fulfill({ json: job });
+  }
+  const retryJob = /^\/api\/v1\/jobs\/(\d+)\/retry$/.exec(path);
+  if (retryJob && method === 'POST') {
+    const job = api.jobs.find((j) => j.id === Number(retryJob[1]));
+    if (!job) return problem(route, 404, 'not_found');
+    job.state = 'queued';
+    job.errorCode = null;
+    return route.fulfill({ json: job });
+  }
+  const queueAction = /^\/api\/v1\/queues\/([^/]+)\/(pause|resume|cancel-all|clear-finished)$/.exec(
+    path,
+  );
+  if (queueAction && method === 'POST') {
+    const kind = decodeURIComponent(queueAction[1]);
+    let affected = 0;
+    if (queueAction[2] === 'pause') {
+      affected = api.pausedKinds.has(kind) ? 0 : 1;
+      api.pausedKinds.add(kind);
+    } else if (queueAction[2] === 'resume') {
+      affected = api.pausedKinds.has(kind) ? 1 : 0;
+      api.pausedKinds.delete(kind);
+    } else if (queueAction[2] === 'cancel-all') {
+      // The real scheduler publishes `job.updated` for every job it cancels
+      // this way (crates/server/src/jobs/scheduler.rs `cancel_all`): queue it
+      // on the next reconnect, same as any other live event here.
+      const updated: string[] = [];
+      for (const job of api.jobs) {
+        if (job.kind === kind && (job.state === 'queued' || job.state === 'running')) {
+          job.state = 'cancelled';
+          affected += 1;
+          updated.push(
+            sse(
+              'job.updated',
+              {
+                id: job.id,
+                kind: job.kind,
+                state: job.state,
+                progress: job.progress,
+                stage: job.stage,
+                postKey: job.postKey,
+                errorCode: job.errorCode,
+              },
+              `e-cancel-${job.id}`,
+            ),
+          );
+        }
+      }
+      if (updated.length) api.streams.push(HELLO + updated.join(''));
+    } else {
+      const before = api.jobs.length;
+      api.jobs = api.jobs.filter((j) => !(j.kind === kind && FINISHED_STATES.includes(j.state)));
+      affected = before - api.jobs.length;
+    }
+    return route.fulfill({ json: { queue: queueOf(kind, api.jobs, api.pausedKinds), affected } });
+  }
+
   return problem(route, 404, 'not_found');
 }
 
@@ -365,6 +523,8 @@ export async function mockApi(page: Page, origin: string): Promise<MockApi> {
   const api: MockApi = {
     signedIn: true,
     ...library(),
+    jobs: [],
+    pausedKinds: new Set(),
     streams: [],
     requests: [],
     thirdParty: [],

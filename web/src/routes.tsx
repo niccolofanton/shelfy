@@ -24,7 +24,7 @@
 // `notFound`. Adding a route is one PATHS entry, one row of APP_ROUTES (or a
 // line in parseRoute) and its case in pathOf.
 import React, { useCallback, useMemo, useRef } from 'react';
-import { useLocation } from 'wouter';
+import { useLocation, useSearch } from 'wouter';
 import {
   DEFAULT_SETTINGS_SECTION,
   NavigationProvider,
@@ -38,6 +38,7 @@ export const PATHS = {
   collection: '/c/:collectionId',
   post: '/p/:key',
   trash: '/trash',
+  jobs: '/jobs',
   settings: '/settings/:section',
   device: '/device',
   login: '/login',
@@ -45,6 +46,12 @@ export const PATHS = {
   reauth: '/login/reauth',
   share: '/share',
 } as const;
+
+// Defensive cap on a `/jobs` query's repeated values — the Jobs view (the one
+// place that knows which kinds and states are valid) filters further; this
+// only keeps a malformed or adversarial address from building an unbounded
+// array.
+const MAX_JOBS_FILTER_VALUES = 20;
 
 export const LOGIN_PATH = PATHS.login;
 
@@ -91,9 +98,20 @@ function matchPattern(pattern: string, path: string): Params | null {
   return params;
 }
 
+// The `kind`/`state` repeats of a `/jobs` address, capped and with blanks
+// dropped; the Jobs view validates the values themselves.
+function jobsFilterOf(query: URLSearchParams, key: string): string[] {
+  const values = query.getAll(key).filter(Boolean);
+  return values.slice(0, MAX_JOBS_FILTER_VALUES);
+}
+
 // The AppRoutes: a pattern, and the route its parameters make (null when they
-// are not valid, which reads as `notFound`).
-const APP_ROUTES: { pattern: string; route: (params: Params) => AppRoute | null }[] = [
+// are not valid, which reads as `notFound`). `search` only matters to `/jobs`
+// today; every other route ignores its second argument.
+const APP_ROUTES: {
+  pattern: string;
+  route: (params: Params, search: string) => AppRoute | null;
+}[] = [
   { pattern: PATHS.library, route: () => ({ name: 'library' }) },
   {
     pattern: PATHS.collection,
@@ -104,6 +122,17 @@ const APP_ROUTES: { pattern: string; route: (params: Params) => AppRoute | null 
   },
   { pattern: PATHS.post, route: ({ key }) => (key ? { name: 'post', key } : null) },
   { pattern: PATHS.trash, route: () => ({ name: 'trash' }) },
+  {
+    pattern: PATHS.jobs,
+    route: (_params, search) => {
+      const query = new URLSearchParams(search);
+      return {
+        name: 'jobs',
+        kind: jobsFilterOf(query, 'kind'),
+        state: jobsFilterOf(query, 'state'),
+      };
+    },
+  },
   { pattern: '/settings', route: () => ({ name: 'settings', section: DEFAULT_SETTINGS_SECTION }) },
   {
     pattern: PATHS.settings,
@@ -112,11 +141,12 @@ const APP_ROUTES: { pattern: string; route: (params: Params) => AppRoute | null 
   },
 ];
 
-// The route of an address the shared UI shows (anything but the web-only pages).
-export function parseAppRoute(pathname: string): CurrentRoute {
+// The route of an address the shared UI shows (anything but the web-only
+// pages). `search` is only read by `/jobs` (its `kind`/`state` filters).
+export function parseAppRoute(pathname: string, search = ''): CurrentRoute {
   for (const { pattern, route } of APP_ROUTES) {
     const params = matchPattern(pattern, pathname);
-    const found = params && route(params);
+    const found = params && route(params, search);
     if (found) return found;
   }
   return { name: 'notFound' };
@@ -140,7 +170,16 @@ export function parseRoute(pathname: string, search = ''): WebRoute {
       title: query.get('title'),
     };
   }
-  return parseAppRoute(pathname);
+  return parseAppRoute(pathname, search);
+}
+
+// `/jobs` with its `kind`/`state` repeated as query parameters (empty: none).
+function jobsPath(kind: string[], state: string[]): string {
+  const query = new URLSearchParams();
+  for (const k of kind) query.append('kind', k);
+  for (const s of state) query.append('state', s);
+  const qs = query.toString();
+  return qs ? `${PATHS.jobs}?${qs}` : PATHS.jobs;
 }
 
 // The address of a route. Takes every WebRoute that `safeNext` allows through
@@ -157,6 +196,8 @@ export function pathOf(route: AppRoute | { name: 'device' } | ShareRoute): strin
       return `/p/${encodeURIComponent(route.key)}`;
     case 'trash':
       return PATHS.trash;
+    case 'jobs':
+      return jobsPath(route.kind, route.state);
     case 'settings':
       return `/settings/${encodeURIComponent(route.section)}`;
     case 'device':
@@ -183,6 +224,7 @@ export function patternOf(route: WebRoute): string {
     case 'collection':
     case 'post':
     case 'trash':
+    case 'jobs':
     case 'device':
     case 'login':
     case 'magic':
@@ -286,7 +328,8 @@ function depthOf(state: unknown): number {
 // `navigate` and `back` keep their identity; `route` follows the address.
 export function WebNavigation({ children }: { children: React.ReactNode }): React.JSX.Element {
   const [location, setLocation] = useLocation();
-  const route = useMemo(() => parseAppRoute(location), [location]);
+  const search = useSearch();
+  const route = useMemo(() => parseAppRoute(location, search), [location, search]);
   const locationRef = useRef(location);
   locationRef.current = location;
 
