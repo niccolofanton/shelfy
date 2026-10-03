@@ -147,10 +147,27 @@ test('opt-in suggestions widen the grid with OR then narrow with AND; live facet
   const h = await fixture(page);
   await page.goto('/');
   await expect(page.getByTestId('post-card')).toHaveCount(3);
+  // Observe the real grid transition: retain the old cards, hide, then reveal results.
+  await page.evaluate(() => {
+    const phases: string[] = [];
+    Object.assign(window, { gallerySearchPhases: phases });
+    new MutationObserver((changes) => {
+      for (const change of changes) {
+        const element = change.target as HTMLElement;
+        if (element.classList.contains('u-search-out')) phases.push('out');
+        if (element.classList.contains('u-search-in')) phases.push('in');
+      }
+    }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'] });
+  });
   await page.getByRole('searchbox', { name: 'Search posts' }).fill('lamp');
   await expect(page.getByTestId('suggested-tag')).toHaveCount(2);
   expect(h.suggestions).toEqual([{ q: 'lamp', scope: 'all' }]);
   await expect(page.getByTestId('post-card')).toHaveCount(1);
+  expect(
+    await page.evaluate(
+      () => (window as Window & { gallerySearchPhases?: string[] }).gallerySearchPhases,
+    ),
+  ).toEqual(expect.arrayContaining(['out', 'in']));
   await page.getByTestId('suggested-tag').filter({ hasText: 'lighting' }).click();
   await expect(page.getByTestId('post-card')).toHaveCount(2);
   await page.getByTestId('suggested-tag').filter({ hasText: 'glass' }).click();
@@ -180,8 +197,16 @@ test('opt-in suggestions widen the grid with OR then narrow with AND; live facet
   await expect(
     page.getByTestId('drawer-language-select').getByRole('option', { name: 'French (1)' }),
   ).toHaveCount(0);
-  if (process.env.SHELFY_E2E_SHOTS)
+  if (process.env.SHELFY_E2E_SHOTS) {
+    await expect
+      .poll(() =>
+        page
+          .getByTestId('filter-drawer')
+          .evaluate((element) => element.parentElement?.getBoundingClientRect().width),
+      )
+      .toBe(280);
     await page.screenshot({ path: `${process.env.SHELFY_E2E_SHOTS}/ai-gallery-facets.png` });
+  }
   await page.getByTestId('drawer-language-select').selectOption('it');
   await expect(page.getByTestId('post-card')).toHaveCount(2);
   await page.getByTestId('drawer-aistatus-select').selectOption('none');
