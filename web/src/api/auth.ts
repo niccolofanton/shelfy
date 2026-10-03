@@ -42,6 +42,9 @@ export interface AuthApi {
   // Approves a device's sign-in code (the migration CLI's): that device gets a
   // `migrate` token for this account. Needs a recent sign-in.
   approveDevice(userCode: string): Promise<void>;
+  // Opens the re-authentication dialog without a refused request; true once
+  // the user confirmed (Http.reauthenticate).
+  confirmIdentity(): Promise<boolean>;
 }
 
 async function json<T>(res: Response): Promise<T> {
@@ -100,5 +103,6 @@ export function createAuthApi(http: Http): AuthApi {
       const body: Schemas['DeviceApproval'] = { userCode };
       await http.send('POST', '/api/v1/auth/device/approve', body);
     },
+    confirmIdentity: () => http.reauthenticate(),
   };
 }

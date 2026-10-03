@@ -188,6 +188,18 @@ describe('http re-authentication', () => {
     expect(isApiError(err, 'reauth_required')).toBe(true);
   });
 
+  it('asks for a re-authentication without a refused request', async () => {
+    const fetch = vi.fn();
+    const http = createHttp({ fetch });
+    expect(await http.reauthenticate()).toBe(false);
+    const handler = vi.fn().mockResolvedValueOnce(true).mockRejectedValueOnce(new Error('crash'));
+    http.onReauthRequired(handler);
+    expect(await http.reauthenticate()).toBe(true);
+    expect(handler).toHaveBeenCalledWith({ again: false });
+    expect(await http.reauthenticate()).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('tells the session listeners about a sign-out', () => {
     const http = createHttp({ fetch: vi.fn() });
     const listener = vi.fn();

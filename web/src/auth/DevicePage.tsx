@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'wouter';
-import { AlertTriangle, CheckCircle2, Loader2, MonitorSmartphone } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, MonitorSmartphone, ShieldCheck } from 'lucide-react';
 import { useFailureText } from '@ui/hooks/useFailureText';
 import { useT } from '@ui/i18n';
 import type { AuthApi } from '../api/auth';
 import { isApiError } from '../api/http';
 import AuthLayout, { Notice, PRIMARY_BUTTON } from './AuthLayout';
+import { AUTH_CHANNEL, REAUTH_MESSAGE } from './ReauthDialog';
 
 // A user code as the CLI shows it: 8 letters, `BCDF-GHJK`. Case, dashes and
 // spaces do not matter to the server; anything else is dropped as it is typed.
@@ -23,7 +24,13 @@ function isComplete(code: string): boolean {
   return code.replace(/-/g, '').length === CODE_LETTERS;
 }
 
-type Status = 'ready' | 'busy' | 'approved';
+// - ready: Approve is on (once the code is complete);
+// - busy: the approval is in flight, the re-authentication dialog included;
+// - reauth: the dialog was cancelled, so the session still has to confirm
+//   who it is. Approve stays off; "Confirm it's you" opens the dialog without
+//   sending the approval, and the approval is sent once it succeeds;
+// - confirming: that dialog is open.
+type Status = 'ready' | 'busy' | 'reauth' | 'confirming' | 'approved';
 
 // `/device` (plan §2.11 device tokens; P1-17): approves the sign-in code of a
 // device, today the migration CLI (`shelfy-migrate login`), which then gets a
@@ -31,6 +38,11 @@ type Status = 'ready' | 'busy' | 'approved';
 // from the last 5 minutes: the re-authentication dialog asks first when it is
 // older. The code comes from the address (`/device#<code>`, the CLI's
 // complete link) or the keyboard; it is never approved without a click.
+//
+// F10: Approve stays off while a re-authentication is required or in
+// progress, so repeated clicks send no approval the server would refuse; a
+// re-authentication confirmed here, or by a link opened in another tab, sends
+// the approval once.
 export default function DevicePage({
   auth,
   initialCode,
@@ -44,23 +56,61 @@ export default function DevicePage({
   const [code, setCode] = useState(() => formatUserCode(initialCode ?? ''));
   const [status, setStatus] = useState<Status>('ready');
   const [error, setError] = useState<string | null>(null);
+  // One approval or confirmation at a time, whatever the clicks.
+  const inFlight = useRef(false);
 
-  const approve = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault();
-    if (!isComplete(code) || status === 'busy') return;
+  const send = useCallback(async (): Promise<void> => {
     setStatus('busy');
     setError(null);
     try {
       await auth.approveDevice(code);
       setStatus('approved');
     } catch (err) {
+      if (isApiError(err, 'reauth_required')) {
+        setStatus('reauth');
+        return;
+      }
       setStatus('ready');
       if (isApiError(err, 'invalid_device_code')) setError(t('deviceInvalid'));
-      else if (isApiError(err, 'reauth_required')) setError(t('deviceReauth'));
       else if (isApiError(err, 'rate_limited')) setError(t('deviceRateLimited'));
       else setError(failure(err));
     }
+  }, [auth, code, failure, t]);
+
+  const once = useCallback(async (work: () => Promise<void>): Promise<void> => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      await work();
+    } finally {
+      inFlight.current = false;
+    }
+  }, []);
+
+  const approve = (e: React.FormEvent): void => {
+    e.preventDefault();
+    if (!isComplete(code) || status !== 'ready') return;
+    void once(send);
   };
+
+  const confirm = (): void => {
+    void once(async () => {
+      setStatus('confirming');
+      if (await auth.confirmIdentity()) await send();
+      else setStatus('reauth');
+    });
+  };
+
+  // A re-authentication link confirmed in another tab of this browser: send
+  // the approval that waited for it.
+  useEffect(() => {
+    if (status !== 'reauth' || typeof BroadcastChannel === 'undefined') return undefined;
+    const channel = new BroadcastChannel(AUTH_CHANNEL);
+    channel.onmessage = (event: MessageEvent) => {
+      if ((event.data as { type?: unknown } | null)?.type === REAUTH_MESSAGE) void once(send);
+    };
+    return () => channel.close();
+  }, [status, once, send]);
 
   if (status === 'approved') {
     return (
@@ -83,6 +133,7 @@ export default function DevicePage({
   }
 
   const busy = status === 'busy';
+  const needsReauth = status === 'reauth' || status === 'confirming';
   return (
     <AuthLayout title={t('deviceTitle')}>
       <form data-testid="device-form" onSubmit={approve} className="space-y-4" noValidate>
@@ -115,10 +166,31 @@ export default function DevicePage({
             {error}
           </Notice>
         )}
+        {needsReauth && (
+          <div className="space-y-3">
+            <Notice tone="info" testId="device-reauth">
+              {t('deviceReauth')}
+            </Notice>
+            <button
+              type="button"
+              data-testid="device-confirm"
+              onClick={confirm}
+              disabled={status === 'confirming'}
+              className={PRIMARY_BUTTON}
+            >
+              {status === 'confirming' ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <ShieldCheck size={15} />
+              )}
+              {status === 'confirming' ? t('deviceConfirming') : t('deviceConfirm')}
+            </button>
+          </div>
+        )}
         <button
           type="submit"
           data-testid="device-approve"
-          disabled={busy || !isComplete(code)}
+          disabled={status !== 'ready' || !isComplete(code)}
           className={PRIMARY_BUTTON}
         >
           {busy ? <Loader2 size={15} className="animate-spin" /> : <MonitorSmartphone size={15} />}
