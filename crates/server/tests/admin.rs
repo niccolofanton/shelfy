@@ -1,6 +1,6 @@
 //! The admin commands, in-process and through the binary: `create-owner`,
-//! `invite`, `login-link` and `snapshot` round trips on temporary data
-//! directories.
+//! `create-user`, `invite`, `login-link` and `snapshot` round trips on
+//! temporary data directories.
 
 use std::path::Path;
 use std::process::{Command, Output};
@@ -486,4 +486,105 @@ fn login_link_mints_a_reauth_link_on_request() {
     );
     assert!(!refused.status.success());
     assert!(refused.stdout.is_empty());
+}
+
+#[test]
+fn create_user_makes_a_member_never_prints_the_email_and_is_idempotent() {
+    let (_dir, data) = data_dir();
+    stdout(&admin(
+        &data,
+        &["create-owner", "--email", "owner@example.test"],
+    ));
+
+    let created = admin(
+        &data,
+        &[
+            "create-user",
+            "--email",
+            "Mock@Example.TEST",
+            "--display-name",
+            "Mock Account",
+        ],
+    );
+    let line = stdout(&created);
+    let id = line
+        .trim_end()
+        .strip_prefix("created user ")
+        .unwrap_or_else(|| panic!("unexpected output {line:?}"));
+    assert!(is_ulid(id), "{id}");
+    assert!(
+        !line.contains("example.test"),
+        "the email is not printed back"
+    );
+    assert!(
+        !line.contains("Mock Account"),
+        "the display name is not printed back either"
+    );
+    assert!(created.stderr.is_empty(), "no logs on a clean run");
+
+    // --help names it a test-account tool, and says the instance is
+    // otherwise owner-only (E4, E6).
+    let help = stdout(&admin(&data, &["create-user", "--help"]));
+    assert!(help.contains("test"), "{help}");
+    assert!(help.contains("E4"), "{help}");
+
+    // Idempotent for the same email, whatever its case; the display name of
+    // a rerun is not applied.
+    let again = stdout(&admin(
+        &data,
+        &[
+            "create-user",
+            "--email",
+            "mock@example.test",
+            "--display-name",
+            "Ignored",
+        ],
+    ));
+    assert_eq!(
+        again.trim_end(),
+        format!("user {id} already exists; nothing changed")
+    );
+
+    // Refuses the owner's email, with a clear reason, nothing on stdout.
+    let refused = admin(&data, &["create-user", "--email", "owner@example.test"]);
+    assert!(!refused.status.success());
+    assert!(refused.stdout.is_empty());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("owner's email"),
+        "{:?}",
+        refused.stderr
+    );
+
+    // The member is real: a second, distinct account, role `member`, the
+    // §4.2 default quota, an audit row with no email in it, and an empty
+    // library of its own.
+    let control = read_only(&data.control_db());
+    let (role, quota, display_name): (String, i64, Option<String>) = control
+        .query_row(
+            "SELECT role, quota_bytes, display_name FROM users WHERE id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(role, "member");
+    assert_eq!(quota, 5 * 1024 * 1024 * 1024);
+    assert_eq!(display_name.as_deref(), Some("Mock Account"));
+    let users: i64 = control
+        .query_row("SELECT count(*) FROM users", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(users, 2, "the owner, plus this one member");
+    let dump: String = control
+        .query_row(
+            "SELECT group_concat(COALESCE(meta_json, '') || action) FROM audit_log \
+             WHERE action = 'user.create'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(dump, r#"{"via":"admin"}user.create"#);
+    let library = read_only(&data.library_db(id));
+    assert_eq!(
+        schema::version(&library).unwrap(),
+        Kind::Library.latest_version()
+    );
 }

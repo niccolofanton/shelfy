@@ -7,6 +7,10 @@ use shelfy_core::repo::Result;
 
 /// `admin create-owner` created the owner.
 pub const OWNER_CREATE: &str = "owner.create";
+/// `admin create-user` created a member account (E6 test accounts, such as
+/// the mock account). `meta`: `via` (always `"admin"`, the only way a member
+/// is created while the instance has no invite redemption route).
+pub const USER_CREATE: &str = "user.create";
 /// An invite was created.
 pub const INVITE_CREATE: &str = "invite.create";
 /// A sign-in link was minted. `meta`: `via` (`email` or `cli`) and `purpose`

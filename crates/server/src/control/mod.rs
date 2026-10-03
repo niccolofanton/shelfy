@@ -87,6 +87,7 @@ pub(crate) mod testing {
                 let user = NewUser {
                     id,
                     email,
+                    display_name: None,
                     role,
                     quota_bytes: 0,
                 };

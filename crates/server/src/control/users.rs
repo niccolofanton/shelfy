@@ -1,5 +1,7 @@
 //! `users`: the accounts (plan §2.6). E4 keeps the instance owner-only: one
-//! `owner`, created by `admin create-owner`.
+//! `owner`, created by `admin create-owner`. `admin create-user` (E6) adds
+//! `member` accounts for tests, such as the live host's mock account; the
+//! instance otherwise stays owner-only (no invite redemption route yet).
 //!
 //! Besides the account itself: what the user accepted ([`Consent`], `POST
 //! /me/consent`) and their storage ([`Usage`], counted by the
@@ -72,6 +74,8 @@ pub struct User {
     pub id: String,
     /// Login email, lowercase.
     pub email: Redacted<String>,
+    /// Display name, if the account was given one.
+    pub display_name: Option<String>,
     /// Role.
     pub role: Role,
     /// Status.
@@ -89,25 +93,33 @@ pub struct NewUser<'a> {
     pub id: &'a str,
     /// Email, as returned by [`normalize_email`].
     pub email: &'a str,
+    /// Display name, if any.
+    pub display_name: Option<&'a str>,
     /// Role.
     pub role: Role,
     /// Quota in bytes; 0 = unlimited.
     pub quota_bytes: i64,
 }
 
-const COLUMNS: &str = "id, email, role, status, quota_bytes, created_at";
+/// A member's default storage quota when none is given (plan §4.2: "Default
+/// quota 5 GiB per member (owner unlimited)"). `admin create-user` (E6) uses
+/// it; P4-07 (quotas) may later make it configurable.
+pub const DEFAULT_MEMBER_QUOTA_BYTES: i64 = 5 * 1024 * 1024 * 1024;
+
+const COLUMNS: &str = "id, email, display_name, role, status, quota_bytes, created_at";
 
 fn from_row(row: &Row<'_>) -> rusqlite::Result<User> {
-    let role: String = row.get(2)?;
-    let status: String = row.get(3)?;
+    let role: String = row.get(3)?;
+    let status: String = row.get(4)?;
     Ok(User {
         id: row.get(0)?,
         email: Redacted(row.get(1)?),
+        display_name: row.get(2)?,
         // The schema's CHECK constraints admit only these values.
         role: Role::parse(&role).unwrap_or(Role::Member),
         status: Status::parse(&status).unwrap_or(Status::Disabled),
-        quota_bytes: row.get(4)?,
-        created_at: row.get(5)?,
+        quota_bytes: row.get(5)?,
+        created_at: row.get(6)?,
     })
 }
 
@@ -118,10 +130,12 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<User> {
 /// [`RepoError::Conflict`] when the id or the email is taken.
 pub fn insert(conn: &Connection, user: &NewUser<'_>, now: i64) -> Result<()> {
     conn.execute(
-        "INSERT INTO users (id, email, role, quota_bytes, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO users (id, email, display_name, role, quota_bytes, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             user.id,
             user.email,
+            user.display_name,
             user.role.as_str(),
             user.quota_bytes,
             now

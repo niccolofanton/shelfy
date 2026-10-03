@@ -16,11 +16,15 @@
 //!
 //! Test libraries and budgets (P1-05): `synth` fills a user's empty library
 //! with synthetic posts and media, `bench` times the read routes on it.
+//! `create-user` (E6) adds the member account itself, such as the live
+//! host's mock account; every one of the above already takes a member by id
+//! or email, not the owner specifically.
 //!
 //! This file is the command dispatch: a new command adds its module and one
 //! line here.
 
 pub mod bench;
+pub mod create_user;
 pub mod install;
 pub mod invite;
 pub mod login_link;
@@ -56,6 +60,11 @@ pub struct AdminArgs {
 pub enum AdminCommand {
     /// Create the owner account (idempotent for the same email).
     CreateOwner(owner::CreateOwnerArgs),
+    /// Create a member account for tests (idempotent for the same email),
+    /// such as the live host's E6 mock account. The instance stays
+    /// owner-only (E4): there is no invite redemption route, so this is the
+    /// only way to get a second account.
+    CreateUser(create_user::CreateUserArgs),
     /// Create a one-time invite link for a new member. Unused while the
     /// instance is owner-only (E4).
     Invite(invite::InviteArgs),
@@ -95,6 +104,7 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
     let mut out = std::io::stdout().lock();
     match args.command {
         AdminCommand::CreateOwner(args) => owner::run(&data, &args, &mut out),
+        AdminCommand::CreateUser(args) => create_user::run(&data, &args, &mut out),
         AdminCommand::Invite(args) => invite::run(&data, &args, &mut out),
         AdminCommand::LoginLink(args) => login_link::run(&data, &args, &mut out),
         AdminCommand::Snapshot(args) => snapshot::run(&data, &args, &mut out),

@@ -94,6 +94,7 @@ pub fn create_owner(data: &DataDir, email: &str) -> anyhow::Result<CreateOwnerOu
             let owner = NewUser {
                 id: &id,
                 email: &email,
+                display_name: None,
                 role: Role::Owner,
                 quota_bytes: 0,
             };
@@ -117,7 +118,10 @@ pub fn create_owner(data: &DataDir, email: &str) -> anyhow::Result<CreateOwnerOu
 /// Creates (or opens and migrates) the user's empty library, so a fresh
 /// install has the whole layout of §2.5. A library locked for maintenance is
 /// left to the operator who locked it.
-fn create_library(data: &DataDir, user_id: &str) -> anyhow::Result<()> {
+///
+/// Shared with `admin create-user` ([`super::create_user`]): every account,
+/// owner or member, gets its library the same way.
+pub(crate) fn create_library(data: &DataDir, user_id: &str) -> anyhow::Result<()> {
     let path = data.library_db(user_id);
     if let Some(dir) = path.parent() {
         create_private_dir(dir).with_context(|| format!("cannot create {}", dir.display()))?;
