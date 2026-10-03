@@ -9,6 +9,13 @@
 // MAIN world has no `require('electron')`. Capture is relayed exclusively
 // through `window.__socialSavedBridge`, exposed by webview-preload.js via
 // contextBridge, which forwards to the host with ipcRenderer.sendToHost.
+//
+// The web port's MV3 extension bundles this file as its MAIN-world hook
+// (extension/src/content/hook.main.ts); without a contextBridge there, the
+// relay takes the postMessage fallback. Keep it a plain script: no runtime
+// import and no export, not even a type export. The desktop build transpiles
+// it file by file to CommonJS, and any export adds a `module.exports` line
+// that throws in the page before the hook installs.
 
 // File-internal types ───────────────────────────────────────────────────────
 
@@ -17,6 +24,12 @@
 interface InterceptMedia {
   type: 'image' | 'video';
   url: string;
+  // Video slides only: the direct MP4 the platform served (IG `video_versions`
+  // or GraphQL `video_url`, X `video_info.variants`, Pinterest's progressive
+  // MP4). `url` stays what the desktop stores: the poster on IG and X, the video
+  // itself on Pinterest. The web port keeps it for on-demand video; the desktop
+  // drops it (sanitizeInterceptedItem keeps only type and url).
+  videoUrl?: string;
 }
 
 // The normalized, post-like record produced by the parsers below and relayed to
@@ -45,6 +58,14 @@ interface ParseResult {
   hasNextPage: boolean | null;
 }
 
+// What the Instagram REST entry (window.__ssEmitInstagramRest) parsed and
+// relayed, so its caller learns whether the post it asked for came back.
+interface IgRestEmitSummary {
+  count: number;
+  ids: string[];
+  shortcodes: string[];
+}
+
 // Loose, structurally-typed views of the open-ended remote payloads. The walk
 // helpers and parsers treat every nested object as an index map of unknown.
 type JsonObject = { [key: string]: unknown };
@@ -69,6 +90,8 @@ declare global {
     __ssPinLastCursor?: string;
     __ssReplayPinterest?: () => void;
     __ssScanTwitterBookmarks?: () => void;
+    // Web port only (see emitInstagramRest): the desktop never calls it.
+    __ssEmitInstagramRest?: (body: unknown) => IgRestEmitSummary;
   }
   interface XMLHttpRequest {
     __swUrl?: string;
@@ -138,6 +161,133 @@ declare global {
     }
   }
 
+  // ── Direct video URLs (web port) ──────────────────────────────────────────
+  //
+  // A video slide also carries one direct MP4 the platform served, as
+  // `videoUrl`, for the web app's on-demand video. The picks are SPIKE-9's
+  // (docs/web-port/spikes/09-video-hydration.md): IG `video_versions[0]`, the
+  // best X MP4 at 1080p or less, Pinterest `V_720P`. Nothing else changes: `url`
+  // keeps the poster (IG, X) or the desktop's own pick of the video
+  // (Pinterest), and a slide without a usable URL gets no `videoUrl` key at all.
+  // URLs are kept verbatim, so each keeps its own expiry: an IG video's `oe` can
+  // fall 32 h after capture, its poster's after 104 h. The server reads both.
+
+  // Same cap as MAX_URL_LEN in src/lib/browserSanitize.ts: a longer URL would be
+  // dropped downstream, so the pick goes to the best variant that survives.
+  const MAX_VIDEO_URL_LEN = 4096;
+  // Real payloads list a handful of variants. Reading only the first 64 keeps
+  // the pick cheap however long a hostile array is.
+  const MAX_VIDEO_VARIANTS = 64;
+  // SPIKE-9: X variants above 1080p double the bytes for the same post.
+  const X_MAX_SHORT_SIDE = 1080;
+
+  function videoUrlOf(u: unknown): string {
+    return typeof u === 'string' && u.length <= MAX_VIDEO_URL_LEN && /^https?:\/\//i.test(u)
+      ? u
+      : '';
+  }
+
+  // A size or bitrate that is not a positive finite number ranks lowest.
+  function rankOf(n: unknown): number {
+    return typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0;
+  }
+
+  // Adds `videoUrl` to a video slide when `pick` finds one; `pick` runs for
+  // video slides only, and image slides are returned untouched.
+  function withVideoUrl(m: InterceptMedia, pick: () => string): InterceptMedia {
+    if (m.type === 'video') {
+      const videoUrl = pick();
+      if (videoUrl) m.videoUrl = videoUrl;
+    }
+    return m;
+  }
+
+  // IG REST `video_versions` ({ type, width, height, url }): the first entry.
+  // SPIKE-9 measured it as the progressive H.264 file, and the other entries
+  // served the same file. An entry without a usable URL is passed over.
+  function firstIgVideoVersion(versions: unknown): string {
+    if (!Array.isArray(versions)) return '';
+    const n = Math.min(versions.length, MAX_VIDEO_VARIANTS);
+    for (let i = 0; i < n; i++) {
+      const v = versions[i] as JsonObject | null;
+      const url = v && typeof v === 'object' ? videoUrlOf(v.url) : '';
+      if (url) return url;
+    }
+    return '';
+  }
+
+  // The short side of an X variant, from the `/<w>x<h>/` in its path
+  // (…/vid/avc1/1280x720/….mp4); 0 when the path has no size, as for GIFs.
+  function xVariantShortSide(url: string): number {
+    const m = /\/(\d{2,5})x(\d{2,5})\//.exec(url.split(/[?#]/, 1)[0]);
+    return m ? Math.min(Number(m[1]), Number(m[2])) : 0;
+  }
+
+  // X `video_info.variants`: the highest-bitrate `video/mp4` whose short side
+  // is at most 1080 px, else the highest-bitrate MP4 of any size. HLS playlists
+  // are skipped. A GIF has a single MP4 variant with bitrate 0.
+  function bestXVideoVariant(videoInfo: unknown): string {
+    const variants =
+      videoInfo && typeof videoInfo === 'object' ? (videoInfo as JsonObject).variants : null;
+    if (!Array.isArray(variants)) return '';
+    let best = '';
+    let bestRate = -1;
+    let any = '';
+    let anyRate = -1;
+    const n = Math.min(variants.length, MAX_VIDEO_VARIANTS);
+    for (let i = 0; i < n; i++) {
+      const v = variants[i] as JsonObject | null;
+      if (!v || typeof v !== 'object') continue;
+      const type = v.content_type;
+      if (typeof type !== 'string' || type.toLowerCase() !== 'video/mp4') continue;
+      const url = videoUrlOf(v.url);
+      if (!url) continue;
+      const rate = rankOf(v.bitrate);
+      if (rate > anyRate) {
+        any = url;
+        anyRate = rate;
+      }
+      if (rate > bestRate && xVariantShortSide(url) <= X_MAX_SHORT_SIDE) {
+        best = url;
+        bestRate = rate;
+      }
+    }
+    return best || any;
+  }
+
+  // A progressive MP4 (by its path); an HLS playlist is not a direct video.
+  function directMp4Url(u: unknown): string {
+    const url = videoUrlOf(u);
+    return url && /\.mp4$/i.test(url.split(/[?#]/, 1)[0]) ? url : '';
+  }
+
+  // Pinterest `videos.video_list`: the `V_720P` MP4, else the widest MP4.
+  // Chosen apart from `url`, which keeps the desktop's own pick (pinVideoUrl);
+  // both are the same file whenever the pin has a `V_720P`. Keys are compared
+  // without underscores or case, so `v720P` counts too.
+  function pinDirectMp4(videos: unknown): string {
+    const list = videos && typeof videos === 'object' ? (videos as JsonObject).video_list : null;
+    if (!list || typeof list !== 'object') return '';
+    const map = list as JsonObject;
+    const keys = Object.keys(map);
+    let widest = '';
+    let widestWidth = -1;
+    const n = Math.min(keys.length, MAX_VIDEO_VARIANTS);
+    for (let i = 0; i < n; i++) {
+      const v = map[keys[i]] as JsonObject | null;
+      if (!v || typeof v !== 'object') continue;
+      const url = directMp4Url(v.url);
+      if (!url) continue;
+      if (keys[i].replace(/_/g, '').toUpperCase() === 'V720P') return url;
+      const width = rankOf(v.width);
+      if (width > widestWidth) {
+        widest = url;
+        widestWidth = width;
+      }
+    }
+    return widest;
+  }
+
   // ── Instagram parser ──────────────────────────────────────────────────────
 
   function parseInstagramResponse(data: JsonObject): ParseResult {
@@ -162,13 +312,17 @@ declare global {
         let mediaType = 'image';
         if (item.media_type === 2) mediaType = 'video';
         else if (item.media_type === 8) mediaType = 'carousel';
-        const oneMedia = (m: JsonObject): InterceptMedia => ({
-          type: m.media_type === 2 ? 'video' : 'image',
-          url:
-            (((m.image_versions2 as JsonObject)?.candidates as JsonObject[])?.[0]?.url as
-              | string
-              | undefined) || '',
-        });
+        const oneMedia = (m: JsonObject): InterceptMedia =>
+          withVideoUrl(
+            {
+              type: m.media_type === 2 ? 'video' : 'image',
+              url:
+                (((m.image_versions2 as JsonObject)?.candidates as JsonObject[])?.[0]?.url as
+                  | string
+                  | undefined) || '',
+            },
+            () => firstIgVideoVersion(m.video_versions),
+          );
         const carouselMedia = item.carousel_media as JsonObject[] | undefined;
         const media = (
           Array.isArray(carouselMedia) && carouselMedia.length > 0
@@ -278,14 +432,18 @@ declare global {
         if (node.__typename === 'GraphVideo' || node.is_video) mediaType = 'video';
         else if (node.__typename === 'GraphSidecar' || node.edge_sidecar_to_children)
           mediaType = 'carousel';
-        const childMedia = (c: JsonObject): InterceptMedia => ({
-          type: c.__typename === 'GraphVideo' || c.is_video ? 'video' : 'image',
-          url:
-            (c.display_url as string | undefined) ||
-            (c.thumbnail_src as string | undefined) ||
-            ((c.thumbnail_resources as JsonObject[])?.[0]?.src as string | undefined) ||
-            '',
-        });
+        const childMedia = (c: JsonObject): InterceptMedia =>
+          withVideoUrl(
+            {
+              type: c.__typename === 'GraphVideo' || c.is_video ? 'video' : 'image',
+              url:
+                (c.display_url as string | undefined) ||
+                (c.thumbnail_src as string | undefined) ||
+                ((c.thumbnail_resources as JsonObject[])?.[0]?.src as string | undefined) ||
+                '',
+            },
+            () => videoUrlOf(c.video_url),
+          );
         const children = (node.edge_sidecar_to_children as JsonObject)?.edges as
           | JsonObject[]
           | undefined;
@@ -386,10 +544,14 @@ declare global {
         }
         const media = mediaEntities
           .map(
-            (m): InterceptMedia => ({
-              type: m.type === 'video' || m.type === 'animated_gif' ? 'video' : 'image',
-              url: (m.media_url_https as string | undefined) || '',
-            }),
+            (m): InterceptMedia =>
+              withVideoUrl(
+                {
+                  type: m.type === 'video' || m.type === 'animated_gif' ? 'video' : 'image',
+                  url: (m.media_url_https as string | undefined) || '',
+                },
+                () => bestXVideoVariant(m.video_info),
+              ),
           )
           .filter((m) => m.url);
         items.push({
@@ -511,7 +673,7 @@ declare global {
           if (b && b.video) {
             const u = pinVideoUrl(b.video);
             if (u) {
-              media.push({ type: 'video', url: u });
+              media.push(withVideoUrl({ type: 'video', url: u }, () => pinDirectMp4(b.video)));
               added = true;
               break;
             }
@@ -537,7 +699,7 @@ declare global {
       }
     } else if (p.videos && (p.videos as JsonObject).video_list) {
       const u = pinVideoUrl(p.videos);
-      if (u) media.push({ type: 'video', url: u });
+      if (u) media.push(withVideoUrl({ type: 'video', url: u }, () => pinDirectMp4(p.videos)));
     }
     const cover = pinImageUrl(p.images);
     if (media.length === 0 && cover) media.push({ type: 'image', url: cover });
@@ -771,6 +933,37 @@ declare global {
           : parseTwitterResponse(data);
     emit(items, hasNextPage, platform);
   }
+
+  // Instagram REST parse-and-emit entry, for the web port's extension only: the
+  // desktop never calls it. The extension's MAIN-world helpers fetch REST bodies
+  // that matchPlatform deliberately leaves alone, such as
+  // /api/v1/media/<pk>/info/ when a post's expired media URLs are refreshed, and
+  // hand the body (parsed, or its raw text) to this entry. It is parsed by the
+  // REST branch of parseInstagramResponse and relayed through emit(), like a
+  // saved-feed page. Only REST bodies (a non-empty `items` or `feed_items`)
+  // are accepted, so a caller never starts the GraphQL walk. The relay says
+  // hasNextPage=null: a media-info body's more_available=false does not end a
+  // feed. Never throws: a body that fails to parse or relay counts 0.
+  function emitInstagramRest(body: unknown): IgRestEmitSummary {
+    const none: IgRestEmitSummary = { count: 0, ids: [], shortcodes: [] };
+    try {
+      const data: unknown = typeof body === 'string' ? JSON.parse(body) : body;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return none;
+      const rec = data as JsonObject;
+      const restItems = rec.items || rec.feed_items;
+      if (!Array.isArray(restItems) || restItems.length === 0) return none;
+      const { items } = parseInstagramResponse(rec);
+      emit(items, null, 'instagram');
+      return {
+        count: items.length,
+        ids: items.map((it) => it.id),
+        shortcodes: items.map((it) => it.shortcode),
+      };
+    } catch {
+      return none;
+    }
+  }
+  window.__ssEmitInstagramRest = emitInstagramRest;
 
   // Pinterest server-renders the FIRST page of a board's pins inline in the page
   // HTML (in a JSON <script>), so the passive fetch/XHR hook never sees it — only
