@@ -7,13 +7,17 @@ import { BUILD } from '../shared/build-info';
 import {
   EXTERNAL,
   MSG,
-  PLATFORMS,
   parseCaptureMessage,
   parseCensusRuntimeMessage,
   parseSettingsPatch,
+  parseSyncEndMessage,
+  parseSyncKnownRequest,
+  parseSyncMainRequest,
+  parseSyncProgressMessage,
+  parseSyncStartRequest,
+  parseSyncStopRequest,
   type CensusCounts,
   type PingAnswer,
-  type Platform,
 } from '../shared/protocol';
 import { EXTENSION_VERSION } from '../shared/version';
 import { ApiClient } from './api';
@@ -27,6 +31,7 @@ import { Queue } from './queue/queue';
 import { Router } from './router';
 import { SettingsStore } from './settings';
 import { panelState } from './state';
+import { SyncService } from './sync/service';
 import { Uploader } from './uploader';
 
 const ALARM = {
@@ -120,11 +125,32 @@ const uploader = new Uploader({
   random: Math.random,
   wakeAt,
   changed,
+  closed: (run): Promise<void> => sync.closed(run),
 });
 
 function flush(force = false): void {
   uploader.flush({ force }).catch((err: unknown) => log('flush', err));
 }
+
+// The worker's side of explicit syncs (P2-13): the walk itself runs in the tab.
+const sync = new SyncService({
+  queue,
+  store,
+  config,
+  api,
+  tabs: {
+    get: (tabId) => chrome.tabs.get(tabId),
+    sendMessage: (tabId, message, options) => chrome.tabs.sendMessage(tabId, message, options),
+  },
+  executeScript: (injection) => chrome.scripting.executeScript(injection),
+  storage: chrome.storage.local,
+  now,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  flush,
+  block: (failure, action): Promise<void> => uploader.block(failure, action),
+  changed,
+  log,
+});
 
 // ── Runs, config and start-up ───────────────────────────────────────────────
 
@@ -166,6 +192,7 @@ async function refreshConfig(force = false): Promise<void> {
 async function maintenance(): Promise<void> {
   await refreshConfig().catch((err: unknown) => log('config', err));
   await endStaleRuns().catch((err: unknown) => log('runs', err));
+  await sync.endStale(tabExists).catch((err: unknown) => log('syncs', err));
   await uploader.flush();
 }
 
@@ -200,14 +227,6 @@ async function addCensus(counts: CensusCounts): Promise<void> {
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 
-/** Syncs running per platform (C9 ping). The sync controller (P2-13, P2-15) reports here. */
-function syncing(): Record<Platform, boolean> {
-  return Object.fromEntries(PLATFORMS.map((platform) => [platform, false])) as Record<
-    Platform,
-    boolean
-  >;
-}
-
 const router = new Router(chrome.runtime.id, origin, log)
   .internal(MSG.capture, 'content', async (message, sender) => {
     const capture = parseCaptureMessage(message);
@@ -240,6 +259,7 @@ const router = new Router(chrome.runtime.id, origin, log)
       queue,
       config,
       census: () => (Object.keys(census).length ? census : null),
+      syncs: () => sync.views(),
     });
   })
   .internal(MSG.settingsSet, 'page', async (message) => {
@@ -272,6 +292,37 @@ const router = new Router(chrome.runtime.id, origin, log)
     changed();
     return { ok: true };
   })
+  // P2-13: explicit syncs. The panel starts and stops them; the tab's controller reports.
+  .internal(MSG.syncStart, 'page', async (message) => {
+    const request = parseSyncStartRequest(message);
+    if (!request) return { ok: false, code: 'bad_request' };
+    return sync.start({
+      tabId: request.tabId,
+      trigger: 'manual',
+      collection: request.collection,
+      name: request.name,
+    });
+  })
+  .internal(MSG.syncStop, 'page', async (message) => {
+    const request = parseSyncStopRequest(message);
+    return request ? sync.stop(request.tabId) : { ok: false, code: 'bad_request' };
+  })
+  .internal(MSG.syncMain, 'content', async (message, sender) => {
+    const request = parseSyncMainRequest(message);
+    return request ? sync.main(request, sender) : { ok: false };
+  })
+  .internal(MSG.syncKnown, 'content', async (message, sender) => {
+    const request = parseSyncKnownRequest(message);
+    return request ? sync.known(request, sender) : { ok: false };
+  })
+  .internal(MSG.syncProgress, 'content', async (message, sender) => {
+    const progress = parseSyncProgressMessage(message);
+    return progress ? sync.progress(progress, sender) : { ok: false };
+  })
+  .internal(MSG.syncEnd, 'content', async (message, sender) => {
+    const end = parseSyncEndMessage(message);
+    return end ? sync.end(end, sender) : { ok: false };
+  })
   .external(EXTERNAL.ping, async () => {
     const [pairing, status] = await Promise.all([store.pairing(), store.status()]);
     const answer: PingAnswer = {
@@ -279,7 +330,7 @@ const router = new Router(chrome.runtime.id, origin, log)
       version: EXTENSION_VERSION,
       paired: pairing !== null,
       outdated: status.outdated,
-      syncing: syncing(),
+      syncing: await sync.syncing(),
     };
     return answer;
   })
@@ -318,6 +369,12 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     .catch((err: unknown) => log('tab closed', err));
 });
 
+// A syncing tab navigated: a login wall, a reload or a new page ends its run (P2-13).
+chrome.tabs.onUpdated.addListener((tabId, change) => {
+  if (change.url || change.status === 'loading')
+    sync.tabUpdated(tabId, change).catch((err: unknown) => log('sync tab', err));
+});
+
 chrome.runtime.onInstalled.addListener(() => {
   enablePanelOnActionClick().catch((err: unknown) => log('side panel', err));
 });
@@ -339,6 +396,7 @@ enablePanelOnActionClick().catch((err: unknown) => log('side panel', err));
 void (async () => {
   await ensureMaintenanceAlarm().catch((err: unknown) => log('alarm', err));
   await endStaleRuns().catch((err: unknown) => log('runs', err));
+  await sync.endStale(tabExists).catch((err: unknown) => log('syncs', err));
   await refreshConfig().catch((err: unknown) => log('config', err));
   await uploader.flush();
 })().catch((err: unknown) => log('start-up', err));

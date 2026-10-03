@@ -8,10 +8,19 @@
 //            `key` is the Idempotency-Key and stays the same across retries
 //   runs     sync runs the queued items belong to (C4), keyed by a local ULID
 //   meta     one record: counters, the open groups, recent message ids
+//   runKeys  the keys the server accepted, per batch and run, kept 7 days (P2-13, for P2-19's
+//            run report); keyed by the batch's Idempotency-Key, indexed by run and time
 
 import type { WireListing } from '../../shared/listing';
-import type { Platform, Trigger, WireSource } from '../../shared/protocol';
-import type { BatchClient, CollectionMode, StopReason } from '../contracts';
+import type {
+  Platform,
+  SyncEndReason,
+  SyncMode,
+  SyncPhase,
+  Trigger,
+  WireSource,
+} from '../../shared/protocol';
+import type { BatchClient, CollectionMode } from '../contracts';
 import type { WireItem } from '../prefilter';
 
 export interface Chunk {
@@ -61,7 +70,7 @@ export interface Run {
   docId: string | null;
   listingKey: string;
   state: RunState;
-  stopReason: StopReason | null;
+  stopReason: SyncEndReason | null;
   /** Relayed messages and accepted items, reported in the closing PATCH (C4). */
   pages: number;
   scanned: number;
@@ -70,13 +79,69 @@ export interface Run {
   createdAt: number;
   lastAt: number;
   endedAt: number | null;
+  // P2-13. Explicit runs (manual, web, scheduled) fill these; passive runs keep the defaults
+  // (normalizeRun completes records stored by an older build).
+  /** What the server answered at POST /sync-runs (C4). */
+  incremental: boolean;
+  stopAfterKnown: number;
+  collectionId: number | null;
+  /** From the ingest results (C5): new and known items, and the trailing run of known ones. */
+  inserted: number;
+  known: number;
+  knownStreak: number;
+  /** Reported in the closing PATCH: the cursor of a capped walk, and an error code. */
+  resumeCursor: string | null;
+  errorCode: string | null;
+  /** The controller's last report. */
+  phase: SyncPhase | null;
+  steps: number;
+  replayPages: number;
+  /** Modes the config killed, skipped by the walk. */
+  skipped: SyncMode[];
 }
+
+/** The P2-13 fields of a run, as a passive run (or a record of an older build) has them. */
+export const RUN_SYNC_DEFAULTS = {
+  incremental: false,
+  stopAfterKnown: 0,
+  collectionId: null,
+  inserted: 0,
+  known: 0,
+  knownStreak: 0,
+  resumeCursor: null,
+  errorCode: null,
+  phase: null,
+  steps: 0,
+  replayPages: 0,
+  skipped: [],
+} satisfies Partial<Run>;
+
+/** A stored run completed with the fields a newer build added. */
+export function normalizeRun(value: Run): Run {
+  return { ...structuredClone(RUN_SYNC_DEFAULTS), ...value };
+}
+
+/** The keys one ingest batch got accepted under (C5 `results[].key`), for the run report. */
+export interface RunKeys {
+  /** The batch's Idempotency-Key. */
+  id: string;
+  runId: string;
+  /** The server's run id the batch was sent with. */
+  serverRunId: string | null;
+  at: number;
+  keys: string[];
+}
+
+/** Accepted keys are kept this long (P2-13). */
+export const RUN_KEYS_TTL_MS = 7 * 24 * 60 * 60_000;
 
 export interface GroupInfo {
   runId: string;
   firstAt: number;
   count: number;
   bytes: number;
+  /** An explicit sync's group: sealed at once, so each page's outcome comes back (P2-13). */
+  eager?: boolean;
 }
 
 export const DISCARD_REASONS = [
@@ -189,6 +254,11 @@ export interface QueueTx {
   putRun(run: Run): Promise<void>;
   deleteRun(id: string): Promise<void>;
   runs(): Promise<Run[]>;
+  putRunKeys(record: RunKeys): Promise<void>;
+  /** A run's accepted keys, oldest batch first. */
+  runKeys(runId: string): Promise<RunKeys[]>;
+  /** Deletes the records older than `before`; returns how many. */
+  pruneRunKeys(before: number): Promise<number>;
 }
 
 export interface QueueStore {

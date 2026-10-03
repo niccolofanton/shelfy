@@ -45,11 +45,17 @@ export interface UploaderDeps {
   wakeAt(at: number): void;
   /** Something the panel shows changed. */
   changed(): void;
+  /** A run's closing PATCH went out (or there was nothing left to report): P2-13's history. */
+  closed?(run: Run): Promise<void> | void;
 }
 
 type Step = 'next' | 'stop';
 
-/** The closing PATCH of a run (C4). Passive runs end `done`, never claiming the end of the feed. */
+/**
+ * The closing PATCH of a run (C4). Passive runs end `done`, never claiming the end of the feed.
+ * A walk that stalled (no end-of-feed signal) ends `done` without a stop reason, so the server
+ * does not take it for a full walk; only a page-capped walk reports its cursor (P2-G2).
+ */
 export function closingPatch(run: Run): SyncRunPatch {
   const reason = run.stopReason ?? 'user';
   const state: RunState =
@@ -62,9 +68,9 @@ export function closingPatch(run: Run): SyncRunPatch {
     state,
     pages: run.pages,
     scanned: run.scanned,
-    stopReason: reason,
-    resumeCursor: null,
-    errorCode: null,
+    stopReason: reason === 'stalled' ? null : reason,
+    resumeCursor: reason === 'page_cap' ? run.resumeCursor : null,
+    errorCode: run.errorCode,
   };
 }
 
@@ -232,26 +238,31 @@ export class Uploader {
   }
 
   private async closeRun(run: Run): Promise<Step> {
-    const { queue, api } = this.deps;
+    const { api } = this.deps;
     if (!run.serverId) {
-      await queue.forgetRun(run.id);
+      await this.forget(run);
       return 'next';
     }
     const response = await api.patch(API.syncRun(run.serverId), closingPatch(run), {
       auth: 'token',
     });
     if (response.ok) {
-      await queue.forgetRun(run.id);
+      await this.forget(run);
       return 'next';
     }
     const action = classifyFailure(response.failure);
     if (action.action === 'drop' || action.action === 'recreate_run') {
       // The server no longer knows the run, or refuses the patch: nothing left to report.
-      await queue.forgetRun(run.id);
+      await this.forget(run);
       return 'next';
     }
     await this.block(response.failure, action);
     return 'stop';
+  }
+
+  private async forget(run: Run): Promise<void> {
+    await this.deps.queue.forgetRun(run.id);
+    await this.deps.closed?.(run);
   }
 
   private async succeeded(): Promise<void> {

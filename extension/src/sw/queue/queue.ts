@@ -13,11 +13,12 @@
 //   Each method is one transaction.
 
 import type { WireListing } from '../../shared/listing';
-import type { Platform, Trigger, WireSource } from '../../shared/protocol';
+import type { Platform, SyncEndReason, Trigger, WireSource } from '../../shared/protocol';
 import { ulid as defaultUlid } from '../../shared/ulid';
-import type { BatchClient, CollectionMode, IngestResult, StopReason } from '../contracts';
+import type { BatchClient, CollectionMode, IngestResult } from '../contracts';
 import { itemBytes, type WireItem } from '../prefilter';
 import {
+  RUN_SYNC_DEFAULTS,
   type Batch,
   type Chunk,
   type Counters,
@@ -26,6 +27,7 @@ import {
   type QueueStore,
   type QueueTx,
   type Run,
+  type RunKeys,
 } from './types';
 
 export interface QueueOptions {
@@ -277,6 +279,7 @@ export class Queue {
           id: this.ulid(),
           serverId: null,
           ...spec,
+          ...structuredClone(RUN_SYNC_DEFAULTS),
           state: 'open',
           stopReason: null,
           pages: 0,
@@ -323,7 +326,13 @@ export class Queue {
         bytes: piece.bytes,
         at: input.at,
       });
-      const info = meta.groups[group] ?? { runId: run.id, firstAt: input.at, count: 0, bytes: 0 };
+      const info = meta.groups[group] ?? {
+        runId: run.id,
+        firstAt: input.at,
+        count: 0,
+        bytes: 0,
+        ...(run.trigger === 'passive' ? {} : { eager: true }),
+      };
       info.count += piece.items.length;
       info.bytes += piece.bytes;
       meta.groups[group] = info;
@@ -374,6 +383,7 @@ export class Queue {
       for (const [group, info] of Object.entries(meta.groups)) {
         const due =
           all ||
+          info.eager === true ||
           info.firstAt + this.options.windowMs <= now ||
           info.count >= this.options.maxBatchItems ||
           info.bytes >= this.options.maxBatchBytes;
@@ -423,7 +433,24 @@ export class Queue {
         counters.batches -= 1;
         counters.queuedItems -= batch.count;
         counters.sentItems += batch.count;
-        await this.touchRun(tx, touched, batch.runId, (run) => (run.queued -= batch.count));
+        await this.touchRun(tx, touched, batch.runId, (run) => {
+          run.queued -= batch.count;
+          run.inserted += result.inserted;
+          run.known += result.known;
+          // The trailing run of known items, in item order (P2-G1): batches of a run are sent
+          // in order, so this follows the listing.
+          for (const entry of [...result.results].sort((a, b) => a.index - b.index))
+            run.knownStreak = entry.outcome === 'known' ? run.knownStreak + 1 : 0;
+        });
+        const keys = result.results.map((entry) => entry.key);
+        if (keys.length)
+          await tx.putRunKeys({
+            id: batch.key,
+            runId: batch.runId,
+            serverRunId: batch.sentRunId,
+            at,
+            keys,
+          });
       }
       counters.sentBatches += 1;
       counters.inserted += result.inserted;
@@ -516,7 +543,7 @@ export class Queue {
   }
 
   /** Ends the open runs `match` selects; returns how many it ended. */
-  endRuns(match: (run: Run) => boolean, reason: StopReason, at: number): Promise<number> {
+  endRuns(match: (run: Run) => boolean, reason: SyncEndReason, at: number): Promise<number> {
     return this.store.transaction(async (tx) => {
       let ended = 0;
       for (const run of await tx.runs()) {
@@ -536,6 +563,71 @@ export class Queue {
     return this.store.transaction(async (tx) =>
       (await tx.runs()).filter((run) => run.state === 'ended' && run.queued <= 0),
     );
+  }
+
+  // ── Explicit runs (P2-13) ─────────────────────────────────────────────────
+
+  /** Opens an explicit run (manual, web, scheduled): the sync controller walks it. */
+  openRun(spec: RunSpec & Partial<Pick<Run, 'incremental' | 'stopAfterKnown'>>, at: number) {
+    return this.store.transaction(async (tx): Promise<Run> => {
+      const run: Run = {
+        id: this.ulid(),
+        serverId: null,
+        ...structuredClone(RUN_SYNC_DEFAULTS),
+        ...spec,
+        state: 'open',
+        stopReason: null,
+        pages: 0,
+        scanned: 0,
+        queued: 0,
+        createdAt: at,
+        lastAt: at,
+        endedAt: null,
+      };
+      await tx.putRun(run);
+      return run;
+    });
+  }
+
+  /**
+   * Appends a capture to an open run (an explicit sync's batches): like capturePassive, without
+   * finding or opening a run. A run that is gone or ended takes nothing (`run: null`).
+   */
+  captureToRun(runId: string, input: CaptureInput): Promise<CaptureResult> {
+    return this.store.transaction(async (tx) => {
+      const meta = await tx.meta();
+      if (input.messageId && meta.recent.includes(input.messageId))
+        return { run: null, accepted: 0, dropped: 0, duplicate: true, full: false };
+      const run = await tx.getRun(runId);
+      if (!run || run.state !== 'open')
+        return { run: null, accepted: 0, dropped: 0, duplicate: false, full: false };
+      const touched = new Map<string, Run>([[run.id, run]]);
+      const result = await this.appendTo(tx, meta, touched, run, input);
+      await this.saveRuns(tx, touched);
+      await tx.putMeta(meta);
+      return { run, duplicate: false, ...result };
+    });
+  }
+
+  /** Changes a run in one transaction; returns it as saved, or null when it is gone. */
+  updateRun(id: string, change: (run: Run) => void): Promise<Run | null> {
+    return this.store.transaction(async (tx) => {
+      const run = await tx.getRun(id);
+      if (!run) return null;
+      change(run);
+      await tx.putRun(run);
+      return run;
+    });
+  }
+
+  /** The keys the server accepted for a run, in the last 7 days (P2-19's run report). */
+  runKeys(runId: string): Promise<RunKeys[]> {
+    return this.store.transaction((tx) => tx.runKeys(runId));
+  }
+
+  /** Forgets accepted keys older than `before`. */
+  pruneRunKeys(before: number): Promise<number> {
+    return this.store.transaction((tx) => tx.pruneRunKeys(before));
   }
 
   forgetRun(id: string): Promise<void> {

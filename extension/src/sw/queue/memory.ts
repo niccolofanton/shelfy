@@ -4,12 +4,14 @@
 
 import {
   emptyMeta,
+  normalizeRun,
   type Batch,
   type Chunk,
   type QueueMeta,
   type QueueStore,
   type QueueTx,
   type Run,
+  type RunKeys,
 } from './types';
 
 interface State {
@@ -18,6 +20,7 @@ interface State {
   batches: Map<string, Batch>;
   runs: Map<string, Run>;
   meta: QueueMeta;
+  runKeys: Map<string, RunKeys>;
 }
 
 const copy = <T>(value: T): T => structuredClone(value);
@@ -29,6 +32,7 @@ export class MemoryQueueStore implements QueueStore {
     batches: new Map(),
     runs: new Map(),
     meta: emptyMeta(),
+    runKeys: new Map(),
   };
   private chain: Promise<unknown> = Promise.resolve();
   /** Transactions run so far (tests use it to check that work is batched). */
@@ -50,12 +54,13 @@ export class MemoryQueueStore implements QueueStore {
   }
 
   /** A copy of everything stored (tests inspect it). */
-  dump(): { chunks: Chunk[]; batches: Batch[]; runs: Run[]; meta: QueueMeta } {
+  dump(): { chunks: Chunk[]; batches: Batch[]; runs: Run[]; meta: QueueMeta; runKeys: RunKeys[] } {
     return copy({
       chunks: [...this.state.chunks.values()],
       batches: [...this.state.batches.values()].sort((a, b) => (a.id < b.id ? -1 : 1)),
       runs: [...this.state.runs.values()],
       meta: this.state.meta,
+      runKeys: [...this.state.runKeys.values()],
     });
   }
 
@@ -96,11 +101,26 @@ export class MemoryQueueStore implements QueueStore {
           .sort(),
       getRun: async (id) => {
         const run = state().runs.get(id);
-        return run ? copy(run) : null;
+        return run ? normalizeRun(copy(run)) : null;
       },
       putRun: async (run) => void state().runs.set(run.id, copy(run)),
       deleteRun: async (id) => void state().runs.delete(id),
-      runs: async () => [...state().runs.values()].map(copy),
+      runs: async () => [...state().runs.values()].map((run) => normalizeRun(copy(run))),
+      putRunKeys: async (record) => void state().runKeys.set(record.id, copy(record)),
+      runKeys: async (runId) =>
+        [...state().runKeys.values()]
+          .filter((record) => record.runId === runId)
+          .sort((a, b) => a.at - b.at)
+          .map(copy),
+      pruneRunKeys: async (before) => {
+        let removed = 0;
+        for (const [id, record] of state().runKeys)
+          if (record.at < before) {
+            state().runKeys.delete(id);
+            removed += 1;
+          }
+        return removed;
+      },
     };
   }
 }

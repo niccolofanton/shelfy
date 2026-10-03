@@ -23,6 +23,8 @@ export interface Sender {
   url?: string;
   origin?: string;
   frameId?: number;
+  /** The sender document (Chrome 106+): the sync controller's MAIN-world target (P2-13). */
+  documentId?: string;
   tab?: { id?: number; url?: string };
 }
 

@@ -69,7 +69,12 @@ declare namespace chrome {
 
     // Delivers to the content scripts of the tab; rejects when none of this extension's
     // instance is listening (e.g. the tab was loaded before the extension was reloaded).
-    function sendMessage<T = unknown>(tabId: number, message: unknown): Promise<T>;
+    // `frameId` or `documentId` (Chrome 106+) narrows it to one frame or document.
+    function sendMessage<T = unknown>(
+      tabId: number,
+      message: unknown,
+      options?: { frameId?: number; documentId?: string },
+    ): Promise<T>;
 
     const onActivated: {
       addListener(callback: (activeInfo: { tabId: number; windowId: number }) => void): void;
@@ -102,6 +107,29 @@ declare namespace chrome {
     function get(name: string): Promise<Alarm | undefined>;
 
     const onAlarm: { addListener(callback: (alarm: Alarm) => void): void };
+  }
+
+  /** P2-13: the sync controller's MAIN-world helpers (main/replay.ts). */
+  namespace scripting {
+    type InjectionTarget =
+      | { tabId: number; frameIds?: number[]; allFrames?: boolean }
+      | { tabId: number; documentIds: string[] };
+
+    interface InjectionResult {
+      frameId: number;
+      documentId?: string;
+      result?: unknown;
+    }
+
+    // `func` is serialized with toString(): it must not reference anything outside itself.
+    // `args` are JSON-serializable values passed to it.
+    function executeScript(injection: {
+      target: InjectionTarget;
+      world?: 'ISOLATED' | 'MAIN';
+      func: (...args: never[]) => unknown;
+      args?: unknown[];
+      injectImmediately?: boolean;
+    }): Promise<InjectionResult[]>;
   }
 
   namespace sidePanel {
