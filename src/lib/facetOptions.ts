@@ -1,14 +1,6 @@
-// Static facet-value lists for the Gallery's filter drawer (category, content
-// type, AI status — plan §1.2 #13). There is no facet-values endpoint yet:
-// P3-04 builds `GET /facets` and P3-21 wires it in. Until then each facet is a
-// fixed list, behind its own function here, so swapping one for a live lookup
-// later is a one-function change with no call-site churn.
-//
-// The category/content-type vocabulary mirrors the desktop's web-reference
-// catalog (electron/analyzer.ts WEB_INDUSTRY_ENUM / WEB_PURPOSE_ENUM): today
-// only web posts carry `aiCategory`/`aiContentType` (social posts leave them
-// null), so filtering by either facet only ever narrows to websites — correct
-// until P3 generalizes the catalog schema to every platform.
+// Desktop facet defaults and the localized label vocabulary. The web drawer
+// reads values/counts from GET /facets and uses these lists only for known labels.
+// Unknown server values remain visible verbatim.
 
 export interface FacetOption {
   value: string;

@@ -69,6 +69,7 @@ export default function AiSettings({ api }: { api: AiProvidersApi }): React.JSX.
     let active = true;
     const changed = (event: Event): void => {
       const change = (event as CustomEvent<ProviderSettingsChange>).detail;
+      if (change.aiSuggestions !== undefined) return;
       void api
         .getSettings()
         .then((value) => {
@@ -122,6 +123,7 @@ export default function AiSettings({ api }: { api: AiProvidersApi }): React.JSX.
       setDraft(value);
       setSaved(value);
       setSuccess(true);
+      notifyProviderSettingsChanged({ aiSuggestions: value.aiSuggestions });
     } catch (error) {
       setSaveError(error);
     } finally {

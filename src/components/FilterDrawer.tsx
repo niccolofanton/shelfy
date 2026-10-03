@@ -12,7 +12,10 @@ import {
   Activity,
   Eye,
 } from 'lucide-react';
-import { useT } from '../i18n';
+import { localeTag, useLang, useT } from '../i18n';
+import type { LibraryFacet, LibraryFacetsApi } from '../api/facets';
+import { useLibraryFacets } from '../hooks/useLibraryFacets';
+import { useFailureText } from '../hooks/useFailureText';
 import { useDialog } from '../hooks/useDialog';
 import { NARROW_QUERY, useMediaQuery } from './ui/useMediaQuery';
 import { categoryOptions, contentTypeOptions, aiStatusOptions } from '../lib/facetOptions';
@@ -35,6 +38,7 @@ interface FilterDrawerFilters {
   category?: string;
   contentType?: string;
   aiStatus?: string;
+  aiLanguage?: string;
 }
 
 // A library source selection routed back up to App (same path as the sidebar).
@@ -81,6 +85,7 @@ interface FilterDrawerProps<F extends FilterDrawerFilters> {
   // desktop's query builder only has the coarser analyzed/unanalyzed split
   // that `aiTagged` already covers. Default false (the desktop build).
   showAiStatus?: boolean;
+  facetsApi?: LibraryFacetsApi;
   // The filtered post total (what the toolbar's count shows): the bottom
   // sheet's footer applies/closes with "Show N posts" (audit GAL-1).
   filteredTotal?: number;
@@ -205,10 +210,14 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
   activeSource,
   onSelectSource,
   showAiStatus = false,
+  facetsApi,
   filteredTotal = 0,
   viewControls = null,
 }: FilterDrawerProps<F>): React.JSX.Element | null {
   const t: Translate = useT('filterDrawer');
+  const { lang } = useLang();
+  const failure = useFailureText();
+  const live = useLibraryFacets(facetsApi, open);
   const narrow = useMediaQuery(NARROW_QUERY);
   // Below 1280px (but not narrow) the panel overlays the grid instead of
   // pushing it; narrow is the bottom sheet; ≥1280px is the inline push panel.
@@ -245,10 +254,8 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
     { value: 'untagged', label: t('aiUntagged') },
   ];
 
-  // Category / content type / AI status (§1.2 #13): static lists (no
-  // facet-values endpoint yet, P3-04/P3-21), each behind its own function in
-  // src/lib/facetOptions.ts so swapping one for a live lookup later touches
-  // only that function.
+  // Desktop defaults also supply localized labels for known server values.
+  // Web choices and their counts always come from the live facets API.
   const CATEGORY_OPTIONS: SelectOption[] = categoryOptions().map((o) => ({
     value: o.value,
     label: t(`facetCategory.${o.key}`),
@@ -261,6 +268,45 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
     value: o.value,
     label: t(`facetAiStatus.${o.key}`),
   }));
+  const options = (
+    values: LibraryFacet[] | undefined,
+    selected: string | undefined,
+    label: (value: string) => string,
+  ): SelectOption[] => {
+    const rows = values ?? [];
+    const result = rows.map(({ value, count }) => ({
+      value,
+      label: `${label(value)} (${formatCount(count)})`,
+    }));
+    if (selected && !rows.some((row) => row.value === selected))
+      result.push({ value: selected, label: `${label(selected)}${values ? ' (0)' : ''}` });
+    return result;
+  };
+  const knownLabel = (value: string, staticOptions: SelectOption[]) =>
+    staticOptions.find((option) => option.value === value)?.label ?? value;
+  const languageLabel = (value: string): string => {
+    try {
+      return new Intl.DisplayNames([localeTag(lang)], { type: 'language' }).of(value) ?? value;
+    } catch {
+      return value;
+    }
+  };
+  const categories = facetsApi
+    ? options(live.facets?.category, filters.category, (value) =>
+        knownLabel(value, CATEGORY_OPTIONS),
+      )
+    : CATEGORY_OPTIONS;
+  const contentTypes = facetsApi
+    ? options(live.facets?.contentType, filters.contentType, (value) =>
+        knownLabel(value, CONTENT_TYPE_OPTIONS),
+      )
+    : CONTENT_TYPE_OPTIONS;
+  const statuses = facetsApi
+    ? options(live.facets?.status, filters.aiStatus, (value) =>
+        value === 'none' ? t('facetAiStatus.none') : knownLabel(value, AI_STATUS_OPTIONS),
+      )
+    : AI_STATUS_OPTIONS;
+  const languages = options(live.facets?.language, filters.aiLanguage, languageLabel);
 
   // Platform rows: the one list shared with the sidebar (§1.2 #13, P1-06
   // carry-over), so the drawer and the sidebar can never drift apart on
@@ -290,14 +336,15 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
     (aiTagged !== 'all' ? 1 : 0) +
     (category ? 1 : 0) +
     (contentType ? 1 : 0) +
-    (showAiStatus && aiStatus ? 1 : 0);
+    (showAiStatus && aiStatus ? 1 : 0) +
+    (facetsApi && filters.aiLanguage ? 1 : 0);
 
   // The source mirror duplicates the sidebar tree, so show it only where the
   // sidebar is hidden — narrow (GAL-6 / O5). Industry and Site type apply only
   // to websites (GAL-6 / O6): the source is "Websites" or the media type is
   // Website.
   const showSourceMirror = narrow;
-  const showWebFacets = activeSource?.value === 'web' || mediaType === 'website';
+  const showWebFacets = !!facetsApi || activeSource?.value === 'web' || mediaType === 'website';
 
   const isActive = (type: ActiveSource['type'], value: string | number): boolean =>
     activeSource?.type === type && activeSource?.value === value;
@@ -313,6 +360,7 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
       category: undefined,
       contentType: undefined,
       aiStatus: undefined,
+      aiLanguage: undefined,
     });
 
   // One source/subfolder row. `nested` indents it (collections under a platform).
@@ -479,7 +527,7 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
               ariaLabel={t('category')}
               allLabel={t('categoryAll')}
               value={category}
-              options={CATEGORY_OPTIONS}
+              options={categories}
               onChange={(val) => onFiltersChange({ ...filters, category: val || undefined })}
             />
           </div>
@@ -491,7 +539,7 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
               ariaLabel={t('contentType')}
               allLabel={t('contentTypeAll')}
               value={contentType}
-              options={CONTENT_TYPE_OPTIONS}
+              options={contentTypes}
               onChange={(val) => onFiltersChange({ ...filters, contentType: val || undefined })}
             />
           </div>
@@ -507,10 +555,44 @@ export default function FilterDrawer<F extends FilterDrawerFilters>({
             ariaLabel={t('aiStatus')}
             allLabel={t('aiStatusAll')}
             value={aiStatus}
-            options={AI_STATUS_OPTIONS}
+            options={statuses}
             onChange={(val) => onFiltersChange({ ...filters, aiStatus: val || undefined })}
           />
         </div>
+      )}
+      {facetsApi && (
+        <>
+          <div data-testid="drawer-language">
+            <SectionLabel icon={Tag}>{t('language')}</SectionLabel>
+            <FacetSelect
+              testId="drawer-language-select"
+              ariaLabel={t('language')}
+              allLabel={t('languageAll')}
+              value={filters.aiLanguage ?? ''}
+              options={languages}
+              onChange={(value) => onFiltersChange({ ...filters, aiLanguage: value || undefined })}
+            />
+          </div>
+          <p className="text-xs text-muted">{t('facetCountsHelp')}</p>
+          {live.loading && (
+            <p role="status" className="text-xs text-muted">
+              {t('facetsLoading')}
+            </p>
+          )}
+          {live.error != null && (
+            <div role="alert" className="text-xs text-red-400">
+              {failure(live.error)}
+              <button
+                className="u-press ml-2 underline"
+                onClick={() => {
+                  void live.refresh();
+                }}
+              >
+                {t('facetsRetry')}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </>
   );

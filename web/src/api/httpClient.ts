@@ -1,3 +1,5 @@
+import { createFacetsApi } from './facets';
+import { createSuggestApi } from './ai/suggest';
 import { createSyncApi } from './sync';
 import { createAiSearchApi } from './ai/search';
 import { createActivityApi } from './activity';
@@ -120,6 +122,7 @@ export function webCapabilities(me: Schemas['Me'] | null | undefined): ShelfyCap
     ...WEB_CAPABILITIES,
     ai: Boolean(me.capabilities['ai.tasks']),
     aiTags: Boolean(me.capabilities['ai.tasks']),
+    aiSuggest: Boolean(me.capabilities['ai.tasks']),
     aiQueue: Boolean(me.capabilities['ai.tasks']),
     dictation: Boolean(me.capabilities['ai.tasks']),
     account: true,
@@ -196,6 +199,7 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
     ...(me
       ? {
           account: createAccountApi(http, me, { events }),
+          facets: createFacetsApi(http, events),
           ...(me.capabilities['ai.tasks']
             ? {
                 aiProviders: createAiProvidersApi(http, events),
@@ -204,6 +208,7 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
                   webQueue: createWebAiQueueApi(http, events),
                   search: createAiSearchApi(http, events),
                   dictation: createDictationApi(http),
+                  suggest: createSuggestApi(http),
                 },
               }
             : {}),

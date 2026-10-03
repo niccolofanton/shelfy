@@ -22,6 +22,7 @@ export interface PostFilters {
   // The post's exact AI status (§1.2 #13); web only (see FilterDrawer's
   // showAiStatus doc comment).
   aiStatus?: string;
+  aiLanguage?: string;
   concepts?: string[];
   conceptMode?: string;
   sortOrder?: string;
@@ -204,6 +205,7 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
     filters.tag,
     filters.aiTagged,
     filters.aiStatus,
+    filters.aiLanguage,
     conceptsKey,
     filters.conceptMode,
     filters.sortOrder,
@@ -434,6 +436,8 @@ export function usePosts(filters: PostFilters, options: UsePostsOptions = {}): U
         f.tag ||
         f.category ||
         f.contentType ||
+        f.aiLanguage ||
+        f.aiStatus ||
         f.search ||
         (f.concepts && f.concepts.length)
       );

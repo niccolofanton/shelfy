@@ -1,3 +1,4 @@
+import { useWebAiSuggestions } from '../hooks/useWebAiSuggestions';
 import type { AnalyzeRequest } from '../api/ai/webQueue';
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy } from 'react';
 import VirtualPostGrid from '../components/VirtualPostGrid';
@@ -83,6 +84,7 @@ interface GalleryFilters {
   // The post's exact AI status (§1.2 #13); web only (see FilterDrawer's
   // showAiStatus doc comment).
   aiStatus: string | undefined;
+  aiLanguage: string | undefined;
   search: string;
   category: string | undefined;
   contentType: string | undefined;
@@ -283,6 +285,7 @@ export default function Gallery({
     downloadStatus: 'all',
     aiTagged: 'all',
     aiStatus: undefined,
+    aiLanguage: undefined,
     search: '',
     category: undefined,
     contentType: undefined,
@@ -350,26 +353,38 @@ export default function Gallery({
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // ── AI suggested filter tags ──────────────────────────────────────────────
-  // When the text filter is non-empty, the local model proposes a few related
+  // When the text filter is non-empty, the task provider proposes a few related
   // filter tags (e.g. "AirPods" → cuffie, Apple, musica, design) shown as
   // clickable chips below the search bar. Clicking one adds it to the query as a
   // concept filter (OR by default; the AND/OR toggle narrows).
   const [suggestedTags, setSuggestedTags] = useState<string[]>([]);
   const [suggestLoading, setSuggestLoading] = useState(false);
   const aiReqIdRef = useRef(0);
-  // Opt-in (default OFF): spinning the local LLM on every search is expensive.
+  // Opt-in (default OFF), local on desktop and per-account on the web.
   const { enabled: aiSuggestOptIn } = useAiSuggestions();
-  const aiSuggestEnabled = aiSuggestOptIn && caps.ai;
+  const webSuggestOptIn = useWebAiSuggestions(client.aiProviders);
+  const aiSuggestEnabled =
+    (isWeb ? webSuggestOptIn : aiSuggestOptIn) && caps.aiSuggest && !!client.ai?.suggest;
+  const suggestionScope =
+    filters.source === 'web' || filters.platform === 'web'
+      ? 'web'
+      : filters.source === 'social'
+        ? 'social'
+        : 'all';
 
+  const suggestActive = !isWeb || active;
   useEffect(() => {
-    const query = (filters.search || '').trim();
-    // A changed query invalidates the old suggestions and any active concepts.
+    // Changing the query/scope/preference clears its concepts; simply hiding a
+    // kept-alive Gallery retains the user's selected filters.
     setSuggestedTags([]);
     setFilters((prev) =>
       prev.concepts && prev.concepts.length ? { ...prev, concepts: [] } : prev,
     );
-    // No query, or the feature is turned off → don't touch the model at all.
-    if (!query || !aiSuggestEnabled) {
+  }, [filters.search, aiSuggestEnabled, client.ai, suggestionScope]);
+  useEffect(() => {
+    const query = (filters.search || '').trim();
+    // An off-screen web Gallery cannot start provider work.
+    if (!query || !aiSuggestEnabled || !suggestActive) {
       setSuggestLoading(false);
       return undefined;
     }
@@ -382,7 +397,10 @@ export default function Gallery({
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const res = await window.electronAPI.suggestSearch(query);
+        const res = await client.ai!.suggest!.suggest(
+          query,
+          isWeb ? { scope: suggestionScope } : undefined,
+        );
         // Ignore responses superseded by a newer query (race guard) or
         // belonging to a torn-down effect run.
         if (cancelled || reqId !== aiReqIdRef.current) return;
@@ -398,7 +416,7 @@ export default function Gallery({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [filters.search, aiSuggestEnabled]);
+  }, [filters.search, aiSuggestEnabled, client.ai, isWeb, suggestionScope, suggestActive]);
 
   const activeConcepts = filters.concepts || [];
   const conceptMode: ConceptMode = filters.conceptMode || 'or';
@@ -1333,7 +1351,7 @@ export default function Gallery({
     (!!filters.aiTagged && filters.aiTagged !== 'all') ||
     !!filters.category ||
     !!filters.contentType ||
-    (isWeb && !!filters.aiStatus) ||
+    (isWeb && (!!filters.aiStatus || !!filters.aiLanguage)) ||
     !!filters.tag;
   // "Select all matching" (P1-14): `selected` holds the EXCLUDED ids instead
   // of the included ones while selectAllMatching is on (useRangeSelect's doc
@@ -2059,6 +2077,7 @@ export default function Gallery({
                     <button
                       key={m}
                       data-testid={`concept-mode-${m}`}
+                      aria-pressed={conceptMode === m}
                       onClick={() => changeConceptMode(m)}
                       onMouseDown={(e) => e.preventDefault()}
                       className={[
@@ -2227,6 +2246,7 @@ export default function Gallery({
                         category: undefined,
                         contentType: undefined,
                         aiStatus: undefined,
+                        aiLanguage: undefined,
                         tag: undefined,
                       }),
                     testId: 'empty-reset-filters',
@@ -2278,6 +2298,7 @@ export default function Gallery({
         activeSource={activeSource}
         onSelectSource={onSelectSource}
         showAiStatus={isWeb}
+        facetsApi={client.facets}
         filteredTotal={total}
         viewControls={viewControls}
       />

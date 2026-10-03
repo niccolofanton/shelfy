@@ -1,3 +1,4 @@
+import type { LibraryFacetsApi } from './facets';
 // The seam between the UI and its backend (web port plan §2.19, D19). Views
 // talk to a ShelfyClient instead of `window.electronAPI`, so the same React UI
 // runs in the desktop app (electronClient: IPC to the main process) and in the
@@ -98,6 +99,7 @@ export interface PostQuery {
   collectionId?: number | null;
   category?: string;
   contentType?: string;
+  aiLanguage?: string;
   tag?: string;
   tags?: string[];
   tagMode?: 'and' | 'or';
@@ -321,6 +323,7 @@ export interface ShelfyClient {
   // web client's. The desktop has none.
   readonly account?: AccountApi;
   readonly aiProviders?: AiProvidersApi;
+  readonly facets?: LibraryFacetsApi;
   // Turning a URL into a post (src/api/links.ts), when the backend has one:
   // the web client's, once signed in. The desktop has none.
   readonly links?: LinksApi;

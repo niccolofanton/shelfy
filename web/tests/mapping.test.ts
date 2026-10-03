@@ -142,6 +142,7 @@ describe('bulk/trash selector (P1-11/P1-14)', () => {
       entity: null,
       category: null,
       contentType: null,
+      aiLanguage: null,
       q: null,
       concept: [],
       conceptMode: null,

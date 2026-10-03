@@ -9,6 +9,7 @@ export interface ProviderSettingsChange {
   task?: AiTask;
   providerId?: string;
   deletedId?: string;
+  aiSuggestions?: boolean;
 }
 // A local UI event carries descriptors and task ids, never a credential.
 export function requestProviderConnection(task?: AiTask, provider?: AiProviderSummary): void {

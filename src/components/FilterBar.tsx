@@ -16,6 +16,7 @@ interface FilterBarFilters {
   downloadStatus?: string;
   aiTagged?: string;
   aiStatus?: string;
+  aiLanguage?: string;
   category?: string;
   contentType?: string;
   tag?: string;
@@ -115,7 +116,8 @@ export default function FilterBar<F extends FilterBarFilters>({
     (aiTagged !== 'all' ? 1 : 0) +
     (filters.category ? 1 : 0) +
     (filters.contentType ? 1 : 0) +
-    (showAiStatus && filters.aiStatus ? 1 : 0);
+    (showAiStatus && filters.aiStatus ? 1 : 0) +
+    (showAiStatus && filters.aiLanguage ? 1 : 0);
 
   // Apple-Maps-style floating control "island": a translucent, blurred, rounded
   // capsule with a hairline ring + soft shadow. There is NO toolbar background —

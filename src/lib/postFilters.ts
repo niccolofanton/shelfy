@@ -17,6 +17,7 @@ export interface UiFilters {
   collectionId?: number | null;
   category?: string;
   contentType?: string;
+  aiLanguage?: string;
   tag?: string;
   aiTagged?: string;
   // The post's exact AI status (pending/analyzing/done/error, §1.2 #13) — web
@@ -39,6 +40,7 @@ export interface ApiFilters {
   collectionId: number | null | undefined;
   category: string | undefined;
   contentType: string | undefined;
+  aiLanguage: string | undefined;
   tag: string | undefined;
   aiTagged: string | undefined;
   aiStatus: string | undefined;
@@ -62,6 +64,7 @@ export function toApiFilters(filters: UiFilters = {}): ApiFilters {
     collectionId: filters.collectionId || undefined,
     category: filters.category || undefined,
     contentType: filters.contentType || undefined,
+    aiLanguage: filters.aiLanguage || undefined,
     tag: filters.tag || undefined,
     aiTagged: filters.aiTagged && filters.aiTagged !== 'all' ? filters.aiTagged : undefined,
     aiStatus: filters.aiStatus || undefined,
