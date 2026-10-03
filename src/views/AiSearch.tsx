@@ -777,6 +777,7 @@ export default function AiSearch({
   } = actions;
 
   const [draft, setDraft] = useState<string>('');
+  const composerGeneration = useRef(0);
   const { toast, toastClosing, showToast } = useToast();
   const [activePost, setActivePost] = useState<Shelfy.Post | null>(null);
   // Collection-creation modal (replaces window.prompt): holds the post ids
@@ -800,6 +801,7 @@ export default function AiSearch({
   useEffect(() => {
     if (!isWeb) return;
     const clearLocal = () => {
+      composerGeneration.current += 1;
       setDraft('');
       setActivePost(null);
       setCollectionModal(null);
@@ -852,17 +854,19 @@ export default function AiSearch({
   // the draft, and sends in one step — no need to press the stop button first.
   const handleSend = useCallback(async () => {
     if (chatLoading) return;
+    const generation = composerGeneration.current;
     let text = draft.trim();
     if (dictation.status === 'recording') {
       const dictated = await dictation.stop({ silent: true });
       text = [text, (dictated || '').trim()].filter(Boolean).join(' ');
     }
-    if (!text) return;
+    if (!text || generation !== composerGeneration.current) return;
     setDraft('');
     sendMessage(text);
   }, [draft, chatLoading, sendMessage, dictation]);
 
   const handleReset = useCallback(() => {
+    composerGeneration.current += 1;
     if (dictation.isActive) dictation.stop({ silent: true });
     reset();
     setDraft('');

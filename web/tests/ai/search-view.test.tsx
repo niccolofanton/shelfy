@@ -7,6 +7,21 @@ import { getElectronClient } from '@ui/api/electronClient';
 import type { ChatSearchResult } from '../../../types/electron-api';
 import type { AiSearchApi } from '@ui/api/ai';
 import { WEB_CAPABILITIES } from '../../src/api/httpClient';
+const voice = vi.hoisted(() => ({
+  status: 'idle',
+  isActive: false,
+  liveText: '',
+  error: null,
+  modelStatus: { ready: false },
+  modelProgress: null,
+  getAudioLevel: () => 0,
+  subscribeAudioLevel: () => () => {},
+  start: vi.fn(async () => {}),
+  stop: vi.fn(async (_opts?: { silent?: boolean }) => ''),
+  toggle: vi.fn(),
+  downloadModel: vi.fn(async () => {}),
+}));
+vi.mock('@ui/hooks/useDictation', () => ({ useDictation: () => voice }));
 const callbacks = new Map<AiSearchApi, (v: unknown) => void>();
 const sessions = new Map<AiSearchApi, Set<() => void>>();
 function api() {
@@ -56,7 +71,13 @@ function send(text = 'lamp') {
   fireEvent.change(screen.getByTestId('chat-input'), { target: { value: text } });
   fireEvent.click(screen.getByTestId('chat-send-btn'));
 }
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  voice.status = 'idle';
+  voice.isActive = false;
+  voice.modelStatus = { ready: false };
+  voice.stop.mockReset().mockResolvedValue('');
+});
 describe('web conversation and filter state', () => {
   it('localizes fallback, scopes the chat and search, replaces filters, toggles and clears', async () => {
     const search = api();
@@ -163,6 +184,37 @@ describe('web conversation and filter state', () => {
     expect(screen.queryByTestId('active-tag-chip')).toBeNull();
     expect(first.cancelChat).toHaveBeenCalled();
     expect(callbacks.has(first)).toBe(false);
+  });
+  it('does not send an old draft when a stopped transcription finishes after reset', async () => {
+    const search = api();
+    const c = client(search);
+    const withVoice = { ...c, capabilities: { ...c.capabilities, dictation: true } };
+    const view = () => (
+      <ShelfyProvider client={withVoice}>
+        <AiSearch />
+      </ShelfyProvider>
+    );
+    const rendered = render(view());
+    send('first turn');
+    await screen.findByTestId('chat-message-assistant');
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'old draft' } });
+    let finish!: (text: string) => void;
+    voice.status = 'recording';
+    voice.isActive = true;
+    voice.modelStatus = { ready: true };
+    voice.stop.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    rendered.rerender(view());
+    fireEvent.click(screen.getByTestId('chat-send-btn'));
+    expect(voice.stop).toHaveBeenCalledWith({ silent: true });
+    fireEvent.click(screen.getByTestId('chat-reset-btn'));
+    await act(async () => finish('late transcript'));
+    expect(search.chat).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('late transcript')).toBeNull();
   });
   it('clears the conversation and filters immediately when the session ends', async () => {
     const search = api();
