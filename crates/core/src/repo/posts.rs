@@ -120,6 +120,8 @@ pub struct PostFilter {
     pub category: Option<String>,
     /// Exact `ai_content_type`.
     pub content_type: Option<String>,
+    /// Exact AI-detected language.
+    pub ai_language: Option<String>,
     /// Free-text search.
     pub q: Option<String>,
     /// Suggested concepts: extra search blocks, combined with the text by
@@ -2003,6 +2005,9 @@ impl WhereSql {
                 [Value::Text(content_type.to_owned())],
             );
         }
+        if let Some(language) = non_blank(filter.ai_language.as_deref()) {
+            w.push("p.ai_language = ?", [Value::Text(language.to_owned())]);
+        }
         if let Some(tag) = non_blank(filter.tag.as_deref()) {
             w.push(TAG_EXISTS, [Value::Text(tag.to_lowercase())]);
         }
@@ -2034,7 +2039,11 @@ impl WhereSql {
             None => {}
         }
         if let Some(status) = non_blank(filter.ai_status.as_deref()) {
-            w.push("p.ai_status = ?", [Value::Text(status.to_owned())]);
+            if status == "none" {
+                w.push("p.ai_status IS NULL", []);
+            } else {
+                w.push("p.ai_status = ?", [Value::Text(status.to_owned())]);
+            }
         }
         let ai_tag =
             "EXISTS (SELECT 1 FROM post_tags pt WHERE pt.post_id = p.id AND pt.source = 'ai')";

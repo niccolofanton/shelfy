@@ -2819,6 +2819,15 @@
             }
           },
           {
+            "name": "aiLanguage",
+            "in": "query",
+            "description": "Only posts with this AI-detected language.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "q",
             "in": "query",
             "description": "Free-text search over tags, keywords, entities, description, note,\ncaption, author and page text (plan §2.14). At most 500 characters.",
@@ -3206,6 +3215,15 @@
             "name": "contentType",
             "in": "query",
             "description": "Only posts with this AI content type.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "aiLanguage",
+            "in": "query",
+            "description": "Only posts with this AI-detected language.",
             "required": false,
             "schema": {
               "type": "string"
@@ -7322,6 +7340,11 @@
         "type": "object",
         "description": "The filters of `GET /api/v1/posts`, without paging or order. Every\nfilter is optional; the ones given combine with AND.",
         "properties": {
+          "aiLanguage": {
+            "type": ["string", "null"],
+            "description": "Only posts with this AI-detected language.",
+            "default": null
+          },
           "aiStatus": {
             "type": ["string", "null"],
             "description": "Only posts with this AI status.",

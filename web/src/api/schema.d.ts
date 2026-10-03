@@ -3309,6 +3309,11 @@ export interface components {
      */
     FilterParams: {
       /**
+       * @description Only posts with this AI-detected language.
+       * @default null
+       */
+      aiLanguage: string | null;
+      /**
        * @description Only posts with this AI status.
        * @default null
        */
@@ -7966,6 +7971,8 @@ export interface operations {
         category?: string;
         /** @description Only posts with this AI content type. */
         contentType?: string;
+        /** @description Only posts with this AI-detected language. */
+        aiLanguage?: string;
         /**
          * @description Free-text search over tags, keywords, entities, description, note,
          *     caption, author and page text (plan §2.14). At most 500 characters.
@@ -8137,6 +8144,8 @@ export interface operations {
         category?: string;
         /** @description Only posts with this AI content type. */
         contentType?: string;
+        /** @description Only posts with this AI-detected language. */
+        aiLanguage?: string;
         /** @description Free-text search (plan §2.14). At most 500 characters. */
         q?: string;
         /**

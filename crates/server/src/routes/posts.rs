@@ -90,6 +90,8 @@ pub struct PostsQuery {
     pub category: Option<String>,
     /// Only posts with this AI content type.
     pub content_type: Option<String>,
+    /// Only posts with this AI-detected language.
+    pub ai_language: Option<String>,
     /// Free-text search over tags, keywords, entities, description, note,
     /// caption, author and page text (plan §2.14). At most 500 characters.
     pub q: Option<String>,
@@ -125,6 +127,7 @@ impl PostsQuery {
             ("entity", &self.entity),
             ("category", &self.category),
             ("contentType", &self.content_type),
+            ("aiLanguage", &self.ai_language),
         ] {
             check_text(field, value.as_deref(), MAX_VALUE_CHARS)?;
         }
@@ -157,6 +160,7 @@ impl PostsQuery {
             entity: self.entity.clone(),
             category: self.category.clone(),
             content_type: self.content_type.clone(),
+            ai_language: self.ai_language.clone(),
             q: self.q.clone(),
             concepts: self.concept.clone(),
             concept_mode: self.concept_mode.unwrap_or_default().into(),

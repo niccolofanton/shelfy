@@ -75,6 +75,8 @@ pub struct FilterParams {
     pub category: Option<String>,
     /// Only posts with this AI content type.
     pub content_type: Option<String>,
+    /// Only posts with this AI-detected language.
+    pub ai_language: Option<String>,
     /// Free-text search (plan §2.14). At most 500 characters.
     pub q: Option<String>,
     /// Suggested concepts: more search terms, combined with `q` by
@@ -104,6 +106,7 @@ impl From<FilterParams> for PostsQuery {
             entity: f.entity,
             category: f.category,
             content_type: f.content_type,
+            ai_language: f.ai_language,
             q: f.q,
             concept: f.concept,
             concept_mode: f.concept_mode,

@@ -211,6 +211,38 @@ async fn every_filter_selects_its_posts() {
 }
 
 #[tokio::test]
+async fn language_and_none_status_facets_match_lists_counts_and_bulk_filter_queries() {
+    let (t, _) = two_libraries().await;
+    t.write(ALICE, |tx| {
+        tx.execute_batch(
+            "UPDATE posts SET ai_language=NULL;
+            UPDATE posts SET ai_language='it' WHERE key='ig_3101';",
+        )
+        .unwrap();
+    })
+    .await;
+    let app = t.app_as(ALICE);
+    let facets = get_ok(&app, "/api/v1/facets").await;
+    assert_eq!(facets["language"], json!([{ "value": "it", "count": 1 }]));
+    let page = get_ok(&app, "/api/v1/posts?aiLanguage=it&includeTotal=true").await;
+    assert_eq!(keys(&page), ["ig_3101"]);
+    assert_eq!(page["total"], 1);
+    let count = get_ok(&app, "/api/v1/posts/count?aiLanguage=it").await;
+    assert_eq!(count["total"], 1);
+    let none = facets["status"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["value"] == "none")
+        .unwrap();
+    let page = get_ok(&app, "/api/v1/posts?aiStatus=none&includeTotal=true").await;
+    assert_eq!(page["total"], none["count"]);
+    let selector: routes::selector::FilterParams =
+        serde_json::from_value(json!({ "aiLanguage": "it" })).unwrap();
+    assert_eq!(selector.into_query().ai_language.as_deref(), Some("it"));
+}
+
+#[tokio::test]
 async fn search_text_is_ranked_by_relevance_by_default() {
     let (t, _) = two_libraries().await;
     let app = t.app_as(ALICE);

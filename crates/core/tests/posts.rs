@@ -67,6 +67,45 @@ fn first_page(conn: &Connection, filter: &PostFilter, sort: Sort) -> Vec<PostSum
 }
 
 #[test]
+fn live_language_and_missing_status_facets_select_the_same_population() {
+    let conn = library();
+    insert_all(
+        &conn,
+        &[
+            bare_post("ig_901", Platform::Instagram, NOW),
+            bare_post("ig_902", Platform::Instagram, NOW + 1),
+            bare_post("ig_903", Platform::Instagram, NOW + 2),
+        ],
+    );
+    conn.execute_batch(
+        "UPDATE posts SET ai_language='it' WHERE key='ig_901';
+        UPDATE posts SET ai_language='en',ai_status='done' WHERE key='ig_902';
+        UPDATE posts SET ai_language='it',deleted_at=1 WHERE key='ig_903';",
+    )
+    .unwrap();
+    let facets = shelfy_core::tags::facets::facets(&conn).unwrap();
+    for row in &facets.language {
+        let filter = PostFilter {
+            ai_language: Some(row.value.clone()),
+            ..PostFilter::default()
+        };
+        assert_eq!(posts::count(&conn, &filter).unwrap(), row.count);
+    }
+    let none = PostFilter {
+        ai_status: Some("none".into()),
+        ..PostFilter::default()
+    };
+    assert_eq!(keys(&conn, &none), ["ig_901"]);
+    assert_eq!(posts::count(&conn, &none).unwrap(), 1);
+    let combined = PostFilter {
+        ai_language: Some("en".into()),
+        ai_status: Some("none".into()),
+        ..PostFilter::default()
+    };
+    assert!(keys(&conn, &combined).is_empty());
+}
+
+#[test]
 fn keyset_pages_are_complete_and_stable() {
     let conn = library();
     let posts = synthetic_posts(500, 7);
