@@ -14,6 +14,36 @@ type LangMessages = { it: Record<string, MessageValue>; en: Record<string, Messa
 
 export default {
   it: {
+    analyzeAll: 'Rianalizza tutti',
+    retryErrors: 'Riprova errori',
+    previewTitle: 'Analizza post',
+    previewHelp: 'Controlla il preventivo e conferma per aggiungere le analisi alla coda.',
+    analyzable: 'Analizzabili',
+    waitingMedia: 'In attesa dei media',
+    alreadyQueued: 'Già in coda',
+    inputTokens: 'Token input stimati',
+    outputTokens: 'Token output stimati',
+    cost: 'Costo stimato (USD)',
+    unknown: 'Non disponibile',
+    seconds: '{count} s',
+    waitingMediaHelp: 'I post in attesa dei media non vengono accodati. Riprova dopo il download.',
+    closePreview: 'Chiudi',
+    confirmAnalyze: 'Conferma analisi',
+    confirming: 'Accodamento…',
+    notQueued: 'Le analisi non sono state accodate.',
+    noProvider: 'Nessun provider AI disponibile. Collega un provider nelle Impostazioni AI.',
+    waitingProvider:
+      'In attesa del provider ({state}). La coda riprenderà quando torna disponibile.',
+    missing: 'Mancanti',
+    filterState: 'Stato analisi',
+    allStates: 'Tutti',
+    nextAttempt: 'Prossimo tentativo: {time}',
+    webEmpty: 'Nessuna analisi in questo stato.',
+    loadMore: 'Carica altri',
+    analyzePost: 'Analizza',
+    regeneratePost: 'Rigenera',
+    queuedCount: '{count} analisi accodate',
+
     // ── Platform badge titles ──
     platformWeb: 'Web reference',
 
@@ -79,6 +109,36 @@ export default {
       'Nessuna analisi in coda. Usa "Analizza mancanti" per generare i tag dei post scaricati.',
   },
   en: {
+    analyzeAll: 'Reanalyze all',
+    retryErrors: 'Retry errors',
+    previewTitle: 'Analyze posts',
+    previewHelp: 'Review the estimate and confirm to add analyses to the queue.',
+    analyzable: 'Analyzable',
+    waitingMedia: 'Waiting for media',
+    alreadyQueued: 'Already queued',
+    inputTokens: 'Estimated input tokens',
+    outputTokens: 'Estimated output tokens',
+    cost: 'Estimated cost (USD)',
+    unknown: 'Unavailable',
+    seconds: '{count} s',
+    waitingMediaHelp: 'Posts waiting for media are not queued. Try again after downloading.',
+    closePreview: 'Close',
+    confirmAnalyze: 'Confirm analysis',
+    confirming: 'Queuing…',
+    notQueued: 'The analyses were not queued.',
+    noProvider: 'No AI provider available. Connect a provider in AI Settings.',
+    waitingProvider:
+      'Waiting for the provider ({state}). The queue will resume when it is available.',
+    missing: 'Missing',
+    filterState: 'Analysis state',
+    allStates: 'All',
+    nextAttempt: 'Next attempt: {time}',
+    webEmpty: 'No analyses in this state.',
+    loadMore: 'Load more',
+    analyzePost: 'Analyze',
+    regeneratePost: 'Regenerate',
+    queuedCount: '{count} analyses queued',
+
     // ── Platform badge titles ──
     platformWeb: 'Web reference',
 

@@ -39,6 +39,9 @@ pub struct AnalyzeRequest {
     #[serde(default)]
     pub deep: bool,
     pub confirm_token: Option<String>,
+    /// Dry run even for one post. Returns a confirmation token without queue writes.
+    #[serde(default)]
+    pub estimate_only: bool,
 }
 
 #[utoipa::path(post, path="/api/v1/ai/analyze", tag="jobs", operation_id="analyzePosts", params(IdempotencyHeader), request_body=AnalyzeRequest,
@@ -71,13 +74,14 @@ pub async fn analyze(
         .route(&state, Caller::new(user.id(), owner), Task::Catalog)
         .await?;
     Ok(Json(
-        ai::queue::analyze(
+        ai::queue::analyze_with_preview(
             &state,
             user.id(),
             selector,
             request.mode.into(),
             request.confirm_token,
             request.deep,
+            request.estimate_only,
         )
         .await?,
     ))

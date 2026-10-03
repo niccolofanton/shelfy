@@ -2269,6 +2269,8 @@ export interface components {
     AnalyzeRequest: {
       confirmToken?: string | null;
       deep?: boolean;
+      /** @description Dry run even for one post. Returns a confirmation token without queue writes. */
+      estimateOnly?: boolean;
       mode: components['schemas']['AnalyzeMode'];
       selector: components['schemas']['PostSelector'];
     };

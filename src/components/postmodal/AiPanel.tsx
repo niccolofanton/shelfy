@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, Suspense, lazy } from 'react';
 import {
   X,
   Sparkles,
@@ -12,7 +12,10 @@ import {
   Plus,
   Tags,
 } from 'lucide-react';
-import { useT } from '../../i18n';
+import { useT, withMessages } from '../../i18n';
+import { useFailureText } from '../../hooks/useFailureText';
+import { InlineNote } from '../../views/settings/ui';
+const WebPostAnalysis = lazy(withMessages(() => import('../ai/WebPostAnalysis'), 'aiQueue'));
 import { useAnalysis } from '../../hooks/useAnalysis';
 import { useCapabilities, useShelfy } from '../../api/ShelfyProvider';
 import Popover from '../Popover';
@@ -364,6 +367,9 @@ export default function AiPanel({
   // going through useAnalysis()'s updatePostUserContent, which now wraps the
   // same seam call.
   const client = useShelfy();
+  const webQueue = client.ai?.webQueue;
+  const failure = useFailureText();
+  const [writeError, setWriteError] = useState<unknown>(null);
   const {
     jobFor,
     modelStatus,
@@ -582,7 +588,9 @@ export default function AiPanel({
     }
     setDeletingDesc(true);
     try {
-      await clearPostDescriptions([post.id]);
+      setWriteError(null);
+      if (webQueue) await client.bulkAction({ keys: [post.id] }, 'clearAiDescription');
+      else await clearPostDescriptions([post.id]);
       // Reflect the cleared description locally without mutating the prop; keep
       // the current tags / save-reason intact.
       setOverride({
@@ -594,6 +602,7 @@ export default function AiPanel({
       // post is eligible for "Analizza mancanti" regeneration.
       onPostUpdated?.(post.id, { aiDescription: '', aiStatus: null });
     } catch (err) {
+      setWriteError(err);
       console.error('[PostModal] clearPostDescriptions error:', err);
     } finally {
       // Always leave the confirm prompt, even on failure, so the button never
@@ -605,7 +614,7 @@ export default function AiPanel({
   };
 
   const handleClearAiTags = async (): Promise<void> => {
-    if (typeof window.electronAPI.clearPostAiTags !== 'function') {
+    if (!webQueue && typeof window.electronAPI?.clearPostAiTags !== 'function') {
       console.error(
         '[PostModal] clearPostAiTags non disponibile — riavvia `npm run dev` (preload/main non fanno hot-reload).',
       );
@@ -614,7 +623,9 @@ export default function AiPanel({
     }
     setDeletingTags(true);
     try {
-      await window.electronAPI.clearPostAiTags([post.id]);
+      setWriteError(null);
+      if (webQueue) await client.bulkAction({ keys: [post.id] }, 'clearAiTags');
+      else await window.electronAPI.clearPostAiTags([post.id]);
       // Reflect the cleared tags locally without mutating the prop; keep the
       // current description / save-reason intact.
       setOverride({
@@ -626,6 +637,7 @@ export default function AiPanel({
       // status back to "not analyzed", same as handleDeleteDescription above.
       onPostUpdated?.(post.id, { aiTags: [], aiStatus: null });
     } catch (err) {
+      setWriteError(err);
       console.error('[PostModal] clearPostAiTags error:', err);
     } finally {
       setConfirmDeleteTags(false);
@@ -652,7 +664,7 @@ export default function AiPanel({
   const videoNeedsDownload = post.mediaType === 'video' && !post.videoPath;
 
   const hasUserContent = !!userNote || manualTags.length > 0;
-  if (ai) {
+  if (ai && !webQueue) {
     if (!hasLocalAsset && !hasExistingAnalysis) return null;
     if (videoNeedsDownload && !hasExistingAnalysis) return null;
   } else if (!hasExistingAnalysis && !hasUserContent && !libraryEdit) {
@@ -982,7 +994,7 @@ export default function AiPanel({
             </p>
           )}
 
-          {ai && !videoNeedsDownload && (
+          {ai && !webQueue && !videoNeedsDownload && (
             <div className="flex items-center gap-3 pt-0.5">
               <button
                 data-testid="post-modal-regenerate"
@@ -1000,7 +1012,7 @@ export default function AiPanel({
     // No AI content yet. With the `ai` capability, offer to analyze (or retry);
     // without it there is no AI card at all — the user card stands alone (MOD-4).
     // The raw backend error is never printed (MOD-10): a mapped, friendly line.
-    if (ai) {
+    if (ai && !webQueue) {
       return (
         <Section>
           {status === 'error' ? (
@@ -1026,11 +1038,17 @@ export default function AiPanel({
     return null;
   })();
 
-  if (!userCard && !aiCard) return null;
+  if (!userCard && !aiCard && !webQueue) return null;
   return (
     <>
       {userCard}
       {aiCard}
+      {writeError != null && <InlineNote tone="error">{failure(writeError)}</InlineNote>}
+      {webQueue && (
+        <Suspense fallback={null}>
+          <WebPostAnalysis api={webQueue} post={post} onPostUpdated={onPostUpdated} />
+        </Suspense>
+      )}
     </>
   );
 }

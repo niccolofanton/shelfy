@@ -152,13 +152,14 @@ async fn confirm_expiry_follows_the_test_clock() {
     let (_stub, t, user) = fixture(StubConfig::default()).await;
     let keys = posts(&t, &user, 2).await;
     let selector = Selector::Keys(keys);
-    let result = ai::queue::analyze(
+    let result = ai::queue::analyze_with_preview(
         &t.state,
         &user,
         selector.clone(),
         Mode::Missing,
         None,
         false,
+        true,
     )
     .await
     .unwrap();
@@ -750,4 +751,78 @@ async fn admin_status_reports_orphans_and_offline_waiting_as_aggregates_only() {
     }
     assert!(!output.contains("x_1000"));
     assert!(!output.contains("Synthetic brass lamp"));
+}
+
+#[tokio::test]
+async fn explicit_preview_never_queues_zero_one_or_many_and_confirms_idempotently() {
+    let (_stub, t, user) = fixture(StubConfig::default()).await;
+    let keys = posts(&t, &user, 2).await;
+    let cookie = sign_in(&t.app(), &t).await;
+    for selected in [
+        vec!["x_missing".to_owned()],
+        vec![keys[0].clone()],
+        keys.clone(),
+    ] {
+        let body = json!({"selector":{"keys":selected},"mode":"selected","estimateOnly":true});
+        let response = request(&t, &cookie, "/api/v1/ai/analyze", body.clone(), None).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let preview = response_json(response).await;
+        assert_eq!(preview["queued"], false);
+        assert_eq!(preview["enqueued"], 0);
+        assert_eq!(counts(&t, &user).await.pending, 0);
+        assert_eq!(counts(&t, &user).await.analyzing, 0);
+        if selected[0] == "x_missing" {
+            assert!(preview["confirmToken"].is_null());
+            continue;
+        }
+        let token = preview["confirmToken"].as_str().unwrap();
+        // An accidental preview+confirm does not consume the token or mutate.
+        let invalid = json!({"selector":{"keys":selected},"mode":"selected","estimateOnly":true,"confirmToken":token});
+        assert_eq!(
+            request(
+                &t,
+                &cookie,
+                "/api/v1/ai/analyze",
+                invalid,
+                Some("preview-invalid")
+            )
+            .await
+            .status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(counts(&t, &user).await.pending, 0);
+        let confirm = json!({"selector":{"keys":selected},"mode":"selected","confirmToken":token});
+        let idempotency = format!("preview-confirm-{}", selected.len());
+        let first = request(
+            &t,
+            &cookie,
+            "/api/v1/ai/analyze",
+            confirm.clone(),
+            Some(&idempotency),
+        )
+        .await;
+        assert_eq!(first.status(), StatusCode::OK);
+        let first = response_json(first).await;
+        assert_eq!(first["queued"], true);
+        assert_eq!(first["enqueued"], selected.len());
+        let repeated = request(
+            &t,
+            &cookie,
+            "/api/v1/ai/analyze",
+            confirm,
+            Some(&idempotency),
+        )
+        .await;
+        assert_eq!(repeated.status(), StatusCode::OK);
+        assert_eq!(response_json(repeated).await, first);
+        let canceled = request(
+            &t,
+            &cookie,
+            "/api/v1/ai/queue/cancel",
+            json!({"all":true}),
+            None,
+        )
+        .await;
+        assert_eq!(canceled.status(), StatusCode::OK);
+    }
 }

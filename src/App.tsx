@@ -1,4 +1,5 @@
 import { WebSyncProvider, useWebSync } from './hooks/useWebSync';
+import { useWebAiQueue } from './components/ai/useWebAiQueue';
 import React, {
   useState,
   useEffect,
@@ -261,6 +262,7 @@ function viewOfRoute(route: CurrentRoute): ViewId {
   if (route.name === 'aiTags') return 'aitags';
   if (route.name === 'trash') return 'trash';
   if (route.name === 'jobs') return 'jobs';
+  if (route.name === 'aiQueue') return 'aiqueue';
   if (route.name === 'settings') return 'settings';
   return 'gallery';
 }
@@ -291,6 +293,7 @@ function routeOfView(view: View, source: ActiveSource): AppRoute | null {
   if (view === 'aitags') return { name: 'aiTags' };
   if (view === 'trash') return { name: 'trash' };
   if (view === 'jobs') return { name: 'jobs', kind: [], state: [] };
+  if (view === 'aiqueue') return { name: 'aiQueue' };
   if (view === 'settings') return { name: 'settings', section: DEFAULT_SETTINGS_SECTION };
   return null;
 }
@@ -603,7 +606,17 @@ function AppInner(): React.JSX.Element {
   const [lastSave, setLastSave] = useState<LastSave | null>(null);
   // Only the at-a-glance counts feed the "AI Tags" nav badge; the rich live
   // detail is rendered by <ActivityCenter> straight from the activity context.
-  const { active: analysisActive, done: analysisDone, total: analysisTotal } = analysis;
+  const webQueue = useWebAiQueue(client.ai?.webQueue);
+  const queueCounts = webQueue.page?.counts;
+  const analysisActive = client.ai?.webQueue
+    ? !!queueCounts && queueCounts.pending + queueCounts.analyzing > 0
+    : analysis.active;
+  const analysisDone = client.ai?.webQueue ? (queueCounts?.done ?? 0) : analysis.done;
+  const analysisTotal = client.ai?.webQueue
+    ? queueCounts
+      ? queueCounts.pending + queueCounts.analyzing + queueCounts.done + queueCounts.error
+      : 0
+    : analysis.total;
 
   // Post detail modal opened from the AI activity strip / AI Tags queue. Lives at
   // App level so a job row anywhere can pop it; we fetch the full post by id since
@@ -989,7 +1002,7 @@ function AppInner(): React.JSX.Element {
   // missing is Gallery's own not-found panel now (P1-06): the gallery is what
   // resolves the route to a post, so it is what finds out there isn't one.
   const routePanel: React.ReactNode =
-    route?.name === 'notFound' ? (
+    route?.name === 'notFound' || (route?.name === 'aiQueue' && !caps.aiQueue) ? (
       <ErrorPanel
         testId="route-not-found"
         icon={FileQuestion}
@@ -1001,7 +1014,7 @@ function AppInner(): React.JSX.Element {
       />
     ) : null;
 
-  const notFound = route?.name === 'notFound';
+  const notFound = route?.name === 'notFound' || (route?.name === 'aiQueue' && !caps.aiQueue);
 
   // The page's title, per view on the web (SH-13): "Trash · Shelfy", a
   // folder's or a platform's name in the library. The desktop window keeps its own.
@@ -1294,7 +1307,7 @@ function AppInner(): React.JSX.Element {
                       ))}
                     {v === 'aiqueue' && (
                       <Suspense fallback={<ViewLoading />}>
-                        <AiTagsQueueMemo onOpenPost={openAiPost} />
+                        <AiTagsQueueMemo onOpenPost={openAiPost} active={view === 'aiqueue'} />
                       </Suspense>
                     )}
                     {v === 'aiweb' && (

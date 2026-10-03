@@ -8,6 +8,7 @@ import type { AiQueueApi } from './queue';
 import type { AiSearchApi } from './search';
 import type { AiSuggestApi } from './suggest';
 import type { AiTagsApi } from './tags';
+import type { WebAiQueueApi } from './webQueue';
 
 export type { AiQueueProgress, AiModelProgress, AiModelStatus, AiQueueApi } from './queue';
 export type { AiClusterProgress, AiAliasProgress, AiTagsApi } from './tags';
@@ -22,6 +23,7 @@ export type { AiSuggestApi } from './suggest';
 export type { AiDictationApi } from './dictation';
 
 export interface AiApi {
+  webQueue?: WebAiQueueApi;
   queue?: AiQueueApi;
   tags?: AiTagsApi;
   search?: AiSearchApi;

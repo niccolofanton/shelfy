@@ -256,3 +256,32 @@ describe('event stream', () => {
     off();
   });
 });
+
+describe('live AI stream subscription', () => {
+  it('opts in on the shared connection only while requested and preserves replay cursor', () => {
+    const s = stream();
+    const stopPosts = s.on('posts.changed', () => {});
+    const original = FakeEventSource.last;
+    expect(original.url).not.toContain('topics=');
+    original.emit('posts.changed', { keys: null, reason: 'ai' }, '42');
+    const receive = vi.fn();
+    const stopAi = s.on('ai.stream', receive);
+    expect(original.closed).toBe(true);
+    const opted = FakeEventSource.last;
+    expect(opted.url).toContain('topics=ai.stream');
+    expect(opted.url).toContain('lastEventId=42');
+    const connections = FakeEventSource.all.length;
+    const stopAi2 = s.on('ai.stream', () => {});
+    expect(FakeEventSource.all).toHaveLength(connections);
+    opted.emit('ai.stream', { postKey: 'x_1', text: 'Preview' });
+    expect(receive).toHaveBeenCalledWith({ postKey: 'x_1', text: 'Preview' });
+    stopAi();
+    expect(opted.closed).toBe(false);
+    stopAi2();
+    expect(opted.closed).toBe(true);
+    expect(FakeEventSource.last.url).not.toContain('topics=');
+    expect(FakeEventSource.last.url).toContain('lastEventId=42');
+    stopPosts();
+    expect(FakeEventSource.last.closed).toBe(true);
+  });
+});

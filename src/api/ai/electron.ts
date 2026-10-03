@@ -4,6 +4,7 @@
 // (P3-08 acceptance).
 import type { ElectronAPI } from '../../../types/electron-api';
 import type { AiApi } from './index';
+type DesktopAiApi = Required<Omit<AiApi, 'webQueue'>>;
 import type { AiQueueApi } from './queue';
 import type { AiTagsApi } from './tags';
 import type { AiSearchApi } from './search';
@@ -13,7 +14,7 @@ import type { AiDictationApi } from './dictation';
 // `bridge` is read on every call, never captured — same contract as
 // createElectronClient (electron.ts / electronClient.ts share this pattern
 // because the preload may install `window.electronAPI` after module load).
-export function createElectronAiApi(bridge: () => ElectronAPI): Required<AiApi> {
+export function createElectronAiApi(bridge: () => ElectronAPI): DesktopAiApi {
   const queue: AiQueueApi = {
     getStatus: () => bridge().getAnalyzeStatus(),
     getIsPaused: () => bridge().getAnalyzeIsPaused(),

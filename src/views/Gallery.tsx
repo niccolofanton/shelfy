@@ -1,3 +1,4 @@
+import type { AnalyzeRequest } from '../api/ai/webQueue';
 import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense, lazy } from 'react';
 import VirtualPostGrid from '../components/VirtualPostGrid';
 import InfiniteCanvas from '../components/InfiniteCanvas';
@@ -57,6 +58,7 @@ import type { BulkActionKind, BulkActionParams, BulkJob, BulkOutcome } from '../
 // The "new collection" dialog isn't on the first screen (plan §2.19 / F14):
 // same withMessages() pattern as App.tsx's lazy views, so its code and its
 // 'collectionModal' strings both ship in their own chunk instead of here.
+const AnalyzeDialog = lazy(withMessages(() => import('../components/ai/AnalyzeDialog'), 'aiQueue'));
 const CollectionModal = lazy(
   withMessages(() => import('../components/CollectionModal'), 'collectionModal'),
 );
@@ -245,6 +247,7 @@ export default function Gallery({
   // window chrome are hidden where it cannot back them (the web app, for now).
   const caps = useCapabilities();
   const client = useShelfy();
+  const [analyzeRequest, setAnalyzeRequest] = useState<AnalyzeRequest | null>(null);
   // The address bar (web only; null on the desktop, which keeps its local
   // activePost state below). P1-06: the gallery's own modal moves onto the
   // `/p/:key` route — a card click navigates, closing goes back, prev/next
@@ -984,6 +987,15 @@ export default function Gallery({
 
   // ── Bulk actions: analyze, select-all-matching ───────────────────────────
   const handleAnalyzeSelected = async (): Promise<void> => {
+    if (client.ai?.webQueue) {
+      setAnalyzeRequest({
+        selector: selectAllMatching
+          ? { filter: buildApiFilters(), exceptKeys: [...selected] }
+          : { keys: [...selected] },
+        mode: 'selected',
+      });
+      return;
+    }
     const ids = [...selected];
     if (ids.length === 0) return;
     // Gate on model readiness (mirrors PostModal / AiTagsQueue): without a model on
@@ -1838,6 +1850,18 @@ export default function Gallery({
         toast region (GAL-9): one role="status" host, above the BottomNav on
         narrow, each toast with an icon and a dismiss ×. */}
       <ToastHost toasts={toasts} />
+      {analyzeRequest && client.ai?.webQueue && (
+        <Suspense fallback={null}>
+          <AnalyzeDialog
+            api={client.ai.webQueue}
+            request={analyzeRequest}
+            onClose={() => setAnalyzeRequest(null)}
+            onQueued={(count) => {
+              showFeedback(t('fbQueued', { n: count }));
+            }}
+          />
+        </Suspense>
+      )}
       {/* `overflow: clip` (not hidden) can't be scrolled by script, so focusing
         an off-screen control can never slide the grid sideways (audit GAL-1).
         A paired `overflow-y:hidden` would force clip back to hidden, so clip

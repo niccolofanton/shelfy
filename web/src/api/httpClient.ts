@@ -24,6 +24,7 @@ import type {
 import { createTagsApi } from './ai/tags';
 import { createAccountApi } from './account';
 import { createAiProvidersApi } from './aiProviders';
+import { createWebAiQueueApi } from './ai/queue';
 import { createEventStream, type EventStream } from './events';
 import { isApiError, type Http } from './http';
 import { createJobsApi } from './jobs';
@@ -117,6 +118,7 @@ export function webCapabilities(me: Schemas['Me'] | null | undefined): ShelfyCap
     ...WEB_CAPABILITIES,
     ai: Boolean(me.capabilities['ai.tasks']),
     aiTags: Boolean(me.capabilities['ai.tasks']),
+    aiQueue: Boolean(me.capabilities['ai.tasks']),
     account: true,
     settings: true,
     links: true,
@@ -191,7 +193,10 @@ export function createHttpClient(http: Http, options: HttpClientOptions = {}): S
       ? {
           account: createAccountApi(http, me, { events }),
           ...(me.capabilities['ai.tasks']
-            ? { aiProviders: createAiProvidersApi(http, events), ai: { tags: createTagsApi(http) } }
+            ? {
+                aiProviders: createAiProvidersApi(http, events),
+                ai: { tags: createTagsApi(http), webQueue: createWebAiQueueApi(http, events) },
+              }
             : {}),
           links: createLinksApi(http),
           jobs: createJobsApi(http, { events }),

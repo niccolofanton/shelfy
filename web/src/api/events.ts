@@ -158,7 +158,16 @@ export function createEventStream(options: EventStreamOptions = {}): EventStream
     state = 'connecting';
     let es: EventSourceLike;
     try {
-      es = new Source(resumeUrl(url, lastEventId));
+      let requestedUrl = url;
+      if ((listeners.get('ai.stream')?.size ?? 0) > 0) {
+        const separator = url.includes('?') ? '&' : '?';
+        requestedUrl +=
+          separator +
+          EVENT_NAMES.filter((name) => !['hello', 'resync'].includes(name))
+            .map((name) => `topics=${encodeURIComponent(name)}`)
+            .join('&');
+      }
+      es = new Source(resumeUrl(requestedUrl, lastEventId));
     } catch (err) {
       console.error('[events] cannot open the stream:', err);
       schedule();
@@ -211,10 +220,17 @@ export function createEventStream(options: EventStreamOptions = {}): EventStream
       if (!set) listeners.set(name, (set = new Set()));
       // A wrapper per subscription: the same function may subscribe twice.
       const entry = (data: unknown): void => listener(data as ServerEventData<typeof name>);
+      const streamChanged = name === 'ai.stream' && set.size === 0;
       set.add(entry);
       subscribers += 1;
       if (subscribers === 1) {
         target?.addEventListener('online', onOnline);
+        connect();
+      } else if (streamChanged) {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        source?.close();
+        source = null;
         connect();
       }
       let subscribed = true;
@@ -224,6 +240,13 @@ export function createEventStream(options: EventStreamOptions = {}): EventStream
         set.delete(entry);
         subscribers -= 1;
         if (subscribers === 0) close();
+        else if (name === 'ai.stream' && set.size === 0) {
+          if (timer) clearTimeout(timer);
+          timer = null;
+          source?.close();
+          source = null;
+          connect();
+        }
       };
     },
     get state() {

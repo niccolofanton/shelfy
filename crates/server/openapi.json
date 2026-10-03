@@ -5522,6 +5522,10 @@
           "deep": {
             "type": "boolean"
           },
+          "estimateOnly": {
+            "type": "boolean",
+            "description": "Dry run even for one post. Returns a confirmation token without queue writes."
+          },
           "mode": {
             "$ref": "#/components/schemas/AnalyzeMode"
           },

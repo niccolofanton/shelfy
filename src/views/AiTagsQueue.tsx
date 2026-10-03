@@ -1,3 +1,4 @@
+import WebAiQueue from '../components/ai/WebAiQueue';
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
@@ -703,10 +704,23 @@ const STATUS_RANK: Record<string, number> = {
 };
 
 interface AiTagsQueueProps {
+  active?: boolean;
   onOpenPost?: (postId: string) => void;
 }
 
-export default function AiTagsQueue({ onOpenPost }: AiTagsQueueProps): React.JSX.Element {
+export default function AiTagsQueue({
+  onOpenPost,
+  active = true,
+}: AiTagsQueueProps): React.JSX.Element {
+  const api = useShelfy().ai?.webQueue;
+  return api ? (
+    <WebAiQueue api={api} active={active} onOpenPost={onOpenPost} />
+  ) : (
+    <DesktopAiTagsQueue onOpenPost={onOpenPost} />
+  );
+}
+
+function DesktopAiTagsQueue({ onOpenPost }: AiTagsQueueProps): React.JSX.Element {
   const t = useT('aiQueue');
   // Un-namespaced translator for the shared feedback string: the error copy lives
   // in the aiTags namespace (analyzeStartError) and is reused verbatim here.

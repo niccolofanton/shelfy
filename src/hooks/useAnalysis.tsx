@@ -575,7 +575,8 @@ interface AnalysisProviderProps {
 // without the `aiQueue` capability gets a dormant instance (no jobs, no model).
 export function AnalysisProvider({ children }: AnalysisProviderProps): React.JSX.Element {
   const { aiQueue } = useCapabilities();
-  const value = useAnalysisStandalone(aiQueue);
+  const client = useShelfy();
+  const value = useAnalysisStandalone(aiQueue && !!client.ai?.queue);
   return createElement(AnalysisContext.Provider, { value }, children);
 }
 
@@ -586,6 +587,7 @@ export function useAnalysis(): AnalysisInstance {
   const { aiQueue } = useCapabilities();
   // The standalone instance is only active (subscribes/loads) when no provider
   // supplies the shared one — keeps hook order stable without double work.
-  const standalone = useAnalysisStandalone(ctx == null && aiQueue);
+  const client = useShelfy();
+  const standalone = useAnalysisStandalone(ctx == null && aiQueue && !!client.ai?.queue);
   return ctx ?? standalone;
 }

@@ -168,6 +168,29 @@ pub async fn analyze(
     confirm_token: Option<String>,
     deep: bool,
 ) -> Result<AnalyzeResult, ApiError> {
+    analyze_with_preview(state, user_id, selector, mode, confirm_token, deep, false).await
+}
+
+/// Runs an analyze request with an explicit preview option for UI confirmation.
+/// A preview never writes the queue, including single-post requests.
+///
+/// # Errors
+/// The same errors as [`analyze`]; a preview with a confirmation token is invalid.
+pub async fn analyze_with_preview(
+    state: &AppState,
+    user_id: &str,
+    selector: Selector,
+    mode: Mode,
+    confirm_token: Option<String>,
+    deep: bool,
+    estimate_only: bool,
+) -> Result<AnalyzeResult, ApiError> {
+    if estimate_only && confirm_token.is_some() {
+        return Err(ApiError::invalid_field(
+            "estimateOnly",
+            "cannot confirm in a preview",
+        ));
+    }
     let now = state.jobs().clock().now_ms();
     let owner = crate::jobs::ai_drain::is_owner(state, user_id).await?;
     let route = state
@@ -222,7 +245,7 @@ pub async fn analyze(
             confirm_token: None,
         });
     }
-    if matches!(&selector, Selector::Keys(keys) if keys.len() == 1) {
+    if !estimate_only && matches!(&selector, Selector::Keys(keys) if keys.len() == 1) {
         let enqueued = enqueue_now(state, user_id, &selector, mode, deep, now).await?;
         return Ok(AnalyzeResult {
             counts: counts.into(),
