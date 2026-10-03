@@ -21,9 +21,15 @@
 //! | `SHELFY_SMTP_FROM` | none | sender, required with SMTP |
 //! | `SHELFY_DEV_MAILBOX` | `false` | write emails to `<data>/dev-mailbox/*.eml` instead; loopback public URL only |
 //! | `SHELFY_WEB_DIR` | none | the built web app (`web/dist`) to serve; `/app/web` in the image. Unset: the API only |
+//! | `SHELFY_EGRESS_PROXY` | none | the egress proxy every outbound request goes through; unset: direct, with the resolver's address check |
+//! | `SHELFY_EGRESS_ALLOW_ORIGINS` | none | exact origins of the operator's AI node, reachable at a private address (L15) |
+//! | `SHELFY_CAPTURE_URL` | none | the capture service, the only origin of the internal client |
+//! | `SHELFY_ARCHIVE_RATE_INSTAGRAM`, `…_X`, `…_PINTEREST` | `2` | CDN requests per second per host group |
+//! | `SHELFY_DEV_EGRESS_HOSTS`, `SHELFY_DEV_EGRESS_CA` | none | dev and tests: fixture hosts on loopback ports, and their CA; loopback public URL only |
 //!
-//! [`crate::mail`] validates the email settings. Later tasks add their
-//! variables here (master key, capture and egress endpoints, media budgets).
+//! [`crate::mail`] validates the email settings and [`crate::outbound`] the
+//! outbound ones. Later tasks add their variables here (master key, media
+//! budgets).
 
 use std::fmt;
 use std::io;
@@ -39,6 +45,7 @@ use crate::auth::AuthConfig;
 use crate::jobs::JobsConfig;
 use crate::mail::{MailArgs, MailConfig};
 use crate::net::TrustedProxies;
+use crate::outbound::{OutboundArgs, OutboundConfig};
 use crate::rate_limit::RateLimitConfig;
 use crate::static_files::WebApp;
 
@@ -146,6 +153,11 @@ pub struct ServeArgs {
     #[command(flatten)]
     pub mail: MailArgs,
 
+    /// Boxed: `serve`'s arguments stay small enough for clippy's
+    /// `large_enum_variant` in `cli::Command`.
+    #[command(flatten)]
+    pub outbound: Box<OutboundArgs>,
+
     /// The built web app (`web/dist`) to serve to browsers: its
     /// `index.html` answers every path no route takes. The image sets
     /// `/app/web`. Unset: the API only.
@@ -197,6 +209,9 @@ pub struct Config {
     pub jobs: JobsConfig,
     /// The web app to serve, if any (P1-09).
     pub web: Option<WebApp>,
+    /// Outbound HTTP: the proxy or direct mode, the operator allowlist, the
+    /// capture service, the CDN limits (P2-04).
+    pub outbound: OutboundConfig,
 }
 
 impl Config {
@@ -213,6 +228,8 @@ impl Config {
         let public_url = args.public.public_url;
         let mail =
             MailConfig::from_args(args.mail, &data_dir, &public_url).map_err(ConfigError::Mail)?;
+        let outbound = OutboundConfig::from_args(*args.outbound, &public_url)
+            .map_err(ConfigError::Outbound)?;
         let web = args
             .web_dir
             .filter(|dir| !dir.as_os_str().is_empty())
@@ -227,6 +244,7 @@ impl Config {
             trusted_proxies: args.trusted_proxies,
             mail,
             web,
+            outbound,
             ..Self::with_data_dir(data_dir)
         })
     }
@@ -250,6 +268,7 @@ impl Config {
             rate_limits: RateLimitConfig::default(),
             jobs: JobsConfig::default(),
             web: None,
+            outbound: OutboundConfig::default(),
         }
     }
 }
@@ -279,6 +298,9 @@ pub enum ConfigError {
     /// The web app directory is unusable.
     #[error("SHELFY_WEB_DIR: {0}")]
     WebDir(io::Error),
+    /// The outbound settings are inconsistent.
+    #[error("{0}")]
+    Outbound(String),
 }
 
 /// The public origin of the web app: `http(s)://host[:port]`, no trailing slash.

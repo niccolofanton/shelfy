@@ -19,6 +19,9 @@
 //! | `shelfy_open_user_dbs` | gauge | — | user libraries open in the handle cache |
 //! | `shelfy_sqlite_busy_total` | counter | — | SQLite calls that gave up on a lock ([`shelfy_core::db::sqlite_busy_total`]) |
 //! | `shelfy_rendition_bytes` | histogram, [`RENDITION_BUCKETS`] | `variant` (`g480`) | each rendition written ([`shelfy_media::store::RENDITION_BYTES`]) |
+//! | `shelfy_egress_requests_total` | counter | `purpose` ([`crate::outbound::Purpose`]), `outcome` ([`egress_outcome`]) | outbound HTTP requests, once each, redirects included |
+//! | `shelfy_media_fetch_total` | counter | `host_group` (`instagram`, `x`, `pinterest`, [`fetch_outcome::NO_GROUP`]), `outcome` ([`fetch_outcome`]) | CDN fetches of the archive |
+//! | `shelfy_breaker_open` | gauge, 0 or 1 | `host_group` ([`crate::outbound::HostGroup`]: the three CDNs and `instagram_web`, `x_web`, `pinterest_web`) | whether a host group's breaker is open (or half-open); 0 from the start |
 //! | `shelfy_build_info` | gauge, always 1 | `version` | the build |
 //!
 //! `route` is a route template (`/api/v1/posts/{key}`), [`super::http::SPA_ROUTE`]
@@ -63,6 +66,12 @@ pub const DISK_BYTES: &str = "shelfy_disk_bytes";
 pub const OPEN_USER_DBS: &str = "shelfy_open_user_dbs";
 /// Counter of SQLite calls that gave up on a lock.
 pub const SQLITE_BUSY_TOTAL: &str = "shelfy_sqlite_busy_total";
+/// Counter of outbound HTTP requests, by purpose and [`egress_outcome`].
+pub const EGRESS_REQUESTS_TOTAL: &str = "shelfy_egress_requests_total";
+/// Counter of the archive's CDN fetches, by host group and [`fetch_outcome`].
+pub const MEDIA_FETCH_TOTAL: &str = "shelfy_media_fetch_total";
+/// Gauge: 1 while a host group's breaker is open or half-open.
+pub const BREAKER_OPEN: &str = "shelfy_breaker_open";
 /// Constant 1, labelled with the build version.
 pub const BUILD_INFO: &str = "shelfy_build_info";
 
@@ -125,6 +134,55 @@ pub mod job_outcome {
     pub const CANCELLED: &str = "cancelled";
     /// The lease watchdog stopped it: no sign of life for a whole lease.
     pub const LEASE_EXPIRED: &str = "lease_expired";
+}
+
+/// The `outcome` values of [`EGRESS_REQUESTS_TOTAL`].
+pub mod egress_outcome {
+    /// A final response below 400.
+    pub const OK: &str = "ok";
+    /// A final 4xx.
+    pub const CLIENT_ERROR: &str = "client_error";
+    /// A final 5xx.
+    pub const SERVER_ERROR: &str = "server_error";
+    /// The egress policy (or the proxy) refused a URL, or a redirect went
+    /// past the limit: nothing reached the destination.
+    pub const REFUSED: &str = "refused";
+    /// The request took longer than its timeout.
+    pub const TIMEOUT: &str = "timeout";
+    /// The connection or the exchange failed.
+    pub const FAILED: &str = "failed";
+    /// Every value.
+    pub const ALL: [&str; 6] = [OK, CLIENT_ERROR, SERVER_ERROR, REFUSED, TIMEOUT, FAILED];
+}
+
+/// The `outcome` values of [`MEDIA_FETCH_TOTAL`] (`crate::outbound::FetchOutcome`).
+pub mod fetch_outcome {
+    /// The image is staged in the user's store.
+    pub const STORED: &str = "stored";
+    /// The URL's signature expired (no request, or the CDN's expiry answer).
+    pub const EXPIRED: &str = "expired";
+    /// 404, 410 or 451.
+    pub const GONE: &str = "gone";
+    /// The CDN refused the server: a breaker sample.
+    pub const BLOCKED: &str = "blocked";
+    /// A 5xx, a timeout, a connection failure.
+    pub const TRANSIENT: &str = "transient";
+    /// The server cannot archive this URL.
+    pub const REJECTED: &str = "rejected";
+    /// The host group's breaker is open: nothing was sent.
+    pub const BREAKER_OPEN: &str = "breaker_open";
+    /// Every value.
+    pub const ALL: [&str; 7] = [
+        STORED,
+        EXPIRED,
+        GONE,
+        BLOCKED,
+        TRANSIENT,
+        REJECTED,
+        BREAKER_OPEN,
+    ];
+    /// The `host_group` of a URL outside the three CDN host groups.
+    pub const NO_GROUP: &str = "none";
 }
 
 /// The `area` values of [`DISK_BYTES`] with their directory: the top-level
@@ -210,6 +268,18 @@ fn describe() {
         RENDITION_BYTES,
         metrics::Unit::Bytes,
         "Size of each rendition written, by variant."
+    );
+    metrics::describe_counter!(
+        EGRESS_REQUESTS_TOTAL,
+        "Outbound HTTP requests, by purpose and outcome; a redirect chain counts once."
+    );
+    metrics::describe_counter!(
+        MEDIA_FETCH_TOTAL,
+        "CDN fetches of the archive, by host group and outcome."
+    );
+    metrics::describe_gauge!(
+        BREAKER_OPEN,
+        "1 while a host group's breaker is open or half-open, else 0."
     );
     metrics::describe_gauge!(BUILD_INFO, "Always 1; the label carries the version.");
 }

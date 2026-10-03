@@ -30,6 +30,7 @@
 //! | [`auth`] | sign-in links, sessions, the CSRF guard, the deny-by-default access gate |
 //! | [`mail`] | outgoing email: SMTP, the dev mailbox, or off |
 //! | [`net`] | the client address behind trusted proxies, local hosts |
+//! | [`outbound`] | outbound HTTP: the one client (proxy or guarded direct), the CDN fetcher, host limits, breakers |
 //! | [`telemetry`] | JSON logs, redaction, request ids, Prometheus metrics |
 //! | [`control`] | queries on the control database |
 //! | [`admin`] | the operator commands |
@@ -61,6 +62,7 @@ pub mod limits;
 pub mod mail;
 pub mod migrations;
 pub mod net;
+pub mod outbound;
 pub mod rate_limit;
 pub mod routes;
 pub mod security_headers;

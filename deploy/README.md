@@ -51,12 +51,18 @@ validated at start: a bad one stops the process with a message.
 | `SHELFY_SMTP_FROM` | none | Sender, `address` or `Name <address>`; required with `SHELFY_SMTP_HOST` |
 | `SHELFY_DEV_MAILBOX` | `false` | Write emails as `.eml` files to `<data>/dev-mailbox/` instead of sending them. Local runs and tests only: refused together with `SHELFY_SMTP_HOST`, and unless `SHELFY_PUBLIC_URL` is loopback (`localhost`) |
 | `SHELFY_WEB_DIR` | none (`/app/web` in the image) | The built web app (`web/dist`) to serve. Its `index.html` answers every path that no route takes and that is not under `/api`, `/media`, `/health` or `/.well-known`; files under `/assets/` are immutable. The directory must hold `index.html`, or the start fails. Unset: the API only |
+| `SHELFY_EGRESS_PROXY` | none | The egress proxy (§3.2: `http://shelfy-egress:4750`, from P4). Set: every outbound request goes through it, and the proxy resolves names and refuses private destinations. Unset: the server connects directly, and its own resolver refuses loopback, private, link-local (169.254.169.254 included), CGNAT, ULA, multicast and IPv4-mapped addresses. In both modes only http(s) on ports 80 and 443 is allowed, with at most 5 redirects, each checked again |
+| `SHELFY_EGRESS_ALLOW_ORIGINS` | none | Exact origins `scheme://host:port`, comma-separated, of the operator's own AI node (L15), reached directly even at a private address (a Tailscale `100.64.0.0/10` address). Only the operator's AI integration uses them; URLs a user enters keep the strict rules. Never put a user-reachable service here |
+| `SHELFY_CAPTURE_URL` | none | The capture service (§3.2: `http://shelfy-capture:8080`, P4): the only origin the internal client reaches, without the proxy |
+| `SHELFY_ARCHIVE_RATE_INSTAGRAM`, `SHELFY_ARCHIVE_RATE_X`, `SHELFY_ARCHIVE_RATE_PINTEREST` | `2` | Requests per second to each CDN host group (SPIKE-2), above 0 and at most 100. Raise one step per quiet breaker week (P2-20). Concurrency is 4, 8 and 4; Instagram and Pinterest fetches start after a random 120–400 ms. The hydration hosts are fixed at 1 request per 3 s (`www.instagram.com`) and 1 per second (X and Pinterest, SPIKE-9) |
+| `SHELFY_DEV_EGRESS_HOSTS` | none | Local runs and tests only: `host=127.0.0.1:port` pairs, comma-separated, that send those names to a loopback fixture without DNS or the address check. Refused unless `SHELFY_PUBLIC_URL` is loopback, and together with `SHELFY_EGRESS_PROXY` |
+| `SHELFY_DEV_EGRESS_CA` | none | Local runs and tests only: a PEM file of extra root certificates to trust (a fixture CDN's CA). Refused unless `SHELFY_PUBLIC_URL` is loopback |
 
 Empty values count as unset, so a compose file may pass `SHELFY_SMTP_HOST=` when email is off.
-Later tasks add the master key, the capture and egress endpoints and the media budgets (§3.2,
-§3.4). The operator commands (`shelfy-server admin create-owner | invite | login-link |
-snapshot | verify | user | install-snapshots | migrate-token | synth | bench`) use
-`SHELFY_DATA_DIR` too and print their results on stdout, never to the logs.
+Later tasks add the master key and the media budgets (§3.2, §3.4). The operator commands
+(`shelfy-server admin create-owner | invite | login-link | snapshot | verify | user |
+install-snapshots | migrate-token | synth | bench`) use `SHELFY_DATA_DIR` too and print their
+results on stdout, never to the logs.
 
 To sign in, create the owner once, then mint a one-time link (valid 15 minutes):
 
@@ -114,6 +120,9 @@ names and labels: change them together.
 | `shelfy_open_user_dbs` | gauge | — | Libraries open in the handle cache (at most 64) |
 | `shelfy_sqlite_busy_total` | counter | — | SQLite calls that gave up on a lock after `busy_timeout` (5 s) |
 | `shelfy_rendition_bytes` | histogram | `variant` | Size of each rendition written (`g480`), with bucket bounds at 35 and 60 KB |
+| `shelfy_egress_requests_total` | counter | `purpose`, `outcome` | Outbound HTTP requests, once per request (redirects included). `purpose`: `cdn`, `link`, `ai`, `ai_operator`, `video`, `feedback`, `capture`. `outcome`: `ok`, `client_error`, `server_error`, `refused` (our policy or the proxy refused a URL, or too many redirects), `timeout`, `failed` |
+| `shelfy_media_fetch_total` | counter | `host_group`, `outcome` | The archive's CDN fetches. `host_group`: `instagram`, `x`, `pinterest`, or `none` for a URL outside them. `outcome`: `stored`, `expired` (no request, or the CDN's expiry answer), `gone`, `blocked`, `transient`, `rejected`, `breaker_open` (no request) |
+| `shelfy_breaker_open` | gauge | `host_group` | 1 while a host group's breaker is open or half-open, else 0, from the start: the three CDN groups and `instagram_web`, `x_web`, `pinterest_web` (link hydration) |
 | `shelfy_build_info` | gauge | `version` | Always 1 |
 
 Logs never carry session ids, tokens, email addresses, captions, notes, post URLs or query

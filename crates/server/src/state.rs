@@ -1,6 +1,6 @@
 //! The state shared by every request: the databases, the configuration,
 //! authentication, the mailer, the realtime event bus, the job system, the
-//! library caches, the rate limiters and the shutdown token.
+//! library caches, the rate limiters, outbound HTTP and the shutdown token.
 
 use std::sync::Arc;
 
@@ -16,6 +16,7 @@ use crate::events::EventBus;
 use crate::jobs::Jobs;
 use crate::library::LibraryCaches;
 use crate::mail::Mailer;
+use crate::outbound::Outbound;
 use crate::rate_limit::RateLimits;
 
 /// Cheap to clone: everything lives behind one `Arc`.
@@ -34,6 +35,7 @@ struct Inner {
     jobs: Jobs,
     library_caches: LibraryCaches,
     rate_limits: RateLimits,
+    outbound: Outbound,
     shutdown: CancellationToken,
 }
 
@@ -64,6 +66,14 @@ impl AppState {
         });
         let mailer = Mailer::new(&config.mail).context("cannot set up email")?;
         tracing::info!(transport = mailer.kind().as_str(), "email transport");
+        let outbound = Outbound::new(&config.outbound).context("cannot set up outbound HTTP")?;
+        tracing::info!(
+            mode = outbound.mode().as_str(),
+            allowed_origins = config.outbound.allow_origins.iter().count(),
+            capture = config.outbound.capture.is_some(),
+            dev_hosts = config.outbound.dev_hosts.len(),
+            "outbound HTTP"
+        );
         if config.trusted_proxies.is_empty() {
             tracing::info!(
                 "no trusted proxy: CF-Connecting-IP is ignored, the TCP peer is the client"
@@ -96,6 +106,7 @@ impl AppState {
                 jobs,
                 library_caches: LibraryCaches::new(),
                 rate_limits,
+                outbound,
                 shutdown: CancellationToken::new(),
             }),
         })
@@ -135,6 +146,13 @@ impl AppState {
     #[must_use]
     pub fn mailer(&self) -> &Mailer {
         &self.inner.mailer
+    }
+
+    /// Outbound HTTP: the clients by purpose, the capture service's client
+    /// and the archive's CDN fetcher ([`crate::outbound`]).
+    #[must_use]
+    pub fn outbound(&self) -> &Outbound {
+        &self.inner.outbound
     }
 
     /// The realtime event bus: publish after a write commits.

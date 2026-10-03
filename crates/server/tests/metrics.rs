@@ -22,10 +22,12 @@ use shelfy_server::control::jobs::JobRow;
 use shelfy_server::events::model::JobState;
 use shelfy_server::ids::now_ms;
 use shelfy_server::jobs::{NewJob, Registry};
+use shelfy_server::outbound::{HostGroup, Purpose};
 use shelfy_server::routes;
 use shelfy_server::static_files::WebApp;
 use shelfy_server::telemetry::metrics::{
-    self, DISK_AREAS, OTHER_AREA, job_outcome, job_state, sample, sample_disk,
+    self, DISK_AREAS, OTHER_AREA, egress_outcome, fetch_outcome, job_outcome, job_state, sample,
+    sample_disk,
 };
 use support::auth::{OWNER_EMAIL, owner, post, sign_in, spa, with_session};
 use support::jobs::{Probe, kind, mode, modes};
@@ -202,6 +204,7 @@ async fn every_metric_is_exported_with_sane_values() {
         ("shelfy_open_user_dbs", "gauge"),
         ("shelfy_sqlite_busy_total", "counter"),
         ("shelfy_rendition_bytes", "histogram"),
+        ("shelfy_breaker_open", "gauge"),
         ("shelfy_build_info", "gauge"),
     ] {
         assert!(
@@ -261,6 +264,11 @@ async fn every_metric_is_exported_with_sane_values() {
     let at_25_kb = [("variant", "g480"), ("le", "25000")];
     let below = value(&all, "shelfy_rendition_bytes_bucket", &at_25_kb).unwrap_or(0.0);
     assert!(below < get_value("shelfy_rendition_bytes_bucket", &at_35_kb));
+    // Every host group's breaker has a series from the start (P2-04).
+    for group in HostGroup::ALL {
+        let open = get_value("shelfy_breaker_open", &[("host_group", group.label())]);
+        assert_eq!(open, 0.0, "{group:?}");
+    }
 
     probe.open(4);
     assert!(
@@ -416,6 +424,12 @@ async fn no_label_carries_a_per_user_value() {
         .map(|&(area, _)| area)
         .chain([OTHER_AREA])
         .collect();
+    let host_groups: Vec<&str> = HostGroup::ALL
+        .map(HostGroup::label)
+        .into_iter()
+        .chain([fetch_outcome::NO_GROUP])
+        .collect();
+    let purposes = Purpose::ALL.map(Purpose::label);
     let mut seen = BTreeSet::new();
     for series in &all {
         for (name, value) in &series.labels {
@@ -426,8 +440,14 @@ async fn no_label_carries_a_per_user_value() {
                 "status" => value.len() == 3 && value.bytes().all(|b| b.is_ascii_digit()),
                 "kind" => value.starts_with("test."),
                 "state" => job_states.contains(&value.as_str()),
-                "outcome" => outcomes.contains(&value.as_str()),
+                "outcome" => {
+                    outcomes.contains(&value.as_str())
+                        || egress_outcome::ALL.contains(&value.as_str())
+                        || fetch_outcome::ALL.contains(&value.as_str())
+                }
                 "area" => areas.contains(&value.as_str()),
+                "host_group" => host_groups.contains(&value.as_str()),
+                "purpose" => purposes.contains(&value.as_str()),
                 "variant" => value == "g480",
                 "version" => value == shelfy_server::VERSION,
                 "le" | "quantile" => value == "+Inf" || value.parse::<f64>().is_ok(),
