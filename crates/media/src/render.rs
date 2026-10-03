@@ -64,6 +64,64 @@ impl RenderSpec {
         max_side: 480,
         quality: 75.0,
     };
+
+    /// The master of an archived image that is too large to keep as served
+    /// (plan D4, §2.13): WebP q82 at 2,048 px. See [`keeps_original`].
+    pub const MASTER: Self = Self {
+        max_side: 2_048,
+        quality: 82.0,
+    };
+
+    /// The master of a video's poster (plan D4, §2.13): always WebP q78, at
+    /// most 1,080 px.
+    pub const POSTER: Self = Self {
+        max_side: 1_080,
+        quality: 78.0,
+    };
+}
+
+/// Largest archived image kept as served, in bytes (plan D4): 1.5 MB.
+pub const ORIGINAL_MAX_BYTES: u64 = 1_500_000;
+
+/// Whether an archived image (a cover or an image slide, not a poster) is
+/// stored as served: at most [`RenderSpec::MASTER`]'s 2,048 px on its long
+/// side and at most [`ORIGINAL_MAX_BYTES`] (plan D4). Otherwise its master
+/// is a WebP rendered with [`RenderSpec::MASTER`]. An image the pipeline
+/// cannot decode (AVIF) is always kept as served.
+#[must_use]
+pub fn keeps_original(kind: MediaKind, bytes: u64, width: u32, height: u32) -> bool {
+    !kind.is_renderable()
+        || (bytes <= ORIGINAL_MAX_BYTES && width.max(height) <= RenderSpec::MASTER.max_side)
+}
+
+/// The size of the image file at `path` as displayed (after its EXIF
+/// orientation), read from its header: no pixel is decoded.
+///
+/// # Errors
+///
+/// [`RenderError`]: not an image the pipeline decodes, or a damaged header.
+pub fn dimensions(path: &Path) -> Result<(u32, u32), RenderError> {
+    let mut reader = BufReader::new(File::open(path)?);
+    let (kind, _) = probe(&mut reader)?;
+    let format = match kind {
+        Some(MediaKind::Jpeg) => ImageFormat::Jpeg,
+        Some(MediaKind::Png) => ImageFormat::Png,
+        Some(MediaKind::Gif) => ImageFormat::Gif,
+        Some(MediaKind::Webp) => ImageFormat::WebP,
+        other => return Err(RenderError::Unsupported(other)),
+    };
+    let mut image_reader = ImageReader::with_format(reader, format);
+    image_reader.limits(limits());
+    let mut decoder = image_reader
+        .into_decoder()
+        .map_err(|e| decode_error(e, kind))?;
+    let (width, height) = decoder.dimensions();
+    let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+    Ok(if swaps_axes(orientation) {
+        (height, width)
+    } else {
+        (width, height)
+    })
 }
 
 impl Rendition {
@@ -361,6 +419,21 @@ mod tests {
         assert_eq!(fit(20_000, 1, 480), (480, 1));
         assert_eq!(fit(1, 16_384, 100), (1, 100));
         assert_eq!(fit(16_384, 16_384, 100), (100, 100));
+    }
+
+    #[test]
+    fn masters_follow_the_media_policy() {
+        assert_eq!(RenderSpec::MASTER.max_side, 2_048);
+        assert!((RenderSpec::MASTER.quality - 82.0).abs() < f32::EPSILON);
+        assert_eq!(RenderSpec::POSTER.max_side, 1_080);
+        assert!((RenderSpec::POSTER.quality - 78.0).abs() < f32::EPSILON);
+        assert!(keeps_original(MediaKind::Jpeg, 1_500_000, 2_048, 1_536));
+        assert!(!keeps_original(MediaKind::Jpeg, 1_500_001, 1_080, 1_350));
+        assert!(!keeps_original(MediaKind::Png, 900_000, 2_049, 100));
+        assert!(
+            keeps_original(MediaKind::Avif, 9_000_000, 4_000, 3_000),
+            "not decodable: kept"
+        );
     }
 
     #[test]
