@@ -198,7 +198,7 @@ pub fn scope_counts(
     now: i64,
 ) -> Result<ScopeCounts> {
     let _ = now;
-    let scope = selector.sql()?;
+    let scope = selector.sql(conn)?;
     let count = |extra: &str| -> Result<u64> {
         let sql = format!(
             "SELECT count(*) FROM posts p WHERE {SOCIAL} AND p.deleted_at IS NULL \
@@ -386,7 +386,7 @@ pub fn errors_by_code(conn: &Connection) -> Result<Vec<(String, u64)>> {
 ///
 /// [`RepoError::Invalid`] when the selector is over its caps; database errors.
 pub fn mark_pending(conn: &Connection, selector: &Selector, mode: Mode, now: i64) -> Result<u64> {
-    let scope = selector.sql()?;
+    let scope = selector.sql(conn)?;
     let sql = format!(
         "UPDATE posts AS p SET ai_status = 'pending', ai_next_at = ?1, ai_attempts = 0, ai_error = NULL \
          WHERE id IN (SELECT p.id FROM posts p WHERE {SOCIAL} AND p.deleted_at IS NULL \
@@ -690,7 +690,7 @@ pub fn retry(conn: &Connection, reach: &Reach, now: i64) -> Result<u64> {
 
 /// Exact eligible IDs at estimate time; confirmation cannot grow its selection.
 pub fn eligible_ids(conn: &Connection, selector: &Selector, mode: Mode) -> Result<Vec<i64>> {
-    let scope = selector.sql()?;
+    let scope = selector.sql(conn)?;
     let mut stmt = conn.prepare(&format!("SELECT p.id FROM posts p WHERE {SOCIAL} AND p.deleted_at IS NULL AND ({}) AND {} AND {HAS_INPUTS} ORDER BY p.id", scope.condition, mode.enqueue_condition()))?;
     Ok(stmt
         .query_map(params_from_iter(scope.params.iter()), |r| r.get(0))?

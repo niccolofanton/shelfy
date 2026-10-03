@@ -244,3 +244,74 @@ fn manual_files_need_an_image_preview_instead_of_a_caption() {
     );
     assert_eq!(inputs::select(&db, id).unwrap().unwrap().frames.len(), 1);
 }
+
+#[test]
+fn alias_filters_keep_estimates_eligible_ids_and_enqueue_on_the_same_posts() {
+    use shelfy_core::repo::posts::{Mode, PostFilter, UserContentPatch};
+    let db = library();
+    db.execute_batch("INSERT INTO tag_alias (alias_norm, canonical_norm, canonical_form, status, created_at) VALUES ('lights', 'lamp', 'Lamp', 'accepted', 0), ('proposal', 'lamp', 'Lamp', 'proposed', 0)").unwrap();
+    let wanted = post(&db, "x_2001", "text");
+    let other = post(&db, "x_2002", "text");
+    for (id, tag) in [(wanted, "lamp"), (other, "chair")] {
+        posts::update_user_content(
+            &db,
+            id,
+            &UserContentPatch {
+                tags: Some(vec![tag.into()]),
+                ..UserContentPatch::default()
+            },
+            2,
+        )
+        .unwrap();
+    }
+    let filter = PostFilter {
+        tags: vec![" LIGHTS ".into(), "lamp".into()],
+        tag_mode: Mode::And,
+        ..PostFilter::default()
+    };
+    let scope = Selector::filter(filter.clone());
+    assert_eq!(posts::list_ids(&db, &filter).unwrap(), vec![wanted]);
+    assert_eq!(
+        queue::scope_counts(&db, &scope, queue::Mode::Missing, 3)
+            .unwrap()
+            .analyzable,
+        1
+    );
+    assert_eq!(
+        queue::eligible_ids(&db, &scope, queue::Mode::Missing).unwrap(),
+        vec![wanted]
+    );
+    for tag in ["unknown", "proposal"] {
+        let scope = Selector::filter(PostFilter {
+            tags: vec![tag.into()],
+            ..PostFilter::default()
+        });
+        assert_eq!(
+            queue::scope_counts(&db, &scope, queue::Mode::Missing, 3)
+                .unwrap()
+                .analyzable,
+            0
+        );
+        assert!(
+            queue::eligible_ids(&db, &scope, queue::Mode::Missing)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            queue::mark_pending(&db, &scope, queue::Mode::Missing, 3).unwrap(),
+            0
+        );
+    }
+    assert_eq!(
+        queue::mark_pending(&db, &scope, queue::Mode::Missing, 3).unwrap(),
+        1
+    );
+    assert_eq!(
+        queue::scope_counts(&db, &scope, queue::Mode::Missing, 3)
+            .unwrap()
+            .already_queued,
+        1
+    );
+    assert_eq!(queue::claim_due(&db, 3).unwrap().unwrap().post_id, wanted);
+    assert!(queue::claim_due(&db, 3).unwrap().is_none());
+}
