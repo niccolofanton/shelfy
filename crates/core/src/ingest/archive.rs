@@ -44,11 +44,11 @@
 //! 6. Something failed: `failed`.
 //! 7. `done`.
 //!
-//! **Fetch state of the cover.** Only slides have fetch columns
-//! (`post_media.fetch_*`). The archive fetches the cover through slide 0
-//! (an image post's cover is its first slide, a video's poster is the URL
-//! slide 0 carries, §2.13), so the cover's tries and error are slide 0's. A
-//! cover without slides (a text post's avatar) never counts as failed.
+//! **Fetch state of the cover.** The archive fetches the cover through
+//! slide 0 (an image post's cover is its first slide, a video's poster is
+//! the URL slide 0 carries, §2.13), so the cover's tries and error are
+//! slide 0's (`post_media.fetch_*`). A cover without slides (a text post's
+//! avatar) keeps them in `posts.cover_fetch_*` (library v3, P2-10).
 //!
 //! **Time.** A state depends on `now` through the URLs' expiries: a stored
 //! `pending` turns stale once its Instagram URLs expire, and nothing writes
@@ -533,7 +533,8 @@ pub struct Refreshed {
 /// A query failed.
 pub fn load(conn: &Connection, scope: Scope<'_>) -> Result<Vec<(i64, PostFacts)>> {
     const POSTS: &str = "SELECT id, platform, media_type, archive_state, cover_object IS NOT NULL,
-                                cover_url IS NOT NULL, cover_url_expires_at
+                                cover_url IS NOT NULL, cover_url_expires_at,
+                                cover_fetch_attempts, cover_fetch_error
                          FROM posts";
     const SLIDES: &str = "SELECT post_id, position, kind, object_id IS NOT NULL,
                                  source_url IS NOT NULL, source_url_expires_at, fetch_attempts,
@@ -558,6 +559,10 @@ pub fn load(conn: &Connection, scope: Scope<'_>) -> Result<Vec<(i64, PostFacts)>
     let mut stmt = conn.prepare_cached(&format!("{POSTS} {post_filter} ORDER BY id"))?;
     let mut rows = stmt.query(params.as_slice())?;
     while let Some(row) = rows.next()? {
+        // The cover's own fetch state, for a post without slides; slide 0's
+        // replaces it below.
+        let attempts: i64 = row.get(7)?;
+        let error: Option<String> = row.get(8)?;
         posts.push((
             row.get(0)?,
             PostFacts {
@@ -568,7 +573,7 @@ pub fn load(conn: &Connection, scope: Scope<'_>) -> Result<Vec<(i64, PostFacts)>
                     stored: row.get(4)?,
                     has_url: row.get(5)?,
                     expires_at: row.get(6)?,
-                    failed: false,
+                    failed: fetch_failed(attempts, error.as_deref()),
                 },
                 slides: Vec::new(),
             },
@@ -593,7 +598,7 @@ pub fn load(conn: &Connection, scope: Scope<'_>) -> Result<Vec<(i64, PostFacts)>
         let kind: String = row.get(2)?;
         let attempts: i64 = row.get(6)?;
         let error: Option<String> = row.get(7)?;
-        let failed = error.as_deref() == Some(FETCH_ERROR_GONE) || attempts >= FETCH_TRIES;
+        let failed = fetch_failed(attempts, error.as_deref());
         let slide = SlideFacts {
             image: kind == "image",
             asset: Asset {
@@ -610,6 +615,12 @@ pub fn load(conn: &Connection, scope: Scope<'_>) -> Result<Vec<(i64, PostFacts)>
         post.slides.push(slide);
     }
     Ok(posts)
+}
+
+/// Whether an item's fetch failed for good: gone, or out of tries.
+#[must_use]
+pub fn fetch_failed(attempts: i64, error: Option<&str>) -> bool {
+    error == Some(FETCH_ERROR_GONE) || attempts >= FETCH_TRIES
 }
 
 /// Derives the state of the posts in `scope` under `policy` at `now` and

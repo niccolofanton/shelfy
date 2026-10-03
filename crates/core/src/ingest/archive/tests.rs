@@ -703,6 +703,55 @@ fn load_reads_the_facts() {
     assert_eq!(state(&facts[0].1, &ArchivePolicy::default(), NOW), Failed);
 }
 
+/// A cover without slides (an X text tweet's avatar) keeps its own fetch
+/// state in `posts.cover_fetch_*` (library v3); slide 0's wins when there
+/// is one.
+#[test]
+fn a_cover_without_slides_has_its_own_fetch_state() {
+    let conn = library();
+    let mut avatar = new_post("x_8", X, "text");
+    avatar.cover_url = Some("https://pbs.twimg.com/profile_images/1/a.jpg".to_owned());
+    let id = posts::insert(&conn, &avatar, NOW).unwrap();
+    let policy = ArchivePolicy::default();
+    let derive = || {
+        let facts = load(&conn, Scope::Posts(&[id])).unwrap();
+        state(&facts[0].1, &policy, NOW)
+    };
+    assert_eq!(derive(), Pending);
+    conn.execute(
+        "UPDATE posts SET cover_fetch_attempts = ?2 - 1, cover_fetch_error = 'transient'
+         WHERE id = ?1",
+        params![id, FETCH_TRIES],
+    )
+    .unwrap();
+    assert_eq!(derive(), Pending, "a try is left");
+    conn.execute(
+        "UPDATE posts SET cover_fetch_attempts = ?2 WHERE id = ?1",
+        params![id, FETCH_TRIES],
+    )
+    .unwrap();
+    assert_eq!(derive(), Failed, "out of tries");
+    conn.execute(
+        "UPDATE posts SET cover_fetch_attempts = 1, cover_fetch_error = 'gone' WHERE id = ?1",
+        [id],
+    )
+    .unwrap();
+    assert_eq!(derive(), Failed, "gone");
+
+    // With a slide 0, its state is the cover's: the post's columns are not
+    // read.
+    let ids = seed(&conn);
+    conn.execute(
+        "UPDATE posts SET cover_fetch_error = 'gone' WHERE id = ?1",
+        [ids[5]],
+    )
+    .unwrap();
+    let facts = load(&conn, Scope::Posts(&[ids[5]])).unwrap();
+    assert!(!facts[0].1.cover.failed);
+    assert!(fetch_failed(FETCH_TRIES, None) && fetch_failed(0, Some(FETCH_ERROR_GONE)));
+    assert!(!fetch_failed(FETCH_TRIES - 1, Some("transient")));
+}
+
 #[test]
 fn the_policy_reads_the_users_asset_types() {
     let conn = library();

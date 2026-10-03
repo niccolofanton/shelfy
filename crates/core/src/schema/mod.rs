@@ -99,6 +99,10 @@ const LIBRARY_MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/library/0002_search_infix.sql"),
         comment: "library schema v2: posts_infix",
     },
+    Migration {
+        sql: include_str!("../../migrations/library/0003_cover_fetch.sql"),
+        comment: "library schema v3: the fetch state of a cover without slides",
+    },
 ];
 
 const CONTROL_MIGRATIONS: &[Migration] = &[
