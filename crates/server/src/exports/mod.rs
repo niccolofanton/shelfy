@@ -158,6 +158,11 @@ pub async fn run(ctx: &JobContext, id: &str) -> Result<(), JobError> {
         if amount > free {
             return Err(JobError::permanent("storage_full"));
         }
+        // Export admission is durable before this barrier. A GC chunk that
+        // checked for exports before admission may still hold the writer; let
+        // it commit before taking the snapshot. Subsequent GC chunks observe
+        // this queued/running export under the same writer and wait.
+        library.write(|_| Ok::<_, shelfy_core::db::DbError>(()))?;
         library
             .read(|source| {
                 bundle::snapshot(source, &snapshot, context.token(), &|| context.heartbeat())

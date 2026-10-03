@@ -36,6 +36,7 @@ pub mod backfill_covers;
 pub mod bench;
 pub mod create_user;
 pub mod flags;
+pub mod gc;
 pub mod install;
 pub mod invite;
 pub mod login_link;
@@ -72,6 +73,8 @@ pub struct AdminArgs {
 pub enum AdminCommand {
     /// Create the owner account (idempotent for the same email).
     CreateOwner(owner::CreateOwnerArgs),
+    /// Collect unreferenced media (counts only); dry-run leaves data unchanged.
+    Gc(gc::GcArgs),
     /// Create a member account for tests (idempotent for the same email),
     /// such as the live host's E6 mock account. The instance stays
     /// owner-only (E4): there is no invite redemption route, so this is the
@@ -130,6 +133,7 @@ pub fn run(args: AdminArgs) -> anyhow::Result<()> {
     let data = DataDir::new(args.data.data_dir).context("SHELFY_DATA_DIR is unusable")?;
     let mut out = std::io::stdout().lock();
     match args.command {
+        AdminCommand::Gc(args) => gc::run(&data, &args, &mut out),
         AdminCommand::CreateOwner(args) => owner::run(&data, &args, &mut out),
         AdminCommand::CreateUser(args) => create_user::run(&data, &args, &mut out),
         AdminCommand::Invite(args) => invite::run(&data, &args, &mut out),

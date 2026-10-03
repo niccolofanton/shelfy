@@ -29,6 +29,8 @@
 //! | `shelfy_archive_backlog` | gauge | `platform` | items left to the server's archive, as the drains last counted them |
 //! | `shelfy_ingest_items_total` | counter | `platform`, `outcome` ([`ingest_outcome`]) | items of ingest batches (P2-09) |
 //! | `shelfy_sync_run_pages` | histogram, [`SYNC_RUN_PAGES_BUCKETS`] | `platform`, `trigger` | pages a finished sync run scanned (P2-09) |
+//! | `shelfy_gc_objects_deleted_total` | counter | — | unreferenced objects collected |
+//! | `shelfy_gc_bytes_freed_total` | counter | — | bytes of collected object rows |
 //! | `shelfy_build_info` | gauge, always 1 | `version` | the build |
 //!
 //! `route` is a route template (`/api/v1/posts/{key}`), [`super::http::SPA_ROUTE`]
@@ -62,6 +64,10 @@ use crate::state::{AppState, blocking};
 pub const ARCHIVE_COVER_LATENCY_SECONDS: &str = "shelfy_archive_cover_latency_seconds";
 /// Gauge of the items left to the archive, by platform.
 pub const ARCHIVE_BACKLOG: &str = "shelfy_archive_backlog";
+/// Unreferenced object rows collected.
+pub const GC_OBJECTS_DELETED_TOTAL: &str = "shelfy_gc_objects_deleted_total";
+/// Bytes recorded by those collected rows (renditions excluded).
+pub const GC_BYTES_FREED_TOTAL: &str = "shelfy_gc_bytes_freed_total";
 /// Counter of HTTP requests by route template, method and status.
 pub const HTTP_REQUESTS_TOTAL: &str = "shelfy_http_requests_total";
 /// Histogram of request handling time by route template, in seconds.
@@ -355,6 +361,12 @@ pub fn install() -> PrometheusHandle {
 }
 
 fn describe() {
+    metrics::describe_counter!(GC_OBJECTS_DELETED_TOTAL, "Unreferenced objects collected.");
+    metrics::describe_counter!(
+        GC_BYTES_FREED_TOTAL,
+        metrics::Unit::Bytes,
+        "Bytes of collected object rows."
+    );
     metrics::describe_counter!(
         HTTP_REQUESTS_TOTAL,
         "HTTP requests by route template, method and status."

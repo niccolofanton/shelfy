@@ -407,6 +407,27 @@ pub fn restamp(conn: &Connection, now: i64) -> Result<(usize, usize)> {
     Ok((stamped, cleared))
 }
 
+/// Counts objects eligible for collection without changing stamps, rows or files.
+/// Uses the same reference predicate as collection, including trashed posts.
+///
+/// # Errors
+///
+/// Database errors.
+pub fn garbage_totals(conn: &Connection, cutoff: i64) -> Result<(u64, u64)> {
+    let sql = format!(
+        "SELECT count(*), coalesce(sum(bytes), 0) FROM media_objects
+         WHERE unreferenced_since IS NOT NULL AND unreferenced_since <= ?1 AND {}",
+        *UNREFERENCED
+    );
+    let (objects, bytes) = conn.query_row(&sql, [cutoff], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    Ok((
+        u64::try_from(objects).unwrap_or(0),
+        u64::try_from(bytes).unwrap_or(0),
+    ))
+}
+
 /// An object deleted by [`collect_garbage`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Garbage {

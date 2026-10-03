@@ -71,6 +71,7 @@ pub mod archive;
 pub mod bulk;
 mod clock;
 mod context;
+pub mod gc;
 pub mod hydrate;
 pub mod idempotency;
 pub mod import;
