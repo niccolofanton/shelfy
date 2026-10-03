@@ -30,6 +30,7 @@ const apiPort = Number(process.env.SHELFY_E2E_API_PORT || 18201);
 const metricsPort = apiPort + 90;
 const stubPort = apiPort + 1;
 const stubControlPort = apiPort + 2;
+const byokStubPort = apiPort + 3;
 // Generate once in the runner; its child servers and workers inherit the values.
 process.env.SHELFY_E2E_MASTER_KEY ||= randomBytes(32).toString('base64');
 process.env.SHELFY_E2E_STUB_KEY ||= randomBytes(32).toString('base64');
@@ -46,6 +47,8 @@ export const E2E = {
   stubUrl: `http://127.0.0.1:${stubPort}`,
   stubControlUrl: `http://127.0.0.1:${stubControlPort}`,
   stubControlPort,
+  byokStubPort,
+  byokStubUrl: `http://[::1]:${byokStubPort}`,
   stubBin: resolve(repoRoot, process.env.SHELFY_E2E_STUB_BIN || 'target/release/shelfy-ai-stub'),
   origin,
   apiUrl: `http://localhost:${apiPort}`,
@@ -79,6 +82,7 @@ export const E2E = {
   serverEnv: {
     SHELFY_DATA_DIR: dataDir,
     SHELFY_MASTER_KEY: process.env.SHELFY_E2E_MASTER_KEY,
+    SHELFY_AI_ALLOW_LOOPBACK: 'true',
     SHELFY_OPERATOR_AI_URL: `http://127.0.0.1:${stubPort}/v1`,
     SHELFY_OPERATOR_AI_KEY: process.env.SHELFY_E2E_STUB_KEY,
     SHELFY_OPERATOR_AI_MODEL: 'stub-text',

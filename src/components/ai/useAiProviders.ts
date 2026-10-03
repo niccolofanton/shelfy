@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AiProvidersApi, AiProviderSummary, ProviderState } from '../../api/aiProviders';
+import { PROVIDER_SETTINGS_CHANGED } from './providerConnection';
 
 // Snapshots recover missed SSE events; statuses received during a fetch win
 // over its older snapshot. Every listener belongs to the client's shared stream.
@@ -36,11 +37,17 @@ export function useAiProviders(api: AiProvidersApi): {
       statuses.clear();
       void refresh();
     });
+    const changed = (): void => {
+      statuses.clear();
+      void refresh();
+    };
+    window.addEventListener(PROVIDER_SETTINGS_CHANGED, changed);
     void refresh();
     return () => {
       active = false;
       offStatus();
       offResync();
+      window.removeEventListener(PROVIDER_SETTINGS_CHANGED, changed);
     };
   }, [api]);
   return { providers, error };

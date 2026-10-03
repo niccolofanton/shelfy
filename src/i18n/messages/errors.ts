@@ -59,7 +59,7 @@ export default {
       'Il file di importazione non è valido o usa un formato non supportato.',
     'code.ai_not_configured': 'Nessun provider AI è configurato per questa operazione.',
     'code.ai_vault_disabled':
-      'Il server non è ancora configurato per salvare le chiavi dei provider AI.',
+      'Le credenziali dei provider personali sono disabilitate. Contatta il proprietario del server.',
     'code.ai_consent_required': 'Serve il tuo consenso per inviare i contenuti a questo provider.',
     'code.provider_offline': 'Il provider AI non è raggiungibile ora. Riprova più tardi.',
     'code.provider_unavailable': 'Il provider AI non è disponibile al momento. Riprova tra poco.',
@@ -117,7 +117,8 @@ export default {
     'code.provider_key_invalid': 'The AI provider refused the key.',
     'code.import_format_unknown': 'The import file is invalid or uses an unsupported format.',
     'code.ai_not_configured': 'No AI provider is set up for this task.',
-    'code.ai_vault_disabled': 'The server is not yet configured to store AI provider keys.',
+    'code.ai_vault_disabled':
+      'Credentials for personal providers are disabled. Contact the server owner.',
     'code.ai_consent_required': 'Sending your content to this provider needs your consent first.',
     'code.provider_offline': 'The AI provider cannot be reached right now. Try again later.',
     'code.provider_unavailable': 'The AI provider is unavailable right now. Try again shortly.',

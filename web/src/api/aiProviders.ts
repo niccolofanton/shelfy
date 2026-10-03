@@ -17,6 +17,24 @@ function settings(value: Schemas['Settings']): AiProviderSettings {
 export function createAiProvidersApi(http: Http, events: Pick<EventStream, 'on'>): AiProvidersApi {
   return {
     list: () => http.get<Schemas['ProviderSummary'][]>('/api/v1/me/providers'),
+    management: {
+      async save(id, input) {
+        await http.send('PUT', `/api/v1/me/providers/${encodeURIComponent(id)}`, input);
+      },
+      async delete(id) {
+        await http.send('DELETE', `/api/v1/me/providers/${encodeURIComponent(id)}`);
+      },
+      async test(id) {
+        return (
+          await http.send('POST', `/api/v1/me/providers/${encodeURIComponent(id)}/test`)
+        ).json();
+      },
+      async consent(id, version) {
+        await http.send('POST', `/api/v1/me/providers/${encodeURIComponent(id)}/consent`, {
+          version,
+        });
+      },
+    },
     async getSettings() {
       return settings(await http.get<Schemas['Settings']>('/api/v1/me/settings'));
     },

@@ -7,6 +7,13 @@ import {
   type AiUsageDay,
 } from '../../api/aiProviders';
 import { useAiProviders } from '../../components/ai/useAiProviders';
+import { providerSupports } from '../../components/ai/ConnectProviderWizard';
+import {
+  requestProviderConnection,
+  notifyProviderSettingsChanged,
+  PROVIDER_SETTINGS_CHANGED,
+  type ProviderSettingsChange,
+} from '../../components/ai/providerConnection';
 import { useFailureText } from '../../hooks/useFailureText';
 import { localeTag, useLang, useT } from '../../i18n';
 import { Card, CardHeader, InlineNote, INPUT, Loading, PRIMARY_BUTTON } from './ui';
@@ -31,6 +38,8 @@ export default function AiSettings({ api }: { api: AiProvidersApi }): React.JSX.
   const [saveError, setSaveError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [manageError, setManageError] = useState<unknown>(null);
   useEffect(() => {
     let active = true;
     void api
@@ -56,6 +65,48 @@ export default function AiSettings({ api }: { api: AiProvidersApi }): React.JSX.
       active = false;
     };
   }, [api]);
+  useEffect(() => {
+    let active = true;
+    const changed = (event: Event): void => {
+      const change = (event as CustomEvent<ProviderSettingsChange>).detail;
+      void api
+        .getSettings()
+        .then((value) => {
+          if (!active) return;
+          setSaved(value);
+          setDraft((previous) => {
+            if (!previous) return value;
+            const aiRouting = { ...previous.aiRouting };
+            if (change.task && change.providerId) aiRouting[change.task] = change.providerId;
+            if (change.deletedId)
+              for (const task of AI_TASKS)
+                if (aiRouting[task] === change.deletedId) delete aiRouting[task];
+            return { ...previous, aiRouting };
+          });
+        })
+        .catch((cause) => {
+          if (active) setManageError(cause);
+        });
+    };
+    window.addEventListener(PROVIDER_SETTINGS_CHANGED, changed);
+    return () => {
+      active = false;
+      window.removeEventListener(PROVIDER_SETTINGS_CHANGED, changed);
+    };
+  }, [api]);
+  const remove = async (id: string): Promise<void> => {
+    if (!api.management || deleting) return;
+    setDeleting(id);
+    setManageError(null);
+    try {
+      await api.management.delete(id);
+      notifyProviderSettingsChanged({ deletedId: id });
+    } catch (cause) {
+      setManageError(cause);
+    } finally {
+      setDeleting(null);
+    }
+  };
   const change = (patch: Partial<AiProviderSettings>): void => {
     setDraft((previous) => previous && { ...previous, ...patch });
     setSuccess(false);
@@ -86,9 +137,25 @@ export default function AiSettings({ api }: { api: AiProvidersApi }): React.JSX.
   return (
     <div className="space-y-4" data-testid="ai-provider-settings">
       <Card testId="ai-providers">
-        <CardHeader icon={Cpu} title={t('providersTitle')} description={t('providersDesc')} />
+        <CardHeader
+          icon={Cpu}
+          title={t('providersTitle')}
+          description={t('providersDesc')}
+          aside={
+            api.management && (
+              <button
+                type="button"
+                className={PRIMARY_BUTTON}
+                onClick={() => requestProviderConnection()}
+              >
+                {t('addProvider')}
+              </button>
+            )
+          }
+        />
         {providers === null && providerError === null && <Loading />}
         {providerError != null && <InlineNote tone="error">{failure(providerError)}</InlineNote>}
+        {manageError != null && <InlineNote tone="error">{failure(manageError)}</InlineNote>}
         {providers?.length === 0 && <InlineNote tone="info">{t('noProviders')}</InlineNote>}
         <div className="mt-4 space-y-3">
           {providers?.map((provider) => (
@@ -105,17 +172,83 @@ export default function AiSettings({ api }: { api: AiProvidersApi }): React.JSX.
               </div>
               <p className="mt-1 text-gray-400">{t(provider.managed ? 'managed' : 'byok')}</p>
               <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-gray-400">
-                {(['text', 'vision', 'embed'] as const).map((kind) => (
-                  <React.Fragment key={kind}>
-                    <dt>{t(`model.${kind}`)}</dt>
-                    <dd className="break-all text-gray-200">
-                      {provider.models[kind] ?? t('notConfigured')}
-                    </dd>
-                  </React.Fragment>
-                ))}
-                <dt>{t('model.stt')}</dt>
-                <dd>{t(provider.stt ? 'available' : 'notConfigured')}</dd>
+                {provider.taskModels
+                  ? AI_TASKS.map((task) => (
+                      <React.Fragment key={task}>
+                        <dt>{t(`task.${task}`)}</dt>
+                        <dd className="break-all text-gray-200">
+                          {provider.taskModels?.[task] ?? t('notConfigured')}
+                        </dd>
+                      </React.Fragment>
+                    ))
+                  : (['text', 'vision', 'embed'] as const).map((kind) => (
+                      <React.Fragment key={kind}>
+                        <dt>{t(`model.${kind}`)}</dt>
+                        <dd className="break-all text-gray-200">
+                          {provider.models[kind] ?? t('notConfigured')}
+                        </dd>
+                      </React.Fragment>
+                    ))}
+                {!provider.taskModels && (
+                  <>
+                    <dt>{t('model.stt')}</dt>
+                    <dd>{t(provider.stt ? 'available' : 'notConfigured')}</dd>
+                  </>
+                )}
               </dl>
+              {!provider.managed && (
+                <>
+                  {provider.last4 && (
+                    <p className="mt-2 text-gray-400">
+                      {t('storedKey', { last4: provider.last4 })}
+                    </p>
+                  )}
+                  {provider.baseUrl && (
+                    <p className="mt-1 break-all text-gray-500">{provider.baseUrl}</p>
+                  )}
+                  <p className="mt-2 text-gray-400">
+                    {t(provider.consent ? 'consentRecorded' : 'consentNeeded')}
+                  </p>
+                  {provider.prices && (
+                    <p className="mt-1 text-gray-400">
+                      {t('providerPrices', {
+                        input: number.format(provider.prices.inputPerMillionUsd),
+                        output: number.format(provider.prices.outputPerMillionUsd),
+                      })}
+                    </p>
+                  )}
+                  {provider.test && (
+                    <p className="mt-1 text-gray-400">
+                      {t('lastTest')}:{' '}
+                      {(['models', 'text', 'vision', 'schema'] as const)
+                        .map(
+                          (name) =>
+                            `${t(`probe.${name}`)}: ${t(provider.test![name].ok ? 'probePassed' : provider.test![name].skipped ? 'probeSkipped' : 'probeFailed')}`,
+                        )
+                        .join(' · ')}
+                    </p>
+                  )}
+                  {api.management && (
+                    <div className="mt-3 flex gap-4">
+                      <button
+                        type="button"
+                        disabled={deleting != null}
+                        onClick={() => requestProviderConnection(undefined, provider)}
+                      >
+                        {t('editProvider')}
+                      </button>
+                      <button
+                        type="button"
+                        className="text-red-300"
+                        disabled={deleting != null}
+                        onClick={() => void remove(provider.id)}
+                      >
+                        {t(deleting === provider.id ? 'deletingProvider' : 'deleteProvider')}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           ))}
         </div>
@@ -131,13 +264,7 @@ export default function AiSettings({ api }: { api: AiProvidersApi }): React.JSX.
                 const chosen = draft.aiRouting[task];
                 const vision = task === 'catalog' || task === 'qc';
                 const supports = (provider: NonNullable<typeof providers>[number]): boolean =>
-                  vision
-                    ? !!provider.models.vision
-                    : task === 'embed'
-                      ? !!provider.models.embed
-                      : task === 'stt'
-                        ? provider.stt
-                        : true;
+                  providerSupports(provider, task);
                 const effective = chosen
                   ? providers?.find((p) => p.id === chosen)
                   : providers?.find(supports);
@@ -171,6 +298,15 @@ export default function AiSettings({ api }: { api: AiProvidersApi }): React.JSX.
                     {noRoute && (
                       <InlineNote tone="info">
                         {t(vision ? 'visionRequired' : 'noRoute')}
+                        {api.management && (
+                          <button
+                            type="button"
+                            className="ml-2 underline"
+                            onClick={() => requestProviderConnection(task)}
+                          >
+                            {t('connectProvider')}
+                          </button>
+                        )}
                       </InlineNote>
                     )}
                   </div>
