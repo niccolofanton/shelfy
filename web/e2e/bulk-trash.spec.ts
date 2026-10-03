@@ -106,7 +106,7 @@ test('select all → delete → the trash count matches → restore → empty (P
   await page.getByTestId('nav-trash').click();
   await expect(page.getByTestId('trash-count')).toHaveText('70 in trash');
   await page.getByTestId('trash-empty').click();
-  await page.getByTestId('trash-empty').click(); // two-step confirm
+  await page.getByTestId('trash-empty-confirm').click(); // two-step confirm
   await expect(page.getByTestId('trash-empty-state')).toBeVisible();
   await expect(page.getByTestId('trash-count')).toHaveText('0 in trash');
   expect(api.requestsTo('/api/v1/trash/empty', 'POST')).toHaveLength(1);

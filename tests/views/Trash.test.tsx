@@ -65,6 +65,10 @@ describe('Trash view — empty state', () => {
     expect(await screen.findByTestId('trash-empty-state')).toBeInTheDocument();
     expect(screen.getByTestId('trash-count')).toHaveTextContent('0');
     expect(screen.queryByTestId('trash-select-toggle')).toBeNull();
+    // TR-1/TR-2: nothing to empty, and the retention line would only repeat
+    // the empty state's body.
+    expect(screen.queryByTestId('trash-empty')).toBeNull();
+    expect(screen.getAllByText(/30 giorni/)).toHaveLength(1);
     // No search here at all (review L6: trashed posts have no FTS rows).
     expect(screen.queryByRole('textbox')).toBeNull();
   });
@@ -189,14 +193,14 @@ describe('Trash view — empty trash', () => {
 
     fireEvent.click(screen.getByTestId('trash-empty'));
     expect(client.emptyTrash).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId('trash-empty'));
+    fireEvent.click(screen.getByTestId('trash-empty-confirm'));
     await waitFor(() => expect(client.emptyTrash).toHaveBeenCalledTimes(1));
   });
 
-  it('is disabled when the trash is already empty', async () => {
+  it('hides the button when the trash is already empty', async () => {
     const client = fakeClient();
     renderTrash(client);
     await screen.findByTestId('trash-empty-state');
-    expect(screen.getByTestId('trash-empty')).toBeDisabled();
+    expect(screen.queryByTestId('trash-empty')).toBeNull();
   });
 });

@@ -99,7 +99,8 @@ test('pause, a planted job, cancel, and the queue bar agree with the real server
   await expect(row).toContainText('Cancelled');
   expect(sql(`SELECT state FROM jobs WHERE id = 9001;`)).toBe('cancelled');
 
-  await queueRow.getByTestId('jobs-queue-clear-finished').click();
+  await queueRow.getByTestId('jobs-queue-menu').click();
+  await page.getByTestId('jobs-queue-clear-finished').click();
   await expect(row).toHaveCount(0);
 
   await context.close();

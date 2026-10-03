@@ -17,7 +17,7 @@ export default {
     ai: 'AI',
     downloads: 'Downloads',
     trash: 'Cestino',
-    jobs: 'Lavori',
+    jobs: 'Attività',
     website: 'Aggiungi sito',
     manualBookmark: 'Aggiungi file',
     newFolder: 'Nuova cartella',

@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { ListChecks, RefreshCw, SearchX } from 'lucide-react';
+import MenuButton from '../components/MenuButton';
+import { Button, EmptyState, IconButton, PageHeader, Spinner } from '../components/ui';
 import { useLang, useT } from '../i18n';
 import { useShelfy } from '../api/ShelfyProvider';
 import { useNavigation } from '../api/navigation';
@@ -128,20 +130,20 @@ export default function Jobs({ onOpenPost }: JobsProps): React.JSX.Element {
   );
 
   return (
-    <div data-testid="jobs-view" className="flex flex-col h-full overflow-hidden bg-[#0f0f0f]">
-      <header className="flex items-center gap-3 px-4 h-14 shrink-0 border-b border-[#222]">
-        <h1 className="flex-1 text-[15px] font-semibold text-white">{t('title')}</h1>
-        <button
-          type="button"
-          data-testid="jobs-refresh"
-          title={t('refresh')}
-          aria-label={t('refresh')}
-          onClick={jobs.refresh}
-          className="u-press flex items-center justify-center w-8 h-8 rounded-md text-[#9a9a9a] hover:text-white hover:bg-[#1f1f1f]"
-        >
-          <RefreshCw size={16} />
-        </button>
-      </header>
+    <div data-testid="jobs-view" className="flex flex-col h-full overflow-hidden bg-primary">
+      <PageHeader
+        className="border-b border-subtle"
+        leading={<MenuButton />}
+        title={t('title')}
+        actions={
+          <IconButton
+            data-testid="jobs-refresh"
+            label={t('refresh')}
+            icon={RefreshCw}
+            onClick={jobs.refresh}
+          />
+        }
+      />
 
       <QueueBar
         queues={jobs.summary}
@@ -154,49 +156,72 @@ export default function Jobs({ onOpenPost }: JobsProps): React.JSX.Element {
         onClearFinished={jobs.clearFinishedQueue}
       />
 
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[#222] flex-wrap">
-        <span className="text-[11px] uppercase tracking-wide text-[#7a7a7a]">
+      {/* State filter: one scrolling row with an edge fade (JOB-4), chips 36px
+        on narrow with a 44px tap area. */}
+      <div className="flex items-center gap-2 border-b border-subtle py-2.5 pl-4 narrow:pl-3">
+        <span className="shrink-0 text-caption uppercase tracking-wide text-muted">
           {t('stateFilterLabel')}
         </span>
-        {STATE_ORDER.map((state) => {
-          const selected = filter.state.includes(state);
-          return (
+        <div
+          data-testid="jobs-state-filters"
+          className="u-fade-x flex min-w-0 flex-1 items-center gap-2 overflow-x-auto py-1 pr-6"
+        >
+          {STATE_ORDER.map((state) => {
+            const selected = filter.state.includes(state);
+            return (
+              <button
+                key={state}
+                type="button"
+                data-testid={`jobs-state-filter-${state}`}
+                aria-pressed={selected}
+                onClick={() => toggleState(state)}
+                className={[
+                  'u-press u-hit relative h-7 shrink-0 rounded-full border px-2.5 text-xs narrow:h-9 narrow:px-3',
+                  selected
+                    ? 'border-accent bg-accent-fill/20 text-primary'
+                    : 'border-subtle text-secondary hover:bg-hover hover:text-primary',
+                ].join(' ')}
+              >
+                {jobStateLabel(lang, state)}
+              </button>
+            );
+          })}
+          {filtered && (
             <button
-              key={state}
               type="button"
-              data-testid={`jobs-state-filter-${state}`}
-              aria-pressed={selected}
-              onClick={() => toggleState(state)}
-              className={[
-                'u-press px-2.5 h-7 rounded-full text-[12px] border',
-                selected
-                  ? 'border-[#7B5CFF] bg-[#7B5CFF22] text-white'
-                  : 'border-[#2a2a2a] text-[#9a9a9a] hover:text-white hover:bg-[#1a1a1a]',
-              ].join(' ')}
+              data-testid="jobs-clear-filters"
+              onClick={clearFilters}
+              className="u-press u-hit relative h-7 shrink-0 rounded-full px-2.5 text-xs text-secondary hover:bg-hover hover:text-primary narrow:h-9"
             >
-              {jobStateLabel(lang, state)}
+              {t('clearFilters')}
             </button>
-          );
-        })}
-        {filtered && (
-          <button
-            type="button"
-            data-testid="jobs-clear-filters"
-            onClick={clearFilters}
-            className="u-press ml-1 px-2.5 h-7 rounded-full text-[12px] text-[#9a9a9a] hover:text-white hover:bg-[#1a1a1a]"
-          >
-            {t('clearFilters')}
-          </button>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto">
         {jobs.loading ? (
-          <div className="p-6 text-center text-[13px] text-[#7a7a7a]">{tc('loading')}</div>
-        ) : jobs.jobs.length === 0 ? (
-          <div data-testid="jobs-empty" className="p-6 text-center text-[13px] text-[#7a7a7a]">
-            {filtered ? t('emptyFiltered') : t('empty')}
+          <div className="flex justify-center p-6">
+            <Spinner size={18} label={tc('loading')} className="text-muted" />
           </div>
+        ) : jobs.jobs.length === 0 ? (
+          filtered ? (
+            <EmptyState
+              testId="jobs-empty"
+              className="min-h-[50vh]"
+              icon={SearchX}
+              title={t('emptyFiltered')}
+              action={{ label: t('clearFilters'), onClick: clearFilters }}
+            />
+          ) : (
+            <EmptyState
+              testId="jobs-empty"
+              className="min-h-[50vh]"
+              icon={ListChecks}
+              title={t('empty')}
+              body={t('emptyBody')}
+            />
+          )
         ) : (
           <>
             {jobs.jobs.map((job) => {
@@ -216,15 +241,14 @@ export default function Jobs({ onOpenPost }: JobsProps): React.JSX.Element {
             })}
             {jobs.hasMore && (
               <div className="p-4 flex justify-center">
-                <button
-                  type="button"
+                <Button
                   data-testid="jobs-load-more"
-                  disabled={jobs.loadingMore}
+                  variant="secondary"
+                  loading={jobs.loadingMore}
                   onClick={jobs.loadMore}
-                  className="u-press px-3 h-8 rounded-md bg-[#1f1f1f] text-[12px] text-[#ddd] hover:bg-[#272727] disabled:opacity-60"
                 >
                   {jobs.loadingMore ? tc('loading') : t('loadMore')}
-                </button>
+                </Button>
               </div>
             )}
           </>

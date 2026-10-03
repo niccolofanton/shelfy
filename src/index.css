@@ -1064,3 +1064,14 @@ textarea,
     border-top: 1px solid #2e2e2e !important;
   }
 }
+
+/* A horizontally scrolling row with a soft fade on its right edge, so a
+   clipped chip reads as "more this way" (Jobs state filter, JOB-4). */
+.u-fade-x {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  scrollbar-width: none;
+}
+.u-fade-x::-webkit-scrollbar {
+  display: none;
+}

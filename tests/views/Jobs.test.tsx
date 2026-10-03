@@ -205,7 +205,7 @@ describe('Jobs view', () => {
 
   it('shows the empty state when there are no jobs', async () => {
     renderJobs(fakeJobsApi({ items: [], nextCursor: null }));
-    expect(await screen.findByTestId('jobs-empty')).toHaveTextContent('No recent jobs.');
+    expect(await screen.findByTestId('jobs-empty')).toHaveTextContent('No background jobs');
   });
 
   it('lists jobs with their kind, state and a post thumbnail', async () => {
@@ -248,11 +248,26 @@ describe('Jobs view', () => {
     expect(within(row).getByTestId('job-row-error')).toHaveTextContent(
       'A dependency was unavailable.',
     );
-    // The "tries" count shares a <span> with its "· " separator (one text
-    // node each): a regex matches the substring instead of the whole node.
-    expect(within(row).getByText(/1\/3 tries/)).toBeInTheDocument();
+    // JOB-3: the attempt count shows only after a retry.
+    expect(within(row).queryByText(/Attempt/)).toBeNull();
     fireEvent.click(within(row).getByTestId('job-row-retry'));
     await waitFor(() => expect(api.retry).toHaveBeenCalledWith(2));
+  });
+
+  it('shows the attempt count only after a retry, and hides idle queues', async () => {
+    const api = fakeJobsApi(
+      {
+        items: [
+          job({ id: 2, state: 'failed', errorCode: 'internal', attempts: 2, maxAttempts: 3 }),
+        ],
+        nextCursor: null,
+      },
+      [queue({ kind: 'capture.site', queued: 0, running: 0, succeeded: 4 })],
+    );
+    renderJobs(api);
+    const row = await screen.findByTestId('job-row');
+    expect(within(row).getByText(/Attempt 2 of 3/)).toBeInTheDocument();
+    expect(screen.queryByTestId('jobs-queue-bar')).toBeNull();
   });
 
   it('the queue bar offers pause, cancel-all and clear-finished per kind', async () => {
@@ -263,11 +278,17 @@ describe('Jobs view', () => {
     const bar = await screen.findByTestId('jobs-queue-bar');
     const row = within(bar).getByTestId('jobs-queue-row');
     expect(row).toHaveAttribute('data-kind', 'capture.site');
-    fireEvent.click(within(row).getByTestId('jobs-queue-pause-toggle'));
+    // JOB-1: the controls live in a labeled "⋯" menu (it closes after each pick).
+    const menu = (id: string): HTMLElement => {
+      fireEvent.click(within(row).getByTestId('jobs-queue-menu'));
+      return screen.getByTestId(id);
+    };
+    fireEvent.click(menu('jobs-queue-pause-toggle'));
     await waitFor(() => expect(api.pauseQueue).toHaveBeenCalledWith('capture.site'));
-    fireEvent.click(within(row).getByTestId('jobs-queue-cancel-all'));
+    fireEvent.click(menu('jobs-queue-cancel-all'));
+    expect(screen.queryByText('Cancel queued')).toBeNull(); // closed after the pick
     await waitFor(() => expect(api.cancelQueue).toHaveBeenCalledWith('capture.site'));
-    fireEvent.click(within(row).getByTestId('jobs-queue-clear-finished'));
+    fireEvent.click(menu('jobs-queue-clear-finished'));
     await waitFor(() => expect(api.clearFinishedQueue).toHaveBeenCalledWith('capture.site'));
   });
 
