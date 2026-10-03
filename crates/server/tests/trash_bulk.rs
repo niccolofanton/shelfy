@@ -29,9 +29,11 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
-use shelfy_core::repo::collections;
-use shelfy_core::repo::posts::{self, UserContentPatch};
+use shelfy_core::repo::posts::{self, NewPost, UserContentPatch};
+use shelfy_core::repo::{Platform, collections};
 use shelfy_core::search::index;
+use shelfy_server::config::{Config, DataDir};
+use shelfy_server::control::jobs::JobRow;
 use shelfy_server::error::ErrorCode;
 use shelfy_server::events::Delivery;
 use shelfy_server::events::model::{EventTopic, JobState};
@@ -244,6 +246,60 @@ async fn wait_succeeded(t: &TestState, user: &str, kind: &str, n: i64) {
         let next = tokio::time::timeout(Duration::from_secs(3 * 86_400), events.next()).await;
         assert!(next.is_ok(), "no {n} succeeded {kind} jobs");
     }
+}
+
+/// A write transaction of the test's own on a library: the server's writer
+/// waits for it (up to its 5-second busy timeout) until it is released, so a
+/// test can hold a job inside a chunk.
+struct HeldWriter(Connection);
+
+impl HeldWriter {
+    fn take(t: &TestState, user: &str) -> Self {
+        let conn = library(t, user);
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        Self(conn)
+    }
+
+    fn release(self) {
+        self.0.execute_batch("ROLLBACK").unwrap();
+    }
+}
+
+/// Polls job `id` of `user` until `done` holds; returns it.
+async fn poll_job(
+    state: &shelfy_server::state::AppState,
+    user: &str,
+    id: i64,
+    done: impl Fn(&JobRow) -> bool,
+) -> JobRow {
+    for _ in 0..6_000 {
+        let job = state.jobs().get(user, id).await.unwrap().expect("the job");
+        if done(&job) {
+            return job;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("job {id} never got there");
+}
+
+/// Waits until job `id` of `user` runs its first chunk: it reported its
+/// stage, and the worker has had time to reach the library's writer.
+async fn wait_in_first_chunk(t: &TestState, user: &str, id: i64, stage: &str) {
+    poll_job(&t.state, user, id, |job| {
+        job.state == JobState::Running && job.stage.as_deref() == Some(stage)
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+}
+
+/// The checkpoint of a bulk job's payload: the largest id it went through,
+/// and how many posts it went through.
+fn checkpoint(job: &JobRow) -> (i64, u64) {
+    let payload: Value = serde_json::from_str(&job.payload_json).unwrap();
+    (
+        payload["after"].as_i64().unwrap(),
+        payload["done"].as_u64().unwrap(),
+    )
 }
 
 /// A `job.updated` of one job, as the stream carried it.
@@ -1370,6 +1426,191 @@ async fn a_purge_waits_for_a_restore_asked_before_it() {
     let count = ok(&app, get("/api/v1/posts/count")).await;
     assert_eq!(count["total"], 1_207, "every post the undo restored stayed");
     assert_index_consistent(&t, ALICE, "a purge after a restore");
+}
+
+/// How a test stops a bulk job right after its first chunk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Interruption {
+    /// The user pauses the queue, then resumes it.
+    Pause,
+    /// The server shuts down, then starts again.
+    Shutdown,
+    /// An operator locks the library (`admin user lock`), then unlocks it.
+    Lock,
+    /// The queue pauses, the user cancels the job, then retries it.
+    CancelThenRetry,
+}
+
+/// A state of its own on `t`'s data directory: the server after a restart.
+fn restarted(t: &TestState) -> shelfy_server::state::AppState {
+    let mut config = Config::with_data_dir(DataDir::new(t.dir.path()).unwrap());
+    config.rate_limits = shelfy_server::rate_limit::RateLimitConfig::disabled();
+    shelfy_server::state::AppState::open(config).unwrap()
+}
+
+/// Review M1: a bulk delete of 1,600 posts stops after its first chunk.
+/// Meanwhile the user restores 40 of the posts it trashed, and a post is
+/// added. The job then goes on from where it stopped: the 40 stay restored,
+/// the new post is never reached, and no try is used.
+async fn a_stopped_bulk_job_goes_on_where_it_stopped(interruption: Interruption) {
+    let t = TestState::new();
+    t.add_user(ALICE);
+    let keys = t.write(ALICE, |tx| synthetic_library(tx, 1_600, 41)).await;
+    let app = t.app_as(ALICE);
+    let jobs = scheduler(&t);
+
+    // The job's first chunk waits for the test's write transaction.
+    let held = HeldWriter::take(&t, ALICE);
+    let started = call(
+        &app,
+        bulk(json!({ "filter": {} }), "delete", Value::Null),
+        StatusCode::ACCEPTED,
+    )
+    .await;
+    let id = started["job"]["id"].as_i64().unwrap();
+    wait_in_first_chunk(&t, ALICE, id, "delete").await;
+    let users = t.data_dir().users_dir();
+    let jobs = match interruption {
+        Interruption::Pause | Interruption::CancelThenRetry => {
+            ok(&app, post_empty("/api/v1/queues/bulk/pause")).await;
+            held.release();
+            Some(jobs)
+        }
+        Interruption::Shutdown => {
+            let stopping =
+                tokio::spawn(jobs.stop(tokio::time::Instant::now() + Duration::from_secs(30)));
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            held.release();
+            assert!(stopping.await.unwrap(), "the worker stopped in time");
+            None
+        }
+        Interruption::Lock => {
+            assert!(shelfy_core::db::lock_library(&users, ALICE, "restore").unwrap());
+            held.release();
+            Some(jobs)
+        }
+    };
+    // The first chunk committed, then the job went back to the queue with
+    // its checkpoint, without using a try.
+    let stopped = poll_job(&t.state, ALICE, id, |job| {
+        job.state == JobState::Queued && checkpoint(job).1 > 0
+    })
+    .await;
+    assert_eq!(stopped.attempts, 0, "{interruption:?}");
+    let first_ids: Vec<i64> = {
+        let conn = library(&t, ALICE);
+        conn.prepare("SELECT id FROM posts WHERE deleted_at IS NOT NULL ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    };
+    assert_eq!(first_ids.len(), 500, "{interruption:?}: one chunk");
+    assert_eq!(
+        checkpoint(&stopped),
+        (*first_ids.last().unwrap(), 500),
+        "{interruption:?}"
+    );
+    if interruption == Interruption::Lock {
+        assert!(stopped.run_at > stopped.updated_at, "held for the unlock");
+        assert!(shelfy_core::db::unlock_library(&users, ALICE).unwrap());
+    }
+
+    // In between: the user restores 40 of the trashed posts, by key, and a
+    // post arrives that the filter matches.
+    let restored: Vec<&String> = keys[..40].iter().collect();
+    let back = ok(&app, restore(json!({ "selector": { "keys": restored } }))).await;
+    assert_eq!(back["changed"], 40);
+    t.write(ALICE, |tx| {
+        let post = NewPost::new("ig_77777", Platform::Instagram, "77777", "image", NOW);
+        posts::insert(tx, &post, NOW)
+    })
+    .await;
+
+    // The job goes on.
+    let done = match interruption {
+        Interruption::Pause => {
+            ok(&app, post_empty("/api/v1/queues/bulk/resume")).await;
+            let done = poll_job(&t.state, ALICE, id, |job| job.state.is_final()).await;
+            drop(jobs);
+            done
+        }
+        Interruption::CancelThenRetry => {
+            let cancelled = ok(&app, post_empty(&format!("/api/v1/jobs/{id}/cancel"))).await;
+            assert_eq!(cancelled["state"], "cancelled");
+            ok(&app, post_empty("/api/v1/queues/bulk/resume")).await;
+            let retried = ok(&app, post_empty(&format!("/api/v1/jobs/{id}/retry"))).await;
+            assert_eq!(retried["state"], "queued");
+            let done = poll_job(&t.state, ALICE, id, |job| job.state.is_final()).await;
+            drop(jobs);
+            done
+        }
+        Interruption::Shutdown => {
+            let _jobs = scheduler(&t);
+            poll_job(&t.state, ALICE, id, |job| job.state.is_final()).await
+        }
+        Interruption::Lock => {
+            // The library stays held for a minute after a lock: a server
+            // that restarts once that time is over runs the job again.
+            drop(jobs);
+            t.control()
+                .execute("UPDATE jobs SET run_at = 0 WHERE id = ?1", [id])
+                .unwrap();
+            let state = restarted(&t);
+            let _jobs = state.jobs().start(state.clone(), CancellationToken::new());
+            poll_job(&state, ALICE, id, |job| job.state.is_final()).await
+        }
+    };
+    assert_eq!(
+        done.state,
+        JobState::Succeeded,
+        "{interruption:?}: {done:?}"
+    );
+    assert_eq!(done.attempts, 0, "{interruption:?}");
+    assert_eq!(checkpoint(&done).1, 1_600, "{interruption:?}");
+    let trash = ok(&app, get("/api/v1/trash?limit=1")).await;
+    assert_eq!(trash["total"], 1_560, "{interruption:?}");
+    let live = ok(
+        &app,
+        post("/api/v1/posts/batch-get", &json!({ "keys": restored })),
+    )
+    .await;
+    assert!(
+        live["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p["deletedAt"].is_null()),
+        "{interruption:?}: the restored posts stayed restored"
+    );
+    assert_eq!(
+        ok(&app, get("/api/v1/posts/ig_77777")).await["deletedAt"],
+        Value::Null,
+        "{interruption:?}: the new post was not reached"
+    );
+    assert_index_consistent(&t, ALICE, "an interrupted bulk job");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_paused_bulk_job_goes_on_where_it_stopped() {
+    a_stopped_bulk_job_goes_on_where_it_stopped(Interruption::Pause).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bulk_job_stopped_by_a_shutdown_goes_on_where_it_stopped() {
+    a_stopped_bulk_job_goes_on_where_it_stopped(Interruption::Shutdown).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_bulk_job_stopped_by_a_user_lock_goes_on_where_it_stopped() {
+    a_stopped_bulk_job_goes_on_where_it_stopped(Interruption::Lock).await;
+}
+
+/// The manual retry of a cancelled delete goes on from its checkpoint too.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_retried_bulk_job_goes_on_where_it_stopped() {
+    a_stopped_bulk_job_goes_on_where_it_stopped(Interruption::CancelThenRetry).await;
 }
 
 /// The nightly purge (03:00 UTC) deletes what has been in the trash for 30

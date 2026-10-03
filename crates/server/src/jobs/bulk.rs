@@ -7,34 +7,56 @@
 //! delete moves (the undo key). Each chunk changes its posts at its own time,
 //! their `updatedAt`: a post a delete moves later than asked stays in the
 //! trash for its full 30 days, and outside the purge of an emptying asked
-//! before the move ([`shelfy_core::trash`]). The worker counts the
-//! selection, then works through it in chunks of 500 posts in id order
-//! ([`shelfy_core::bulk::next_chunk`]), one write transaction per chunk on a
-//! handle taken for that chunk ([`JobContext::user_db`]). After each chunk
-//! that changed posts it announces `posts.changed` (the action's reason, the
-//! chunk's keys or `null`) and `stats.changed`, and reports its progress
-//! (`stage` is the action, `progress` the share of the selection done) on
-//! `job.updated`.
+//! before the move ([`shelfy_core::trash`]). The worker counts what is left
+//! of the selection, then works through it in chunks of 500 posts in id
+//! order ([`shelfy_core::bulk::next_chunk`]), one write transaction per chunk
+//! on a handle taken for that chunk ([`JobContext::user_db`]). After each
+//! chunk that changed posts it announces `posts.changed` (the action's
+//! reason, the chunk's keys or `null`) and `stats.changed`, and reports its
+//! progress (`stage` is the action, `progress` the share of the selection
+//! done) on `job.updated`.
 //!
-//! **Stopping.** Between chunks it stops when cancelled (what is done stays
-//! done) and yields when the queue is paused. Every action is idempotent on
-//! each post, so a try that starts over (after a pause, a crash or a lost
-//! lease) runs the whole selection again and changes only what is left.
+//! **Where it stands** (P1-11 review M1). The payload also holds the largest
+//! post id when the job was asked (`maxId`): posts added since (an install,
+//! an extension's ingest) are never visited, even when a filter matches
+//! them. After each chunk the job merges into its payload the largest id it
+//! went through and how many posts it went through (`after`, `done`:
+//! [`AttemptFence::checkpoint`]), so a later try (after a pause, a shutdown,
+//! a locked library, a lost lease, or the user's retry of a cancelled job)
+//! goes on from there and never redoes a chunk whose changes the user undid
+//! in between. Should a try stop between a chunk's commit and its record (a
+//! crash), the next one runs that chunk again: every action is idempotent
+//! on each post.
+//!
+//! **Stopping.** Between chunks it stops when cancelled and yields when the
+//! queue is paused. Each chunk checks, inside its write transaction, that its
+//! try is still the job's current one ([`AttemptFence::is_current`]): once a
+//! cancel is committed, the try writes nothing more, which is what makes the
+//! undo of a running delete complete ([`crate::routes::trash`]). A chunk is
+//! announced and recorded from the blocking task that committed it, so a
+//! worker aborted after a commit loses neither (P1-11 review L7).
 //!
 //! **Limits.** Two at once overall, one per user (a user's bulk actions run
 //! in the order they were asked), three tries, a 5-minute lease renewed by
 //! every chunk.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use shelfy_core::bulk::{self, Action, CHUNK};
-use shelfy_core::repo::RepoError;
+use shelfy_core::db::{UserDb, UserDbCache};
 use shelfy_core::selector::Selector;
 
 use super::codes;
-use super::{Enqueued, JobContext, JobError, JobResult, Jobs, Kind, KindSpec, NewJob, Outcome};
+use super::{
+    AttemptFence, Clock, Enqueued, JobContext, JobError, JobResult, Jobs, Kind, KindSpec, NewJob,
+    Outcome,
+};
 use crate::error::ApiError;
+use crate::events::EventBus;
+use crate::events::model::ChangeReason;
 use crate::library;
 use crate::routes::bulk::{BulkAction, BulkParams, changed_keys};
 use crate::routes::selector::PostSelector;
@@ -106,6 +128,40 @@ pub struct Payload {
     /// The request's stamp, unix ms: the `deletedAt` of every post a delete
     /// moves. The posts' `updatedAt` is the time of their chunk.
     pub at: i64,
+    /// The largest post id when the job was asked: posts added since are
+    /// never visited. Absent from jobs queued before it existed: no bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_id: Option<i64>,
+    /// Checkpoint: the largest post id the job went through, 0 before its
+    /// first chunk. A try goes on after it.
+    #[serde(default)]
+    pub after: i64,
+    /// Checkpoint: how many posts the job went through.
+    #[serde(default)]
+    pub done: u64,
+}
+
+impl Payload {
+    /// A job of `action` with `params` over `selection`, stamped `at`, for
+    /// the posts up to `max_id`: nothing done yet.
+    #[must_use]
+    pub fn new(
+        action: BulkAction,
+        params: Option<BulkParams>,
+        selection: Selection,
+        at: i64,
+        max_id: i64,
+    ) -> Self {
+        Self {
+            action,
+            params,
+            selection,
+            at,
+            max_id: Some(max_id),
+            after: 0,
+            done: 0,
+        }
+    }
 }
 
 /// Enqueues the bulk job of `payload` for `user_id`.
@@ -120,18 +176,6 @@ pub async fn enqueue(jobs: &Jobs, user_id: &str, payload: &Payload) -> Result<En
         .await
 }
 
-/// What one chunk did.
-struct Step {
-    /// Posts in the chunk.
-    len: usize,
-    /// The chunk's largest id.
-    last: i64,
-    /// Whether it changed posts.
-    changed: bool,
-    /// The event keys of the posts it changed.
-    keys: Option<Vec<String>>,
-}
-
 async fn run(ctx: JobContext) -> JobResult {
     let payload: Payload = ctx.payload_as()?;
     let invalid =
@@ -142,18 +186,18 @@ async fn run(ctx: JobContext) -> JobResult {
         .map_err(invalid)?;
     let selector = payload.selection.resolve().map_err(invalid)?;
     let stage = payload.action.as_str();
-    let reason = payload.action.reason();
-    let at = payload.at;
+    let upto = payload.max_id.unwrap_or(i64::MAX);
+    let (mut after, mut done) = (payload.after, payload.done);
 
     let counted = selector.clone();
-    let total = ctx
+    let left = ctx
         .user_db(move |db| {
-            db.read(|conn| bulk::count(conn, &counted))
+            db.read(|conn| bulk::count_between(conn, &counted, after, upto))
                 .map_err(JobError::from)
         })
         .await?;
-    ctx.progress(Some(0.0), Some(stage)).await;
-    let (mut after, mut done) = (0_i64, 0_u64);
+    let total = done.saturating_add(left);
+    ctx.progress(Some(share(done, total)), Some(stage)).await;
     loop {
         if ctx.is_cancelled() {
             return Err(JobError::cancelled());
@@ -161,40 +205,142 @@ async fn run(ctx: JobContext) -> JobResult {
         if ctx.is_paused() {
             return Ok(Outcome::Requeue { run_at: None });
         }
-        let (selector, action) = (selector.clone(), action.clone());
-        let clock = *ctx.jobs().clock();
-        let step = ctx
-            .user_db(move |db| {
-                db.write(|tx| -> Result<Option<Step>, RepoError> {
-                    let Some(chunk) = bulk::next_chunk(tx, &selector, after, CHUNK)? else {
-                        return Ok(None);
-                    };
-                    // The stamp is the request's; the time is the chunk's
-                    // own: when its posts really change (P1-11 review H1).
-                    let now = clock.now_ms();
-                    let applied = bulk::apply_stamped(tx, &chunk.selector, &action, at, now)?;
-                    Ok(Some(Step {
-                        len: chunk.len,
-                        last: chunk.last,
-                        changed: !applied.changed.is_empty(),
-                        keys: changed_keys(tx, &applied.changed)?,
-                    }))
-                })
-                .map_err(JobError::from)
-            })
-            .await?;
-        let Some(step) = step else {
-            break;
+        let chunk = ChunkRun {
+            fence: ctx.attempt_fence(),
+            cache: Arc::clone(ctx.state().user_dbs()),
+            events: ctx.state().events().clone(),
+            user: ctx.user_id().to_owned(),
+            clock: *ctx.jobs().clock(),
+            selector: selector.clone(),
+            action: action.clone(),
+            reason: payload.action.reason(),
+            at: payload.at,
+            upto,
+            after,
+            done,
         };
-        if step.changed {
-            library::announce(ctx.state().events(), ctx.user_id(), reason, step.keys);
+        match ctx.user_db(move |db| chunk.run(db)).await? {
+            Step::Went {
+                last,
+                done: total_done,
+            } => {
+                after = last;
+                done = total_done;
+                ctx.progress(Some(share(done, total)), Some(stage)).await;
+            }
+            Step::Finished => break,
+            // Cancelled meanwhile, or another try took the job over: the
+            // scheduler knows, and records it.
+            Step::Stopped => return Err(JobError::cancelled()),
         }
-        after = step.last;
-        done += step.len as u64;
-        ctx.progress(Some(share(done, total)), Some(stage)).await;
     }
     ctx.progress(Some(1.0), Some(stage)).await;
     Ok(Outcome::Succeeded)
+}
+
+/// One chunk of a job: everything it needs on its blocking task.
+struct ChunkRun {
+    fence: AttemptFence,
+    cache: Arc<UserDbCache>,
+    events: EventBus,
+    user: String,
+    clock: Clock,
+    selector: Selector,
+    action: Action,
+    reason: ChangeReason,
+    at: i64,
+    upto: i64,
+    after: i64,
+    done: u64,
+}
+
+/// What a chunk did.
+enum Step {
+    /// It went through posts up to `last`; `done` in all so far.
+    Went { last: i64, done: u64 },
+    /// Nothing is left: the job is done.
+    Finished,
+    /// The try is no longer the job's current one: it changed nothing.
+    Stopped,
+}
+
+/// What a chunk's write transaction did.
+enum Wrote {
+    Chunk {
+        len: usize,
+        last: i64,
+        changed: bool,
+        keys: Option<Vec<String>>,
+    },
+    Nothing,
+    NotCurrent,
+}
+
+impl ChunkRun {
+    /// Runs the chunk on `db`, then, from this blocking task, announces what
+    /// it changed and records where the job stands (module docs).
+    fn run(self, db: &UserDb) -> Result<Step, JobError> {
+        let wrote = db.write(|tx| -> Result<Wrote, JobError> {
+            // Under the writer: a cancel committed before is seen here, and a
+            // write that starts after it waits for this chunk.
+            if !self.fence.is_current()? {
+                return Ok(Wrote::NotCurrent);
+            }
+            let Some(chunk) = bulk::next_chunk(tx, &self.selector, self.after, self.upto, CHUNK)?
+            else {
+                return Ok(Wrote::Nothing);
+            };
+            // The stamp is the request's; the time is the chunk's own: when
+            // its posts really change (P1-11 review H1).
+            let now = self.clock.now_ms();
+            let applied = bulk::apply_stamped(tx, &chunk.selector, &self.action, self.at, now)?;
+            let changed = !applied.changed.is_empty();
+            let keys = if changed {
+                changed_keys(tx, &applied.changed)?
+            } else {
+                None
+            };
+            Ok(Wrote::Chunk {
+                len: chunk.len,
+                last: chunk.last,
+                changed,
+                keys,
+            })
+        })?;
+        let (len, last) = match wrote {
+            Wrote::NotCurrent => return Ok(Step::Stopped),
+            Wrote::Nothing => return Ok(Step::Finished),
+            Wrote::Chunk {
+                len,
+                last,
+                changed,
+                keys,
+            } => {
+                if changed {
+                    library::committed(
+                        &self.cache,
+                        &self.events,
+                        &self.user,
+                        db,
+                        self.reason,
+                        keys,
+                    );
+                }
+                (len, last)
+            }
+        };
+        let done = self.done.saturating_add(len as u64);
+        let recorded = self
+            .fence
+            .checkpoint(&json!({ "after": last, "done": done }))?;
+        Ok(if recorded {
+            Step::Went { last, done }
+        } else {
+            // Its lease was taken back: another try goes on from the last
+            // record, and runs this chunk again, which changes nothing more.
+            Step::Stopped
+        })
+    }
 }
 
 /// `done` of `total`, from 0 to 1 (a selection may grow while the job runs).
@@ -209,8 +355,6 @@ pub(crate) fn share(done: u64, total: u64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
     #[test]
@@ -221,16 +365,22 @@ mod tests {
         }))
         .unwrap();
         for selection in [Selection::selector(request), Selection::DeletedAt(42)] {
-            let payload = Payload {
-                action: BulkAction::AddToCollections,
-                params: Some(BulkParams {
-                    collection_ids: Some(vec![3]),
-                    collection_id: None,
-                }),
-                selection,
-                at: 7,
+            let params = BulkParams {
+                collection_ids: Some(vec![3]),
+                collection_id: None,
             };
+            let payload = Payload::new(
+                BulkAction::AddToCollections,
+                Some(params),
+                selection,
+                7,
+                900,
+            );
             let value = serde_json::to_value(&payload).unwrap();
+            assert_eq!(
+                (&value["maxId"], &value["after"], &value["done"]),
+                (&json!(900), &json!(0), &json!(0))
+            );
             let back: Payload = serde_json::from_value(value).unwrap();
             assert_eq!(back, payload);
             assert!(back.selection.resolve().is_ok());
@@ -241,6 +391,14 @@ mod tests {
             Selection::DeletedAt(42).resolve().unwrap(),
             Selector::TrashedAt(42)
         );
+        // A job queued before the checkpoints: no bound, from the start.
+        let old: Payload = serde_json::from_value(json!({
+            "action": "delete",
+            "selection": { "deletedAt": 42 },
+            "at": 7,
+        }))
+        .unwrap();
+        assert_eq!((old.max_id, old.after, old.done), (None, 0, 0));
     }
 
     #[test]

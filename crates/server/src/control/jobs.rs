@@ -428,6 +428,42 @@ pub fn set_progress(
     Ok(changed == 1)
 }
 
+/// Whether the row is still the attempt `fence`: running, with the
+/// `attempts` it was claimed with. False once the job was cancelled, its
+/// lease taken back, or it finished.
+///
+/// # Errors
+///
+/// The query failed.
+pub fn is_current(conn: &Connection, fence: Fence) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM jobs WHERE id = ?1 AND state = 'running' AND attempts = ?2)",
+        params![fence.id, fence.attempts],
+        |row| row.get(0),
+    )
+    .map_err(RepoError::from)
+}
+
+/// Merges `patch`, a JSON object, into the payload of the job of the
+/// attempt `fence` (RFC 7396: a member set to `null` is removed): a worker's
+/// checkpoint, which its next try reads in its payload. It applies while the
+/// row is that attempt, and also once the attempt was cancelled, so that the
+/// work the attempt did before it stopped is recorded for a retry; a retry
+/// cannot start before the attempt ended. False when the row is no longer
+/// that attempt (its lease was taken back).
+///
+/// # Errors
+///
+/// The query failed (`patch` is not a JSON object, say).
+pub fn checkpoint(conn: &Connection, fence: Fence, patch: &str) -> Result<bool> {
+    let changed = conn.execute(
+        "UPDATE jobs SET payload_json = json_patch(payload_json, ?3) \
+         WHERE id = ?1 AND attempts = ?2 AND state IN ('running', 'cancelled')",
+        params![fence.id, fence.attempts, patch],
+    )?;
+    Ok(changed == 1)
+}
+
 /// How an attempt ended.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Finish<'a> {
@@ -992,6 +1028,61 @@ mod tests {
                 None,
                 "only failed or cancelled"
             );
+            Ok::<_, RepoError>(())
+        })
+        .unwrap();
+    }
+
+    /// A worker's checkpoint: written by its attempt while it runs, and still
+    /// after a cancel (what the attempt did stays recorded for a retry); not
+    /// by an attempt whose lease was taken back.
+    #[test]
+    fn checkpoints_belong_to_the_attempt() {
+        let (db, owner, _) = control_with_users();
+        let payload = |tx: &Connection, id: i64| -> serde_json::Value {
+            let row = get(tx, &owner, id).unwrap().unwrap();
+            serde_json::from_str(&row.payload_json).unwrap()
+        };
+        db.write(|tx| {
+            let job = created(insert(
+                tx,
+                &NewJobRow {
+                    payload_json: r#"{"action":"delete","after":0}"#,
+                    ..new_job(&owner, "test.k", None)
+                },
+                NOW,
+            )?);
+            assert!(!is_current(tx, job.fence())?, "queued");
+            assert!(!checkpoint(tx, job.fence(), r#"{"after":1}"#)?);
+            let running = claim(tx, job.id, NOW + 30_000, NOW)?.expect("claimed");
+            let fence = running.fence();
+            assert!(is_current(tx, fence)?);
+            assert!(checkpoint(tx, fence, r#"{"after":500,"done":500}"#)?);
+            assert_eq!(
+                payload(tx, job.id),
+                serde_json::json!({ "action": "delete", "after": 500, "done": 500 })
+            );
+
+            cancel(tx, &owner, job.id, NOW)?.expect("cancelled");
+            assert!(!is_current(tx, fence)?);
+            assert!(checkpoint(tx, fence, r#"{"after":1000,"done":1000}"#)?);
+            let again = retry(tx, &owner, job.id, NOW + 1)?.expect("queued again");
+            assert_eq!(payload(tx, job.id)["after"], 1000, "a retry keeps it");
+            assert!(!checkpoint(tx, fence, r#"{"after":7}"#)?, "queued again");
+
+            // A lease taken back moves `attempts`: the old attempt is out.
+            let second = claim(tx, again.id, NOW + 30_000, NOW + 1)?.expect("claimed");
+            let retried = Finish::Retry {
+                run_at: NOW + 2,
+                code: "lease_expired",
+                detail: None,
+            };
+            finish(tx, second.fence(), &retried, None, None, NOW + 1)?.expect("queued");
+            let third = claim(tx, again.id, NOW + 30_000, NOW + 2)?.expect("claimed");
+            assert!(!is_current(tx, second.fence())?);
+            assert!(!checkpoint(tx, second.fence(), r#"{"after":7}"#)?);
+            assert!(is_current(tx, third.fence())?);
+            assert_eq!(payload(tx, job.id)["after"], 1000);
             Ok::<_, RepoError>(())
         })
         .unwrap();

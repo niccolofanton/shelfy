@@ -317,7 +317,7 @@ fn a_restore_round_trip_leaves_the_indexes_and_folders_identical() {
     let in_trash = Selector::TrashedAt(NOW + 3);
     let mut after = 0;
     let mut chunks = 0;
-    while let Some(chunk) = bulk::next_chunk(&conn, &in_trash, after, 100).unwrap() {
+    while let Some(chunk) = bulk::next_chunk(&conn, &in_trash, after, i64::MAX, 100).unwrap() {
         assert!(chunk.len <= 100);
         bulk::apply(&conn, &chunk.selector, &Action::Restore, NOW + 4).unwrap();
         after = chunk.last;
@@ -346,7 +346,7 @@ fn chunks_cover_the_selection_once_in_id_order() {
     let mut seen = Vec::new();
     let mut after = 0;
     let mut chunks = 0;
-    while let Some(chunk) = bulk::next_chunk(&conn, &selection, after, 50).unwrap() {
+    while let Some(chunk) = bulk::next_chunk(&conn, &selection, after, i64::MAX, 50).unwrap() {
         assert!(chunk.len <= 50);
         chunks += 1;
         let Selector::Keys(chunk_keys) = &chunk.selector else {
@@ -364,10 +364,57 @@ fn chunks_cover_the_selection_once_in_id_order() {
     assert_eq!(chunks, expected.len().div_ceil(50));
     // A chunk never holds more posts than a selector of keys may.
     assert!(
-        bulk::next_chunk(&conn, &Selector::filter(PostFilter::default()), 0, 10_000)
-            .unwrap()
-            .is_some_and(|c| c.len == CHUNK)
+        bulk::next_chunk(
+            &conn,
+            &Selector::filter(PostFilter::default()),
+            0,
+            i64::MAX,
+            10_000
+        )
+        .unwrap()
+        .is_some_and(|c| c.len == CHUNK)
     );
+}
+
+/// A job visits only the posts that existed when it was asked: `upto`, the
+/// largest id then, keeps out the posts added since, even those its filter
+/// matches (P1-11 review M1).
+#[test]
+fn chunks_stop_at_the_largest_id_of_the_request() {
+    let conn = library();
+    let ids = insert_all(&conn, &synthetic_posts(120, 6));
+    let upto = *ids.last().unwrap();
+    assert_eq!(bulk::newest_id(&conn).unwrap(), upto);
+    let everything = Selector::filter(PostFilter::default());
+    // Added after the request: an install or an import.
+    let mut later = synthetic_posts(130, 7);
+    later.drain(..120);
+    let added = insert_all(&conn, &later);
+    assert!(added.iter().all(|&id| id > upto));
+
+    let mut seen = Vec::new();
+    let mut after = 0;
+    while let Some(chunk) = bulk::next_chunk(&conn, &everything, after, upto, 50).unwrap() {
+        seen.extend(selector::ids(&conn, &chunk.selector).unwrap());
+        after = chunk.last;
+    }
+    seen.sort_unstable();
+    assert_eq!(seen, ids);
+    // A later start goes on after the id it reached.
+    let rest = bulk::next_chunk(&conn, &everything, ids[99], upto, 50)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rest.len, 20);
+    assert_eq!(rest.last, upto);
+    assert_eq!(
+        bulk::count_between(&conn, &everything, ids[99], upto).unwrap(),
+        20
+    );
+    assert_eq!(
+        bulk::count_between(&conn, &everything, 0, i64::MAX).unwrap(),
+        130
+    );
+    assert_eq!(bulk::newest_id(&library()).unwrap(), 0, "an empty library");
 }
 
 /// Running an action in chunks ends where running it inline ends.
@@ -409,7 +456,8 @@ fn chunked_and_inline_runs_agree() {
         let selector = selector(&chunked);
         let mut changed = Vec::new();
         let mut after = 0;
-        while let Some(chunk) = bulk::next_chunk(&chunked, &selector, after, 37).unwrap() {
+        while let Some(chunk) = bulk::next_chunk(&chunked, &selector, after, i64::MAX, 37).unwrap()
+        {
             changed.extend(
                 bulk::apply(&chunked, &chunk.selector, &action, now)
                     .unwrap()
@@ -582,7 +630,7 @@ fn unknown_keys_and_empty_selections_change_nothing() {
             assert!(applied.changed.is_empty());
         }
         assert!(
-            bulk::next_chunk(&conn, selection, 0, CHUNK)
+            bulk::next_chunk(&conn, selection, 0, i64::MAX, CHUNK)
                 .unwrap()
                 .is_none()
         );

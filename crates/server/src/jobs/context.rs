@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
-use shelfy_core::db::{DbError, UserDb};
+use shelfy_core::db::{ControlDb, DbError, UserDb};
 use shelfy_core::repo::RepoError;
 use tokio_util::sync::CancellationToken;
 
@@ -507,6 +507,76 @@ impl JobContext {
     pub(super) fn last_progress(&self) -> (Option<f64>, Option<String>) {
         let current = lock(&self.inner.progress);
         (current.value, current.stage.clone())
+    }
+
+    /// This try's fence, for blocking code that writes in its name (see
+    /// [`AttemptFence`]).
+    #[must_use]
+    pub fn attempt_fence(&self) -> AttemptFence {
+        AttemptFence {
+            control: Arc::clone(self.inner.state.control()),
+            fence: self.inner.fence,
+        }
+    }
+}
+
+/// A try of a job, as blocking code sees it: whether it is still the job's
+/// current try, and its checkpoint.
+///
+/// **A cancelled try writes nothing more.** A worker that writes a user's
+/// library in chunks checks [`AttemptFence::is_current`] inside each chunk's
+/// write transaction, before it changes anything. A cancel (or a lease taken
+/// back) that committed before is then always seen, and a chunk that saw the
+/// try current holds the library's writer until it commits, so every write
+/// that starts after the cancel comes after that chunk. Whatever runs after
+/// a cancel (the undo of a delete, say) sees everything the cancelled try
+/// will ever have done.
+///
+/// **Checkpoints** ([`AttemptFence::checkpoint`]) are merged into the job's
+/// payload, where the next try (a retry, a requeue after a pause, a
+/// shutdown or a locked library, a lost lease) reads them, so it goes on
+/// where this one stopped.
+#[derive(Clone)]
+pub struct AttemptFence {
+    control: Arc<ControlDb>,
+    fence: Fence,
+}
+
+impl AttemptFence {
+    /// Whether this try is still the job's current one: not cancelled, its
+    /// lease not taken back. Blocking.
+    ///
+    /// # Errors
+    ///
+    /// The control database failed.
+    pub fn is_current(&self) -> Result<bool, JobError> {
+        let fence = self.fence;
+        self.control
+            .read(|conn| rows::is_current(conn, fence))
+            .map_err(JobError::from)
+    }
+
+    /// Merges `checkpoint`, a JSON object, into the job's payload; also after
+    /// this try was cancelled, so a retry goes on from it. Returns false when
+    /// another try owns the job now. Blocking.
+    ///
+    /// # Errors
+    ///
+    /// The control database failed.
+    pub fn checkpoint(&self, checkpoint: &serde_json::Value) -> Result<bool, JobError> {
+        let (fence, patch) = (self.fence, checkpoint.to_string());
+        self.control
+            .write(|tx| rows::checkpoint(tx, fence, &patch))
+            .map_err(JobError::from)
+    }
+}
+
+impl fmt::Debug for AttemptFence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AttemptFence")
+            .field("job", &self.fence.id)
+            .field("attempts", &self.fence.attempts)
+            .finish_non_exhaustive()
     }
 }
 

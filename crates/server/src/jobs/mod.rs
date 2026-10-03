@@ -58,7 +58,7 @@
 //! | [`bulk`] | `bulk`: a bulk action over more than 500 posts (P1-11) |
 //! | [`purge`] | `purge`: emptying the trash, and the nightly 30-day retention (P1-11) |
 //! | [`idempotency`] | the `Idempotency-Key` middleware of job-creating routes |
-//! | `registry`, `context`, `clock` | [`Registry`], [`KindSpec`], [`Worker`]; [`JobContext`], [`JobError`]; [`Clock`] |
+//! | `registry`, `context`, `clock` | [`Registry`], [`KindSpec`], [`Worker`]; [`JobContext`], [`JobError`], [`AttemptFence`]; [`Clock`] |
 //!
 //! The control-database queries are in [`crate::control::jobs`] and
 //! [`crate::control::idempotency`]; the routes in [`crate::routes::jobs`].
@@ -84,7 +84,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 pub use clock::Clock;
-pub use context::{JobContext, JobError, JobResult, Outcome, SweepContext, codes};
+pub use context::{AttemptFence, JobContext, JobError, JobResult, Outcome, SweepContext, codes};
 pub use queues::KindStats;
 pub use registry::{Backoff, BoxFuture, Kind, KindSpec, Registry, Sweep, Worker};
 

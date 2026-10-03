@@ -15,10 +15,15 @@
 //! the [`Selector::Keys`] of its posts, so a job runs exactly the inline
 //! path, one chunk at a time.
 //!
-//! **A job sees the library as it goes.** Each chunk evaluates the selector
-//! anew: a post that starts or stops matching a filter while the job runs is
-//! included or not by the chunk that reaches its id, and the id order means
-//! no post is visited twice.
+//! **A job sees the library as it goes, within its request.** Each chunk
+//! evaluates the selector anew: a post that starts or stops matching a
+//! filter while the job runs is included or not by the chunk that reaches
+//! its id, and the id order means no post is visited twice. Only posts that
+//! existed when the job was asked are visited: a job passes the largest id
+//! of that time as `upto`, so posts added since (an install, an import) stay
+//! out of a delete by filter. A job records the id it reached after each
+//! chunk and a later try goes on from it, so it never redoes what the user
+//! undid in between (P1-11 review M1).
 //!
 //! **What each action changes**, among the selected posts:
 //!
@@ -34,8 +39,8 @@
 //! A [`Selector::Keys`] selection reaches the trash, so the AI actions apply
 //! to trashed posts given by key, as `PATCH /posts/{key}` does; a filter
 //! reaches the trash only with `trash` set. Each action is idempotent on
-//! each post: applying it again changes nothing, so a job that stopped
-//! halfway can start over from the first chunk.
+//! each post: applying it again changes nothing, so a try that runs a chunk
+//! again (one whose record a crash lost) changes nothing more.
 
 use rusqlite::types::Value;
 use rusqlite::{Connection, params_from_iter};
@@ -139,6 +144,39 @@ pub fn count(conn: &Connection, selector: &Selector) -> Result<u64> {
     selector::count(conn, selector)
 }
 
+/// How many posts `selector` selects with an internal id above `after` and
+/// at most `upto`: what a job has left ([`next_chunk`]).
+///
+/// # Errors
+///
+/// [`RepoError::Invalid`] for a selector over its caps; database errors.
+pub fn count_between(conn: &Connection, selector: &Selector, after: i64, upto: i64) -> Result<u64> {
+    let which = selector.sql()?;
+    let range = [Value::Integer(after), Value::Integer(upto)];
+    let n: i64 = conn
+        .prepare_cached(&format!(
+            "SELECT count(*) FROM posts p WHERE ({}) AND p.id > ? AND p.id <= ?",
+            which.condition
+        ))?
+        .query_row(params_from_iter(which.params.iter().chain(&range)), |r| {
+            r.get(0)
+        })?;
+    Ok(u64::try_from(n).unwrap_or(0))
+}
+
+/// The largest internal id of a post, in the trash or not; 0 for an empty
+/// library. A job asked now passes it to [`next_chunk`] as `upto`.
+///
+/// # Errors
+///
+/// Database errors.
+pub fn newest_id(conn: &Connection) -> Result<i64> {
+    let id: Option<i64> = conn
+        .prepare_cached("SELECT max(id) FROM posts")?
+        .query_row([], |r| r.get(0))?;
+    Ok(id.unwrap_or(0))
+}
+
 /// Runs `action` on every post `selector` selects, at time `now` (every
 /// changed post's new `updated_at`, and the trash stamp of a delete), in the
 /// caller's transaction. Checks the action first ([`Action::check`]).
@@ -202,8 +240,9 @@ pub struct Chunk {
 }
 
 /// The next `limit` posts `selector` selects whose internal id is above
-/// `after` (0 for the first chunk), in id order; `None` once there are no
-/// more.
+/// `after` (0 for the first chunk) and at most `upto` (the largest id when
+/// the job was asked, so posts added since stay out; `i64::MAX` for no
+/// bound), in id order; `None` once there are no more.
 ///
 /// # Errors
 ///
@@ -212,15 +251,18 @@ pub fn next_chunk(
     conn: &Connection,
     selector: &Selector,
     after: i64,
+    upto: i64,
     limit: usize,
 ) -> Result<Option<Chunk>> {
     let which = selector.sql()?;
     let sql = format!(
-        "SELECT p.id, p.key FROM posts p WHERE ({}) AND p.id > ? ORDER BY p.id LIMIT ?",
+        "SELECT p.id, p.key FROM posts p WHERE ({}) AND p.id > ? AND p.id <= ?
+         ORDER BY p.id LIMIT ?",
         which.condition
     );
     let tail = [
         Value::Integer(after),
+        Value::Integer(upto),
         Value::Integer(i64::try_from(limit.min(CHUNK)).unwrap_or(0)),
     ];
     let rows: Vec<(i64, String)> = conn

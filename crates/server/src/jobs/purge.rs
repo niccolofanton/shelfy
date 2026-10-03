@@ -22,11 +22,13 @@
 //! post rows and what cascades from them (slides, tags, entities,
 //! memberships, captures) go, and media objects that lose their last
 //! reference get `unreferenced_since`. Deleting their files is the GC's
-//! (P4). Each chunk is announced (`posts.changed`, reason `delete`, and
-//! `stats.changed`) and reported on `job.updated` (`stage` `purge`). Once
-//! posts were purged, the user's storage is counted again
-//! ([`super::usage::enqueue`]). A user without a library has nothing to
-//! purge, and none is created.
+//! (P4). Each chunk checks, inside its write transaction, that its try is
+//! still current ([`AttemptFence::is_current`]): a cancelled purge deletes
+//! nothing more. Each chunk is announced (`posts.changed`, reason `delete`,
+//! and `stats.changed`) from the blocking task that committed it, and
+//! reported on `job.updated` (`stage` `purge`). Once posts were purged, the
+//! user's storage is counted again ([`super::usage::enqueue`]). A user
+//! without a library has nothing to purge, and none is created.
 //!
 //! **Idempotent.** A purged post is gone: a try that starts over, or a
 //! second purge, finds only what is left.
@@ -39,13 +41,16 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use shelfy_core::bulk::CHUNK;
+use shelfy_core::db::{UserDb, UserDbCache};
 use shelfy_core::trash;
 
 use super::{
-    Enqueued, JobContext, JobError, JobResult, Jobs, Kind, KindSpec, NewJob, Outcome, codes, usage,
+    AttemptFence, Clock, Enqueued, JobContext, JobError, JobResult, Jobs, Kind, KindSpec, NewJob,
+    Outcome, codes, usage,
 };
 use crate::control::jobs as rows;
 use crate::error::ApiError;
+use crate::events::EventBus;
 use crate::events::model::ChangeReason;
 use crate::library::{self, event_keys};
 
@@ -142,28 +147,24 @@ async fn run(ctx: JobContext) -> JobResult {
                 run_at: Some(run_at),
             });
         }
-        let now = ctx.jobs().clock().now_ms();
-        let purged = ctx
-            .user_db(move |db| {
-                db.write(|tx| {
-                    let ids = trash::purgeable(tx, through, CHUNK)?;
-                    trash::purge(tx, &ids, now)
-                })
-                .map_err(JobError::from)
-            })
-            .await?;
-        if purged.is_empty() {
-            break;
+        let chunk = PurgeChunk {
+            fence: ctx.attempt_fence(),
+            cache: Arc::clone(ctx.state().user_dbs()),
+            events: ctx.state().events().clone(),
+            user: ctx.user_id().to_owned(),
+            clock: *ctx.jobs().clock(),
+            through,
+        };
+        match ctx.user_db(move |db| chunk.run(db)).await? {
+            Purged::Posts(n) => {
+                done += n;
+                ctx.progress(Some(super::bulk::share(done, total)), Some(STAGE))
+                    .await;
+            }
+            Purged::Nothing => break,
+            // Cancelled meanwhile, or another try took the job over.
+            Purged::Stopped => return Err(JobError::cancelled()),
         }
-        done += purged.len() as u64;
-        library::announce(
-            ctx.state().events(),
-            ctx.user_id(),
-            ChangeReason::Delete,
-            event_keys(purged),
-        );
-        ctx.progress(Some(super::bulk::share(done, total)), Some(STAGE))
-            .await;
     }
     if done > 0 {
         // The storage the library uses (`GET /me/usage`) is counted again.
@@ -179,6 +180,58 @@ async fn run(ctx: JobContext) -> JobResult {
         "trash purged"
     );
     Ok(Outcome::Succeeded)
+}
+
+/// One chunk of a purge: everything it needs on its blocking task.
+struct PurgeChunk {
+    fence: AttemptFence,
+    cache: Arc<UserDbCache>,
+    events: EventBus,
+    user: String,
+    clock: Clock,
+    through: i64,
+}
+
+/// What a chunk of a purge did.
+enum Purged {
+    /// It deleted this many posts.
+    Posts(u64),
+    /// Nothing was left: the purge is done.
+    Nothing,
+    /// The try is no longer the job's current one: it deleted nothing.
+    Stopped,
+}
+
+impl PurgeChunk {
+    /// Purges the next chunk on `db`, then announces it from this blocking
+    /// task, so a worker aborted after the commit still announces it (P1-11
+    /// review L7).
+    fn run(self, db: &UserDb) -> Result<Purged, JobError> {
+        let purged = db.write(|tx| -> Result<Option<Vec<String>>, JobError> {
+            // Under the writer: a cancel committed before is seen here.
+            if !self.fence.is_current()? {
+                return Ok(None);
+            }
+            let ids = trash::purgeable(tx, self.through, CHUNK)?;
+            Ok(Some(trash::purge(tx, &ids, self.clock.now_ms())?))
+        })?;
+        let Some(keys) = purged else {
+            return Ok(Purged::Stopped);
+        };
+        if keys.is_empty() {
+            return Ok(Purged::Nothing);
+        }
+        let n = keys.len() as u64;
+        library::committed(
+            &self.cache,
+            &self.events,
+            &self.user,
+            db,
+            ChangeReason::Delete,
+            event_keys(keys),
+        );
+        Ok(Purged::Posts(n))
+    }
 }
 
 /// Whether the user has an active `bulk` job enqueued before this purge,

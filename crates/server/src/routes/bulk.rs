@@ -313,8 +313,9 @@ pub(crate) async fn start(
     let at = state.jobs().clock().now_ms();
     let deleted_at = (action == BulkAction::Delete).then_some(at);
     // A selection by key fits the inline limit by construction. Otherwise
-    // count it, and check the action can run, before anything is enqueued.
-    let selected = if matches!(selector, Selector::Keys(_)) {
+    // count it, and check the action can run, before anything is enqueued;
+    // the largest post id of the same snapshot bounds a job's selection.
+    let counted = if matches!(selector, Selector::Keys(_)) {
         None
     } else {
         let db = state.user_db(user_id).await?;
@@ -322,12 +323,13 @@ pub(crate) async fn start(
         let n = blocking(move || {
             db.read(|conn| {
                 checked.check(conn)?;
-                bulk::count(conn, &counted)
+                Ok::<_, RepoError>((bulk::count(conn, &counted)?, bulk::newest_id(conn)?))
             })
         })
         .await?;
         Some(n)
     };
+    let selected = counted.map(|(n, _)| n);
     if selected.is_none_or(|n| n <= MAX_INLINE) {
         let written = library::write(state, user_id, action.reason(), move |tx| {
             let applied = bulk::apply(tx, &selector, &core, at)?;
@@ -348,12 +350,8 @@ pub(crate) async fn start(
         };
         return Ok(Json(body).into_response());
     }
-    let payload = Payload {
-        action,
-        params,
-        selection,
-        at,
-    };
+    let max_id = counted.map_or(i64::MAX, |(_, newest)| newest);
+    let payload = Payload::new(action, params, selection, at, max_id);
     let enqueued = job::enqueue(state.jobs(), user_id, &payload).await?;
     let body = BulkResult {
         action,

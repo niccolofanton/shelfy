@@ -29,8 +29,8 @@
 //! read, the order the ETags rely on too.
 //!
 //! Seams: the bulk and trash routes (P1-11) write through [`write`] with
-//! their own [`ChangeReason`] (`delete`); a job that changes posts announces
-//! with [`announce`] after its chunk commits.
+//! their own [`ChangeReason`] (`delete`); a job that changes posts calls
+//! [`committed`] after its chunk commits, on the chunk's blocking task.
 //!
 //! [`Generation`]: shelfy_core::generation::Generation
 
@@ -120,12 +120,29 @@ where
             Ok::<_, RepoError>((change, tx.total_changes() != before))
         })?;
         if changed {
-            retire_if_unseen(&cache, &user, &db);
-            announce(&events, &user, reason, keys);
+            committed(&cache, &events, &user, &db, reason, keys);
         }
         Ok::<_, RepoError>(Written { value, changed })
     })
     .await
+}
+
+/// What follows a commit through `db` that changed `user_id`'s posts, on the
+/// thread that committed it: the generation is retired when no reader would
+/// see it move ([`write`], step 1), then the change is announced
+/// ([`announce`]). A job's chunk calls it from its blocking task too, so an
+/// abort of the worker after the commit still announces it (P1-11 review
+/// L7, as F6 L2 for requests).
+pub fn committed(
+    cache: &UserDbCache,
+    events: &EventBus,
+    user_id: &str,
+    db: &UserDb,
+    reason: ChangeReason,
+    keys: Option<Vec<String>>,
+) {
+    retire_if_unseen(cache, user_id, db);
+    announce(events, user_id, reason, keys);
 }
 
 /// After a write through `db` moved its generation: when the cache serves
